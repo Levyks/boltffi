@@ -48,3 +48,9 @@ pub struct EnhancedEnumTemplate<'a> {
 pub struct SealedClassEnumTemplate<'a> {
     pub dart_enum: &'a super::DartEnum,
 }
+
+#[derive(Template)]
+#[template(path = "render_dart/callback.txt", escape = "none")]
+pub struct CallbackTemplate<'a> {
+    pub cb: &'a super::DartCallback,
+}

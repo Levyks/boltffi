@@ -1,15 +1,20 @@
+use boltffi_ffi_rules::transport::ParamValueStrategy;
+
 use crate::{
     ir::{
-        AbiCall, AbiContract, AbiEnumField, AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord,
-        AbiType, CallId, ConstructorDef, CustomTypeDef, EnumDef, EnumRepr, FfiContract, FieldDef,
-        FieldName, FieldReadOp, FunctionId, MethodDef, OffsetExpr, ParamDef, ReadOp, ReadSeq,
-        RecordDef, RecordId, WriteOp, WriteSeq,
+        AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiEnumField,
+        AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, AbiType, CallId, CallbackId,
+        CallbackMethodDef, CallbackTraitDef, ConstructorDef, CustomTypeDef, EnumDef, EnumRepr,
+        FfiContract, FieldDef, FieldName, FieldReadOp, FunctionId, MethodDef, OffsetExpr, ParamDef,
+        ParamRole, PrimitiveType, ReadOp, ReadSeq, RecordDef, RecordId, Transport, WriteOp,
+        WriteSeq,
     },
     render::dart::{
-        DartBlittableField, DartBlittableLayout, DartConstructor, DartConstructorKind,
-        DartCustomType, DartEnum, DartEnumKind, DartEnumVariant, DartFunction, DartFunctionParam,
-        DartLibrary, DartNative, DartNativeFunction, DartNativeFunctionParam, DartNativeType,
-        DartRecord, DartRecordField, DartType, NamingConvention,
+        DartBlittableField, DartBlittableLayout, DartCallback, DartCallbackMethod, DartConstructor,
+        DartConstructorKind, DartCustomType, DartEnum, DartEnumKind, DartEnumVariant, DartFunction,
+        DartFunctionParam, DartLibrary, DartNative, DartNativeCallback, DartNativeCallbackMethod,
+        DartNativeFunction, DartNativeFunctionParam, DartNativeType, DartRecord, DartRecordField,
+        DartType, NamingConvention,
     },
 };
 
@@ -29,8 +34,23 @@ impl<'a> DartLowerer<'a> {
     }
 
     fn lower_native_function_param(&self, abi_param: &AbiParam) -> DartNativeFunctionParam {
+        let name = match &abi_param.role {
+            ParamRole::Input { contract, .. } => match contract.value_strategy() {
+                ParamValueStrategy::DirectBuffer(..) | ParamValueStrategy::WireEncoded(..) => {
+                    format!(
+                        "{}Ptr",
+                        NamingConvention::param_name(abi_param.name.as_str())
+                    )
+                }
+                _ => NamingConvention::param_name(abi_param.name.as_str()),
+            },
+            ParamRole::OutDirect => String::from("_p$outPtr"),
+            ParamRole::OutLen { .. } => String::from("_p$outLen"),
+            _ => NamingConvention::param_name(abi_param.name.as_str()),
+        };
+
         DartNativeFunctionParam {
-            name: abi_param.name.to_string(),
+            name,
             native_type: DartNativeType::from_abi_param(abi_param),
         }
     }
@@ -54,7 +74,10 @@ impl<'a> DartLowerer<'a> {
         DartNativeFunction {
             symbol,
             params,
-            return_type: DartNativeType::abi_call_return_type(abi_call),
+            return_type: DartNativeType::from_return_shape_and_error_transport(
+                &abi_call.returns,
+                &abi_call.error,
+            ),
             is_leaf: !is_not_leaf,
         }
     }
@@ -79,6 +102,10 @@ impl<'a> DartLowerer<'a> {
             .records
             .iter()
             .find(|record| record.id == *record_id)
+    }
+
+    fn abi_callback_for(&self, id: &CallbackId) -> Option<&AbiCallbackInvocation> {
+        self.abi.callbacks.iter().find(|cb| cb.callback_id == *id)
     }
 
     fn record_field_read_seq(
@@ -331,6 +358,97 @@ impl<'a> DartLowerer<'a> {
         }
     }
 
+    fn lower_native_callback_method(
+        &self,
+        m: &AbiCallbackMethod,
+    ) -> super::DartNativeCallbackMethod {
+        assert!(matches!(
+            m.params[0].role,
+            ParamRole::Input {
+                transport: Transport::Callback { .. },
+                ..
+            }
+        ));
+
+        let mut params = vec![DartNativeFunctionParam {
+            name: "_p$handle".to_string(),
+            native_type: DartNativeType::Primitive(PrimitiveType::U64),
+        }];
+
+        params.extend(
+            m.params[1..]
+                .iter()
+                .map(|p| self.lower_native_function_param(p)),
+        );
+
+        params.push(DartNativeFunctionParam {
+            name: "_p$outStatus".to_string(),
+            native_type: DartNativeType::Pointer(Box::new(DartNativeType::Status)),
+        });
+
+        let return_type =
+            DartNativeType::from_return_shape_and_error_transport(&m.returns, &m.error);
+
+        DartNativeCallbackMethod {
+            vtable_field_name: NamingConvention::property_name(m.vtable_field.as_str()),
+            params,
+            return_type,
+        }
+    }
+
+    fn lower_callback_method(&self, cb: &CallbackMethodDef) -> DartCallbackMethod {
+        let params = cb.params.iter().map(|p| self.lower_param(p)).collect();
+
+        DartCallbackMethod {
+            name: NamingConvention::function_name(cb.id.as_str()),
+            params,
+            ret_ty: DartType::from_return_def(&cb.returns),
+        }
+    }
+
+    fn lower_callback(&self, cb_def: &CallbackTraitDef) -> DartCallback {
+        let abi_cb = self.abi_callback_for(&cb_def.id).unwrap();
+
+        let class_name = NamingConvention::class_name(cb_def.id.as_str());
+        let native_decls_class_name = format!("_$$Native${}", class_name);
+        let impl_class_name = format!("_I${}", class_name);
+        let vtable_struct_name = format!(
+            "_I${}",
+            NamingConvention::class_name(abi_cb.vtable_type.as_str())
+        );
+        let handle_map_class_name = format!("{}HandleMap", impl_class_name);
+        let handle_map_instance_name = format!("_k${}HandleMap", class_name);
+        let create_handle_fn_name = abi_cb.create_fn.to_string();
+        let vtable_register_fn_name = abi_cb.register_fn.to_string();
+
+        let methods = cb_def
+            .methods
+            .iter()
+            .map(|cb| self.lower_callback_method(cb))
+            .collect();
+
+        let native_methods = abi_cb
+            .methods
+            .iter()
+            .map(|m| self.lower_native_callback_method(m))
+            .collect();
+
+        DartCallback {
+            class_name,
+            impl_class_name,
+            handle_map_class_name,
+            handle_map_instance_name,
+            methods,
+            native: DartNativeCallback {
+                native_decls_class_name,
+                create_handle_fn_name,
+                vtable_struct_name,
+                vtable_register_fn_name,
+                methods: native_methods,
+            },
+        }
+    }
+
     pub fn library(&self) -> DartLibrary {
         let custom_types = self
             .ffi
@@ -362,6 +480,13 @@ impl<'a> DartLowerer<'a> {
             .map(|e| self.lower_enum(e))
             .collect();
 
+        let callbacks = self
+            .ffi
+            .catalog
+            .all_callbacks()
+            .map(|cb| self.lower_callback(cb))
+            .collect();
+
         DartLibrary {
             custom_types,
             native: DartNative {
@@ -369,6 +494,7 @@ impl<'a> DartLowerer<'a> {
             },
             records,
             enums,
+            callbacks,
         }
     }
 }

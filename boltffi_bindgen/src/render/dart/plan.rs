@@ -1,8 +1,8 @@
 use crate::{
     ir::{
-        AbiCall, AbiParam, AbiType, BuiltinId, CallbackId, ClassId, CustomTypeId, EnumId,
-        ErrorTransport, ParamRole, PrimitiveType, ReadSeq, RecordId, ReturnDef, SizeExpr,
-        Transport, TypeExpr, WriteSeq,
+        AbiParam, AbiType, BuiltinId, CallbackId, ClassId, CustomTypeId, EnumId, ErrorTransport,
+        ParamRole, PrimitiveType, ReadSeq, RecordId, ReturnDef, ReturnShape, SizeExpr, Transport,
+        TypeExpr, WriteSeq,
     },
     render::dart::NamingConvention,
 };
@@ -92,22 +92,25 @@ impl DartNativeType {
         }
     }
 
-    pub fn abi_call_return_type(abi_call: &AbiCall) -> Self {
-        if let Some(Transport::Handle { class_id, .. }) = &abi_call.returns.transport {
+    pub fn from_return_shape_and_error_transport(
+        return_shape: &ReturnShape,
+        error_transport: &ErrorTransport,
+    ) -> Self {
+        if let Some(Transport::Handle { class_id, .. }) = &return_shape.transport {
             return Self::from_abi_type(&AbiType::Handle(class_id.clone()));
         }
 
-        if matches!(abi_call.returns.transport, Some(Transport::Callback { .. })) {
+        if matches!(return_shape.transport, Some(Transport::Callback { .. })) {
             return Self::from_abi_type(&AbiType::CallbackHandle);
         }
 
-        if matches!(abi_call.error, ErrorTransport::Encoded { .. }) {
+        if matches!(error_transport, ErrorTransport::Encoded { .. }) {
             return Self::from_abi_type(&AbiType::OwnedBuffer);
         }
 
-        match &abi_call.returns.transport {
+        match &return_shape.transport {
             None => {
-                if matches!(abi_call.error, ErrorTransport::StatusCode) {
+                if matches!(error_transport, ErrorTransport::StatusCode) {
                     Self::Status
                 } else {
                     Self::from_abi_type(&AbiType::Void)
@@ -380,6 +383,7 @@ pub struct DartLibrary {
     pub native: DartNative,
     pub records: Vec<DartRecord>,
     pub enums: Vec<DartEnum>,
+    pub callbacks: Vec<DartCallback>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -453,4 +457,37 @@ impl DartEnum {
     pub fn wire_encoded_size_expr(&self) -> String {
         super::emit_size_expr(&self.size_expr)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct DartNativeCallbackMethod {
+    pub vtable_field_name: String,
+    pub params: Vec<DartNativeFunctionParam>,
+    pub return_type: DartNativeType,
+}
+
+#[derive(Debug, Clone)]
+pub struct DartNativeCallback {
+    pub native_decls_class_name: String,
+    pub create_handle_fn_name: String,
+    pub vtable_struct_name: String,
+    pub vtable_register_fn_name: String,
+    pub methods: Vec<DartNativeCallbackMethod>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DartCallbackMethod {
+    pub name: String,
+    pub params: Vec<DartFunctionParam>,
+    pub ret_ty: DartType,
+}
+
+#[derive(Debug, Clone)]
+pub struct DartCallback {
+    pub class_name: String,
+    pub impl_class_name: String,
+    pub handle_map_class_name: String,
+    pub handle_map_instance_name: String,
+    pub methods: Vec<DartCallbackMethod>,
+    pub native: DartNativeCallback,
 }
