@@ -247,6 +247,10 @@ Generates a Kotlin Multiplatform module with `commonMain` declarations and JVM/A
 - `module_name` (string, optional): Kotlin source/module class name.
   - Default: same as `[targets.android.kotlin].module_name`
 
+Desktop JVM native resources for `boltffi pack kmp` use `[targets.java.jvm].host_targets`.
+`targets.java.jvm.enabled` does not need to be true for KMP packaging to read this shared JVM
+host matrix. When omitted, the host matrix defaults to `["current"]`.
+
 ## Java
 
 ### `[targets.java]` (optional)

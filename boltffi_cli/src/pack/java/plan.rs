@@ -51,8 +51,8 @@ pub(crate) struct JvmPackagingTarget {
     pub(crate) toolchain: NativeHostToolchain,
 }
 
-pub(crate) struct PreparedJavaPackaging {
-    pub(crate) java_host_targets: Vec<JavaHostTarget>,
+pub(crate) struct PreparedJvmPackaging {
+    pub(crate) host_targets: Vec<JavaHostTarget>,
     pub(crate) packaging_targets: Vec<JvmPackagingTarget>,
 }
 
@@ -75,7 +75,7 @@ pub(crate) fn check_java_packaging_prereqs(
 pub(crate) fn pack_java(
     config: &Config,
     options: crate::commands::pack::PackJavaOptions,
-    prepared: Option<PreparedJavaPackaging>,
+    prepared: Option<PreparedJvmPackaging>,
     reporter: &Reporter,
 ) -> Result<()> {
     if !config.is_java_jvm_enabled() {
@@ -94,8 +94,8 @@ pub(crate) fn pack_java(
         "pack java",
     )?;
 
-    let PreparedJavaPackaging {
-        java_host_targets,
+    let PreparedJvmPackaging {
+        host_targets,
         packaging_targets,
     } = if let Some(prepared) = prepared {
         prepared
@@ -162,14 +162,11 @@ pub(crate) fn pack_java(
         &packaged_outputs,
         artifact_name,
     )?;
-    remove_stale_structured_jvm_outputs(
-        &config.java_jvm_output().join("native"),
-        &java_host_targets,
-    )?;
+    remove_stale_structured_jvm_outputs(&config.java_jvm_output().join("native"), &host_targets)?;
     remove_stale_flat_jvm_outputs_if_current_host_unrequested(
         &config.java_jvm_output(),
         JavaHostTarget::current(),
-        &java_host_targets,
+        &host_targets,
         artifact_name,
     )?;
 
@@ -181,65 +178,69 @@ pub(crate) fn prepare_java_packaging(
     config: &Config,
     release: bool,
     cargo_args: &[String],
-) -> Result<PreparedJavaPackaging> {
-    let build_cargo_args = resolve_build_cargo_args(config, cargo_args);
-    ensure_java_pack_cargo_args_supported(&build_cargo_args)?;
-    let build_profile = crate::build::resolve_build_profile(release, &build_cargo_args);
-    let java_host_targets = resolve_java_host_targets_for_packaging(config)?;
-    let packaging_targets = resolve_jvm_packaging_targets(
+) -> Result<PreparedJvmPackaging> {
+    let prepared = prepare_jvm_packaging_matrix(
         config,
-        &build_cargo_args,
         release,
-        build_profile,
-        &java_host_targets,
+        cargo_args,
         config.java_jvm_strip_symbols(),
+        "pack java",
     )?;
     if config.java_jvm_debug_symbols_enabled() {
+        let build_cargo_args = resolve_build_cargo_args(config, cargo_args);
         ensure_debug_symbols_profile_has_debuginfo(
             &build_cargo_args,
-            &packaging_targets[0].cargo_context.build_profile,
+            &prepared.packaging_targets[0].cargo_context.build_profile,
             "targets.java.jvm.debug_symbols",
-            &packaging_targets
+            &prepared
+                .packaging_targets
                 .iter()
                 .map(|target| target.cargo_context.rust_target_triple.clone())
                 .collect::<Vec<_>>(),
         )?;
     }
 
-    Ok(PreparedJavaPackaging {
-        java_host_targets,
-        packaging_targets,
-    })
+    Ok(prepared)
 }
 
-pub(crate) fn prepare_current_host_jvm_packaging(
+pub(crate) fn prepare_kmp_jvm_packaging(
     config: &Config,
     release: bool,
     cargo_args: &[String],
-) -> Result<JvmPackagingTarget> {
+) -> Result<PreparedJvmPackaging> {
+    prepare_jvm_packaging_matrix(config, release, cargo_args, false, "pack kmp")
+}
+
+fn prepare_jvm_packaging_matrix(
+    config: &Config,
+    release: bool,
+    cargo_args: &[String],
+    strip_symbols: bool,
+    command_name: &str,
+) -> Result<PreparedJvmPackaging> {
     let build_cargo_args = resolve_build_cargo_args(config, cargo_args);
-    ensure_java_pack_cargo_args_supported(&build_cargo_args)?;
+    ensure_jvm_pack_cargo_args_supported(&build_cargo_args, command_name)?;
     let build_profile = crate::build::resolve_build_profile(release, &build_cargo_args);
-    let current_host = JavaHostTarget::current().ok_or_else(|| CliError::CommandFailed {
-        command:
-            "JVM packaging is only supported on darwin-arm64, darwin-x86_64, linux-x86_64, linux-aarch64, and windows-x86_64 hosts".to_string(),
-        status: None,
-    })?;
-    let mut packaging_targets = resolve_jvm_packaging_targets(
+    let host_targets = resolve_java_host_targets_for_packaging(config)?;
+    if host_targets.is_empty() {
+        return Err(CliError::CommandFailed {
+            command: "targets.java.jvm.host_targets must be non-empty when provided".to_string(),
+            status: None,
+        });
+    }
+    let packaging_targets = resolve_jvm_packaging_targets(
         config,
         &build_cargo_args,
         release,
         build_profile,
-        &[current_host],
-        false,
+        &host_targets,
+        strip_symbols,
     )?;
 
-    packaging_targets
-        .pop()
-        .ok_or_else(|| CliError::CommandFailed {
-            command: "could not resolve current JVM host packaging target".to_string(),
-            status: None,
-        })
+    Ok(PreparedJvmPackaging {
+        host_targets,
+        packaging_targets,
+    })
 }
 
 pub(crate) fn ensure_java_no_build_supported(
@@ -260,11 +261,11 @@ pub(crate) fn ensure_java_no_build_supported(
     Ok(())
 }
 
-pub(crate) fn ensure_java_pack_cargo_args_supported(cargo_args: &[String]) -> Result<()> {
+fn ensure_jvm_pack_cargo_args_supported(cargo_args: &[String], command_name: &str) -> Result<()> {
     if let Some(target_selector) = Cargo::current(cargo_args)?.target_selector() {
         return Err(CliError::CommandFailed {
             command: format!(
-                "pack java resolves desktop targets from targets.java.jvm.host_targets; remove cargo --target '{}'",
+                "{command_name} resolves desktop targets from targets.java.jvm.host_targets; remove cargo --target '{}'",
                 target_selector
             ),
             status: None,
@@ -288,7 +289,9 @@ pub(crate) fn selected_jvm_package_source_directory(
         })
 }
 
-fn selected_jvm_package_artifact_name(packaging_targets: &[JvmPackagingTarget]) -> Result<&str> {
+pub(crate) fn selected_jvm_package_artifact_name(
+    packaging_targets: &[JvmPackagingTarget],
+) -> Result<&str> {
     packaging_targets
         .first()
         .map(|target| target.cargo_context.artifact_name.as_str())
@@ -512,7 +515,7 @@ mod tests {
 
     use super::{
         JvmCargoContext, JvmCrateOutputs, JvmPackagingTarget, ensure_java_no_build_supported,
-        ensure_java_pack_cargo_args_supported, resolve_jvm_packaging_targets,
+        ensure_jvm_pack_cargo_args_supported, resolve_jvm_packaging_targets,
         selected_jvm_package_source_directory, write_jvm_debug_symbols,
     };
     use crate::build::CargoBuildProfile;
@@ -586,16 +589,38 @@ mod tests {
 
     #[test]
     fn rejects_explicit_cargo_target_for_pack_java() {
-        let error = ensure_java_pack_cargo_args_supported(&[
-            "--target".to_string(),
-            "x86_64-unknown-linux-gnu".to_string(),
-        ])
+        let error = ensure_jvm_pack_cargo_args_supported(
+            &[
+                "--target".to_string(),
+                "x86_64-unknown-linux-gnu".to_string(),
+            ],
+            "pack java",
+        )
         .expect_err("expected explicit target rejection");
 
         assert!(matches!(
             error,
             CliError::CommandFailed { command, status: None }
                 if command.contains("remove cargo --target 'x86_64-unknown-linux-gnu'")
+        ));
+    }
+
+    #[test]
+    fn rejects_explicit_cargo_target_for_pack_kmp_with_kmp_command_name() {
+        let error = ensure_jvm_pack_cargo_args_supported(
+            &[
+                "--target".to_string(),
+                "x86_64-unknown-linux-gnu".to_string(),
+            ],
+            "pack kmp",
+        )
+        .expect_err("expected explicit target rejection");
+
+        assert!(matches!(
+            error,
+            CliError::CommandFailed { command, status: None }
+                if command.contains("pack kmp resolves desktop targets")
+                    && command.contains("targets.java.jvm.host_targets")
         ));
     }
 

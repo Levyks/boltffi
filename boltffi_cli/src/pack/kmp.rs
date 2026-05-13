@@ -12,8 +12,10 @@ use crate::pack::android::{AndroidBindingMode, AndroidPackager, build_android_ta
 use crate::pack::java::link::{
     JvmNativePackageLayout, build_jvm_native_library, compile_jni_library_with_layout,
 };
+use crate::pack::java::outputs::remove_stale_structured_jvm_outputs;
 use crate::pack::java::{
-    generate_jvm_header, prepare_current_host_jvm_packaging, selected_jvm_package_source_directory,
+    generate_jvm_header, prepare_kmp_jvm_packaging, selected_jvm_package_artifact_name,
+    selected_jvm_package_source_directory,
 };
 use crate::pack::{
     discover_built_libraries_for_targets, missing_built_libraries, resolve_build_cargo_args,
@@ -36,8 +38,8 @@ pub(crate) fn pack_kmp(
 
     reporter.section("🧩", "Packing Kotlin Multiplatform");
 
-    let step = reporter.step("Validating JVM toolchain");
-    let packaging_target = prepare_current_host_jvm_packaging(
+    let step = reporter.step("Validating JVM toolchains");
+    let prepared_jvm_packaging = prepare_kmp_jvm_packaging(
         config,
         options.execution.release,
         &options.execution.cargo_args,
@@ -45,8 +47,9 @@ pub(crate) fn pack_kmp(
     step.finish_success();
 
     let source_directory =
-        selected_jvm_package_source_directory(std::slice::from_ref(&packaging_target))?;
-    let artifact_name = packaging_target.cargo_context.artifact_name.as_str();
+        selected_jvm_package_source_directory(&prepared_jvm_packaging.packaging_targets)?;
+    let artifact_name =
+        selected_jvm_package_artifact_name(&prepared_jvm_packaging.packaging_targets)?;
     let source_crate_name = config.library_name();
     let jni_dir = kmp_jvm_jni_dir(config);
 
@@ -82,25 +85,34 @@ pub(crate) fn pack_kmp(
 
     package_kmp_android_libraries(config, &options, reporter)?;
 
-    let step = reporter.step(&format!(
-        "Building Rust library for {}",
-        packaging_target.cargo_context.host_target.canonical_name()
-    ));
-    let build_artifacts =
-        build_jvm_native_library(&packaging_target, options.execution.release, &step)?;
-    step.finish_success();
+    let kmp_jvm_layout = kmp_jvm_native_layout(config, source_crate_name);
+    for packaging_target in &prepared_jvm_packaging.packaging_targets {
+        let host_target = packaging_target.cargo_context.host_target;
+        let step = reporter.step(&format!(
+            "Building Rust library for {}",
+            host_target.canonical_name()
+        ));
+        let build_artifacts =
+            build_jvm_native_library(packaging_target, options.execution.release, &step)?;
+        step.finish_success();
 
-    let step = reporter.step(&format!(
-        "Compiling JVM JNI library for {}",
-        packaging_target.cargo_context.host_target.canonical_name()
-    ));
-    compile_jni_library_with_layout(
-        &packaging_target,
-        &build_artifacts,
-        &kmp_jvm_native_layout(config, source_crate_name),
-        &step,
+        let step = reporter.step(&format!(
+            "Compiling JVM JNI library for {}",
+            host_target.canonical_name()
+        ));
+        compile_jni_library_with_layout(
+            packaging_target,
+            &build_artifacts,
+            &kmp_jvm_layout,
+            &step,
+        )?;
+        step.finish_success();
+    }
+
+    remove_stale_structured_jvm_outputs(
+        &kmp_jvm_native_resource_root(config),
+        &prepared_jvm_packaging.host_targets,
     )?;
-    step.finish_success();
 
     reporter.finish();
     Ok(())
@@ -308,6 +320,35 @@ module_name = "Demo"
             layout.native_output_root,
             PathBuf::from("dist/kmp/src/jvmMain/resources/native")
         );
+        assert!(layout.flat_output_root.is_none());
+        assert!(!layout.strip_symbols);
+        assert!(!layout.debug_symbols_enabled);
+    }
+
+    #[test]
+    fn kmp_jvm_layout_does_not_inherit_java_strip_or_debug_symbols_policy() {
+        let config = parse_config(
+            r#"
+experimental = ["kotlin_multiplatform"]
+
+[package]
+name = "demo"
+
+[targets.kotlin_multiplatform]
+enabled = true
+output = "dist/kmp"
+
+[targets.java.jvm]
+strip_symbols = true
+
+[targets.java.jvm.debug_symbols]
+enabled = true
+"#,
+        );
+        let layout = kmp_jvm_native_layout(&config, "demo");
+
+        assert!(config.java_jvm_strip_symbols());
+        assert!(config.java_jvm_debug_symbols_enabled());
         assert!(layout.flat_output_root.is_none());
         assert!(!layout.strip_symbols);
         assert!(!layout.debug_symbols_enabled);

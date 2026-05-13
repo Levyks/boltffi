@@ -454,6 +454,8 @@ Generated output is a Kotlin Multiplatform Gradle module with `commonMain` decla
 
 If `package` or `module_name` is omitted, BoltFFI reuses the corresponding Android Kotlin defaults.
 
+`boltffi pack kmp` writes JVM desktop native resources under `src/jvmMain/resources/native/<host-target>/`. Those JVM host targets come from `[targets.java.jvm].host_targets`, which defaults to `["current"]`; `targets.java.jvm.enabled` does not need to be true for KMP packaging to use the shared host matrix.
+
 ## Java Configuration
 
 The `[targets.java]` section controls Java bindings for both JVM and Android.

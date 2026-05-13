@@ -389,6 +389,28 @@ android {
 
 The shared libraries are loaded automatically when you first call into your Kotlin bindings.
 
+## Kotlin Multiplatform Packaging
+
+Package the experimental Kotlin Multiplatform module:
+
+```bash
+boltffi pack kmp --experimental --release
+```
+
+This generates the KMP sources, builds Android `jniLibs`, and writes JVM desktop native resources to `dist/kotlin-multiplatform/src/jvmMain/resources/native/<host-target>/`.
+
+KMP reuses the Java JVM host matrix:
+
+```toml
+[targets.kotlin_multiplatform]
+enabled = true
+
+[targets.java.jvm]
+host_targets = ["current", "linux-x86_64"]
+```
+
+`targets.java.jvm.enabled` does not need to be true for KMP packaging to read `host_targets`. The default is `["current"]`.
+
 ## Java Packaging
 
 Package for JVM:

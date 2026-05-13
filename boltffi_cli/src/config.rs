@@ -810,7 +810,7 @@ impl Config {
             }
         }
 
-        if self.is_java_jvm_enabled()
+        if (self.is_java_jvm_enabled() || self.is_kotlin_multiplatform_enabled())
             && let Some(host_targets) = self.targets.java.jvm.host_targets.as_ref()
             && host_targets.is_empty()
         {
@@ -2094,6 +2094,32 @@ enabled = true
     }
 
     #[test]
+    fn kmp_can_reuse_java_jvm_host_targets_without_enabling_java() {
+        let config = parse_config(
+            r#"
+[package]
+name = "mylib"
+
+[targets.kotlin_multiplatform]
+enabled = true
+
+[targets.java.jvm]
+host_targets = ["linux-x86_64"]
+"#,
+        );
+
+        assert!(!config.is_java_jvm_enabled());
+        assert_eq!(
+            config
+                .java_jvm_requested_host_targets()
+                .iter()
+                .map(|target| target.canonical_name())
+                .collect::<Vec<_>>(),
+            vec!["linux-x86_64"]
+        );
+    }
+
+    #[test]
     fn resolves_default_debug_symbols_outputs() {
         let config = parse_config(
             r#"
@@ -2199,6 +2225,29 @@ name = "mylib"
 
 [targets.java.jvm]
 enabled = true
+host_targets = []
+"#,
+        )
+        .expect("toml parse failed");
+
+        assert!(matches!(
+            parsed.validate(),
+            Err(ConfigError::Validation(message))
+                if message == "targets.java.jvm.host_targets must be non-empty when provided"
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_java_jvm_host_targets_when_kmp_enabled() {
+        let parsed: Config = toml::from_str(
+            r#"
+[package]
+name = "mylib"
+
+[targets.kotlin_multiplatform]
+enabled = true
+
+[targets.java.jvm]
 host_targets = []
 "#,
         )
