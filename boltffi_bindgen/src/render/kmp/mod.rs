@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ir::{self, AbiContract, FfiContract};
 use crate::render::jni::{JniEmitter, JniLowerer, JvmBindingStyle};
@@ -26,14 +26,64 @@ pub struct KMPOutput {
 
 pub struct KMPEmitter;
 
-struct KmpFunction {
-    common: String,
-    actual: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KmpActualBackend {
+    KotlinJvm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KmpPlatformAdapter {
+    source_set: &'static str,
+    actual_file_suffix: &'static str,
+    backend: KmpActualBackend,
+}
+
+impl KmpPlatformAdapter {
+    const fn jvm() -> Self {
+        Self {
+            source_set: "jvmMain",
+            actual_file_suffix: "JvmActual",
+            backend: KmpActualBackend::KotlinJvm,
+        }
+    }
+
+    const fn android() -> Self {
+        Self {
+            source_set: "androidMain",
+            actual_file_suffix: "AndroidActual",
+            backend: KmpActualBackend::KotlinJvm,
+        }
+    }
 }
 
 struct KmpRender {
     common: String,
-    actual: String,
+    platform_actuals: Vec<KmpPlatformActual>,
+}
+
+struct KmpPlatformActual {
+    adapter: KmpPlatformAdapter,
+    contents: String,
+}
+
+struct KmpSurfaceSupport {
+    records: HashSet<String>,
+    enums: HashSet<String>,
+    custom_types: HashSet<String>,
+}
+
+impl KmpSurfaceSupport {
+    fn for_contract(contract: &ir::FfiContract) -> Self {
+        let records = supported_records(contract);
+        let enums = supported_c_style_enums(contract);
+        let custom_types = supported_custom_types(contract, &records, &enums);
+
+        Self {
+            records,
+            enums,
+            custom_types,
+        }
+    }
 }
 
 impl KMPEmitter {
@@ -51,8 +101,14 @@ impl KMPEmitter {
         let internal_package = format!("{package_name}.jvm");
         let common_package_path = Self::package_path(&package_name);
         let internal_package_path = Self::package_path(&internal_package);
+        let platform_adapters = Self::default_platform_adapters();
 
-        let rendered = Self::render_common_and_actual(contract, &package_name, &internal_package);
+        let rendered = Self::render_surfaces(
+            contract,
+            &package_name,
+            &internal_package,
+            &platform_adapters,
+        );
 
         let kotlin_module = KotlinLowerer::new(
             contract,
@@ -70,127 +126,137 @@ impl KMPEmitter {
         let jni_source = JniEmitter::emit(&jni_module);
 
         let common_dir = PathBuf::from("src/commonMain/kotlin").join(&common_package_path);
-        let jvm_dir = PathBuf::from("src/jvmMain/kotlin").join(&common_package_path);
-        let android_dir = PathBuf::from("src/androidMain/kotlin").join(&common_package_path);
-        let jvm_internal_dir = PathBuf::from("src/jvmMain/kotlin").join(&internal_package_path);
-        let android_internal_dir =
-            PathBuf::from("src/androidMain/kotlin").join(&internal_package_path);
 
-        KMPOutput {
-            files: vec![
-                KMPOutputFile {
-                    relative_path: PathBuf::from("settings.gradle.kts"),
-                    contents: Self::render_settings_gradle(&module_name),
-                },
-                KMPOutputFile {
-                    relative_path: PathBuf::from("build.gradle.kts"),
-                    contents: Self::render_build_gradle(&package_name, min_sdk),
-                },
-                KMPOutputFile {
-                    relative_path: common_dir.join(format!("{module_name}.kt")),
-                    contents: rendered.common,
-                },
-                KMPOutputFile {
-                    relative_path: jvm_dir.join(format!("{module_name}JvmActual.kt")),
-                    contents: rendered.actual.clone(),
-                },
-                KMPOutputFile {
-                    relative_path: android_dir.join(format!("{module_name}AndroidActual.kt")),
-                    contents: rendered.actual,
-                },
-                KMPOutputFile {
-                    relative_path: jvm_internal_dir.join(format!("{module_name}.kt")),
+        let mut files = vec![
+            KMPOutputFile {
+                relative_path: PathBuf::from("settings.gradle.kts"),
+                contents: Self::render_settings_gradle(&module_name),
+            },
+            KMPOutputFile {
+                relative_path: PathBuf::from("build.gradle.kts"),
+                contents: Self::render_build_gradle(&package_name, min_sdk),
+            },
+            KMPOutputFile {
+                relative_path: common_dir.join(format!("{module_name}.kt")),
+                contents: rendered.common,
+            },
+        ];
+
+        rendered.platform_actuals.into_iter().for_each(|actual| {
+            let actual_dir =
+                Self::source_set_kotlin_dir(actual.adapter.source_set, &common_package_path);
+            files.push(KMPOutputFile {
+                relative_path: actual_dir.join(format!(
+                    "{}{}.kt",
+                    module_name, actual.adapter.actual_file_suffix
+                )),
+                contents: actual.contents,
+            });
+        });
+
+        platform_adapters
+            .iter()
+            .filter(|adapter| matches!(adapter.backend, KmpActualBackend::KotlinJvm))
+            .for_each(|adapter| {
+                let internal_dir =
+                    Self::source_set_kotlin_dir(adapter.source_set, &internal_package_path);
+                files.push(KMPOutputFile {
+                    relative_path: internal_dir.join(format!("{module_name}.kt")),
                     contents: jvm_source.clone(),
-                },
-                KMPOutputFile {
-                    relative_path: android_internal_dir.join(format!("{module_name}.kt")),
-                    contents: jvm_source,
-                },
-                KMPOutputFile {
-                    relative_path: PathBuf::from("src/jvmMain/c/jni_glue.c"),
+                });
+            });
+
+        platform_adapters
+            .iter()
+            .filter(|adapter| matches!(adapter.backend, KmpActualBackend::KotlinJvm))
+            .for_each(|adapter| {
+                files.push(KMPOutputFile {
+                    relative_path: PathBuf::from(format!(
+                        "src/{}/c/jni_glue.c",
+                        adapter.source_set
+                    )),
                     contents: jni_source.clone(),
-                },
-                KMPOutputFile {
-                    relative_path: PathBuf::from("src/androidMain/c/jni_glue.c"),
-                    contents: jni_source,
-                },
-            ],
-        }
+                });
+            });
+
+        KMPOutput { files }
     }
 
-    fn render_common_and_actual(
+    fn default_platform_adapters() -> Vec<KmpPlatformAdapter> {
+        vec![KmpPlatformAdapter::jvm(), KmpPlatformAdapter::android()]
+    }
+
+    fn source_set_kotlin_dir(source_set: &str, package_path: &Path) -> PathBuf {
+        PathBuf::from(format!("src/{source_set}/kotlin")).join(package_path)
+    }
+
+    fn render_surfaces(
         contract: &ir::FfiContract,
         package_name: &str,
         internal_package: &str,
+        platform_adapters: &[KmpPlatformAdapter],
     ) -> KmpRender {
-        let supported_records = supported_records(contract);
-        let supported_enums = supported_c_style_enums(contract);
-        let supported_custom_types =
-            supported_custom_types(contract, &supported_records, &supported_enums);
+        let support = KmpSurfaceSupport::for_contract(contract);
+        let common = Self::render_common_surface(contract, package_name, &support);
+        let platform_actuals = platform_adapters
+            .iter()
+            .map(|adapter| KmpPlatformActual {
+                adapter: *adapter,
+                contents: Self::render_platform_actual(
+                    contract,
+                    package_name,
+                    internal_package,
+                    &support,
+                    *adapter,
+                ),
+            })
+            .collect();
 
+        KmpRender {
+            common,
+            platform_actuals,
+        }
+    }
+
+    fn render_common_surface(
+        contract: &ir::FfiContract,
+        package_name: &str,
+        support: &KmpSurfaceSupport,
+    ) -> String {
         let mut common_sections = Vec::new();
         common_sections.push("// Auto-generated by BoltFFI. Do not edit.".to_string());
         common_sections.push(format!("package {package_name}"));
-
-        let mut actual_sections = Vec::new();
-        actual_sections.push("// Auto-generated by BoltFFI. Do not edit.".to_string());
-        actual_sections.push(format!("package {package_name}"));
 
         let mut unsupported = Vec::new();
 
         contract
             .catalog
             .all_custom_types()
-            .filter(|custom| supported_custom_types.contains(custom.id.as_str()))
+            .filter(|custom| support.custom_types.contains(custom.id.as_str()))
             .map(Self::render_custom_type)
             .for_each(|section| common_sections.push(section));
 
         contract
             .catalog
             .all_records()
-            .filter(|record| supported_records.contains(record.id.as_str()))
+            .filter(|record| support.records.contains(record.id.as_str()))
             .map(Self::render_common_record)
             .for_each(|section| common_sections.push(section));
 
         contract
             .catalog
-            .all_records()
-            .filter(|record| supported_records.contains(record.id.as_str()))
-            .map(|record| {
-                Self::render_record_actual_conversions(record, internal_package, contract)
-            })
-            .for_each(|section| actual_sections.push(section));
-
-        contract
-            .catalog
             .all_enums()
-            .filter(|enumeration| supported_enums.contains(enumeration.id.as_str()))
+            .filter(|enumeration| support.enums.contains(enumeration.id.as_str()))
             .map(Self::render_common_enum)
             .for_each(|section| common_sections.push(section));
 
-        contract
-            .functions
-            .iter()
-            .filter_map(|function| {
-                match Self::render_function(
-                    function,
-                    contract,
-                    internal_package,
-                    &supported_records,
-                    &supported_enums,
-                    &supported_custom_types,
-                ) {
-                    Some(rendered) => Some(rendered),
-                    None => {
-                        unsupported.push(function.id.as_str().to_string());
-                        None
-                    }
-                }
-            })
-            .for_each(|rendered| {
-                common_sections.push(rendered.common);
-                actual_sections.push(rendered.actual);
-            });
+        contract.functions.iter().for_each(|function| {
+            if function_supported(function, contract, support) {
+                common_sections.push(Self::render_common_function(function));
+            } else {
+                unsupported.push(function.id.as_str().to_string());
+            }
+        });
 
         if !unsupported.is_empty() {
             common_sections.push(format!(
@@ -199,10 +265,52 @@ impl KMPEmitter {
             ));
         }
 
-        KmpRender {
-            common: join_kotlin_sections(common_sections),
-            actual: join_kotlin_sections(actual_sections),
+        join_kotlin_sections(common_sections)
+    }
+
+    fn render_platform_actual(
+        contract: &ir::FfiContract,
+        package_name: &str,
+        internal_package: &str,
+        support: &KmpSurfaceSupport,
+        adapter: KmpPlatformAdapter,
+    ) -> String {
+        match adapter.backend {
+            KmpActualBackend::KotlinJvm => {
+                Self::render_kotlin_jvm_actual(contract, package_name, internal_package, support)
+            }
         }
+    }
+
+    fn render_kotlin_jvm_actual(
+        contract: &ir::FfiContract,
+        package_name: &str,
+        internal_package: &str,
+        support: &KmpSurfaceSupport,
+    ) -> String {
+        let mut actual_sections = Vec::new();
+        actual_sections.push("// Auto-generated by BoltFFI. Do not edit.".to_string());
+        actual_sections.push(format!("package {package_name}"));
+
+        contract
+            .catalog
+            .all_records()
+            .filter(|record| support.records.contains(record.id.as_str()))
+            .map(|record| {
+                Self::render_record_actual_conversions(record, internal_package, contract)
+            })
+            .for_each(|section| actual_sections.push(section));
+
+        contract
+            .functions
+            .iter()
+            .filter(|function| function_supported(function, contract, support))
+            .map(|function| {
+                Self::render_kotlin_jvm_function_actual(function, contract, internal_package)
+            })
+            .for_each(|section| actual_sections.push(section));
+
+        join_kotlin_sections(actual_sections)
     }
 
     fn render_custom_type(custom: &ir::definitions::CustomTypeDef) -> String {
@@ -311,48 +419,35 @@ impl KMPEmitter {
         )
     }
 
-    fn render_function(
-        function: &ir::definitions::FunctionDef,
-        contract: &ir::FfiContract,
-        internal_package: &str,
-        records: &HashSet<String>,
-        enums: &HashSet<String>,
-        custom_types: &HashSet<String>,
-    ) -> Option<KmpFunction> {
-        if !return_supported(&function.returns, contract, records, enums, custom_types) {
-            return None;
-        }
-        if function
-            .params
-            .iter()
-            .any(|param| !type_supported(&param.type_expr, contract, records, enums, custom_types))
-        {
-            return None;
-        }
-
+    fn render_common_function(function: &ir::definitions::FunctionDef) -> String {
         let function_name = NamingConvention::method_name(function.id.as_str());
         let suspend_prefix = if function.is_async() { "suspend " } else { "" };
-        let params = function
-            .params
-            .iter()
-            .map(|param| {
-                format!(
-                    "{}: {}",
-                    NamingConvention::param_name(param.name.as_str()),
-                    common_type_name(&param.type_expr)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        let params = Self::render_common_function_params(function);
         let return_type = return_type_name(&function.returns);
         let return_suffix = return_type
             .as_ref()
             .map(|ty| format!(": {ty}"))
             .unwrap_or_default();
-        let common = format!(
+
+        format!(
             "{}expect {suspend_prefix}fun {function_name}({params}){return_suffix}",
             kdoc_block(&function.doc)
-        );
+        )
+    }
+
+    fn render_kotlin_jvm_function_actual(
+        function: &ir::definitions::FunctionDef,
+        contract: &ir::FfiContract,
+        internal_package: &str,
+    ) -> String {
+        let function_name = NamingConvention::method_name(function.id.as_str());
+        let suspend_prefix = if function.is_async() { "suspend " } else { "" };
+        let params = Self::render_common_function_params(function);
+        let return_type = return_type_name(&function.returns);
+        let return_suffix = return_type
+            .as_ref()
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_default();
 
         let args = function
             .params
@@ -365,12 +460,26 @@ impl KMPEmitter {
             .join(", ");
         let delegated = format!("{internal_package}.{function_name}({args})");
         let actual_body = return_type_expr(&function.returns, delegated, contract);
-        let actual = format!(
+
+        format!(
             "{}actual {suspend_prefix}fun {function_name}({params}){return_suffix} = {actual_body}",
             kdoc_block(&function.doc)
-        );
+        )
+    }
 
-        Some(KmpFunction { common, actual })
+    fn render_common_function_params(function: &ir::definitions::FunctionDef) -> String {
+        function
+            .params
+            .iter()
+            .map(|param| {
+                format!(
+                    "{}: {}",
+                    NamingConvention::param_name(param.name.as_str()),
+                    common_type_name(&param.type_expr)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn render_build_gradle(package_name: &str, min_sdk: u32) -> String {
@@ -528,11 +637,15 @@ fn supported_custom_types(
 fn type_supported(
     ty: &ir::types::TypeExpr,
     contract: &ir::FfiContract,
-    records: &HashSet<String>,
-    enums: &HashSet<String>,
-    custom_types: &HashSet<String>,
+    support: &KmpSurfaceSupport,
 ) -> bool {
-    type_supported_with_sets(ty, contract, records, enums, custom_types)
+    type_supported_with_sets(
+        ty,
+        contract,
+        &support.records,
+        &support.enums,
+        &support.custom_types,
+    )
 }
 
 fn type_supported_with_sets(
@@ -564,17 +677,25 @@ fn type_supported_with_sets(
 fn return_supported(
     returns: &ir::definitions::ReturnDef,
     contract: &ir::FfiContract,
-    records: &HashSet<String>,
-    enums: &HashSet<String>,
-    custom_types: &HashSet<String>,
+    support: &KmpSurfaceSupport,
 ) -> bool {
     match returns {
         ir::definitions::ReturnDef::Void => true,
-        ir::definitions::ReturnDef::Value(ty) => {
-            type_supported(ty, contract, records, enums, custom_types)
-        }
+        ir::definitions::ReturnDef::Value(ty) => type_supported(ty, contract, support),
         ir::definitions::ReturnDef::Result { .. } => false,
     }
+}
+
+fn function_supported(
+    function: &ir::definitions::FunctionDef,
+    contract: &ir::FfiContract,
+    support: &KmpSurfaceSupport,
+) -> bool {
+    return_supported(&function.returns, contract, support)
+        && function
+            .params
+            .iter()
+            .all(|param| type_supported(&param.type_expr, contract, support))
 }
 
 fn common_type_name(ty: &ir::types::TypeExpr) -> String {
@@ -815,6 +936,46 @@ mod tests {
         assert!(actual.contains("= Empty"));
         assert!(!common.contains("data class Empty()"));
         assert!(!actual.contains("Empty()"));
+    }
+
+    #[test]
+    fn default_platform_adapters_are_jvm_family_actuals() {
+        let adapters = KMPEmitter::default_platform_adapters();
+
+        assert_eq!(
+            adapters,
+            vec![KmpPlatformAdapter::jvm(), KmpPlatformAdapter::android()]
+        );
+        assert!(
+            adapters
+                .iter()
+                .all(|adapter| matches!(adapter.backend, KmpActualBackend::KotlinJvm))
+        );
+    }
+
+    #[test]
+    fn surfaces_render_common_once_and_platform_actuals_separately() {
+        let adapters = KMPEmitter::default_platform_adapters();
+        let rendered = KMPEmitter::render_surfaces(
+            &empty_contract(),
+            "com.example.demo",
+            "com.example.demo.jvm",
+            &adapters,
+        );
+
+        assert!(rendered.common.contains("package com.example.demo"));
+        assert_eq!(rendered.platform_actuals.len(), 2);
+        assert_eq!(rendered.platform_actuals[0].adapter.source_set, "jvmMain");
+        assert_eq!(
+            rendered.platform_actuals[1].adapter.source_set,
+            "androidMain"
+        );
+        assert!(
+            rendered
+                .platform_actuals
+                .iter()
+                .all(|actual| actual.contents.contains("package com.example.demo"))
+        );
     }
 
     #[test]
