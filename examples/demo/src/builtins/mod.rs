@@ -15,11 +15,6 @@ use uuid::Uuid;
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
     ),
     exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
-    ),
-    exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently map BoltFFI built-in value types. Include this case when the relevant built-in Python binding is implemented."
@@ -38,11 +33,6 @@ pub fn echo_duration(d: Duration) -> Duration {
         csharp,
         reason = ExclusionReason::ImplementationGap,
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
-    ),
-    exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
     ),
     exclude(
         python,
@@ -65,11 +55,6 @@ pub fn make_duration(secs: u64, nanos: u32) -> Duration {
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
     ),
     exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
-    ),
-    exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently map BoltFFI built-in value types. Include this case when the relevant built-in Python binding is implemented."
@@ -88,11 +73,6 @@ pub fn duration_as_millis(d: Duration) -> u64 {
         csharp,
         reason = ExclusionReason::ImplementationGap,
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
-    ),
-    exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
     ),
     exclude(
         python,
@@ -115,11 +95,6 @@ pub fn echo_system_time(t: SystemTime) -> SystemTime {
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
     ),
     exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
-    ),
-    exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently map BoltFFI built-in value types. Include this case when the relevant built-in Python binding is implemented."
@@ -138,11 +113,6 @@ pub fn system_time_to_millis(t: SystemTime) -> u64 {
         csharp,
         reason = ExclusionReason::ImplementationGap,
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
-    ),
-    exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
     ),
     exclude(
         python,
@@ -166,11 +136,6 @@ pub fn millis_to_system_time(millis: u64) -> SystemTime {
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
     ),
     exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
-    ),
-    exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently map BoltFFI built-in value types. Include this case when the relevant built-in Python binding is implemented."
@@ -189,11 +154,6 @@ pub fn echo_uuid(id: Uuid) -> Uuid {
         csharp,
         reason = ExclusionReason::ImplementationGap,
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
-    ),
-    exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
     ),
     exclude(
         python,
@@ -216,11 +176,6 @@ pub fn uuid_to_string(id: Uuid) -> String {
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
     ),
     exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
-    ),
-    exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently map BoltFFI built-in value types. Include this case when the relevant built-in Python binding is implemented."
@@ -239,11 +194,6 @@ pub fn echo_url(url: Url) -> Url {
         csharp,
         reason = ExclusionReason::ImplementationGap,
         details = "#320: C# bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant C# built-in binding is implemented."
-    ),
-    exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#320: Java bindgen does not currently emit functions whose signatures use built-in value types (Duration, SystemTime, URL, UUID). Include this case when the relevant Java built-in binding is implemented."
     ),
     exclude(
         python,

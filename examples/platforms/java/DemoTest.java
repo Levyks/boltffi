@@ -1,9 +1,13 @@
 package com.boltffi.demo;
 
+import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class DemoTest {
@@ -28,6 +32,7 @@ public final class DemoTest {
             testNoop();
             testStrings();
             testCustomTypes();
+            testBuiltins();
             testPointRecords();
             testLineRecords();
             testAddressRecords();
@@ -244,6 +249,42 @@ public final class DemoTest {
         assert echoedDts.length == 3 : "echoDatetimes length";
         assert echoedDts[0] == dts[0] && echoedDts[1] == dts[1] && echoedDts[2] == dts[2]
             : "echoDatetimes roundtrip";
+
+        System.out.println("  PASS\n");
+    }
+
+    private static void testBuiltins() {
+        System.out.println("Testing builtins...");
+
+        Duration duration = Duration.ofSeconds(12L, 345_000_000L);
+        demoCase("case:builtins.duration.should_roundtrip_value");
+        assert Demo.echoDuration(duration).equals(duration) : "echoDuration";
+        demoCase("case:builtins.duration.should_construct_from_parts");
+        assert Demo.makeDuration(7L, 89).equals(Duration.ofSeconds(7L, 89L)) : "makeDuration";
+        demoCase("case:builtins.duration.should_report_milliseconds");
+        assert Demo.durationAsMillis(Duration.ofMillis(1234L)) == 1234L : "durationAsMillis";
+
+        Instant instant = Instant.ofEpochMilli(1_710_000_000_123L);
+        demoCase("case:builtins.system_time.should_roundtrip_value");
+        assert Demo.echoSystemTime(instant).equals(instant) : "echoSystemTime";
+        Instant preEpochInstant = Instant.ofEpochSecond(-1L, 500_000_000L);
+        assert Demo.echoSystemTime(preEpochInstant).equals(preEpochInstant) : "echoSystemTime pre epoch";
+        demoCase("case:builtins.system_time.should_convert_to_epoch_milliseconds");
+        assert Demo.systemTimeToMillis(instant) == 1_710_000_000_123L : "systemTimeToMillis";
+        demoCase("case:builtins.system_time.should_construct_from_epoch_milliseconds");
+        assert Demo.millisToSystemTime(1_710_000_000_123L).equals(instant) : "millisToSystemTime";
+
+        UUID uuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+        demoCase("case:builtins.uuid.should_roundtrip_value");
+        assert Demo.echoUuid(uuid).equals(uuid) : "echoUuid";
+        demoCase("case:builtins.uuid.should_format_canonical_string");
+        assert Demo.uuidToString(uuid).equals("550e8400-e29b-41d4-a716-446655440000") : "uuidToString";
+
+        URI uri = URI.create("https://example.com/path?q=boltffi");
+        demoCase("case:builtins.url.should_roundtrip_value");
+        assert Demo.echoUrl(uri).equals(uri) : "echoUrl";
+        demoCase("case:builtins.url.should_format_string");
+        assert Demo.urlToString(uri).equals("https://example.com/path?q=boltffi") : "urlToString";
 
         System.out.println("  PASS\n");
     }

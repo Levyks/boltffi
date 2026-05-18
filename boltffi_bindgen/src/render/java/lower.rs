@@ -12,7 +12,7 @@ use super::mappings;
 use super::names::NamingConvention;
 use super::plan::{
     JavaAsyncCall, JavaAsyncCallbackInvoker, JavaAsyncCallbackMethod, JavaAsyncMode,
-    JavaBlittableField, JavaBlittableLayout, JavaBridgeParam, JavaBridgeReturn,
+    JavaBlittableField, JavaBlittableLayout, JavaBridgeParam, JavaBridgeReturn, JavaBuiltinSet,
     JavaCallbackErrorCapture, JavaCallbackProxyAsyncMethod, JavaCallbackProxySyncMethod,
     JavaCallbackTrait, JavaClass, JavaClassMethod, JavaClosureInterface, JavaConstructor,
     JavaConstructorKind, JavaDirectCompositeInput, JavaEnum, JavaEnumField, JavaEnumKind,
@@ -140,6 +140,7 @@ impl<'a> JavaLowerer<'a> {
                 .catalog
                 .resolve_custom(id)
                 .is_some_and(|custom| Self::is_leaf_supported(ffi, &custom.repr, supported)),
+            TypeExpr::Builtin(_) => true,
             TypeExpr::Option(inner) => Self::is_leaf_supported(ffi, inner, supported),
             TypeExpr::Vec(inner) => Self::is_leaf_supported(ffi, inner, supported),
             TypeExpr::Callback(_) => true,
@@ -215,6 +216,13 @@ impl<'a> JavaLowerer<'a> {
             .unwrap_or_else(|| naming::library_name(&self.module_name));
 
         let prefix = boltffi_ffi_rules::naming::ffi_prefix().to_string();
+        let builtins = JavaBuiltinSet::from_kinds(
+            self.ffi
+                .catalog
+                .all_builtins()
+                .map(|builtin| builtin.kind)
+                .collect(),
+        );
 
         let enums: Vec<JavaEnum> = self
             .ffi
@@ -273,6 +281,7 @@ impl<'a> JavaLowerer<'a> {
             desktop_loader: self.options.desktop_loader,
             java_version: self.options.min_java_version,
             async_mode: JavaAsyncMode::from_version(self.options.min_java_version),
+            builtins,
             prefix,
             records,
             enums,
@@ -903,7 +912,7 @@ impl<'a> JavaLowerer<'a> {
                 format!("Double.compare({left}, {right}) == 0")
             }
             TypeExpr::Primitive(_) => format!("{left} == {right}"),
-            TypeExpr::String | TypeExpr::Record(_) | TypeExpr::Enum(_) => {
+            TypeExpr::String | TypeExpr::Record(_) | TypeExpr::Enum(_) | TypeExpr::Builtin(_) => {
                 format!("java.util.Objects.equals({left}, {right})")
             }
             TypeExpr::Bytes => format!("java.util.Arrays.equals({left}, {right})"),
@@ -965,7 +974,7 @@ impl<'a> JavaLowerer<'a> {
             | TypeExpr::Primitive(PrimitiveType::USize) => format!("Long.hashCode({value})"),
             TypeExpr::Primitive(PrimitiveType::F32) => format!("Float.hashCode({value})"),
             TypeExpr::Primitive(PrimitiveType::F64) => format!("Double.hashCode({value})"),
-            TypeExpr::String | TypeExpr::Record(_) | TypeExpr::Enum(_) => {
+            TypeExpr::String | TypeExpr::Record(_) | TypeExpr::Enum(_) | TypeExpr::Builtin(_) => {
                 format!("java.util.Objects.hashCode({value})")
             }
             TypeExpr::Bytes => format!("java.util.Arrays.hashCode({value})"),
@@ -1166,7 +1175,11 @@ impl<'a> JavaLowerer<'a> {
                     (java_type.clone(), field_name.to_string())
                 }
             }
-            TypeExpr::Record(_) | TypeExpr::Enum(_) | TypeExpr::Option(_) | TypeExpr::Custom(_) => {
+            TypeExpr::Record(_)
+            | TypeExpr::Enum(_)
+            | TypeExpr::Option(_)
+            | TypeExpr::Custom(_)
+            | TypeExpr::Builtin(_) => {
                 let binding_name = input_bindings
                     .binding_name_for(source_name)
                     .expect("encoded input binding must exist");
@@ -1511,6 +1524,13 @@ impl<'a> JavaLowerer<'a> {
                 Some(decode_seq) => self.emit_reader_read(decode_seq),
                 None => panic!(
                     "unsupported direct Option return transport for Java backend: {:?}",
+                    ty
+                ),
+            },
+            TypeExpr::Builtin(_) => match &ret_shape.decode_ops {
+                Some(decode_seq) => self.emit_reader_read(decode_seq),
+                None => panic!(
+                    "unsupported direct builtin return transport for Java backend: {:?}",
                     ty
                 ),
             },
@@ -2047,6 +2067,7 @@ impl<'a> JavaLowerer<'a> {
             TypeExpr::Primitive(p) => mappings::java_type(*p).to_string(),
             TypeExpr::String => "String".to_string(),
             TypeExpr::Bytes => "byte[]".to_string(),
+            TypeExpr::Builtin(id) => mappings::java_builtin_type(id).to_string(),
             TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Custom(id) => self.java_type(self.custom_repr_type(id)),
             TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
@@ -2073,6 +2094,7 @@ impl<'a> JavaLowerer<'a> {
             TypeExpr::Primitive(p) => mappings::java_boxed_type(*p).to_string(),
             TypeExpr::String => "String".to_string(),
             TypeExpr::Bytes => "byte[]".to_string(),
+            TypeExpr::Builtin(id) => mappings::java_builtin_type(id).to_string(),
             TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Custom(id) => self.java_boxed_type(self.custom_repr_type(id)),
             TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
@@ -3339,8 +3361,8 @@ mod tests {
         ParamPassing, Receiver, RecordDef, ReturnDef, VariantPayload,
     };
     use crate::ir::ids::{
-        CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId, MethodId,
-        ParamName, QualifiedName, RecordId, VariantName,
+        BuiltinId, CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId,
+        MethodId, ParamName, QualifiedName, RecordId, VariantName,
     };
     use crate::ir::types::{PrimitiveType, TypeExpr};
     use crate::render::java::JavaVersion;
@@ -4058,6 +4080,53 @@ mod tests {
         assert_eq!(func.return_type, "String");
         assert!(func.return_plan.is_decode());
         assert!(func.return_plan.decode_expr().contains("readString"));
+    }
+
+    #[test]
+    fn function_builtin_param_and_return_are_wire_encoded() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "echo_duration",
+            vec![param(
+                "duration",
+                TypeExpr::Builtin(BuiltinId::new("Duration")),
+            )],
+            ReturnDef::Value(TypeExpr::Builtin(BuiltinId::new("Duration"))),
+        ));
+
+        let module = lower(&contract);
+        let func = &module.functions[0];
+        let duration_param = &func.params[0];
+
+        assert_eq!(func.return_type, "java.time.Duration");
+        assert_eq!(duration_param.java_type, "java.time.Duration");
+        assert_eq!(duration_param.native_type, "ByteBuffer");
+        assert_eq!(func.return_plan.native_return_type, "byte[]");
+        assert!(func.return_plan.is_decode());
+        assert_eq!(func.return_plan.decode_expr(), "reader.readDuration()");
+        assert_eq!(func.input_bindings.wire_writers.len(), 1);
+    }
+
+    #[test]
+    fn record_builtin_field_uses_object_equality_and_hash() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(record_def(
+            "Timing",
+            vec![field(
+                "duration",
+                TypeExpr::Builtin(BuiltinId::new("Duration")),
+            )],
+        ));
+
+        let module = lower(&contract);
+        let field = &module.records[0].fields[0];
+
+        assert_eq!(field.java_type, "java.time.Duration");
+        assert_eq!(
+            field.equals_expr,
+            "java.util.Objects.equals(this.duration, other.duration)"
+        );
+        assert_eq!(field.hash_expr, "java.util.Objects.hashCode(duration)");
     }
 
     #[test]

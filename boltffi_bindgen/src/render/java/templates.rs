@@ -138,11 +138,12 @@ pub struct CallbackCallbacksTemplate<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::types::BuiltinKind;
     use crate::render::java::JavaVersion;
     use crate::render::java::plan::{
-        JavaAsyncMode, JavaClassMethod, JavaConstructor, JavaConstructorKind, JavaEnum,
-        JavaEnumField, JavaEnumKind, JavaEnumVariant, JavaFunction, JavaInputBindings, JavaParam,
-        JavaRecord, JavaRecordDefaultConstructor, JavaRecordDefaultConstructorParam,
+        JavaAsyncMode, JavaBuiltinSet, JavaClassMethod, JavaConstructor, JavaConstructorKind,
+        JavaEnum, JavaEnumField, JavaEnumKind, JavaEnumVariant, JavaFunction, JavaInputBindings,
+        JavaParam, JavaRecord, JavaRecordDefaultConstructor, JavaRecordDefaultConstructorParam,
         JavaRecordField, JavaReturnPlan, JavaReturnRender, JavaStream, JavaStreamMode,
         JavaWireWriter,
     };
@@ -178,6 +179,7 @@ mod tests {
             desktop_loader: true,
             java_version: JavaVersion::JAVA_17,
             async_mode: JavaAsyncMode::CompletableFuture,
+            builtins: JavaBuiltinSet::default(),
             prefix: "boltffi".to_string(),
             records: vec![],
             enums: vec![],
@@ -187,6 +189,81 @@ mod tests {
             functions: vec![],
             classes,
         }
+    }
+
+    #[test]
+    fn preamble_omits_builtin_runtime_when_module_has_no_builtins() {
+        let module = java_module(vec![]);
+
+        let source = PreambleTemplate { module: &module }
+            .render()
+            .expect("preamble template should render");
+
+        assert!(!source.contains("import java.net.URI;"));
+        assert!(!source.contains("import java.time.Duration;"));
+        assert!(!source.contains("import java.time.Instant;"));
+        assert!(!source.contains("import java.util.UUID;"));
+        assert!(!source.contains("readDuration()"));
+        assert!(!source.contains("readInstant()"));
+        assert!(!source.contains("readUuid()"));
+        assert!(!source.contains("readUri()"));
+        assert!(!source.contains("writeDuration("));
+        assert!(!source.contains("writeInstant("));
+        assert!(!source.contains("writeUuid("));
+        assert!(!source.contains("writeUri("));
+    }
+
+    #[test]
+    fn preamble_emits_only_fully_qualified_builtin_runtime_when_builtins_are_used() {
+        let mut module = java_module(vec![]);
+        module.builtins = JavaBuiltinSet::from_kinds(
+            [
+                BuiltinKind::Duration,
+                BuiltinKind::SystemTime,
+                BuiltinKind::Uuid,
+                BuiltinKind::Url,
+            ]
+            .into_iter()
+            .collect(),
+        );
+        module.functions = vec![JavaFunction {
+            doc: None,
+            name: "storeDuration".to_string(),
+            ffi_name: "boltffi_store_duration".to_string(),
+            params: vec![],
+            return_type: "void".to_string(),
+            return_plan: JavaReturnPlan {
+                native_return_type: "void".to_string(),
+                render: JavaReturnRender::Void,
+            },
+            input_bindings: JavaInputBindings {
+                direct_composites: vec![],
+                wire_writers: vec![wire_writer(
+                    "_wireDuration",
+                    "duration",
+                    "WireWriter.sizeOfDuration(duration)",
+                    "writer.writeDuration(duration)",
+                )],
+            },
+            async_call: None,
+        }];
+
+        let source = PreambleTemplate { module: &module }
+            .render()
+            .expect("preamble template should render");
+
+        assert!(!source.contains("import java.net.URI;"));
+        assert!(!source.contains("import java.time.Duration;"));
+        assert!(!source.contains("import java.time.Instant;"));
+        assert!(!source.contains("import java.util.UUID;"));
+        assert!(source.contains("java.time.Duration readDuration()"));
+        assert!(source.contains("java.time.Instant readInstant()"));
+        assert!(source.contains("java.util.UUID readUuid()"));
+        assert!(source.contains("java.net.URI readUri()"));
+        assert!(source.contains("void writeDuration(java.time.Duration value)"));
+        assert!(source.contains("void writeInstant(java.time.Instant value)"));
+        assert!(source.contains("void writeUuid(java.util.UUID value)"));
+        assert!(source.contains("void writeUri(java.net.URI value)"));
     }
 
     #[test]

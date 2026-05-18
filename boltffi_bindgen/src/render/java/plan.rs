@@ -1,4 +1,8 @@
+use std::collections::HashSet;
+
 use boltffi_ffi_rules::naming::{LibraryName, Name};
+
+use crate::ir::types::BuiltinKind;
 
 use super::JavaVersion;
 
@@ -43,6 +47,7 @@ pub struct JavaModule {
     pub desktop_loader: bool,
     pub java_version: JavaVersion,
     pub async_mode: JavaAsyncMode,
+    pub builtins: JavaBuiltinSet,
     pub prefix: String,
     pub records: Vec<JavaRecord>,
     pub enums: Vec<JavaEnum>,
@@ -110,6 +115,22 @@ impl JavaModule {
         !self.callbacks.is_empty()
     }
 
+    pub fn uses_duration_builtin(&self) -> bool {
+        self.builtins.uses_duration()
+    }
+
+    pub fn uses_system_time_builtin(&self) -> bool {
+        self.builtins.uses_system_time()
+    }
+
+    pub fn uses_uuid_builtin(&self) -> bool {
+        self.builtins.uses_uuid()
+    }
+
+    pub fn uses_url_builtin(&self) -> bool {
+        self.builtins.uses_url()
+    }
+
     fn uses_callback_wire_writer(&self) -> bool {
         self.closures
             .iter()
@@ -118,6 +139,33 @@ impl JavaModule {
                 .callbacks
                 .iter()
                 .any(JavaCallbackTrait::requires_wire_writer)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct JavaBuiltinSet {
+    kinds: HashSet<BuiltinKind>,
+}
+
+impl JavaBuiltinSet {
+    pub fn from_kinds(kinds: HashSet<BuiltinKind>) -> Self {
+        Self { kinds }
+    }
+
+    fn uses_duration(&self) -> bool {
+        self.kinds.contains(&BuiltinKind::Duration)
+    }
+
+    fn uses_system_time(&self) -> bool {
+        self.kinds.contains(&BuiltinKind::SystemTime)
+    }
+
+    fn uses_uuid(&self) -> bool {
+        self.kinds.contains(&BuiltinKind::Uuid)
+    }
+
+    fn uses_url(&self) -> bool {
+        self.kinds.contains(&BuiltinKind::Url)
     }
 }
 

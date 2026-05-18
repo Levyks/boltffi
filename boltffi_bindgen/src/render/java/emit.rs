@@ -1,5 +1,6 @@
 use crate::ir::abi::AbiContract;
 use crate::ir::contract::FfiContract;
+use crate::ir::ids::BuiltinId;
 use crate::ir::ops::{ReadOp, ReadSeq, SizeExpr, ValueExpr, WriteOp, WriteSeq};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use boltffi_ffi_rules::transport::EnumTagStrategy;
@@ -276,6 +277,9 @@ fn emit_reader_read_with_context(seq: &ReadSeq, context: &mut JavaEmitContext) -
         }
         ReadOp::String { .. } => "reader.readString()".to_string(),
         ReadOp::Bytes { .. } => "reader.readBytes()".to_string(),
+        ReadOp::Builtin { id, .. } => {
+            format!("reader.{}()", mappings::java_builtin_read_method(id))
+        }
         ReadOp::Record { id, .. } => {
             format!(
                 "{}.decode(reader)",
@@ -406,6 +410,14 @@ fn emit_write_expr_with_context(
         }
         WriteOp::Bytes { value } => {
             format!("{}.writeBytes({})", writer_name, render_value(value))
+        }
+        WriteOp::Builtin { id, value } => {
+            format!(
+                "{}.{}({})",
+                writer_name,
+                mappings::java_builtin_write_method(id),
+                render_value(value)
+            )
         }
         WriteOp::Option { value, some } => {
             let option_expr = render_value(value);
@@ -542,6 +554,7 @@ fn java_type_for_iteration(ty: &TypeExpr) -> String {
         TypeExpr::Primitive(primitive) => mappings::java_boxed_type(*primitive).to_string(),
         TypeExpr::String => "String".to_string(),
         TypeExpr::Bytes => "byte[]".to_string(),
+        TypeExpr::Builtin(id) => mappings::java_builtin_type(id).to_string(),
         TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
         TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
         TypeExpr::Option(inner) => {
@@ -585,6 +598,7 @@ fn emit_size_expr_with_context(size: &SizeExpr, context: &mut JavaEmitContext) -
         SizeExpr::BytesLen(value) => {
             format!("{}.length", render_value(value))
         }
+        SizeExpr::BuiltinSize { id, value } => emit_builtin_size(id, &render_value(value)),
         SizeExpr::WireSize { value, .. } => {
             format!("{}.wireEncodedSize()", render_value(value))
         }
@@ -625,6 +639,13 @@ fn emit_size_expr_with_context(size: &SizeExpr, context: &mut JavaEmitContext) -
             format!("({})", rendered)
         }
         other => panic!("unsupported Java size expr: {:?}", other),
+    }
+}
+
+fn emit_builtin_size(id: &BuiltinId, value: &str) -> String {
+    match id.as_str() {
+        "Url" => format!("(({}).toString().length() * 3)", value),
+        _ => panic!("unsupported Java builtin size: {:?}", id),
     }
 }
 

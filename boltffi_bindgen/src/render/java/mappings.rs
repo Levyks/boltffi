@@ -1,4 +1,35 @@
+use crate::ir::ids::BuiltinId;
 use crate::ir::types::PrimitiveType;
+
+pub fn java_builtin_type(id: &BuiltinId) -> &'static str {
+    match id.as_str() {
+        "Duration" => "java.time.Duration",
+        "SystemTime" => "java.time.Instant",
+        "Uuid" => "java.util.UUID",
+        "Url" => "java.net.URI",
+        _ => panic!("unsupported Java builtin type: {:?}", id),
+    }
+}
+
+pub fn java_builtin_read_method(id: &BuiltinId) -> &'static str {
+    match id.as_str() {
+        "Duration" => "readDuration",
+        "SystemTime" => "readInstant",
+        "Uuid" => "readUuid",
+        "Url" => "readUri",
+        _ => panic!("unsupported Java builtin read: {:?}", id),
+    }
+}
+
+pub fn java_builtin_write_method(id: &BuiltinId) -> &'static str {
+    match id.as_str() {
+        "Duration" => "writeDuration",
+        "SystemTime" => "writeInstant",
+        "Uuid" => "writeUuid",
+        "Url" => "writeUri",
+        _ => panic!("unsupported Java builtin write: {:?}", id),
+    }
+}
 
 pub fn java_type(primitive: PrimitiveType) -> &'static str {
     match primitive {

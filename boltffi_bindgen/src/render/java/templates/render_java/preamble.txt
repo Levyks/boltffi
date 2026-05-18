@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicReference;
 {%- endif %}
 
 final class WireReader {
+    private static final int NANOS_PER_SECOND = 1_000_000_000;
+
     private final byte[] data;
     private int pos;
     private static final int MIN_LONG_VEC_INPUT_CAPACITY = 16;
@@ -114,6 +116,39 @@ final class WireReader {
         pos += len;
         return v;
     }
+
+{% if module.uses_duration_builtin() %}
+    java.time.Duration readDuration() {
+        long seconds = readI64();
+        long nanos = readI32();
+        if (seconds < 0L) throw new RuntimeException("corrupt wire: negative duration seconds");
+        if (nanos < 0L) throw new RuntimeException("corrupt wire: negative duration nanos");
+        if (nanos >= NANOS_PER_SECOND) throw new RuntimeException("corrupt wire: duration nanos out of range");
+        return java.time.Duration.ofSeconds(seconds, nanos);
+    }
+{% endif %}
+
+{% if module.uses_system_time_builtin() %}
+    java.time.Instant readInstant() {
+        long seconds = readI64();
+        int nanos = readI32();
+        if (nanos < 0L) throw new RuntimeException("corrupt wire: negative instant nanos");
+        if (nanos >= NANOS_PER_SECOND) throw new RuntimeException("corrupt wire: instant nanos out of range");
+        return java.time.Instant.ofEpochSecond(seconds, nanos);
+    }
+{% endif %}
+
+{% if module.uses_uuid_builtin() %}
+    java.util.UUID readUuid() {
+        return new java.util.UUID(readI64(), readI64());
+    }
+{% endif %}
+
+{% if module.uses_url_builtin() %}
+    java.net.URI readUri() {
+        return java.net.URI.create(readString());
+    }
+{% endif %}
 
     boolean[] readBooleanArray() {
         int count = readI32();
@@ -547,6 +582,34 @@ final class WireWriter implements AutoCloseable {
     void writeI64(long v) { ensureCapacity(8); buf.putLong(v); }
     void writeF32(float v) { ensureCapacity(4); buf.putFloat(v); }
     void writeF64(double v) { ensureCapacity(8); buf.putDouble(v); }
+
+{% if module.uses_duration_builtin() %}
+    void writeDuration(java.time.Duration value) {
+        if (value.isNegative()) throw new IllegalArgumentException("duration must be non-negative");
+        writeI64(value.getSeconds());
+        writeI32(value.getNano());
+    }
+{% endif %}
+
+{% if module.uses_system_time_builtin() %}
+    void writeInstant(java.time.Instant value) {
+        writeI64(value.getEpochSecond());
+        writeI32(value.getNano());
+    }
+{% endif %}
+
+{% if module.uses_uuid_builtin() %}
+    void writeUuid(java.util.UUID value) {
+        writeI64(value.getMostSignificantBits());
+        writeI64(value.getLeastSignificantBits());
+    }
+{% endif %}
+
+{% if module.uses_url_builtin() %}
+    void writeUri(java.net.URI value) {
+        writeString(value.toString());
+    }
+{% endif %}
 
     @FunctionalInterface
     interface RawBytesWriter {
