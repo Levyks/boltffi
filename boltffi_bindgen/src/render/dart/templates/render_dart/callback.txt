@@ -30,9 +30,9 @@ final class {{ cb.native.native_decls_class_name }} {
   external static void {{ cb.native.vtable_register_fn_name }}($$ffi.Pointer<{{ cb.native.vtable_struct_name }}> vtable);
 
   @$$ffi.Native<
-    $$ffi.Uint64 Function($$ffi.Uint64)
+    _$$BoltFFICallbackHandle Function($$ffi.Uint64)
   >()
-  external static int {{ cb.native.create_handle_fn_name }}(int handle);
+  external static _$$BoltFFICallbackHandle {{ cb.native.create_handle_fn_name }}(int handle);
 }
 
 abstract interface class {{ cb.class_name }} {
