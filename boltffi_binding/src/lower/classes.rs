@@ -64,11 +64,11 @@ mod tests {
 
     use crate::lower::lower;
     use crate::{
-        BindingErrorKind, Bindings, CanonicalName, ClassDecl, ClassId, Decl, EnumId, ErrorDecl,
-        ExecutionDecl, HandleTarget, InitializerId, LiftPlan, LowerError, LowerErrorKind,
-        LowerPlan, MethodId, Native, NativeSymbol, Primitive as BindingPrimitive, Receive,
-        RecordId, ReturnTypeRef, Surface, SurfaceLower, TypeRef, UnsupportedType, Wasm32, native,
-        wasm32,
+        BindingErrorKind, Bindings, CanonicalName, ClassDecl, ClassId, CodecNode, Decl, EnumId,
+        ErrorDecl, ExecutionDecl, HandleTarget, InitializerId, LiftPlan, LowerError,
+        LowerErrorKind, LowerPlan, MethodId, Native, NativeSymbol, Primitive as BindingPrimitive,
+        Receive, RecordId, ReturnTypeRef, Surface, SurfaceLower, TypeRef, UnsupportedType, Wasm32,
+        native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -240,6 +240,46 @@ mod tests {
         );
         assert_eq!(class_method.callable().receiver(), Some(Receive::ByMutRef));
         assert_eq!(class_method.callable().returns().lift(), &LiftPlan::Void);
+    }
+
+    #[test]
+    fn result_self_initializer_uses_handle_out_and_encoded_error() {
+        let try_new = method(
+            "try_new",
+            Receiver::None,
+            ReturnDef::Value(TypeExpr::Result {
+                ok: Box::new(TypeExpr::SelfType),
+                err: Box::new(TypeExpr::String),
+            }),
+        );
+        let bindings = lower_class::<Native>(class("demo::Engine", "Engine", vec![try_new]));
+        let class = class_by_id(&bindings, ClassId::from_raw(0));
+        let initializer = class.initializers().first().expect("expected initializer");
+
+        assert_eq!(class.initializers().len(), 1);
+        assert!(class.methods().is_empty());
+        assert_eq!(
+            symbol_name(initializer.symbol()),
+            "boltffi_init_class_demo_engine_try_new"
+        );
+        assert_eq!(
+            initializer.callable().returns().lift(),
+            &LiftPlan::HandleOut {
+                target: HandleTarget::Class(ClassId::from_raw(0)),
+                carrier: native::HandleCarrier::U64,
+            }
+        );
+        match initializer.callable().error() {
+            ErrorDecl::EncodedReturn {
+                ty,
+                read,
+                shape: native::BufferShape::Buffer,
+            } => {
+                assert_eq!(ty, &TypeRef::String);
+                assert_eq!(read.root(), &CodecNode::String);
+            }
+            other => panic!("expected encoded string error, got {other:?}"),
+        }
     }
 
     #[test]

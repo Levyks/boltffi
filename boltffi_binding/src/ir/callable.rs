@@ -328,9 +328,25 @@ pub enum LiftPlan<S: Surface> {
         /// Carrier used to move the handle across the boundary.
         carrier: S::HandleCarrier,
     },
+    /// Opaque handle written through a trailing out-pointer parameter.
+    HandleOut {
+        /// Declaration the handle stands in for.
+        target: HandleTarget,
+        /// Carrier used to move the handle across the boundary.
+        carrier: S::HandleCarrier,
+    },
 }
 
 impl<S: Surface> LiftPlan<S> {
+    pub(crate) fn into_out(self) -> Self {
+        match self {
+            Self::Direct { ty } => Self::DirectOut { ty },
+            Self::Encoded { ty, read, shape } => Self::EncodedOut { ty, read, shape },
+            Self::Handle { target, carrier } => Self::HandleOut { target, carrier },
+            other => other,
+        }
+    }
+
     pub(crate) const fn uses_return_slot(&self) -> bool {
         matches!(
             self,

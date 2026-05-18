@@ -145,8 +145,8 @@ mod tests {
         DirectRecordDecl, EncodedRecordDecl, EnumId, ErrorDecl, ExecutionDecl, FieldKey,
         HandleTarget, InitializerDecl, IntegerValue, IntrinsicOp, LiftPlan, LowerError,
         LowerErrorKind, LowerPlan, MethodDecl, Native, NativeSymbol, OpNode,
-        Primitive as BindingPrimitive, Receive, RecordDecl, RecordId, ReturnTypeRef, SurfaceLower,
-        TypeRef, UnsupportedType, ValueRef, Wasm32, native, wasm32,
+        Primitive as BindingPrimitive, ReadPlan, Receive, RecordDecl, RecordId, ReturnTypeRef,
+        SurfaceLower, TypeRef, UnsupportedType, ValueRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -200,6 +200,20 @@ mod tests {
                 _ => panic!("expected sequence length intrinsic"),
             },
             _ => panic!("expected sequence codec"),
+        }
+    }
+
+    fn assert_encoded_string_error(error: &ErrorDecl<Native>) {
+        match error {
+            ErrorDecl::EncodedReturn {
+                ty,
+                read,
+                shape: native::BufferShape::Buffer,
+            } => {
+                assert_eq!(ty, &TypeRef::String);
+                assert_eq!(read.root(), &CodecNode::String);
+            }
+            other => panic!("expected encoded string error, got {other:?}"),
         }
     }
 
@@ -496,6 +510,63 @@ mod tests {
     }
 
     #[test]
+    fn result_self_initializer_uses_success_out_and_encoded_error() {
+        let bindings = lower_point_method::<Native>(method_with(
+            "try_new",
+            Receiver::None,
+            Vec::new(),
+            ReturnDef::Value(TypeExpr::Result {
+                ok: Box::new(TypeExpr::SelfType),
+                err: Box::new(TypeExpr::String),
+            }),
+        ));
+        let initializers = record_decl_initializers(&bindings);
+
+        assert_eq!(initializers.len(), 1);
+        assert!(record_decl_methods(&bindings).is_empty());
+        assert_eq!(
+            initializers[0].symbol().name().as_str(),
+            "boltffi_init_record_demo_point_try_new"
+        );
+        assert_eq!(
+            initializers[0].callable().returns().lift(),
+            &LiftPlan::DirectOut {
+                ty: TypeRef::Record(RecordId::from_raw(0)),
+            }
+        );
+        assert_encoded_string_error(initializers[0].callable().error());
+    }
+
+    #[test]
+    fn result_self_initializer_on_encoded_record_uses_encoded_success_out() {
+        let mut user = user_record();
+        user.methods.push(method_with(
+            "try_new",
+            Receiver::None,
+            Vec::new(),
+            ReturnDef::Value(TypeExpr::Result {
+                ok: Box::new(TypeExpr::SelfType),
+                err: Box::new(TypeExpr::String),
+            }),
+        ));
+        let bindings = lower_record::<Native>(user);
+        let record = encoded_record(&bindings);
+        let initializers = record.initializers();
+
+        assert_eq!(initializers.len(), 1);
+        assert!(record.methods().is_empty());
+        assert_eq!(
+            initializers[0].callable().returns().lift(),
+            &LiftPlan::EncodedOut {
+                ty: TypeRef::Record(RecordId::from_raw(0)),
+                read: ReadPlan::new(CodecNode::EncodedRecord(RecordId::from_raw(0))),
+                shape: native::BufferShape::Buffer,
+            }
+        );
+        assert_encoded_string_error(initializers[0].callable().error());
+    }
+
+    #[test]
     fn method_returning_self_lowers_self_to_owning_record_type() {
         let bindings = lower_point_method::<Native>(method_with(
             "shifted",
@@ -530,9 +601,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_method_returning_result_with_specific_error() {
-        let mut record = point_record();
-        record.methods.push(method_with(
+    fn method_returning_result_uses_success_out_and_encoded_error() {
+        let bindings = lower_point_method::<Native>(method_with(
             "try_distance",
             Receiver::Shared,
             Vec::new(),
@@ -541,13 +611,16 @@ mod tests {
                 err: Box::new(TypeExpr::String),
             }),
         ));
+        let methods = record_decl_methods(&bindings);
 
-        let error = lower_record_result::<Native>(record).expect_err("Result return should reject");
-
-        match error.kind() {
-            LowerErrorKind::UnsupportedType(UnsupportedType::CallableResult) => {}
-            other => panic!("expected CallableResult, got {other:?}"),
-        }
+        assert_eq!(methods.len(), 1);
+        assert_eq!(
+            methods[0].callable().returns().lift(),
+            &LiftPlan::DirectOut {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+            }
+        );
+        assert_encoded_string_error(methods[0].callable().error());
     }
 
     #[test]

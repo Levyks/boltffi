@@ -13,12 +13,6 @@ use super::{CallableOwner, substitute_self_type};
 /// [`CallableDecl`] records: a [`ReturnDecl<S>`] for the success
 /// value and an [`ErrorDecl<S>`] for the failure channel.
 ///
-/// `Result<T, E>` returns currently reject with
-/// [`UnsupportedType::CallableResult`]; the eventual error-lowering
-/// slice populates `error` non-trivially and the success path
-/// switches to `*Out` lift variants when the error channel claims
-/// the native return slot.
-///
 /// [`CallableDecl`]: crate::CallableDecl
 pub(super) fn lower<S: SurfaceLower>(
     idx: &Index<'_>,
@@ -32,12 +26,17 @@ pub(super) fn lower<S: SurfaceLower>(
             ErrorDecl::none(),
         )),
         ReturnDef::Value(type_expr) => {
-            let type_expr = substitute_self_type(owner, type_expr);
-            if matches!(type_expr, TypeExpr::Result { .. }) {
-                return Err(LowerError::unsupported_type(
-                    UnsupportedType::CallableResult,
+            if let TypeExpr::Result { ok, err } = type_expr {
+                let ok_type_expr = substitute_self_type(owner, ok);
+                let err_type_expr = substitute_self_type(owner, err);
+                let lift = lower_lift::<S>(idx, ids, &ok_type_expr)?.into_out();
+                let error = lower_error::<S>(idx, ids, &err_type_expr)?;
+                return Ok((
+                    ReturnDecl::new(ElementMeta::new(None, None, None), lift),
+                    error,
                 ));
             }
+            let type_expr = substitute_self_type(owner, type_expr);
             let lift = lower_lift::<S>(idx, ids, &type_expr)?;
             Ok((
                 ReturnDecl::new(ElementMeta::new(None, None, None), lift),
@@ -47,13 +46,23 @@ pub(super) fn lower<S: SurfaceLower>(
     }
 }
 
+fn lower_error<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    type_expr: &TypeExpr,
+) -> Result<ErrorDecl<S>, LowerError> {
+    Ok(ErrorDecl::EncodedReturn {
+        ty: types::lower(ids, type_expr)?,
+        read: ReadPlan::new(codecs::node(idx, ids, type_expr, ValueRef::self_value())?),
+        shape: S::encoded_return_shape(),
+    })
+}
+
 /// Picks the [`LiftPlan`] for one return value from its source type.
 ///
 /// Mirrors the parameter-side dispatch but emits lift-side IR
-/// variants. Out-pointer variants ([`LiftPlan::DirectOut`],
-/// [`LiftPlan::EncodedOut`]) belong here too; they activate when an
-/// encoded error reclaims the native return slot. Until error
-/// lowering lands, every value uses the in-slot variant.
+/// variants. Out-pointer variants activate when a `Result<T, E>`
+/// return gives the native return slot to the error channel.
 fn lower_lift<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
@@ -80,6 +89,7 @@ fn lower_lift<S: SurfaceLower>(
         | TypeExpr::Vec(_)
         | TypeExpr::Option(_)
         | TypeExpr::Tuple(_)
+        | TypeExpr::Result { .. }
         | TypeExpr::Map { .. } => {
             let ty = types::lower(ids, type_expr)?;
             let codec = codecs::node(idx, ids, type_expr, ValueRef::self_value())?;
@@ -101,7 +111,7 @@ fn lower_lift<S: SurfaceLower>(
             let _ = types::lower(ids, type_expr)?;
             Err(LowerError::unsupported_type(UnsupportedType::SelfType))
         }
-        TypeExpr::Result { .. } | TypeExpr::SelfType | TypeExpr::Parameter(_) => {
+        TypeExpr::SelfType | TypeExpr::Parameter(_) => {
             Err(types::lower(ids, type_expr).expect_err("unsupported value-position type expr"))
         }
     }
