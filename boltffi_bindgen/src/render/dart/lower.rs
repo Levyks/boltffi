@@ -1,4 +1,4 @@
-use boltffi_ffi_rules::transport::ParamValueStrategy;
+use boltffi_ffi_rules::{callable::ExecutionKind, transport::ParamValueStrategy};
 
 use crate::{
     ir::{
@@ -13,8 +13,8 @@ use crate::{
         DartBlittableField, DartBlittableLayout, DartCallback, DartCallbackMethod, DartConstructor,
         DartConstructorKind, DartCustomType, DartEnum, DartEnumKind, DartEnumVariant, DartFunction,
         DartFunctionParam, DartLibrary, DartNative, DartNativeCallback, DartNativeCallbackMethod,
-        DartNativeFunction, DartNativeFunctionParam, DartNativeType, DartRecord, DartRecordField,
-        DartType, NamingConvention,
+        DartNativeFunction, DartNativeFunctionKind, DartNativeFunctionParam, DartNativeType,
+        DartRecord, DartRecordField, DartType, NamingConvention,
     },
 };
 
@@ -381,10 +381,39 @@ impl<'a> DartLowerer<'a> {
                 .map(|p| self.lower_native_function_param(p)),
         );
 
-        params.push(DartNativeFunctionParam {
-            name: "_p$outStatus".to_string(),
-            native_type: DartNativeType::Pointer(Box::new(DartNativeType::Status)),
-        });
+        match m.execution_kind {
+            ExecutionKind::Sync => {
+                params.push(DartNativeFunctionParam {
+                    name: "_p$outStatus".to_string(),
+                    native_type: DartNativeType::Pointer(Box::new(DartNativeType::Status)),
+                });
+            }
+            ExecutionKind::Async => {
+                params.extend([
+                    DartNativeFunctionParam {
+                        name: "_p$callback".to_string(),
+                        native_type: DartNativeType::Function {
+                            kind: DartNativeFunctionKind::Callback,
+                            params: vec![
+                                // result bytes ptr
+                                DartNativeType::Pointer(Box::new(DartNativeType::Primitive(
+                                    PrimitiveType::U8,
+                                ))),
+                                // result bytes len
+                                DartNativeType::Primitive(PrimitiveType::USize),
+                                // This should be FFIStatus but we choose i32 as it's a valid repr
+                                DartNativeType::Primitive(PrimitiveType::I32),
+                            ],
+                            return_ty: Box::new(DartNativeType::Void),
+                        },
+                    },
+                    DartNativeFunctionParam {
+                        name: "_p$callbackData".to_string(),
+                        native_type: DartNativeType::Primitive(PrimitiveType::U64),
+                    },
+                ]);
+            }
+        };
 
         let return_type =
             DartNativeType::from_return_shape_and_error_transport(&m.returns, &m.error);
@@ -393,6 +422,7 @@ impl<'a> DartLowerer<'a> {
             vtable_field_name: NamingConvention::property_name(m.vtable_field.as_str()),
             params,
             return_type,
+            kind: m.execution_kind,
         }
     }
 
@@ -403,6 +433,7 @@ impl<'a> DartLowerer<'a> {
             name: NamingConvention::function_name(cb.id.as_str()),
             params,
             ret_ty: DartType::from_return_def(&cb.returns),
+            kind: cb.execution_kind,
         }
     }
 
@@ -424,7 +455,7 @@ impl<'a> DartLowerer<'a> {
         let methods = cb_def
             .methods
             .iter()
-            .map(|cb| self.lower_callback_method(cb))
+            .map(|m| self.lower_callback_method(m))
             .collect();
 
         let native_methods = abi_cb

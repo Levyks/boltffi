@@ -37,7 +37,7 @@ final class {{ cb.native.native_decls_class_name }} {
 
 abstract interface class {{ cb.class_name }} {
 {%- for method in cb.methods %}
-  {{ method.ret_ty.dart_type() }} {{ method.name }}(
+  {% if method.is_async() %}Future<{{ method.ret_ty.dart_type() }}>{% else %}{{ method.ret_ty.dart_type() }}{% endif %} {{ method.name }}(
 {%- for param in method.params %}
     {{ param.ty.dart_type() }} {{ param.name }},
 {%- endfor %}
@@ -58,18 +58,15 @@ final class {{ cb.impl_class_name }} {
 {%- for param in method.params %}
     {{ param.native_type.dart_sub_type() }} {{ param.name }},
 {%- endfor %}
-  ) {
+  ){% if method.is_async() %} async{% endif %} {
     final impl = {{ cb.handle_map_instance_name }}.get(_p$handle);
 
     if (impl == null) {
-      _p$outStatus.ref.code = -1;
       throw _$$FFIException(-1, "{{ cb.class_name }}: invalid handle `${_p$handle}`");
     }
 
     try {
-      _p$outStatus.ref.code = 0;
     } catch (e) {
-      _p$outStatus.ref.code = -1;
     }
   }
 {% endfor %}

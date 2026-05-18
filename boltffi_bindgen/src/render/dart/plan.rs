@@ -1,3 +1,5 @@
+use boltffi_ffi_rules::callable::ExecutionKind;
+
 use crate::{
     ir::{
         AbiParam, AbiType, BuiltinId, CallbackId, ClassId, CustomTypeId, EnumId, ErrorTransport,
@@ -8,10 +10,17 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+pub enum DartNativeFunctionKind {
+    InlineClosure,
+    Callback,
+}
+
+#[derive(Clone, Debug)]
 pub enum DartNativeType {
     Void,
     Primitive(PrimitiveType),
     Function {
+        kind: DartNativeFunctionKind,
         params: Vec<DartNativeType>,
         return_ty: Box<DartNativeType>,
     },
@@ -49,6 +58,7 @@ impl DartNativeType {
             } => DartNativeType::Function {
                 params: params.iter().map(Self::from_abi_type).collect(),
                 return_ty: Box::new(Self::from_abi_type(return_type)),
+                kind: DartNativeFunctionKind::InlineClosure,
             },
             AbiType::Handle(_) => DartNativeType::Pointer(Box::new(DartNativeType::Void)),
             AbiType::CallbackHandle => DartNativeType::CallbackHandle,
@@ -63,11 +73,22 @@ impl DartNativeType {
             DartNativeType::Primitive(primitive) => {
                 super::emit::primitive_native_type(*primitive).to_string()
             }
-            DartNativeType::Function { params, return_ty } => format!(
+            DartNativeType::Function {
+                params,
+                return_ty,
+                kind,
+            } => format!(
                 "$$ffi.Pointer<$$ffi.NativeFunction<{} Function({})>>",
                 return_ty.native_type(),
                 params.iter().fold(
-                    DartNativeType::Pointer(Box::new(DartNativeType::Void)).native_type(),
+                    match kind {
+                        DartNativeFunctionKind::InlineClosure =>
+                        // closure context pointer
+                            DartNativeType::Pointer(Box::new(DartNativeType::Void)).native_type(),
+                        DartNativeFunctionKind::Callback =>
+                        // async context handle
+                            DartNativeType::Primitive(PrimitiveType::U64).native_type(),
+                    },
                     |acc, ty| acc + ", " + ty.native_type().as_str()
                 )
             ),
@@ -464,6 +485,13 @@ pub struct DartNativeCallbackMethod {
     pub vtable_field_name: String,
     pub params: Vec<DartNativeFunctionParam>,
     pub return_type: DartNativeType,
+    pub kind: ExecutionKind,
+}
+
+impl DartNativeCallbackMethod {
+    pub fn is_async(&self) -> bool {
+        matches!(self.kind, ExecutionKind::Async)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -480,6 +508,13 @@ pub struct DartCallbackMethod {
     pub name: String,
     pub params: Vec<DartFunctionParam>,
     pub ret_ty: DartType,
+    pub kind: ExecutionKind,
+}
+
+impl DartCallbackMethod {
+    pub fn is_async(&self) -> bool {
+        matches!(self.kind, ExecutionKind::Async)
+    }
 }
 
 #[derive(Debug, Clone)]
