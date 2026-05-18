@@ -3579,7 +3579,6 @@ impl<'a> KotlinLowerer<'a> {
             Some(ReadOp::Result { ok, err, .. }) => (ok.as_ref(), err.as_ref()),
             _ => return emit::emit_reader_read(decode_ops),
         };
-        let raw_ok_expr = emit::emit_reader_read(ok_seq);
         let ok_expr = match returns {
             ReturnDef::Result {
                 ok: TypeExpr::Void, ..
@@ -3594,10 +3593,11 @@ impl<'a> KotlinLowerer<'a> {
                 .map(|e| matches!(e.repr, EnumRepr::CStyle { .. }))
                 .unwrap_or(false) =>
             {
+                let raw_ok_expr = emit::emit_reader_read(ok_seq);
                 let enum_name = NamingConvention::class_name(id.as_str());
                 format!("{}.fromValue({})", enum_name, raw_ok_expr)
             }
-            _ => raw_ok_expr,
+            _ => emit::emit_reader_read(ok_seq),
         };
         let err_expr = emit::emit_reader_read(err_seq);
         format!(
@@ -5005,6 +5005,54 @@ mod tests {
                 deprecated: None,
             }],
         }
+    }
+
+    #[test]
+    fn result_unit_decode_does_not_read_empty_ok_payload() {
+        let contract = FfiContract {
+            package: PackageInfo {
+                name: "demo".to_string(),
+                version: None,
+            },
+            catalog: TypeCatalog::default(),
+            functions: vec![],
+        };
+        let abi = IrLowerer::new(&contract).to_abi_contract();
+        let lowerer = KotlinLowerer::new(
+            &contract,
+            &abi,
+            "com.example.demo".to_string(),
+            "demo".to_string(),
+            KotlinOptions::default(),
+        );
+        let decode_ops = ReadSeq {
+            size: SizeExpr::Runtime,
+            ops: vec![ReadOp::Result {
+                tag_offset: OffsetExpr::Base,
+                ok: Box::new(ReadSeq {
+                    size: SizeExpr::Fixed(0),
+                    ops: vec![],
+                    shape: WireShape::Value,
+                }),
+                err: Box::new(ReadSeq {
+                    size: SizeExpr::Runtime,
+                    ops: vec![ReadOp::String {
+                        offset: OffsetExpr::Base,
+                    }],
+                    shape: WireShape::Value,
+                }),
+            }],
+            shape: WireShape::Value,
+        };
+        let returns = ReturnDef::Result {
+            ok: TypeExpr::Void,
+            err: TypeExpr::String,
+        };
+
+        assert_eq!(
+            lowerer.decode_result_expr(&returns, &decode_ops),
+            "reader.readResult({ Unit }, { reader.readString() }).getOrThrow()"
+        );
     }
 
     #[test]

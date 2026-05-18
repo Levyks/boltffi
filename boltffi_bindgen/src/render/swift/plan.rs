@@ -69,6 +69,22 @@ pub enum SwiftAsyncResult {
 }
 
 impl SwiftAsyncResult {
+    fn ok_buffer_expr(ok_type: Option<&str>, ok: &ReadSeq) -> String {
+        if matches!(ok_type, Some("Void")) {
+            "()".to_string()
+        } else {
+            emit::emit_read_value_at(ok, "pos")
+        }
+    }
+
+    fn ok_reader_expr(ok_type: Option<&str>, ok: &ReadSeq) -> String {
+        if matches!(ok_type, Some("Void")) {
+            "()".to_string()
+        } else {
+            emit::emit_reader_read(ok)
+        }
+    }
+
     pub fn is_unit(&self) -> bool {
         matches!(self, Self::Void)
     }
@@ -169,10 +185,16 @@ impl SwiftAsyncResult {
                 decode,
                 err_decode,
                 err_is_string,
+                ok_type,
                 ..
             } => match decode.ops.first() {
                 Some(ReadOp::Result { ok, .. }) => {
-                    Some(emit::emit_result_ok_throw(ok, err_decode, *err_is_string))
+                    let ok_expr = Self::ok_buffer_expr(ok_type.as_deref(), ok);
+                    Some(emit::emit_result_ok_throw_with_ok_expr(
+                        &ok_expr,
+                        err_decode,
+                        *err_is_string,
+                    ))
                 }
                 _ => Some(emit::emit_read_value_at(decode, "0")),
             },
@@ -187,10 +209,11 @@ impl SwiftAsyncResult {
                 throws: true,
                 decode,
                 err_is_string,
+                ok_type,
                 ..
             } => match decode.ops.first() {
                 Some(ReadOp::Result { ok, err, .. }) => {
-                    let ok_read = emit::emit_reader_read(ok);
+                    let ok_read = Self::ok_reader_expr(ok_type.as_deref(), ok);
                     let err_read = emit::emit_reader_read(err);
                     let err_body = if *err_is_string {
                         format!("FfiError(message: {})", err_read)
@@ -1519,6 +1542,16 @@ pub enum SwiftReturn {
 }
 
 impl SwiftReturn {
+    fn result_ok_reader_expr(&self, ok: &ReadSeq) -> String {
+        match self {
+            SwiftReturn::Void => "()".to_string(),
+            SwiftReturn::CStyleEnumFromRawValue { swift_type } => {
+                format!("{}(rawValue: {})!", swift_type, emit::emit_reader_read(ok))
+            }
+            _ => emit::emit_reader_read(ok),
+        }
+    }
+
     pub fn swift_type(&self) -> Option<String> {
         match self {
             SwiftReturn::Void => None,
@@ -1761,13 +1794,7 @@ impl SwiftReturn {
         };
         match ops.ops.first() {
             Some(ReadOp::Result { ok, err, .. }) => {
-                let raw_ok_read = emit::emit_reader_read(ok);
-                let ok_read = match ok_return {
-                    SwiftReturn::CStyleEnumFromRawValue { swift_type } => {
-                        format!("{}(rawValue: {})!", swift_type, raw_ok_read)
-                    }
-                    _ => raw_ok_read,
-                };
+                let ok_read = ok_return.result_ok_reader_expr(ok);
                 let err_read = emit::emit_reader_read(err);
                 let err_body = if err_is_string {
                     format!("FfiError(message: {})", err_read)

@@ -1476,12 +1476,16 @@ impl<'a> SwiftLowerer<'a> {
                     ops: vec![],
                     shape: WireShape::Value,
                 });
-                let ok_variant = if self.is_c_style_enum_return(returns) {
-                    SwiftReturn::CStyleEnumFromRawValue {
-                        swift_type: self.swift_return_value_type(returns),
+                let ok_variant = match returns {
+                    ReturnDef::Result {
+                        ok: TypeExpr::Void, ..
+                    } => SwiftReturn::Void,
+                    _ if self.is_c_style_enum_return(returns) => {
+                        SwiftReturn::CStyleEnumFromRawValue {
+                            swift_type: self.swift_return_value_type(returns),
+                        }
                     }
-                } else {
-                    base
+                    _ => base,
                 };
                 SwiftReturn::Throws {
                     ok: Box::new(ok_variant),
@@ -2357,11 +2361,13 @@ mod tests {
     use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
-        CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, ConstructorDef,
-        DataVariant, EnumDef, EnumRepr, FieldDef, MethodDef, ParamDef, ParamPassing, Receiver,
-        RecordDef, ReturnDef, VariantPayload,
+        CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef,
+        DataVariant, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef, ParamPassing,
+        Receiver, RecordDef, ReturnDef, VariantPayload,
     };
-    use crate::ir::ids::{CallbackId, EnumId, FieldName, MethodId, ParamName, VariantName};
+    use crate::ir::ids::{
+        CallbackId, ClassId, EnumId, FieldName, FunctionId, MethodId, ParamName, VariantName,
+    };
     use crate::ir::types::{PrimitiveType, TypeExpr};
 
     fn empty_contract() -> FfiContract {
@@ -2864,6 +2870,77 @@ mod tests {
         assert_eq!(cb.protocol_name, "Logger");
         assert_eq!(cb.methods.len(), 1);
         assert_eq!(cb.methods[0].params.len(), 1);
+    }
+
+    #[test]
+    fn result_unit_class_method_decodes_ok_as_void() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_class(ClassDef {
+            id: ClassId::new("Counter"),
+            constructors: vec![ConstructorDef::Default {
+                params: vec![],
+                is_fallible: false,
+                is_optional: false,
+                doc: None,
+                deprecated: None,
+            }],
+            methods: vec![MethodDef {
+                id: MethodId::new("try_reset_if_positive"),
+                receiver: Receiver::RefSelf,
+                params: vec![],
+                returns: ReturnDef::Result {
+                    ok: TypeExpr::Void,
+                    err: TypeExpr::String,
+                },
+                execution_kind: ExecutionKind::Sync,
+                doc: None,
+                deprecated: None,
+            }],
+            streams: vec![],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+        let method = module.classes[0]
+            .methods
+            .iter()
+            .find(|method| method.name == "tryResetIfPositive")
+            .expect("result unit class method should lower");
+        let decode_expr = method
+            .returns
+            .reader_decode_expr()
+            .expect("result unit class method should decode from reader");
+
+        assert!(decode_expr.contains("if tag == 0 { return () }"));
+        assert!(!decode_expr.contains("return reader.readU8()"));
+    }
+
+    #[test]
+    fn result_unit_async_function_decodes_ok_as_void() {
+        let mut contract = empty_contract();
+        contract.functions.push(FunctionDef {
+            id: FunctionId::new("try_reset_async"),
+            params: vec![],
+            returns: ReturnDef::Result {
+                ok: TypeExpr::Void,
+                err: TypeExpr::String,
+            },
+            execution_kind: ExecutionKind::Async,
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+        let SwiftCallMode::Async { result, .. } = &module.functions[0].mode else {
+            panic!("result unit async function should lower as async");
+        };
+        let decode_expr = result
+            .reader_decode_expr()
+            .expect("result unit async function should decode from reader");
+
+        assert!(decode_expr.contains("if tag == 0 { return () }"));
+        assert!(!decode_expr.contains("return reader.readU8()"));
     }
 
     #[test]

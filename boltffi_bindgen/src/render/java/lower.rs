@@ -1351,7 +1351,12 @@ impl<'a> JavaLowerer<'a> {
             Some(ReadOp::Result { ok, err, .. }) => (ok.as_ref(), err.as_ref()),
             _ => panic!("expected ReadOp::Result in decode ops"),
         };
-        let ok_decode_expr = self.emit_reader_read(ok_seq);
+        let ok_decode_expr = match returns {
+            ReturnDef::Result {
+                ok: TypeExpr::Void, ..
+            } => "null".to_string(),
+            _ => self.emit_reader_read(ok_seq),
+        };
         let err_decode_expr = self.emit_reader_read(err_seq);
         let err_is_string =
             matches!(returns, ReturnDef::Result { err, .. } if matches!(err, TypeExpr::String));
@@ -4228,6 +4233,27 @@ mod tests {
         assert_eq!(func.return_type, "java.util.Optional<Integer>");
         assert!(func.return_plan.is_decode());
         assert!(func.return_plan.decode_expr().contains("Optional"));
+    }
+
+    #[test]
+    fn function_result_unit_return_does_not_read_ok_payload() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "try_reset",
+            vec![],
+            ReturnDef::Result {
+                ok: TypeExpr::Void,
+                err: TypeExpr::String,
+            },
+        ));
+
+        let module = lower(&contract);
+        let func = &module.functions[0];
+
+        assert_eq!(func.return_type, "void");
+        assert!(func.return_plan.is_result());
+        assert_eq!(func.return_plan.result_ok_decode(), "null");
+        assert_eq!(func.return_plan.result_err_decode(), "reader.readString()");
     }
 
     #[test]

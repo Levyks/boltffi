@@ -50,6 +50,16 @@ impl Counter {
         *self.count.lock().unwrap() = 0;
     }
 
+    pub fn try_reset_if_positive(&self) -> Result<(), String> {
+        let mut count = self.count.lock().unwrap();
+        if *count > 0 {
+            *count = 0;
+            Ok(())
+        } else {
+            Err("count is not positive".to_string())
+        }
+    }
+
     /// Returns the current count if positive, or an error message.
     pub fn try_get_positive(&self) -> Result<i32, String> {
         let val = *self.count.lock().unwrap();

@@ -12,9 +12,12 @@ final class MethodsTests: DemoTestCase {
         XCTAssertEqual(try counter.tryGetPositive(), 10)
         XCTAssertEqual(counter.maybeDouble(), 20)
         XCTAssertEqual(counter.asPoint(), Point(x: 10.0, y: 0.0))
+        try counter.tryResetIfPositive()
+        XCTAssertEqual(counter.get(), 0)
         counter.reset()
         XCTAssertEqual(counter.get(), 0)
         XCTAssertNil(counter.maybeDouble())
+        assertThrowsMessageContains("count is not positive", try counter.tryResetIfPositive())
         assertThrowsMessageContains("count is not positive", try counter.tryGetPositive())
     }
 

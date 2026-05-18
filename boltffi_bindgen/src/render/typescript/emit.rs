@@ -288,6 +288,12 @@ fn emit_reader_read_op(op: &ReadOp) -> String {
     }
 }
 
+pub fn emit_result_void_ok_reader_read(err: &ReadSeq) -> String {
+    let err_read = emit_reader_read(err);
+    let wrapped_err = wrap_error_in_exception(err, &err_read);
+    format!("reader.readResult(() => undefined, () => {wrapped_err})")
+}
+
 fn wrap_error_in_exception(err_seq: &ReadSeq, err_read: &str) -> String {
     err_seq
         .ops
