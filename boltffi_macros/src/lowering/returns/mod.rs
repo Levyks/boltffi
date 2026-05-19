@@ -4,12 +4,23 @@ pub(crate) mod model;
 
 #[cfg(test)]
 mod tests {
+    use super::classify::classify_value_return_strategy;
     use super::model::{ResolvedReturn, WasmOptionScalarEncoding};
+    use crate::index::custom_types::CustomTypeRegistry;
+    use crate::index::data_types::DataTypeRegistry;
+    use crate::lowering::returns::model::ReturnLoweringContext;
     use boltffi_ffi_rules::transport::{
         EncodedReturnStrategy, ReturnContract, ReturnInvocationContext, ReturnPlatform,
         ValueReturnMethod, ValueReturnStrategy,
     };
     use syn::parse_quote;
+
+    fn empty_return_lowering_context<'a>(
+        custom_types: &'a CustomTypeRegistry,
+        data_types: &'a DataTypeRegistry,
+    ) -> ReturnLoweringContext<'a> {
+        ReturnLoweringContext::new(custom_types, data_types)
+    }
 
     #[test]
     fn wasm_option_bool_uses_numeric_bool_encoding() {
@@ -21,6 +32,49 @@ mod tests {
                 .to_string();
 
         assert_eq!(expression, "if value { 1.0 } else { 0.0 }");
+    }
+
+    #[test]
+    fn wasm_option_i64_is_not_nan_boxed() {
+        assert!(
+            WasmOptionScalarEncoding::from_option_rust_type(&parse_quote!(Option<i64>)).is_none()
+        );
+        assert!(
+            WasmOptionScalarEncoding::from_option_rust_type(&parse_quote!(Option<u64>)).is_none()
+        );
+    }
+
+    #[test]
+    fn option_i64_and_u64_return_use_wire_encoding_to_preserve_bigint_payloads() {
+        let custom_types = CustomTypeRegistry::default();
+        let data_types = DataTypeRegistry::default();
+        let context = empty_return_lowering_context(&custom_types, &data_types);
+
+        let i64_strategy = classify_value_return_strategy(&parse_quote!(Option<i64>), &context);
+        let u64_strategy = classify_value_return_strategy(&parse_quote!(Option<u64>), &context);
+
+        assert_eq!(
+            i64_strategy,
+            ValueReturnStrategy::Buffer(EncodedReturnStrategy::WireEncoded)
+        );
+        assert_eq!(
+            u64_strategy,
+            ValueReturnStrategy::Buffer(EncodedReturnStrategy::WireEncoded)
+        );
+    }
+
+    #[test]
+    fn option_i32_return_keeps_compact_scalar_encoding() {
+        let custom_types = CustomTypeRegistry::default();
+        let data_types = DataTypeRegistry::default();
+        let context = empty_return_lowering_context(&custom_types, &data_types);
+
+        let strategy = classify_value_return_strategy(&parse_quote!(Option<i32>), &context);
+
+        assert_eq!(
+            strategy,
+            ValueReturnStrategy::Buffer(EncodedReturnStrategy::OptionScalar)
+        );
     }
 
     #[test]

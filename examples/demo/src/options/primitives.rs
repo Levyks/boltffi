@@ -193,11 +193,6 @@ pub fn find_even(value: i32) -> Option<i32> {
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently handle Option<T>. Include this case when optional values are implemented for Python."
     ),
-    exclude(
-        typescript,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#326: TypeScript wraps Option<i64> with takePackedBuffer expecting a packed BigInt, but the wasm export returns a NaN-boxed f64 like Option<f64>. Include this case when the Option<i64> lowerer routes through the NaN-box helper."
-    )
 )]
 #[demo_bench_macros::demo_case(
     "options.primitives.i64.should_return_none_for_non_positive_value",
@@ -208,11 +203,6 @@ pub fn find_even(value: i32) -> Option<i32> {
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently handle Option<T>. Include this case when optional values are implemented for Python."
     ),
-    exclude(
-        typescript,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#326: TypeScript wraps Option<i64> with takePackedBuffer expecting a packed BigInt, but the wasm export returns a NaN-boxed f64 like Option<f64>. Include this case when the Option<i64> lowerer routes through the NaN-box helper."
-    )
 )]
 #[export]
 pub fn find_positive_i64(value: i64) -> Option<i64> {

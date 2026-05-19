@@ -21,6 +21,9 @@ export namespace {{ name }} {
 {%- elif constructor.return_route.is_void_slot() %}
     (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }});
     return {{ constructor.return_route.decode_expr() }};
+{%- elif constructor.return_route.is_nan_boxed_optional() %}
+    const packed = (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }}) as number;
+    return {{ constructor.return_route.decode_expr() }};
 {%- elif constructor.return_route.is_packed() %}
     const packed = (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }}) as bigint;
     const reader = _module.takePackedBuffer(packed);
@@ -45,6 +48,9 @@ export namespace {{ name }} {
       }
 {%- elif constructor.return_route.is_void_slot() %}
       (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }});
+      return {{ constructor.return_route.decode_expr() }};
+{%- elif constructor.return_route.is_nan_boxed_optional() %}
+      const packed = (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }}) as number;
       return {{ constructor.return_route.decode_expr() }};
 {%- elif constructor.return_route.is_packed() %}
       const packed = (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }}) as bigint;
@@ -101,6 +107,9 @@ export namespace {{ name }} {
     }
 {%- elif sync_method.return_route.is_void_slot() %}
     (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+    return {{ sync_method.return_route.decode_expr() }};
+{%- elif sync_method.return_route.is_nan_boxed_optional() %}
+    const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as number;
     return {{ sync_method.return_route.decode_expr() }};
 {%- elif sync_method.return_route.is_packed() %}
     const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
@@ -207,6 +216,9 @@ export namespace {{ name }} {
       }
 {%- elif sync_method.return_route.is_void_slot() %}
       (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+      return {{ sync_method.return_route.decode_expr() }};
+{%- elif sync_method.return_route.is_nan_boxed_optional() %}
+      const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as number;
       return {{ sync_method.return_route.decode_expr() }};
 {%- elif sync_method.return_route.is_packed() %}
       const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;

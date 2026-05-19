@@ -5,6 +5,23 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
 runtime_directory="$repo_root/runtime/typescript"
 
+npm_bin() {
+    if command -v npm >/dev/null 2>&1; then
+        printf 'npm\n'
+        return
+    fi
+
+    if command -v npm.cmd >/dev/null 2>&1; then
+        printf 'npm.cmd\n'
+        return
+    fi
+
+    printf 'Missing npm executable\n' >&2
+    exit 127
+}
+
+NPM_BIN="$(npm_bin)"
+
 install_node_dependencies() {
     local package_directory="$1"
 
@@ -12,9 +29,9 @@ install_node_dependencies() {
         cd "$package_directory"
 
         if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
-            npm ci
+            "$NPM_BIN" ci
         else
-            npm install
+            "$NPM_BIN" install
         fi
     )
 }
@@ -25,7 +42,7 @@ run_package_script() {
 
     (
         cd "$package_directory"
-        npm run "$script_name"
+        "$NPM_BIN" run "$script_name"
     )
 }
 

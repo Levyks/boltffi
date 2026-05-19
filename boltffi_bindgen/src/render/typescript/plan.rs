@@ -790,7 +790,7 @@ pub struct TsOutputRoute {
     is_direct: bool,
     is_packed: bool,
     is_raw_packed: bool,
-    is_f64_optional: bool,
+    is_nan_boxed_optional: bool,
     is_void_slot: bool,
     is_struct_return_slot: bool,
     is_async_scalar: bool,
@@ -806,7 +806,7 @@ impl TsOutputRoute {
             is_direct: false,
             is_packed: false,
             is_raw_packed: false,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: false,
             is_struct_return_slot: false,
             is_async_scalar: false,
@@ -822,7 +822,7 @@ impl TsOutputRoute {
             is_direct: true,
             is_packed: false,
             is_raw_packed: false,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: false,
             is_struct_return_slot: false,
             is_async_scalar: false,
@@ -838,7 +838,7 @@ impl TsOutputRoute {
             is_direct: false,
             is_packed: true,
             is_raw_packed: false,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: false,
             is_struct_return_slot: false,
             is_async_scalar: false,
@@ -854,7 +854,7 @@ impl TsOutputRoute {
             is_direct: false,
             is_packed: false,
             is_raw_packed: true,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: false,
             is_struct_return_slot: false,
             is_async_scalar: false,
@@ -864,13 +864,13 @@ impl TsOutputRoute {
         }
     }
 
-    pub fn f64_optional(decode_expr: String) -> Self {
+    pub fn nan_boxed_optional(decode_expr: String) -> Self {
         Self {
             is_void: false,
             is_direct: false,
             is_packed: false,
             is_raw_packed: false,
-            is_f64_optional: true,
+            is_nan_boxed_optional: true,
             is_void_slot: false,
             is_struct_return_slot: false,
             is_async_scalar: false,
@@ -886,7 +886,7 @@ impl TsOutputRoute {
             is_direct: false,
             is_packed: false,
             is_raw_packed: false,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: false,
             is_struct_return_slot: false,
             is_async_scalar: true,
@@ -902,7 +902,7 @@ impl TsOutputRoute {
             is_direct: false,
             is_packed: false,
             is_raw_packed: false,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: true,
             is_struct_return_slot: false,
             is_async_scalar: false,
@@ -918,7 +918,7 @@ impl TsOutputRoute {
             is_direct: false,
             is_packed: false,
             is_raw_packed: false,
-            is_f64_optional: false,
+            is_nan_boxed_optional: false,
             is_void_slot: false,
             is_struct_return_slot: true,
             is_async_scalar: false,
@@ -944,8 +944,8 @@ impl TsOutputRoute {
         self.is_raw_packed
     }
 
-    pub fn is_f64_optional(&self) -> bool {
-        self.is_f64_optional
+    pub fn is_nan_boxed_optional(&self) -> bool {
+        self.is_nan_boxed_optional
     }
 
     pub fn is_void_slot(&self) -> bool {

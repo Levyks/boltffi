@@ -28,6 +28,9 @@
 {%- elif return_route.is_void_slot() %}
   (_exports.{{ ffi_name }} as Function)({{ call_args }});
   return {{ return_route.decode_expr() }};
+{%- elif return_route.is_nan_boxed_optional() %}
+  const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as number;
+  return {{ return_route.decode_expr() }};
 {%- elif return_route.is_packed() %}
   const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
   const reader = _module.takePackedBuffer(packed);
@@ -62,6 +65,9 @@
     }
 {%- elif return_route.is_void_slot() %}
     (_exports.{{ ffi_name }} as Function)({{ call_args }});
+    return {{ return_route.decode_expr() }};
+{%- elif return_route.is_nan_boxed_optional() %}
+    const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as number;
     return {{ return_route.decode_expr() }};
 {%- elif return_route.is_packed() %}
     const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;

@@ -113,6 +113,9 @@ export class {{ cls.class_name }} {
     } finally {
       _module.exports.boltffi_wasm_free(__outPtr, {{ sync_method.return_route.return_slot_size().unwrap() }});
     }
+{%- elif sync_method.return_route.is_nan_boxed_optional() %}
+    const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as number;
+    return {{ sync_method.return_route.decode_expr() }};
 {%- elif sync_method.return_route.is_packed() %}
     const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
     const reader = _module.takePackedBuffer(packed);
@@ -210,6 +213,9 @@ export class {{ cls.class_name }} {
       } finally {
         _module.exports.boltffi_wasm_free(__outPtr, {{ sync_method.return_route.return_slot_size().unwrap() }});
       }
+{%- elif sync_method.return_route.is_nan_boxed_optional() %}
+      const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as number;
+      return {{ sync_method.return_route.decode_expr() }};
 {%- elif sync_method.return_route.is_packed() %}
       const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
       const reader = _module.takePackedBuffer(packed);

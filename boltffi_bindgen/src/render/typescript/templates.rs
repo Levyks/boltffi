@@ -938,6 +938,33 @@ mod tests {
     }
 
     #[test]
+    fn function_template_uses_number_carrier_for_nan_boxed_optional_return() {
+        let doc: Option<String> = None;
+        let template = FunctionTemplate {
+            name: "findEven",
+            params: &[],
+            return_type_str: "number | null",
+            return_route: &TsOutputRoute::nan_boxed_optional(
+                "_module.unpackOptionI32(packed)".to_string(),
+            ),
+            return_callback: &None,
+            ffi_name: "boltffi_find_even",
+            call_args: "",
+            call_args_with_out: "",
+            wrapper_code: "",
+            cleanup_code: "",
+            doc: &doc,
+        };
+
+        let rendered = template.render().unwrap();
+        assert!(
+            rendered
+                .contains("const packed = (_exports.boltffi_find_even as Function)() as number;")
+        );
+        assert!(rendered.contains("return _module.unpackOptionI32(packed);"));
+    }
+
+    #[test]
     fn async_function_param_cleanup_runs_after_await() {
         let doc: Option<String> = None;
         let params = vec![TsParam {
