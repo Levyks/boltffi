@@ -50,6 +50,13 @@ pub struct JavaLowerer<'a> {
     supported_types: HashSet<String>,
 }
 
+#[derive(Default)]
+struct WireEncodableVisit {
+    records: HashSet<RecordId>,
+    enums: HashSet<EnumId>,
+    custom_types: HashSet<CustomTypeId>,
+}
+
 #[derive(Clone, Copy)]
 enum JavaValueTypeDef<'a> {
     Record(&'a RecordDef),
@@ -297,7 +304,7 @@ impl<'a> JavaLowerer<'a> {
         let params_ok = func
             .params
             .iter()
-            .all(|p| self.is_supported_type(&p.type_expr));
+            .all(|p| self.is_supported_param_type(&p.type_expr));
         let return_ok = match &func.returns {
             ReturnDef::Void => true,
             ReturnDef::Value(ty) => self.is_supported_type(ty),
@@ -318,6 +325,95 @@ impl<'a> JavaLowerer<'a> {
 
     fn is_supported_type(&self, ty: &TypeExpr) -> bool {
         Self::is_leaf_supported(self.ffi, ty, &self.supported_types)
+    }
+
+    fn is_supported_param_type(&self, ty: &TypeExpr) -> bool {
+        match ty {
+            TypeExpr::Custom(id) => self.is_supported_param_type(self.custom_repr_type(id)),
+            TypeExpr::Result { ok, err } => {
+                self.is_supported_result_param_branch(ok)
+                    && self.is_supported_result_param_branch(err)
+            }
+            _ => self.is_supported_type(ty),
+        }
+    }
+
+    fn is_supported_result_param_branch(&self, ty: &TypeExpr) -> bool {
+        self.is_wire_encodable_result_param_branch(ty, &mut WireEncodableVisit::default())
+    }
+
+    fn is_wire_encodable_result_param_branch(
+        &self,
+        ty: &TypeExpr,
+        visit: &mut WireEncodableVisit,
+    ) -> bool {
+        match ty {
+            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Bytes | TypeExpr::Builtin(_) => {
+                true
+            }
+            TypeExpr::Option(inner) | TypeExpr::Vec(inner) => {
+                self.is_wire_encodable_result_param_branch(inner, visit)
+            }
+            TypeExpr::Custom(id) => {
+                visit.custom_types.insert(id.clone())
+                    && self.ffi.catalog.resolve_custom(id).is_some_and(|custom| {
+                        let supported =
+                            self.is_wire_encodable_result_param_branch(&custom.repr, visit);
+                        visit.custom_types.remove(id);
+                        supported
+                    })
+            }
+            TypeExpr::Record(id) => {
+                self.supported_types.contains(id.as_str())
+                    && visit.records.insert(id.clone())
+                    && self.ffi.catalog.resolve_record(id).is_some_and(|record| {
+                        let supported = record.fields.iter().all(|field| {
+                            self.is_wire_encodable_result_param_branch(&field.type_expr, visit)
+                        });
+                        visit.records.remove(id);
+                        supported
+                    })
+            }
+            TypeExpr::Enum(id) => {
+                self.supported_types.contains(id.as_str())
+                    && visit.enums.insert(id.clone())
+                    && self
+                        .ffi
+                        .catalog
+                        .resolve_enum(id)
+                        .is_some_and(|enumeration| {
+                            let supported = match &enumeration.repr {
+                                EnumRepr::CStyle { .. } => true,
+                                EnumRepr::Data { variants, .. } => {
+                                    variants.iter().all(|variant| match &variant.payload {
+                                        VariantPayload::Unit => true,
+                                        VariantPayload::Tuple(fields) => {
+                                            fields.iter().all(|field| {
+                                                self.is_wire_encodable_result_param_branch(
+                                                    field, visit,
+                                                )
+                                            })
+                                        }
+                                        VariantPayload::Struct(fields) => {
+                                            fields.iter().all(|field| {
+                                                self.is_wire_encodable_result_param_branch(
+                                                    &field.type_expr,
+                                                    visit,
+                                                )
+                                            })
+                                        }
+                                    })
+                                }
+                            };
+                            visit.enums.remove(id);
+                            supported
+                        })
+            }
+            TypeExpr::Void
+            | TypeExpr::Result { .. }
+            | TypeExpr::Handle(_)
+            | TypeExpr::Callback(_) => false,
+        }
     }
 
     fn resolve_custom_type(&self, id: &CustomTypeId) -> &CustomTypeDef {
@@ -1179,7 +1275,8 @@ impl<'a> JavaLowerer<'a> {
             | TypeExpr::Enum(_)
             | TypeExpr::Option(_)
             | TypeExpr::Custom(_)
-            | TypeExpr::Builtin(_) => {
+            | TypeExpr::Builtin(_)
+            | TypeExpr::Result { .. } => {
                 let binding_name = input_bindings
                     .binding_name_for(source_name)
                     .expect("encoded input binding must exist");
@@ -1812,7 +1909,7 @@ impl<'a> JavaLowerer<'a> {
         let params_ok = method
             .params
             .iter()
-            .all(|p| self.is_supported_type(&p.type_expr));
+            .all(|p| self.is_supported_param_type(&p.type_expr));
         let return_ok = match &method.returns {
             ReturnDef::Void => true,
             ReturnDef::Value(ty) => self.is_supported_method_return_type(ty),
@@ -2076,6 +2173,13 @@ impl<'a> JavaLowerer<'a> {
             TypeExpr::Option(inner) => {
                 format!("java.util.Optional<{}>", self.java_boxed_type(inner))
             }
+            TypeExpr::Result { ok, err } => {
+                format!(
+                    "BoltFFIResult<{}, {}>",
+                    self.java_boxed_type(ok),
+                    self.java_boxed_type(err)
+                )
+            }
             TypeExpr::Vec(inner) => self.java_vec_type(inner),
             _ => "Object".to_string(),
         }
@@ -2102,6 +2206,13 @@ impl<'a> JavaLowerer<'a> {
             TypeExpr::Callback(id) => self.callback_java_type(id),
             TypeExpr::Option(inner) => {
                 format!("java.util.Optional<{}>", self.java_boxed_type(inner))
+            }
+            TypeExpr::Result { ok, err } => {
+                format!(
+                    "BoltFFIResult<{}, {}>",
+                    self.java_boxed_type(ok),
+                    self.java_boxed_type(err)
+                )
             }
             TypeExpr::Vec(inner) => self.java_vec_type(inner),
             _ => "Object".to_string(),
@@ -3399,6 +3510,24 @@ mod tests {
         .module()
     }
 
+    fn is_java_param_type_supported(contract: &FfiContract, ty: &TypeExpr) -> bool {
+        let abi = IrLowerer::new(contract).to_abi_contract();
+        let options = JavaOptions {
+            library_name: None,
+            min_java_version: JavaVersion::JAVA_8,
+            desktop_loader: true,
+        };
+        let lowerer = JavaLowerer::new(
+            contract,
+            &abi,
+            "com.test".to_string(),
+            "test".to_string(),
+            options,
+        );
+
+        lowerer.is_supported_param_type(ty)
+    }
+
     fn record_def(id: &str, fields: Vec<FieldDef>) -> RecordDef {
         RecordDef {
             is_repr_c: true,
@@ -4105,6 +4234,67 @@ mod tests {
         assert!(func.return_plan.is_decode());
         assert_eq!(func.return_plan.decode_expr(), "reader.readDuration()");
         assert_eq!(func.input_bindings.wire_writers.len(), 1);
+    }
+
+    #[test]
+    fn function_result_param_is_wire_encoded() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "result_to_string",
+            vec![param(
+                "input",
+                TypeExpr::Result {
+                    ok: Box::new(TypeExpr::Primitive(PrimitiveType::I32)),
+                    err: Box::new(TypeExpr::String),
+                },
+            )],
+            ReturnDef::Value(TypeExpr::String),
+        ));
+
+        let module = lower(&contract);
+
+        assert_eq!(module.functions.len(), 1);
+        let func = &module.functions[0];
+        let result_param = &func.params[0];
+
+        assert_eq!(result_param.java_type, "BoltFFIResult<Integer, String>");
+        assert_eq!(result_param.native_type, "ByteBuffer");
+        assert_eq!(func.input_bindings.wire_writers.len(), 1);
+    }
+
+    #[test]
+    fn function_result_param_support_rejects_nested_handle_branch() {
+        let mut contract = empty_contract();
+        contract
+            .catalog
+            .insert_class(class_def("Store", vec![], vec![]));
+        let ty = TypeExpr::Result {
+            ok: Box::new(TypeExpr::Option(Box::new(TypeExpr::Handle(ClassId::new(
+                "Store",
+            ))))),
+            err: Box::new(TypeExpr::String),
+        };
+
+        assert!(!is_java_param_type_supported(&contract, &ty));
+    }
+
+    #[test]
+    fn function_result_param_support_rejects_nested_callback_branch() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_callback(CallbackTraitDef {
+            id: CallbackId::new("Progress"),
+            methods: vec![],
+            kind: CallbackKind::Trait,
+            doc: None,
+        });
+        let ty = TypeExpr::Result {
+            ok: Box::new(TypeExpr::Vec(Box::new(TypeExpr::Callback(
+                CallbackId::new("Progress"),
+            )))),
+            err: Box::new(TypeExpr::String),
+        };
+
+        assert!(!is_java_param_type_supported(&contract, &ty));
     }
 
     #[test]

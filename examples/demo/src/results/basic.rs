@@ -137,11 +137,6 @@ pub fn always_err(msg: String) -> Result<i32, String> {
         details = "#321: C# bindgen does not currently emit functions that take Result<T, E> as a parameter. Include this case when C# Result-parameter support lands."
     ),
     exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#321: Java bindgen does not currently emit functions that take Result<T, E> as a parameter. Include this case when Java Result-parameter support lands."
-    ),
-    exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
         details = "Python is experimental; its lowerer does not currently accept Result<T, E> parameters. Include this case when Result parameters are implemented for Python."
@@ -155,11 +150,6 @@ pub fn always_err(msg: String) -> Result<i32, String> {
         csharp,
         reason = ExclusionReason::ImplementationGap,
         details = "#321: C# bindgen does not currently emit functions that take Result<T, E> as a parameter. Include this case when C# Result-parameter support lands."
-    ),
-    exclude(
-        java,
-        reason = ExclusionReason::ImplementationGap,
-        details = "#321: Java bindgen does not currently emit functions that take Result<T, E> as a parameter. Include this case when Java Result-parameter support lands."
     ),
     exclude(
         python,

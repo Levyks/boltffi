@@ -53,6 +53,12 @@ pub struct PreambleTemplate<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "render_java/result.txt", escape = "none")]
+pub struct ResultTemplate<'a> {
+    pub package_name: &'a str,
+}
+
+#[derive(Template)]
 #[template(path = "render_java/record.txt", escape = "none")]
 pub struct RecordTemplate<'a> {
     pub record: &'a JavaRecord,

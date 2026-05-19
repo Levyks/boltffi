@@ -16,6 +16,7 @@ use super::templates::{
     CStyleEnumTemplate, CallbackCallbacksTemplate, CallbackTraitTemplate, ClassTemplate,
     ClosureCallbacksTemplate, ClosureTemplate, DataEnumAbstractTemplate, DataEnumSealedTemplate,
     ErrorEnumTemplate, FunctionsTemplate, NativeTemplate, PreambleTemplate, RecordTemplate,
+    ResultTemplate,
 };
 use askama::Template;
 
@@ -165,6 +166,15 @@ impl JavaEmitter {
         });
 
         files.extend(closure_files.chain(callback_files));
+
+        files.push(JavaFile {
+            file_name: "BoltFFIResult.java".to_string(),
+            source: ResultTemplate {
+                package_name: &module.package_name,
+            }
+            .render()
+            .expect("result template failed"),
+        });
 
         let mut main_source = String::new();
 

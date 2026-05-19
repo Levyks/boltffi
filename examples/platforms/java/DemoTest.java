@@ -2127,6 +2127,11 @@ public final class DemoTest {
             assert e.getMessage().contains("boom") : "alwaysErr error message";
         }
 
+        demoCase("case:results.basic.result_to_string.should_render_ok");
+        assert Demo.resultToString(BoltFFIResult.<Integer, String>ok(7)).equals("ok: 7") : "resultToString ok";
+        demoCase("case:results.basic.result_to_string.should_render_err");
+        assert Demo.resultToString(BoltFFIResult.<Integer, String>err("bad input")).equals("err: bad input") : "resultToString err";
+
         demoCase("case:results.basic.parse_point.should_parse_coordinates");
         Point p = Demo.parsePoint("3.0,4.0");
         assert p.x() == 3.0 : "parsePoint x";

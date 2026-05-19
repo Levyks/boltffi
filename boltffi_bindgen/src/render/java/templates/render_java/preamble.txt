@@ -793,37 +793,6 @@ final class WireWriter implements AutoCloseable {
     }
 }
 {% endif %}
-final class BoltFFIResult<Ok, Err> {
-    private final Ok okValue;
-    private final Err errValue;
-    private final boolean ok;
-
-    private BoltFFIResult(Ok okValue, Err errValue, boolean ok) {
-        this.okValue = okValue;
-        this.errValue = errValue;
-        this.ok = ok;
-    }
-
-    static <Ok, Err> BoltFFIResult<Ok, Err> ok(Ok value) {
-        return new BoltFFIResult<>(value, null, true);
-    }
-
-    static <Ok, Err> BoltFFIResult<Ok, Err> err(Err value) {
-        return new BoltFFIResult<>(null, value, false);
-    }
-
-    boolean isOk() {
-        return ok;
-    }
-
-    Ok okValue() {
-        return okValue;
-    }
-
-    Err errValue() {
-        return errValue;
-    }
-}
 {%- if module.has_async() || module.has_streams() %}
 final class BoltFFIContinuationSignal {
     enum DeliveryState { WAITING, PENDING_DELIVERY, READY_DELIVERY, CANCELLED }
