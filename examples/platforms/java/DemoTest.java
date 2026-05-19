@@ -296,6 +296,10 @@ public final class DemoTest {
         Point point = Demo.makePoint(1.0, 2.0);
         assert point.x() == 1.0 : "makePoint.x";
         assert point.y() == 2.0 : "makePoint.y";
+        demoCase("case:records.blittable.point.should_construct_with_static_new");
+        Point staticNewPoint = Point._new(7.0, 8.0);
+        assert staticNewPoint.x() == 7.0 : "Point._new.x";
+        assert staticNewPoint.y() == 8.0 : "Point._new.y";
         demoCase("case:records.blittable.point.should_return_origin");
         Point origin = Point.origin();
         assert origin.x() == 0.0 : "Point.origin.x";
@@ -670,6 +674,11 @@ public final class DemoTest {
         assert ((Shape.Circle) circle).radius == 5.0 : "makeCircle.radius";
         Shape rect = Demo.makeRectangle(3.0, 4.0);
         assert rect instanceof Shape.Rectangle : "makeRectangle returns Rectangle";
+
+        demoCase("case:enums.data_enum.shape.should_support_primary_constructor");
+        Shape staticNewShape = Shape._new(6.0);
+        assert staticNewShape instanceof Shape.Circle : "Shape._new type";
+        assert Math.abs(((Shape.Circle) staticNewShape).radius - 6.0) < 0.0001 : "Shape._new.radius";
 
         demoCase("case:enums.data_enum.shape.unit_circle.should_construct_circle");
         Shape unitCircle = Shape.unitCircle();

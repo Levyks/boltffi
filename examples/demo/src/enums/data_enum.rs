@@ -42,11 +42,6 @@ impl Shape {
         justification = "Ensure the generated Shape primary constructor builds a Circle variant with the requested radius.",
         directions = "Call `enums::data_enum::Shape::new` through the generated binding and assert the generated Shape primary constructor builds a Circle variant with the requested radius.",
         exclude(
-            java,
-            reason = ExclusionReason::ImplementationGap,
-            details = "#323: Java bindgen drops static methods whose Rust name collides with a Java keyword. Java cannot expose Shape::new because new is a Java keyword. Include this case when Java keyword-safe renaming lands."
-        ),
-        exclude(
             python,
             reason = ExclusionReason::ImplementationGap,
             details = "Python is experimental; its lowerer currently emits only C-style enums, not data-enum payloads. Include this case when Python data-enum bindings are implemented."

@@ -730,10 +730,12 @@ mod tests {
     use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
-        CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, FunctionDef,
-        MethodDef, ParamDef, ParamPassing, Receiver, ReturnDef,
+        CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, FieldDef,
+        FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef,
     };
-    use crate::ir::ids::{CallbackId, ClassId, FunctionId, MethodId, ParamName};
+    use crate::ir::ids::{
+        CallbackId, ClassId, FieldName, FunctionId, MethodId, ParamName, RecordId,
+    };
     use crate::ir::types::{PrimitiveType, TypeExpr};
     use crate::render::java::JavaVersion;
     use boltffi_ffi_rules::callable::ExecutionKind;
@@ -780,6 +782,15 @@ mod tests {
             type_expr,
             passing: ParamPassing::Value,
             doc: None,
+        }
+    }
+
+    fn field(name: &str, type_expr: TypeExpr) -> FieldDef {
+        FieldDef {
+            name: FieldName::new(name),
+            type_expr,
+            doc: None,
+            default: None,
         }
     }
 
@@ -929,6 +940,82 @@ mod tests {
             .status()
             .expect("javac should execute");
         assert!(status.success());
+
+        let _ = fs::remove_dir_all(tmp_root);
+    }
+
+    #[test]
+    fn emit_value_type_default_constructor_collision_compiles_with_javac_when_available() {
+        if Command::new("javac").arg("-version").output().is_err() {
+            return;
+        }
+
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            is_error: false,
+            id: RecordId::new("point"),
+            fields: vec![
+                field("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                field("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+            constructors: vec![default_ctor(vec![
+                param("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                param("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ])],
+            methods: vec![static_method(
+                "new_",
+                vec![
+                    param("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                    param("y", TypeExpr::Primitive(PrimitiveType::F64)),
+                ],
+                ReturnDef::Value(TypeExpr::Record(RecordId::new("point"))),
+            )],
+            doc: None,
+            deprecated: None,
+        });
+        let abi = IrLowerer::new(&contract).to_abi_contract();
+        let output = JavaEmitter::emit(
+            &contract,
+            &abi,
+            "com.test".to_string(),
+            "test".to_string(),
+            JavaOptions::default(),
+        );
+
+        let point_file = output
+            .files
+            .iter()
+            .find(|file| file.file_name == "Point.java")
+            .expect("record file should exist");
+        assert_eq!(point_file.source.matches("static Point _new").count(), 1);
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be monotonic")
+            .as_nanos();
+        let tmp_root = env::temp_dir().join(format!("boltffi-java-keyword-collision-{}", nanos));
+        let package_dir = tmp_root.join(&output.package_path);
+        fs::create_dir_all(&package_dir).expect("should create package directory");
+
+        let source_paths: Vec<_> = output
+            .files
+            .iter()
+            .map(|file| {
+                let path = package_dir.join(&file.file_name);
+                fs::write(&path, &file.source).expect("should write generated source");
+                path
+            })
+            .collect();
+
+        let status = Command::new("javac")
+            .args(source_paths)
+            .status()
+            .expect("javac should execute");
+        assert!(
+            status.success(),
+            "keyword-colliding Java sources should compile"
+        );
 
         let _ = fs::remove_dir_all(tmp_root);
     }

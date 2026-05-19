@@ -17,12 +17,7 @@ impl Point {
     #[demo_bench_macros::demo_case(
         "records.blittable.point.should_construct_with_static_new",
         justification = "Ensure Point::new returns a blittable Point containing the provided coordinates.",
-        directions = "Call `records::blittable::Point::new` through the generated binding and assert Point::new returns a blittable Point containing the provided coordinates.",
-        exclude(
-            java,
-            reason = ExclusionReason::ImplementationGap,
-            details = "#323: Java bindgen drops static methods whose Rust name collides with a Java keyword. Java cannot expose Point::new because new is a Java keyword. Include this case when Java keyword-safe renaming lands."
-        )
+        directions = "Call `records::blittable::Point::new` through the generated binding and assert Point::new returns a blittable Point containing the provided coordinates."
     )]
     pub fn new(x: f64, y: f64) -> Self {
         Point { x, y }

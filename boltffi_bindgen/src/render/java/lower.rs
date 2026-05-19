@@ -119,6 +119,36 @@ impl<'a> JavaValueTypeDef<'a> {
     }
 }
 
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct JavaValueTypeMemberSignature {
+    name: String,
+    param_types: Vec<String>,
+}
+
+impl JavaValueTypeMemberSignature {
+    fn constructor(constructor: &JavaValueTypeConstructor) -> Self {
+        Self {
+            name: constructor.name.clone(),
+            param_types: constructor
+                .params
+                .iter()
+                .map(|param| param.java_type.clone())
+                .collect(),
+        }
+    }
+
+    fn method(method: &JavaValueTypeMethod) -> Self {
+        Self {
+            name: method.name.clone(),
+            param_types: method
+                .params
+                .iter()
+                .map(|param| param.java_type.clone())
+                .collect(),
+        }
+    }
+}
+
 impl<'a> JavaLowerer<'a> {
     pub fn new(
         ffi: &'a FfiContract,
@@ -621,6 +651,8 @@ impl<'a> JavaLowerer<'a> {
             JavaRecordShape::ClassicClass
         };
         let value_type = JavaValueTypeDef::Record(record);
+        let methods = self.lower_value_type_methods(value_type);
+        let constructors = self.lower_value_type_constructors(value_type, &methods);
         JavaRecord {
             doc: record.doc.clone(),
             shape,
@@ -629,8 +661,8 @@ impl<'a> JavaLowerer<'a> {
             fields,
             default_constructors: self.lower_record_default_constructors(record),
             blittable_layout,
-            constructors: self.lower_value_type_constructors(value_type),
-            methods: self.lower_value_type_methods(value_type),
+            constructors,
+            methods,
         }
     }
 
@@ -775,15 +807,42 @@ impl<'a> JavaLowerer<'a> {
     fn lower_value_type_constructors(
         &self,
         owner: JavaValueTypeDef<'_>,
+        methods: &[JavaValueTypeMethod],
     ) -> Vec<JavaValueTypeConstructor> {
-        owner
+        let lowered_constructors = owner
             .constructors()
             .iter()
             .enumerate()
-            .filter(|(_, constructor)| constructor.name().is_some())
             .map(|(index, constructor)| {
                 let call = self.find_abi_call(&owner.constructor_call_id(index));
-                JavaValueTypeConstructor::lower(self, owner, constructor, call)
+                (
+                    constructor.name().is_none(),
+                    JavaValueTypeConstructor::lower(self, owner, constructor, call),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut occupied_signatures = methods
+            .iter()
+            .map(JavaValueTypeMemberSignature::method)
+            .collect::<HashSet<_>>();
+
+        occupied_signatures.extend(
+            lowered_constructors
+                .iter()
+                .filter(|(is_default, _)| !is_default)
+                .map(|(_, constructor)| JavaValueTypeMemberSignature::constructor(constructor)),
+        );
+
+        lowered_constructors
+            .into_iter()
+            .filter_map(|(is_default, lowered)| {
+                let signature = JavaValueTypeMemberSignature::constructor(&lowered);
+                if is_default && occupied_signatures.contains(&signature) {
+                    return None;
+                }
+                occupied_signatures.insert(signature);
+                Some(lowered)
             })
             .collect()
     }
@@ -2274,13 +2333,14 @@ impl<'a> JavaLowerer<'a> {
                 }
             }
         }
+        let constructors = self.lower_value_type_constructors(owner, &methods);
         JavaEnum {
             doc: enumeration.doc.clone(),
             class_name,
             kind,
             value_type,
             variants,
-            constructors: self.lower_value_type_constructors(owner),
+            constructors,
             methods,
         }
     }
@@ -3315,12 +3375,7 @@ impl JavaValueTypeConstructor {
 
         Self {
             doc: constructor.doc().map(str::to_string),
-            name: NamingConvention::method_name(
-                constructor
-                    .name()
-                    .expect("value type constructors must be named")
-                    .as_str(),
-            ),
+            name: Self::java_method_name(constructor),
             params,
             native_params,
             return_type: lowerer.return_java_type(&constructor_return),
@@ -3328,6 +3383,15 @@ impl JavaValueTypeConstructor {
             input_bindings,
             ffi_name: call.symbol.as_str().to_string(),
         }
+    }
+
+    fn java_method_name(constructor: &ConstructorDef) -> String {
+        NamingConvention::method_name(
+            constructor
+                .name()
+                .map(|name| name.as_str())
+                .unwrap_or("new"),
+        )
     }
 }
 
@@ -5666,6 +5730,122 @@ mod tests {
     }
 
     #[test]
+    fn record_default_constructor_is_exposed_with_keyword_safe_name() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            is_error: false,
+            id: RecordId::new("point"),
+            fields: vec![
+                field("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                field("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+            constructors: vec![default_ctor(vec![
+                param_def("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                param_def("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ])],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower(&contract);
+        let record = module
+            .records
+            .iter()
+            .find(|record| record.class_name == "Point")
+            .unwrap();
+
+        assert_eq!(record.constructors.len(), 1);
+        assert_eq!(record.constructors[0].name, "_new");
+        assert_eq!(record.constructors[0].return_type, "Point");
+        assert_eq!(record.constructors[0].params.len(), 2);
+    }
+
+    #[test]
+    fn record_default_constructor_skips_named_constructor_collision() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            is_error: false,
+            id: RecordId::new("point"),
+            fields: vec![
+                field("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                field("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+            constructors: vec![
+                default_ctor(vec![
+                    param_def("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                    param_def("y", TypeExpr::Primitive(PrimitiveType::F64)),
+                ]),
+                named_init(
+                    "new_",
+                    vec![
+                        param_def("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                        param_def("y", TypeExpr::Primitive(PrimitiveType::F64)),
+                    ],
+                ),
+            ],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower(&contract);
+        let record = module
+            .records
+            .iter()
+            .find(|record| record.class_name == "Point")
+            .unwrap();
+
+        assert_eq!(record.constructors.len(), 1);
+        assert_eq!(record.constructors[0].name, "_new");
+        assert_eq!(record.constructors[0].return_type, "Point");
+        assert_eq!(record.constructors[0].params.len(), 2);
+    }
+
+    #[test]
+    fn record_default_constructor_skips_static_method_collision() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            is_error: false,
+            id: RecordId::new("point"),
+            fields: vec![
+                field("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                field("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+            constructors: vec![default_ctor(vec![
+                param_def("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                param_def("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ])],
+            methods: vec![static_method(
+                "new_",
+                vec![
+                    param_def("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                    param_def("y", TypeExpr::Primitive(PrimitiveType::F64)),
+                ],
+                ReturnDef::Value(TypeExpr::Record(RecordId::new("point"))),
+            )],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower(&contract);
+        let record = module
+            .records
+            .iter()
+            .find(|record| record.class_name == "Point")
+            .unwrap();
+
+        assert!(record.constructors.is_empty());
+        assert_eq!(record.methods.len(), 1);
+        assert_eq!(record.methods[0].name, "_new");
+        assert_eq!(record.methods[0].return_type, "Point");
+        assert_eq!(record.methods[0].params.len(), 2);
+    }
+
+    #[test]
     fn record_field_defaults_generate_java_overloads() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
@@ -5830,6 +6010,85 @@ mod tests {
         assert!(enumeration.has_constructors());
         assert!(enumeration.has_static_methods());
         assert!(enumeration.has_instance_methods());
+    }
+
+    #[test]
+    fn data_enum_default_constructor_is_exposed_with_keyword_safe_name() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(EnumDef {
+            id: EnumId::new("shape"),
+            repr: EnumRepr::Data {
+                tag_type: PrimitiveType::I32,
+                variants: vec![DataVariant {
+                    name: VariantName::new("Circle"),
+                    discriminant: 0,
+                    payload: VariantPayload::Tuple(vec![TypeExpr::Primitive(PrimitiveType::F64)]),
+                    doc: None,
+                }],
+            },
+            is_error: false,
+            constructors: vec![default_ctor(vec![param_def(
+                "radius",
+                TypeExpr::Primitive(PrimitiveType::F64),
+            )])],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower(&contract);
+        let enumeration = module
+            .enums
+            .iter()
+            .find(|enumeration| enumeration.class_name == "Shape")
+            .unwrap();
+
+        assert_eq!(enumeration.constructors.len(), 1);
+        assert_eq!(enumeration.constructors[0].name, "_new");
+        assert_eq!(enumeration.constructors[0].return_type, "Shape");
+        assert_eq!(enumeration.constructors[0].params.len(), 1);
+    }
+
+    #[test]
+    fn data_enum_default_constructor_skips_static_method_collision() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(EnumDef {
+            id: EnumId::new("shape"),
+            repr: EnumRepr::Data {
+                tag_type: PrimitiveType::I32,
+                variants: vec![DataVariant {
+                    name: VariantName::new("Circle"),
+                    discriminant: 0,
+                    payload: VariantPayload::Tuple(vec![TypeExpr::Primitive(PrimitiveType::F64)]),
+                    doc: None,
+                }],
+            },
+            is_error: false,
+            constructors: vec![default_ctor(vec![param_def(
+                "radius",
+                TypeExpr::Primitive(PrimitiveType::F64),
+            )])],
+            methods: vec![static_method(
+                "new_",
+                vec![param_def("radius", TypeExpr::Primitive(PrimitiveType::F64))],
+                ReturnDef::Value(TypeExpr::Enum(EnumId::new("shape"))),
+            )],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower(&contract);
+        let enumeration = module
+            .enums
+            .iter()
+            .find(|enumeration| enumeration.class_name == "Shape")
+            .unwrap();
+
+        assert!(enumeration.constructors.is_empty());
+        assert_eq!(enumeration.methods.len(), 1);
+        assert_eq!(enumeration.methods[0].name, "_new");
+        assert_eq!(enumeration.methods[0].return_type, "Shape");
+        assert_eq!(enumeration.methods[0].params.len(), 1);
     }
 
     #[test]
