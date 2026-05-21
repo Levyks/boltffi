@@ -1,4 +1,7 @@
-use boltffi_ffi_rules::{callable::ExecutionKind, transport::ParamValueStrategy};
+use boltffi_ffi_rules::{
+    callable::ExecutionKind,
+    transport::{ParamValueStrategy, ValueReturnStrategy},
+};
 
 use crate::{
     ir::{
@@ -389,21 +392,32 @@ impl<'a> DartLowerer<'a> {
                 });
             }
             ExecutionKind::Async => {
+                let mut callback_params = vec![];
+
+                if !matches!(
+                    m.returns.return_contract().value_strategy(),
+                    ValueReturnStrategy::Void
+                ) {
+                    callback_params.extend([
+                        // result bytes ptr
+                        DartNativeType::Pointer(Box::new(DartNativeType::Primitive(
+                            PrimitiveType::U8,
+                        ))),
+                        // result bytes len
+                        DartNativeType::Primitive(PrimitiveType::USize),
+                    ])
+                }
+                callback_params.push(
+                    // This should be FFIStatus but we choose i32 as it's a valid repr
+                    DartNativeType::Primitive(PrimitiveType::I32),
+                );
+
                 params.extend([
                     DartNativeFunctionParam {
                         name: "_p$callback".to_string(),
                         native_type: DartNativeType::Function {
                             kind: DartNativeFunctionKind::Callback,
-                            params: vec![
-                                // result bytes ptr
-                                DartNativeType::Pointer(Box::new(DartNativeType::Primitive(
-                                    PrimitiveType::U8,
-                                ))),
-                                // result bytes len
-                                DartNativeType::Primitive(PrimitiveType::USize),
-                                // This should be FFIStatus but we choose i32 as it's a valid repr
-                                DartNativeType::Primitive(PrimitiveType::I32),
-                            ],
+                            params: callback_params,
                             return_ty: Box::new(DartNativeType::Void),
                         },
                     },
