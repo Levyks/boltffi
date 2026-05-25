@@ -3,6 +3,8 @@ mod lower;
 pub mod names;
 mod plan;
 mod templates;
+#[cfg(test)]
+pub mod test;
 
 pub use emit::*;
 pub use lower::DartLowerer;

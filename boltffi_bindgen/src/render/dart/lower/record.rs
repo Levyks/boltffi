@@ -149,17 +149,14 @@ impl<'a> super::DartLowerer<'a> {
 mod test {
     use crate::{
         ir::{PrimitiveType, RecordId, TypeExpr},
-        render::dart::{
-            DartEmitter,
-            lower::test::{empty_contract, lower},
-        },
+        render::dart::{DartEmitter, test},
     };
 
     use super::*;
 
     #[test]
     pub fn blittable_record_produces_dart_ffi_struct() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.catalog.insert_record(RecordDef {
             id: RecordId::new("Point"),
             is_repr_c: true,
@@ -184,7 +181,7 @@ mod test {
             deprecated: None,
         });
 
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         let output = DartEmitter::emit(&library, "test");
 
@@ -198,7 +195,7 @@ mod test {
 
     #[test]
     pub fn non_blittable_record_does_not_produce_dart_ffi_struct() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.catalog.insert_record(RecordDef {
             id: RecordId::new("Person"),
             is_repr_c: false,
@@ -223,14 +220,14 @@ mod test {
             deprecated: None,
         });
 
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         assert!(library.records[0].blittable_layout.is_none());
     }
 
     #[test]
     pub fn error_record_implements_exception() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.catalog.insert_record(RecordDef {
             id: RecordId::new("AppError"),
             is_repr_c: false,
@@ -247,7 +244,7 @@ mod test {
             deprecated: None,
         });
 
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         let output = DartEmitter::emit(&library, "test");
 

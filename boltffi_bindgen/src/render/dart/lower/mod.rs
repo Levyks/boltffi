@@ -101,27 +101,3 @@ impl<'a> DartLowerer<'a> {
         }
     }
 }
-
-#[cfg(test)]
-pub(super) mod test {
-    use crate::ir::{Lowerer, PackageInfo};
-
-    use super::*;
-
-    pub(super) fn empty_contract() -> FfiContract {
-        FfiContract {
-            package: PackageInfo {
-                name: "test".to_string(),
-                version: None,
-            },
-            functions: vec![],
-            catalog: Default::default(),
-        }
-    }
-
-    pub(super) fn lower(ffi: &FfiContract) -> DartLibrary {
-        let abi = Lowerer::new(ffi).to_abi_contract();
-
-        DartLowerer::new(ffi, &abi, "test").library()
-    }
-}

@@ -79,14 +79,14 @@ mod tests {
             CallbackId, CallbackKind, CallbackTraitDef, FunctionDef, FunctionId, ParamDef,
             ParamName, ParamPassing, PrimitiveType, ReturnDef, TypeExpr,
         },
-        render::dart::lower::test::{empty_contract, lower},
+        render::dart::test,
     };
 
     use super::*;
 
     #[test]
     pub fn native_function_primitive_in() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.functions.insert(
             0,
             FunctionDef {
@@ -104,7 +104,7 @@ mod tests {
             },
         );
 
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         assert!(matches!(
             library.native.functions[0].params[0].native_type,
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     pub fn native_function_primitive_out() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.functions.insert(
             0,
             FunctionDef {
@@ -133,7 +133,7 @@ mod tests {
                 deprecated: None,
             },
         );
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         assert!(matches!(
             library.native.functions[0].return_type,
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     pub fn native_function_void_out() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.functions.insert(
             0,
             FunctionDef {
@@ -159,7 +159,7 @@ mod tests {
                 deprecated: None,
             },
         );
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         assert!(matches!(
             library.native.functions[0].return_type,
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     pub fn native_function_closure_in() {
-        let mut ffi = empty_contract();
+        let mut ffi = test::empty_contract();
         ffi.catalog.insert_callback(CallbackTraitDef {
             id: CallbackId::new("ClosureCb"),
             methods: vec![],
@@ -196,7 +196,7 @@ mod tests {
                 deprecated: None,
             },
         );
-        let library = lower(&ffi);
+        let library = test::lower(&ffi);
 
         assert!(
             library.native.functions[0].params[0]
