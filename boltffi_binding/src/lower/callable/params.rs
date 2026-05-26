@@ -89,6 +89,7 @@ fn lower_plan<S: SurfaceLower>(
         | TypeExpr::Vec(_)
         | TypeExpr::Option(_)
         | TypeExpr::Tuple(_)
+        | TypeExpr::Result { .. }
         | TypeExpr::Map { .. } => {
             let ty = types::lower(ids, type_expr)?;
             let codec = codecs::node(idx, ids, type_expr, value.clone())?;
@@ -112,7 +113,7 @@ fn lower_plan<S: SurfaceLower>(
         TypeExpr::Callback(_) | TypeExpr::Custom(_) => Err(types::lower(ids, type_expr)
             .err()
             .unwrap_or_else(|| LowerError::unsupported_type(UnsupportedType::SelfType))),
-        TypeExpr::Result { .. } | TypeExpr::SelfType | TypeExpr::Parameter(_) => {
+        TypeExpr::SelfType | TypeExpr::Parameter(_) => {
             Err(types::lower(ids, type_expr).expect_err("unsupported value-position type expr"))
         }
     }

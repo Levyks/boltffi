@@ -18,7 +18,6 @@
 //! What it rejects with a precise error (each will become a follow-up):
 //!
 //! - `async fn` ([`UnsupportedType::AsyncCallable`]);
-//! - `Result<T, E>` returns ([`UnsupportedType::CallableResult`]);
 //! - `impl Trait` and `Box<dyn Trait>` parameters
 //!   ([`UnsupportedType::ImplTraitParameter`],
 //!   [`UnsupportedType::BoxedDynParameter`]);
@@ -60,15 +59,24 @@ impl<'src> CallableOwner<'src> {
             Self::Class(class) => boltffi_ast::TypeExpr::Class(class.id.clone()),
         }
     }
+
+    pub(super) fn owns_type_expr(self, type_expr: &boltffi_ast::TypeExpr) -> bool {
+        match (self, type_expr) {
+            (_, boltffi_ast::TypeExpr::SelfType) => true,
+            (Self::Record(record), boltffi_ast::TypeExpr::Record(id)) => id == &record.id,
+            (Self::Enum(enumeration), boltffi_ast::TypeExpr::Enum(id)) => id == &enumeration.id,
+            (Self::Class(class), boltffi_ast::TypeExpr::Class(id)) => id == &class.id,
+            _ => false,
+        }
+    }
 }
 
 /// Lowers one [`MethodDef`] into a [`CallableDecl<S>`] usable by both
 /// regular methods and initializers.
 ///
 /// The owner context resolves `Self`. The receiver follows the source.
-/// Async, fallible, and callback-shaped parameters are rejected with a
-/// specific [`UnsupportedType`] so the gap is visible to the caller
-/// (and to anyone reading the diagnostic).
+/// Async and callback-shaped parameters are rejected with a specific
+/// [`UnsupportedType`] so the gap is visible to the caller.
 pub(super) fn lower_method<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,

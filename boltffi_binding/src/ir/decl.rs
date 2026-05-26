@@ -85,12 +85,19 @@ impl<S: Surface> Decl<S> {
                 ),
             },
             Self::Enum(enumeration) => match enumeration.as_ref() {
-                EnumDecl::CStyle(c_style) => {
-                    Box::new(c_style.methods().iter().map(|method| method.callable()))
-                }
-                EnumDecl::Data(data) => {
-                    Box::new(data.methods().iter().map(|method| method.callable()))
-                }
+                EnumDecl::CStyle(c_style) => Box::new(
+                    c_style
+                        .initializers()
+                        .iter()
+                        .map(|initializer| initializer.callable())
+                        .chain(c_style.methods().iter().map(|method| method.callable())),
+                ),
+                EnumDecl::Data(data) => Box::new(
+                    data.initializers()
+                        .iter()
+                        .map(|initializer| initializer.callable())
+                        .chain(data.methods().iter().map(|method| method.callable())),
+                ),
             },
             Self::Function(function) => Box::new(std::iter::once(function.callable())),
             Self::Class(class) => Box::new(
@@ -141,15 +148,17 @@ impl<S: Surface> Decl<S> {
             Self::Enum(enumeration) => match enumeration.as_ref() {
                 EnumDecl::CStyle(c_style) => Box::new(
                     c_style
-                        .methods()
+                        .initializers()
                         .iter()
-                        .map(|method| method.target())
+                        .map(|initializer| initializer.symbol())
+                        .chain(c_style.methods().iter().map(|method| method.target()))
                         .chain(nested),
                 ),
                 EnumDecl::Data(data) => Box::new(
-                    data.methods()
+                    data.initializers()
                         .iter()
-                        .map(|method| method.target())
+                        .map(|initializer| initializer.symbol())
+                        .chain(data.methods().iter().map(|method| method.target()))
                         .chain(nested),
                 ),
             },
@@ -550,6 +559,7 @@ pub struct CStyleEnumDecl<S: Surface> {
     meta: DeclMeta,
     repr: IntegerRepr,
     variants: Vec<CStyleVariantDecl>,
+    initializers: Vec<InitializerDecl<S>>,
     methods: Vec<MethodDecl<S, NativeSymbol>>,
 }
 
@@ -560,6 +570,7 @@ impl<S: Surface> CStyleEnumDecl<S> {
         meta: DeclMeta,
         repr: IntegerRepr,
         variants: Vec<CStyleVariantDecl>,
+        initializers: Vec<InitializerDecl<S>>,
         methods: Vec<MethodDecl<S, NativeSymbol>>,
     ) -> Self {
         Self {
@@ -568,6 +579,7 @@ impl<S: Surface> CStyleEnumDecl<S> {
             meta,
             repr,
             variants,
+            initializers,
             methods,
         }
     }
@@ -595,6 +607,11 @@ impl<S: Surface> CStyleEnumDecl<S> {
     /// Returns the variants in source order.
     pub fn variants(&self) -> &[CStyleVariantDecl] {
         &self.variants
+    }
+
+    /// Returns the initializers.
+    pub fn initializers(&self) -> &[InitializerDecl<S>] {
+        &self.initializers
     }
 
     /// Returns the methods.
@@ -647,6 +664,7 @@ pub struct DataEnumDecl<S: Surface> {
     name: CanonicalName,
     meta: DeclMeta,
     variants: Vec<DataVariantDecl>,
+    initializers: Vec<InitializerDecl<S>>,
     methods: Vec<MethodDecl<S, NativeSymbol>>,
     codec: CodecPlan,
 }
@@ -657,6 +675,7 @@ impl<S: Surface> DataEnumDecl<S> {
         name: CanonicalName,
         meta: DeclMeta,
         variants: Vec<DataVariantDecl>,
+        initializers: Vec<InitializerDecl<S>>,
         methods: Vec<MethodDecl<S, NativeSymbol>>,
         codec: CodecPlan,
     ) -> Self {
@@ -665,6 +684,7 @@ impl<S: Surface> DataEnumDecl<S> {
             name,
             meta,
             variants,
+            initializers,
             methods,
             codec,
         }
@@ -688,6 +708,11 @@ impl<S: Surface> DataEnumDecl<S> {
     /// Returns the variants in source order.
     pub fn variants(&self) -> &[DataVariantDecl] {
         &self.variants
+    }
+
+    /// Returns the initializers.
+    pub fn initializers(&self) -> &[InitializerDecl<S>] {
+        &self.initializers
     }
 
     /// Returns the methods.

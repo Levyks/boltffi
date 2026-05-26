@@ -4,8 +4,8 @@ use boltffi_ast::{
 
 use crate::{
     CStyleEnumDecl, CStyleVariantDecl, CanonicalName, DataEnumDecl, DataVariantDecl,
-    DataVariantPayload, EncodedFieldDecl, EnumDecl, FieldKey, IntegerRepr, IntegerValue,
-    MethodDecl, NativeSymbol, ValueRef, VariantTag,
+    DataVariantPayload, EncodedFieldDecl, EnumDecl, FieldKey, InitializerDecl, IntegerRepr,
+    IntegerValue, MethodDecl, NativeSymbol, ValueRef, VariantTag,
 };
 
 use super::{
@@ -52,11 +52,12 @@ fn lower_one<S: SurfaceLower>(
     allocator: &mut SymbolAllocator,
     enumeration: &SourceEnum,
 ) -> Result<EnumDecl<S>, LowerError> {
+    let initializers = methods::lower_enum_initializers::<S>(idx, ids, allocator, enumeration)?;
     let enum_methods = methods::lower_enum_methods::<S>(idx, ids, allocator, enumeration)?;
     if is_c_style(enumeration) {
-        lower_c_style(ids, enumeration, enum_methods).map(EnumDecl::CStyle)
+        lower_c_style(ids, enumeration, initializers, enum_methods).map(EnumDecl::CStyle)
     } else {
-        lower_data(idx, ids, enumeration, enum_methods)
+        lower_data(idx, ids, enumeration, initializers, enum_methods)
             .map(|enumeration| EnumDecl::Data(Box::new(enumeration)))
     }
 }
@@ -64,6 +65,7 @@ fn lower_one<S: SurfaceLower>(
 fn lower_c_style<S: SurfaceLower>(
     ids: &DeclarationIds,
     enumeration: &SourceEnum,
+    initializers: Vec<InitializerDecl<S>>,
     enum_methods: Vec<MethodDecl<S, NativeSymbol>>,
 ) -> Result<CStyleEnumDecl<S>, LowerError> {
     Ok(CStyleEnumDecl::new(
@@ -82,6 +84,7 @@ fn lower_c_style<S: SurfaceLower>(
                 ))
             })
             .collect::<Result<Vec<_>, LowerError>>()?,
+        initializers,
         enum_methods,
     ))
 }
@@ -90,6 +93,7 @@ fn lower_data<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     enumeration: &SourceEnum,
+    initializers: Vec<InitializerDecl<S>>,
     enum_methods: Vec<MethodDecl<S, NativeSymbol>>,
 ) -> Result<DataEnumDecl<S>, LowerError> {
     Ok(DataEnumDecl::new(
@@ -102,6 +106,7 @@ fn lower_data<S: SurfaceLower>(
             .enumerate()
             .map(|(index, variant)| lower_variant(idx, ids, index, variant))
             .collect::<Result<Vec<_>, LowerError>>()?,
+        initializers,
         enum_methods,
         codecs::plan(
             idx,
@@ -205,10 +210,10 @@ mod tests {
     use crate::{
         BindingErrorKind, Bindings, CStyleEnumDecl, CanonicalName, CodecNode, DataEnumDecl,
         DataVariantPayload, Decl, DefaultValue, EncodedFieldDecl, EnumDecl, EnumId, ErrorDecl,
-        ExecutionDecl, FieldKey, HandleTarget, IntegerRepr, IntegerValue, LiftPlan, LowerError,
-        LowerErrorKind, LowerPlan, MethodDecl, Native, NativeSymbol, Primitive as BindingPrimitive,
-        ReadPlan, Receive, RecordId, ReturnTypeRef, SurfaceLower, TypeRef, UnsupportedType,
-        ValueRef, Wasm32, native, wasm32,
+        ExecutionDecl, FieldKey, HandleTarget, InitializerDecl, IntegerRepr, IntegerValue,
+        LiftPlan, LowerError, LowerErrorKind, LowerPlan, MethodDecl, Native, NativeSymbol,
+        Primitive as BindingPrimitive, ReadPlan, Receive, RecordId, ReturnTypeRef, SurfaceLower,
+        TypeRef, UnsupportedType, ValueRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -413,10 +418,40 @@ mod tests {
         }
     }
 
+    fn enum_initializers_at<S: SurfaceLower>(
+        bindings: &Bindings<S>,
+        index: usize,
+    ) -> &[InitializerDecl<S>] {
+        match enum_decl_at(bindings, index) {
+            EnumDecl::CStyle(enumeration) => enumeration.initializers(),
+            EnumDecl::Data(enumeration) => enumeration.initializers(),
+        }
+    }
+
     fn only_method<S: SurfaceLower>(bindings: &Bindings<S>) -> &MethodDecl<S, NativeSymbol> {
         let methods = enum_methods_at(bindings, 0);
         assert_eq!(methods.len(), 1);
         &methods[0]
+    }
+
+    fn only_initializer<S: SurfaceLower>(bindings: &Bindings<S>) -> &InitializerDecl<S> {
+        let initializers = enum_initializers_at(bindings, 0);
+        assert_eq!(initializers.len(), 1);
+        &initializers[0]
+    }
+
+    fn assert_encoded_string_error(error: &ErrorDecl<Native>) {
+        match error {
+            ErrorDecl::EncodedReturn {
+                ty,
+                read,
+                shape: native::BufferShape::Buffer,
+            } => {
+                assert_eq!(ty, &TypeRef::String);
+                assert_eq!(read.root(), &CodecNode::String);
+            }
+            other => panic!("expected encoded string error, got {other:?}"),
+        }
     }
 
     fn tuple_fields(payload: &DataVariantPayload) -> &[EncodedFieldDecl] {
@@ -695,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_static_method_returning_self_is_a_method_not_an_initializer() {
+    fn enum_static_method_returning_self_is_an_initializer() {
         let bindings = lower_enum::<Native>(enum_with_methods(
             direction_enum(),
             vec![method_with(
@@ -705,13 +740,74 @@ mod tests {
                 ReturnDef::Value(TypeExpr::SelfType),
             )],
         ));
-        let method = only_method(&bindings);
+        let initializer = only_initializer(&bindings);
 
-        assert_eq!(method.callable().receiver(), None);
+        assert!(enum_methods_at(&bindings, 0).is_empty());
+        assert_eq!(initializer.callable().receiver(), None);
         assert_eq!(
-            method.target().name().as_str(),
-            "boltffi_method_enum_demo_direction_default_direction"
+            initializer.symbol().name().as_str(),
+            "boltffi_init_enum_demo_direction_default_direction"
         );
+        assert_eq!(
+            initializer.callable().returns().lift(),
+            &LiftPlan::Direct {
+                ty: TypeRef::Enum(EnumId::from_raw(0)),
+            }
+        );
+    }
+
+    #[test]
+    fn enum_result_self_initializer_uses_success_out_and_encoded_error() {
+        let bindings = lower_enum::<Native>(enum_with_methods(
+            direction_enum(),
+            vec![method_with(
+                "try_default",
+                Receiver::None,
+                Vec::new(),
+                ReturnDef::Value(TypeExpr::Result {
+                    ok: Box::new(TypeExpr::SelfType),
+                    err: Box::new(TypeExpr::String),
+                }),
+            )],
+        ));
+        let initializer = only_initializer(&bindings);
+
+        assert!(enum_methods_at(&bindings, 0).is_empty());
+        assert_eq!(
+            initializer.callable().returns().lift(),
+            &LiftPlan::DirectOut {
+                ty: TypeRef::Enum(EnumId::from_raw(0)),
+            }
+        );
+        assert_encoded_string_error(initializer.callable().error());
+    }
+
+    #[test]
+    fn data_enum_result_self_initializer_uses_encoded_success_out_and_encoded_error() {
+        let bindings = lower_enum::<Native>(enum_with_methods(
+            event_enum(),
+            vec![method_with(
+                "try_event",
+                Receiver::None,
+                Vec::new(),
+                ReturnDef::Value(TypeExpr::Result {
+                    ok: Box::new(TypeExpr::SelfType),
+                    err: Box::new(TypeExpr::String),
+                }),
+            )],
+        ));
+        let initializer = only_initializer(&bindings);
+
+        assert!(enum_methods_at(&bindings, 0).is_empty());
+        assert_eq!(
+            initializer.callable().returns().lift(),
+            &LiftPlan::EncodedOut {
+                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                read: ReadPlan::new(CodecNode::DataEnum(EnumId::from_raw(0))),
+                shape: native::BufferShape::Buffer,
+            }
+        );
+        assert_encoded_string_error(initializer.callable().error());
     }
 
     #[test]
@@ -787,8 +883,8 @@ mod tests {
     }
 
     #[test]
-    fn enum_method_rejects_result_return() {
-        let error = lower_enum_result::<Native>(enum_with_methods(
+    fn enum_method_returning_result_uses_success_out_and_encoded_error() {
+        let bindings = lower_enum::<Native>(enum_with_methods(
             direction_enum(),
             vec![method_with(
                 "try_value",
@@ -799,13 +895,16 @@ mod tests {
                     err: Box::new(TypeExpr::String),
                 }),
             )],
-        ))
-        .expect_err("Result return should reject");
+        ));
+        let method = only_method(&bindings);
 
-        match error.kind() {
-            LowerErrorKind::UnsupportedType(UnsupportedType::CallableResult) => {}
-            other => panic!("expected CallableResult, got {other:?}"),
-        }
+        assert_eq!(
+            method.callable().returns().lift(),
+            &LiftPlan::DirectOut {
+                ty: TypeRef::Primitive(BindingPrimitive::I32),
+            }
+        );
+        assert_encoded_string_error(method.callable().error());
     }
 
     #[test]

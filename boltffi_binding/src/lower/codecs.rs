@@ -67,15 +67,14 @@ pub(super) fn node(
                 })
                 .collect::<Result<Vec<_>, LowerError>>()?,
         ),
+        TypeExpr::Result { ok, err } => CodecNode::Result {
+            ok: Box::new(node(idx, ids, ok, ValueRef::self_value())?),
+            err: Box::new(node(idx, ids, err, ValueRef::self_value())?),
+        },
         TypeExpr::Map { key, value: item } => CodecNode::Map {
             key: Box::new(node(idx, ids, key, ValueRef::self_value())?),
             value: Box::new(node(idx, ids, item, ValueRef::self_value())?),
         },
-        TypeExpr::Result { .. } => {
-            return Err(LowerError::unsupported_type(
-                super::error::UnsupportedType::NestedResult,
-            ));
-        }
         TypeExpr::SelfType => {
             return Err(LowerError::unsupported_type(
                 super::error::UnsupportedType::SelfType,

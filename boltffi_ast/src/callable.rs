@@ -95,18 +95,20 @@ pub enum ParameterPassing {
 
 /// The outermost return type of a callable.
 ///
-/// Fallible callables get their own variant. Everything else the callable can
-/// return, including `Option<T>`, `(A, B)`, `Vec<T>`, records, enums, classes,
-/// callbacks, and custom types, is represented as `Value(TypeExpr)`.
+/// Every non-void return is represented as `Value(TypeExpr)`, including
+/// `Result<T, E>`. Fallibility is part of the type expression so the lowering
+/// layer can decide how the success value and error channel cross the boundary
+/// from one source shape.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum ReturnDef {
     /// The callable returns `()`.
     Void,
-    /// The callable returns one non-fallible value.
+    /// The callable returns one value.
     ///
-    /// This includes tuples and options. For example, `fn pair() -> (u32,
-    /// String)` is `Value(TypeExpr::Tuple(_))`, and `fn maybe() -> Option<T>`
-    /// is `Value(TypeExpr::Option(_))`.
+    /// This includes tuples, options, and results. For example,
+    /// `fn pair() -> (u32, String)` is `Value(TypeExpr::Tuple(_))`, and
+    /// `fn try_open() -> Result<File, Error>` is
+    /// `Value(TypeExpr::Result { .. })`.
     Value(TypeExpr),
 }
 

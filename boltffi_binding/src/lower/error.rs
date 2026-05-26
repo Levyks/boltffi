@@ -225,8 +225,6 @@ pub enum UnsupportedType {
     RecordField,
     /// An enum representation did not resolve to an integer carrier.
     EnumRepr,
-    /// A nested `Result<T, E>` appeared outside the callable return position.
-    NestedResult,
     /// `Self` appeared where the lowering pass did not have an owning declaration.
     SelfType,
     /// A generic type parameter appeared in exported source.
@@ -237,8 +235,6 @@ pub enum UnsupportedType {
     DefaultValue,
     /// An `async` callable cannot be lowered yet.
     AsyncCallable,
-    /// A callable returned `Result<T, E>`; error lowering is not implemented.
-    CallableResult,
     /// An `impl Trait` parameter has no IR slice yet.
     ImplTraitParameter,
     /// A `Box<dyn Trait>` parameter has no IR slice yet.
@@ -252,13 +248,11 @@ impl fmt::Display for UnsupportedType {
         formatter.write_str(match self {
             Self::RecordField => "record field",
             Self::EnumRepr => "enum repr",
-            Self::NestedResult => "nested Result",
             Self::SelfType => "Self",
             Self::TypeParameter => "type parameter",
             Self::FallibleClosureReturn => "fallible closure return",
             Self::DefaultValue => "default value",
             Self::AsyncCallable => "async callable",
-            Self::CallableResult => "callable Result return",
             Self::ImplTraitParameter => "impl Trait parameter",
             Self::BoxedDynParameter => "Box<dyn Trait> parameter",
             Self::OwnedClassReceiver => "owned class receiver",

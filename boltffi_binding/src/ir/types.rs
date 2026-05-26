@@ -7,7 +7,7 @@ use crate::{CallbackId, ClassId, CustomTypeId, EnumId, Primitive, RecordId, Stre
 /// Higher-level than [`Primitive`]: covers the heap-managed primitives
 /// the contract treats specially (`String`, `Bytes`), references to
 /// user-declared types (`Record`, `Enum`, `Class`, `Callback`, `Custom`),
-/// and the container shapes (`Optional`, `Sequence`, `Tuple`, `Map`).
+/// and the container shapes (`Optional`, `Sequence`, `Tuple`, `Result`, `Map`).
 ///
 /// Source spelling is gone by the time a value reaches `TypeRef`. A Rust
 /// `Option<Vec<UserProfile>>` is represented as
@@ -41,6 +41,13 @@ pub enum TypeRef {
     Sequence(Box<TypeRef>),
     /// Tuple value.
     Tuple(Vec<TypeRef>),
+    /// Fallible value.
+    Result {
+        /// Success type.
+        ok: Box<TypeRef>,
+        /// Error type.
+        err: Box<TypeRef>,
+    },
     /// Map value.
     Map {
         /// Key type.

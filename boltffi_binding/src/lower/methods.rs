@@ -1,15 +1,11 @@
 //! Method and initializer lowering for declaration-owned callables.
 //!
-//! Records and classes can promote static `Self`-returning methods to
+//! Records, enums, and classes can promote static `Self`-returning methods to
 //! [`InitializerDecl<S>`]. Records, enums, and classes keep every other
 //! method as a [`MethodDecl<S, NativeSymbol>`]. The callable body is
 //! lowered by [`super::callable`]; this module owns the initializer
 //! discriminator, target symbol allocation, and owner-specific constructed
 //! type recorded on an initializer.
-//!
-//! `Result<Self, E>` initializers are not recognised yet. They become
-//! initializers when fallible return lowering lands, so this pass never
-//! produces an initializer whose callable shape cannot be represented.
 
 use boltffi_ast::{ClassDef, EnumDef, MethodDef, Receiver, RecordDef, ReturnDef, TypeExpr};
 
@@ -64,7 +60,7 @@ pub(super) fn lower_record_methods<S: SurfaceLower>(
     record
         .methods
         .iter()
-        .filter(|method| !is_initializer(method))
+        .filter(|method| !is_initializer(owner, method))
         .enumerate()
         .map(|(index, method)| {
             lower_method::<S>(
@@ -79,10 +75,26 @@ pub(super) fn lower_record_methods<S: SurfaceLower>(
         .collect()
 }
 
-/// Lowers every method on `enumeration`.
-///
-/// Enums do not expose initializer declarations in this IR slice, so every
-/// attached method remains a method.
+/// Lowers every initializer-shaped method on `enumeration`.
+pub(super) fn lower_enum_initializers<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    enumeration: &EnumDef,
+) -> Result<Vec<InitializerDecl<S>>, LowerError> {
+    let owner = callable::CallableOwner::Enum(enumeration);
+    let enum_id = ids.enumeration(&enumeration.id)?;
+    lower_initializers(
+        idx,
+        ids,
+        allocator,
+        owner,
+        &enumeration.methods,
+        TypeRef::Enum(enum_id),
+    )
+}
+
+/// Lowers every non-initializer method on `enumeration`.
 pub(super) fn lower_enum_methods<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
@@ -93,6 +105,7 @@ pub(super) fn lower_enum_methods<S: SurfaceLower>(
     enumeration
         .methods
         .iter()
+        .filter(|method| !is_initializer(owner, method))
         .enumerate()
         .map(|(index, method)| {
             lower_method::<S>(
@@ -144,7 +157,7 @@ pub(super) fn lower_class_methods<S: SurfaceLower>(
     class
         .methods
         .iter()
-        .filter(|method| !is_initializer(method))
+        .filter(|method| !is_initializer(owner, method))
         .enumerate()
         .map(|(index, method)| {
             reject_owned_class_receiver(method)?;
@@ -160,9 +173,19 @@ pub(super) fn lower_class_methods<S: SurfaceLower>(
         .collect()
 }
 
-fn is_initializer(method: &MethodDef) -> bool {
+fn is_initializer(owner: callable::CallableOwner<'_>, method: &MethodDef) -> bool {
     matches!(method.receiver, Receiver::None)
-        && matches!(method.returns, ReturnDef::Value(TypeExpr::SelfType))
+        && match &method.returns {
+            ReturnDef::Value(type_expr) => returns_owner(owner, type_expr),
+            ReturnDef::Void => false,
+        }
+}
+
+fn returns_owner(owner: callable::CallableOwner<'_>, type_expr: &TypeExpr) -> bool {
+    match type_expr {
+        TypeExpr::Result { ok, .. } => owner.owns_type_expr(ok),
+        other => owner.owns_type_expr(other),
+    }
 }
 
 fn lower_initializers<S: SurfaceLower>(
@@ -175,7 +198,7 @@ fn lower_initializers<S: SurfaceLower>(
 ) -> Result<Vec<InitializerDecl<S>>, LowerError> {
     methods
         .iter()
-        .filter(|method| is_initializer(method))
+        .filter(|method| is_initializer(owner, method))
         .enumerate()
         .map(|(index, method)| {
             lower_initializer(

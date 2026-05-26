@@ -31,13 +31,14 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
                 .map(|element| lower(ids, element))
                 .collect::<Result<Vec<_>, LowerError>>()?,
         ),
+        TypeExpr::Result { ok, err } => TypeRef::Result {
+            ok: Box::new(lower(ids, ok)?),
+            err: Box::new(lower(ids, err)?),
+        },
         TypeExpr::Map { key, value } => TypeRef::Map {
             key: Box::new(lower(ids, key)?),
             value: Box::new(lower(ids, value)?),
         },
-        TypeExpr::Result { .. } => {
-            return Err(LowerError::unsupported_type(UnsupportedType::NestedResult));
-        }
         TypeExpr::SelfType => {
             return Err(LowerError::unsupported_type(UnsupportedType::SelfType));
         }

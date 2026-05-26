@@ -136,6 +136,13 @@ pub enum CodecNode {
     },
     /// Fixed-size ordered group of values.
     Tuple(Vec<CodecNode>),
+    /// Fallible value with success and error payload codecs.
+    Result {
+        /// Codec used for the success payload.
+        ok: Box<CodecNode>,
+        /// Codec used for the error payload.
+        err: Box<CodecNode>,
+    },
     /// Key-value collection.
     Map {
         /// Codec used for each key.

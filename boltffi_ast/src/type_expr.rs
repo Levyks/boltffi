@@ -4,9 +4,9 @@ use crate::{CallbackId, ClassId, CustomTypeId, EnumId, Primitive, RecordId, Retu
 
 /// A type expression in the exported Rust surface.
 ///
-/// This is the shape you get after scanning a Rust type from a field,
-/// parameter, or non-fallible return. Known exported names have been turned into
-/// IDs, and ordinary Rust containers remain as a tree. For example,
+/// This is the shape produced after scanning a Rust type from a field,
+/// parameter, or return. Known exported names have been turned into IDs, and
+/// ordinary Rust containers remain as a tree. For example,
 /// `Option<Vec<Point>>` becomes `Option(Vec(Record(point_id)))`, `(u32,
 /// String)` becomes `Tuple([Primitive(U32), String])`, inline closure
 /// signatures become `Closure`, and `Self` stays explicit when it appears
@@ -33,12 +33,11 @@ pub enum TypeExpr {
     Vec(Box<TypeExpr>),
     /// An `Option<T>` source type.
     Option(Box<TypeExpr>),
-    /// A `Result<T, E>` source type inside a larger type expression.
+    /// A `Result<T, E>` source type.
     ///
-    /// The outermost return type of a callable uses [`ReturnDef::Result`](crate::ReturnDef)
-    /// instead, so callable fallibility is visible without inspecting this
-    /// generic tree. This variant is for places where `Result` is just another
-    /// type expression.
+    /// In return position, lowering treats this as a success type plus an error
+    /// channel. In field and parameter position, it remains an ordinary value
+    /// type.
     Result {
         /// Success type written as the first `Result` argument.
         ok: Box<TypeExpr>,
@@ -50,7 +49,7 @@ pub enum TypeExpr {
     /// Tuples are ordinary value types in the AST. A function returning
     /// `(u32, String)` is represented as `ReturnDef::Value(TypeExpr::Tuple(_))`,
     /// while a function returning `Result<(u32, String), Error>` is represented
-    /// as `ReturnDef::Result { ok: TypeExpr::Tuple(_), err: ... }`.
+    /// as `ReturnDef::Value(TypeExpr::Result { ok: TypeExpr::Tuple(_), err: ... })`.
     Tuple(Vec<TypeExpr>),
     /// A map-like source type.
     Map {
