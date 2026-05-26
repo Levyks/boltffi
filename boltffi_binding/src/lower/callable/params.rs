@@ -115,12 +115,19 @@ fn lower_plan<S: SurfaceLower>(
             id,
             form: _,
             presence,
-        } => Ok(LowerPlan::Handle {
-            target: HandleTarget::Callback(ids.callback(id)?),
-            carrier: S::callback_handle_carrier(),
-            receive: Receive::ByValue,
-            presence: lower_presence(*presence),
-        }),
+        } => {
+            if !matches!(receive, Receive::ByValue) {
+                return Err(LowerError::unsupported_type(
+                    UnsupportedType::BorrowedCallbackParameter,
+                ));
+            }
+            Ok(LowerPlan::Handle {
+                target: HandleTarget::Callback(ids.callback(id)?),
+                carrier: S::callback_handle_carrier(),
+                receive,
+                presence: lower_presence(*presence),
+            })
+        }
         TypeExpr::Custom(_) => Err(types::lower(ids, type_expr)
             .err()
             .unwrap_or_else(|| LowerError::unsupported_type(UnsupportedType::SelfType))),

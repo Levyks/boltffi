@@ -53,6 +53,10 @@ impl LowerError {
         Self::new(LowerErrorKind::UnknownCustom(id.to_string()))
     }
 
+    pub(crate) fn unknown_function(id: impl fmt::Display) -> Self {
+        Self::new(LowerErrorKind::UnknownFunction(id.to_string()))
+    }
+
     pub(crate) fn invalid_alignment(bytes: u64) -> Self {
         Self::new(LowerErrorKind::InvalidAlignment(bytes))
     }
@@ -106,6 +110,9 @@ impl fmt::Display for LowerError {
             LowerErrorKind::UnknownCustom(custom) => {
                 write!(formatter, "unknown custom type id `{custom}`")
             }
+            LowerErrorKind::UnknownFunction(function) => {
+                write!(formatter, "unknown function id `{function}`")
+            }
             LowerErrorKind::InvalidAlignment(alignment) => {
                 write!(formatter, "invalid record alignment {alignment}")
             }
@@ -157,6 +164,8 @@ pub enum LowerErrorKind {
     UnknownCallback(String),
     /// A custom type reference could not be resolved inside the source contract.
     UnknownCustom(String),
+    /// A free function reference could not be resolved inside the source contract.
+    UnknownFunction(String),
     /// A computed record alignment was not a valid ABI alignment.
     InvalidAlignment(u64),
     /// An enum discriminant sequence overflowed `i128`.
@@ -248,6 +257,8 @@ pub enum UnsupportedType {
     /// A callback method declared a static or owned receiver, neither of
     /// which the callback handle protocol can dispatch.
     InvalidCallbackReceiver,
+    /// A callback handle parameter was borrowed instead of passed by value.
+    BorrowedCallbackParameter,
     /// An owned class receiver has no handle-transfer protocol yet.
     OwnedClassReceiver,
 }
@@ -266,6 +277,7 @@ impl fmt::Display for UnsupportedType {
             Self::SelfInCallbackTrait => "Self in callback trait method",
             Self::CallbackMethodSlotCollision => "callback method name collides with vtable slot",
             Self::InvalidCallbackReceiver => "callback method receiver",
+            Self::BorrowedCallbackParameter => "borrowed callback parameter",
             Self::OwnedClassReceiver => "owned class receiver",
         })
     }
