@@ -117,8 +117,9 @@ impl CallbackProtocolBuilder for Native {
         let methods = methods::lower_callback_methods::<Self, VTableSlot, _>(
             idx,
             ids,
+            allocator,
             callback,
-            |method, slot| {
+            |_allocator, method, slot| {
                 let target =
                     VTableSlot::parse(slot.as_str().to_owned()).map_err(LowerError::from)?;
                 Ok(methods::CallbackMethodSurface::new(
@@ -163,8 +164,9 @@ impl CallbackProtocolBuilder for Wasm32 {
         let methods = methods::lower_callback_methods::<Self, ImportSymbol, _>(
             idx,
             ids,
+            allocator,
             callback,
-            |method, slot| {
+            |allocator, method, slot| {
                 wasm_callback_method_surface(allocator, &module, callback_id, method, slot)
             },
         )?;
@@ -491,6 +493,100 @@ mod tests {
             }
             other => panic!("expected encoded string callback param, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn callback_method_with_closure_param_lowers_to_outgoing_closure() {
+        use boltffi_ast::{ClosureKind, ClosureType, ReturnDef};
+
+        let mut callback = listener_callback();
+        let mut handle = method("on_event", Receiver::Shared);
+        handle.parameters = vec![value_param(
+            "callback",
+            TypeExpr::closure(ClosureType::new(
+                ClosureKind::Fn,
+                vec![TypeExpr::Primitive(Primitive::U32)],
+                ReturnDef::Void,
+            )),
+        )];
+        callback.methods.push(handle);
+
+        let bindings = lower_callback::<Native>(callback);
+        let methods = first_callback(&bindings).protocol().vtable().methods();
+        let params = methods[0].callable().params();
+
+        assert_eq!(params.len(), 1);
+        let outgoing = params[0]
+            .as_closure()
+            .expect("expected outgoing closure param");
+        assert_eq!(outgoing.form(), crate::ClosureForm::Fn);
+        assert_eq!(outgoing.invoke().params().len(), 1);
+        match outgoing.invoke().params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(crate::Primitive::U32),
+                receive: Receive::ByValue,
+            } => {}
+            other => panic!("expected u32 direct param on invoke, got {other:?}"),
+        }
+        assert!(matches!(
+            outgoing.invoke().returns().plan(),
+            ReturnPlan::Void
+        ));
+    }
+
+    #[test]
+    fn wasm32_callback_method_with_closure_param_lowers_to_outgoing_closure() {
+        use boltffi_ast::{ClosureKind, ClosureType, ReturnDef};
+
+        let mut callback = listener_callback();
+        let mut handle = method("on_event", Receiver::Shared);
+        handle.parameters = vec![value_param(
+            "callback",
+            TypeExpr::closure(ClosureType::new(
+                ClosureKind::Fn,
+                vec![TypeExpr::Primitive(Primitive::U32)],
+                ReturnDef::Void,
+            )),
+        )];
+        callback.methods.push(handle);
+
+        let bindings = lower_callback::<Wasm32>(callback);
+        let methods = first_callback(&bindings).protocol().methods();
+        let params = methods[0].callable().params();
+
+        assert_eq!(params.len(), 1);
+        let outgoing = params[0]
+            .as_closure()
+            .expect("expected outgoing closure param");
+        assert_eq!(outgoing.form(), crate::ClosureForm::Fn);
+        assert_eq!(
+            outgoing.registration().shape().call().name().as_str(),
+            "boltffi_closure_1____closure__u32_call"
+        );
+        assert_eq!(
+            outgoing.registration().shape().free().name().as_str(),
+            "boltffi_closure_1____closure__u32_free"
+        );
+        let symbol_names = bindings
+            .symbols()
+            .symbols()
+            .iter()
+            .map(|symbol| symbol.name().as_str())
+            .collect::<Vec<_>>();
+        assert!(symbol_names.contains(&"boltffi_closure_1____closure__u32_call"));
+        assert!(symbol_names.contains(&"boltffi_closure_1____closure__u32_free"));
+
+        let invoke = outgoing.invoke();
+        assert_eq!(invoke.params().len(), 1);
+        match invoke.params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(crate::Primitive::U32),
+                receive: Receive::ByValue,
+            } => {}
+            other => panic!("expected u32 direct param on wasm closure invoke, got {other:?}"),
+        }
+        assert!(matches!(invoke.returns().plan(), ReturnPlan::Void));
+        assert!(matches!(invoke.error(), ErrorDecl::None(_)));
     }
 
     #[test]

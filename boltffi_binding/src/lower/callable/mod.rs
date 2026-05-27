@@ -63,8 +63,8 @@ use boltffi_ast::{
 };
 
 use crate::{
-    ClosureForm, ClosureParam, ClosureRegistration, ExecutionDecl, ExportedCallable,
-    ImportedCallable, IntoRust, OutOfRust, Receive,
+    ClosureForm, ClosureParam, ClosureRegistration, Direction, ExecutionDecl, ExportedCallable,
+    ForeignBody, ImportedCallable, IntoRust, OutOfRust, Receive, RustBody,
 };
 
 use super::{
@@ -150,7 +150,7 @@ pub(super) fn lower_exported_method<S: SurfaceLower>(
     start_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters = params::lower::<S, IntoRust>(idx, ids, owner, &method.parameters)?;
+    let parameters = params::lower::<S, IntoRust>(idx, ids, allocator, owner, &method.parameters)?;
     let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &method.returns)?;
     let execution = lower_execution::<S>(allocator, method.execution, start_symbol_name)?;
 
@@ -166,18 +166,16 @@ pub(super) fn lower_exported_method<S: SurfaceLower>(
 /// methods: Rust pushes arguments out and reads the return back in.
 /// Their dispatch target is not a [`NativeSymbol`](crate::NativeSymbol)
 /// but a per-surface slot ([`crate::VTableSlot`] on native, an
-/// [`crate::ImportSymbol`] on wasm32), so no allocator threads through
-/// here.
-///
 pub(super) fn lower_imported_method<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     owner: CallableOwner<'_>,
     method: &MethodDef,
     execution: ExecutionDecl<S>,
 ) -> Result<ImportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters = params::lower::<S, OutOfRust>(idx, ids, owner, &method.parameters)?;
+    let parameters = params::lower::<S, OutOfRust>(idx, ids, allocator, owner, &method.parameters)?;
     let (returns, error) = returns::lower::<S, IntoRust>(idx, ids, owner, &method.returns)?;
 
     Ok(ImportedCallable::<S>::new(
@@ -185,25 +183,107 @@ pub(super) fn lower_imported_method<S: SurfaceLower>(
     )?)
 }
 
-/// Lowers an inline [`ClosureType`] into a [`ClosureParam<S>`].
+/// Lowers an inline [`ClosureType`] crossing into Rust as a parameter.
+///
+/// The closure was created on the foreign side, so its body lives
+/// there. Rust holds the handle and invokes it. The invoke contract is
+/// an [`ImportedCallable<S>`] (`K = ForeignBody`): args flow
+/// [`OutOfRust`] at invocation, returns and error flow back as
+/// [`IntoRust`]. The registration uses [`Receive::ByValue`] and the
+/// surface's closure-registration shape.
 ///
 /// Closure parameters have no source names, so the lowering pass
 /// synthesises `arg0`, `arg1`, ... and reuses the regular parameter
-/// machinery against them. The invoke contract is built as an
-/// [`ImportedCallable<S>`] because the closure body lives on the
-/// foreign side: args flow [`OutOfRust`](crate::OutOfRust) at
-/// invocation, and the return and error flow back as
-/// [`IntoRust`](crate::IntoRust). The registration uses
-/// [`Receive::ByValue`] and the surface's closure-registration shape.
-///
-/// Closure signatures have no execution axis in the AST, so the invoke
-/// is always synchronous. `Self` references reach the function-scoped
-/// substitution path and are rejected there.
+/// machinery against them. Closure signatures have no execution axis in
+/// the AST, so the invoke is always synchronous. `Self` references
+/// reach the function-scoped substitution path and are rejected there.
 pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     closure: &ClosureType,
-) -> Result<ClosureParam<S>, LowerError> {
+) -> Result<ClosureParam<S, IntoRust>, LowerError> {
+    let (parameters, returns, error) =
+        lower_closure_invoke_parts::<S, ForeignBody>(idx, ids, allocator, closure)?;
+    let invoke: ImportedCallable<S> = ImportedCallable::<S>::new(
+        None,
+        parameters,
+        returns,
+        error,
+        ExecutionDecl::synchronous(),
+    )?;
+
+    let registration = ClosureRegistration::<S, IntoRust>::new(
+        S::incoming_closure_registration(closure)?,
+        Receive::ByValue,
+    );
+
+    Ok(ClosureParam::new(
+        ClosureForm::from(closure.kind),
+        registration,
+        invoke,
+    ))
+}
+
+/// Lowers an inline [`ClosureType`] crossing out of Rust as a callback
+/// parameter.
+///
+/// The closure was created on the Rust side and crosses out so foreign
+/// code can invoke it from a foreign-body callable (callback method).
+/// The body lives on the Rust side, so the invoke contract is an
+/// [`ExportedCallable<S>`] (`K = RustBody`): args flow [`IntoRust`] at
+/// invocation, returns and error flow back as [`OutOfRust`]. The
+/// registration carries the surface's closure-registration shape with a
+/// `()` receive slot.
+pub(super) fn lower_closure_param_out_of_rust<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    closure: &ClosureType,
+) -> Result<ClosureParam<S, OutOfRust>, LowerError> {
+    let (parameters, returns, error) =
+        lower_closure_invoke_parts::<S, RustBody>(idx, ids, allocator, closure)?;
+    let invoke: ExportedCallable<S> = ExportedCallable::<S>::new(
+        None,
+        parameters,
+        returns,
+        error,
+        ExecutionDecl::synchronous(),
+    )?;
+
+    let shape = S::outgoing_closure_registration(allocator, closure)?;
+    #[allow(clippy::let_unit_value)]
+    let receive = <OutOfRust as Direction>::receive_from(Receive::ByValue);
+    let registration = ClosureRegistration::<S, OutOfRust>::new(shape, receive);
+
+    Ok(ClosureParam::new(
+        ClosureForm::from(closure.kind),
+        registration,
+        invoke,
+    ))
+}
+
+type ClosureInvokeParts<S, K> = (
+    Vec<crate::ParamDecl<S, <K as crate::CallableScope>::ParamDirection>>,
+    crate::ReturnDecl<S, <K as crate::CallableScope>::ReturnDirection>,
+    crate::ErrorDecl<S, <K as crate::CallableScope>::ReturnDirection>,
+);
+
+/// Shared closure-invoke argument lowering used by both directions.
+///
+/// Synthesises positional names for the parameter list and routes both
+/// the parameters and the return through the scope `K`'s directions, so
+/// the invoke's params and returns flow correctly for the closure's
+/// body location.
+fn lower_closure_invoke_parts<S: SurfaceLower, K: crate::CallableScope>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    closure: &ClosureType,
+) -> Result<ClosureInvokeParts<S, K>, LowerError>
+where
+    K::ParamDirection: params::ClosureParamSlot<S>,
+{
     let owner = CallableOwner::Function;
     let parameters = closure
         .parameters
@@ -213,27 +293,11 @@ pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
             ParameterDef::value(SourceName::single(format!("arg{index}")), type_expr.clone())
         })
         .collect::<Vec<_>>();
-    let lowered_params = params::lower::<S, _>(idx, ids, owner, &parameters)?;
-    let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &closure.returns)?;
-
-    let invoke: ImportedCallable<S> = ImportedCallable::<S>::new(
-        None,
-        lowered_params,
-        returns,
-        error,
-        ExecutionDecl::synchronous(),
-    )?;
-
-    let registration = ClosureRegistration::<S, IntoRust>::new(
-        S::closure_registration(closure)?,
-        Receive::ByValue,
-    );
-
-    Ok(ClosureParam::new(
-        ClosureForm::from(closure.kind),
-        registration,
-        invoke,
-    ))
+    let lowered_params =
+        params::lower::<S, K::ParamDirection>(idx, ids, allocator, owner, &parameters)?;
+    let (returns, error) =
+        returns::lower::<S, K::ReturnDirection>(idx, ids, owner, &closure.returns)?;
+    Ok((lowered_params, returns, error))
 }
 
 /// Lowers one [`FunctionDef`] into an [`ExportedCallable<S>`].
@@ -253,7 +317,8 @@ pub(super) fn lower_function<S: SurfaceLower>(
     start_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
     let owner = CallableOwner::Function;
-    let parameters = params::lower::<S, IntoRust>(idx, ids, owner, &function.parameters)?;
+    let parameters =
+        params::lower::<S, IntoRust>(idx, ids, allocator, owner, &function.parameters)?;
     let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &function.returns)?;
     let execution = lower_execution::<S>(allocator, function.execution, start_symbol_name)?;
 

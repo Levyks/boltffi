@@ -63,7 +63,7 @@ impl<'a> SymbolOwner<'a> {
 /// Ids are stable inside one [`crate::Bindings`](crate::Bindings) value
 /// but carry no meaning outside it; their job is to keep equal symbols
 /// equal across the contract's symbol table.
-pub(super) struct SymbolAllocator {
+pub struct SymbolAllocator {
     next: u32,
 }
 
@@ -78,6 +78,10 @@ impl SymbolAllocator {
         let id = self.next_id();
         let parsed = SymbolName::parse(name)?;
         Ok(NativeSymbol::new(id, parsed))
+    }
+
+    pub(super) const fn next_group_id(&self) -> u32 {
+        self.next
     }
 
     fn next_id(&mut self) -> SymbolId {
@@ -326,6 +330,13 @@ fn symbol_path(source_id: &str) -> String {
 
 pub(super) fn wasm_callback_import_name(lane: &str, owner: &str, action: &str) -> String {
     format!("__{}_callback_{}_{}_{}", FFI_PREFIX, lane, owner, action)
+}
+
+pub(super) fn wasm_closure_export_name(group_id: u32, signature: &str, action: &str) -> String {
+    format!(
+        "{}_closure_{}_{}_{}",
+        FFI_PREFIX, group_id, signature, action
+    )
 }
 
 /// Lowercases `name` and inserts an underscore at every word boundary.

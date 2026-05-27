@@ -13,7 +13,9 @@
 
 use std::fmt::Debug;
 
-use crate::{CodecNode, ReadPlan, Receive, ValueRef, WritePlan};
+use crate::{
+    ClosureRegistrationIntrospect, CodecNode, ReadPlan, Receive, Surface, ValueRef, WritePlan,
+};
 
 /// Marker for data flowing from foreign code into Rust.
 ///
@@ -79,12 +81,34 @@ pub trait Direction:
         + PartialEq
         + serde::Serialize
         + for<'de> serde::Deserialize<'de>;
+    /// Surface registration shape for a closure crossing in this
+    /// direction.
+    type ClosureRegistrationShape<S: Surface>: Clone
+        + Debug
+        + Eq
+        + std::hash::Hash
+        + PartialEq
+        + serde::Serialize
+        + for<'de> serde::Deserialize<'de>
+        + ClosureRegistrationIntrospect;
     /// The opposite direction.
     ///
     /// `IntoRust::Opposite = OutOfRust` and `OutOfRust::Opposite =
     /// IntoRust`. Used when crossing a callable scope boundary inverts
     /// the data flow.
     type Opposite: Direction<Opposite = Self>;
+    /// The callable scope of a closure whose handle crosses in this
+    /// direction.
+    ///
+    /// A closure that crosses [`IntoRust`] arrived from foreign code,
+    /// so its body lives on the foreign side and the invoke contract is
+    /// [`ForeignBody`] (`InvokeScope::ParamDirection = OutOfRust`,
+    /// `InvokeScope::ReturnDirection = IntoRust`). A closure that
+    /// crosses [`OutOfRust`] was created by Rust, so its body lives on
+    /// the Rust side and the invoke contract is [`RustBody`]
+    /// (`InvokeScope::ParamDirection = IntoRust`,
+    /// `InvokeScope::ReturnDirection = OutOfRust`).
+    type InvokeScope: CallableScope<ParamDirection = Self::Opposite, ReturnDirection = Self>;
 
     /// Constructs the direction's codec wrapper from a value reference
     /// and a codec tree.
@@ -105,7 +129,9 @@ pub trait Direction:
 impl Direction for IntoRust {
     type Codec = WritePlan;
     type Receive = Receive;
+    type ClosureRegistrationShape<S: Surface> = S::IncomingClosureRegistration;
     type Opposite = OutOfRust;
+    type InvokeScope = ForeignBody;
 
     fn make_codec(value: ValueRef, root: CodecNode) -> WritePlan {
         WritePlan::new(value, root)
@@ -119,7 +145,9 @@ impl Direction for IntoRust {
 impl Direction for OutOfRust {
     type Codec = ReadPlan;
     type Receive = ();
+    type ClosureRegistrationShape<S: Surface> = S::OutgoingClosureRegistration;
     type Opposite = IntoRust;
+    type InvokeScope = RustBody;
 
     fn make_codec(_value: ValueRef, root: CodecNode) -> ReadPlan {
         ReadPlan::new(root)

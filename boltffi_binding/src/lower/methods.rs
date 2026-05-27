@@ -310,11 +310,16 @@ fn mint_initializer_symbol(
 pub(super) fn lower_callback_methods<S: SurfaceLower, T, F>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     source_trait: &TraitDef,
     mut surface_for: F,
 ) -> Result<Vec<ImportedMethodDecl<S, T>>, LowerError>
 where
-    F: FnMut(&MethodDef, &CallbackSlot) -> Result<CallbackMethodSurface<S, T>, LowerError>,
+    F: FnMut(
+        &mut SymbolAllocator,
+        &MethodDef,
+        &CallbackSlot,
+    ) -> Result<CallbackMethodSurface<S, T>, LowerError>,
 {
     let owner = callable::CallableOwner::Trait(source_trait);
     source_trait
@@ -325,9 +330,15 @@ where
             require_callback_receiver(method.receiver)?;
             let raw_method_name = method.name.parts().last().map_or("", |part| part.as_str());
             let slot = CallbackSlot::from_method_name(raw_method_name);
-            let surface = surface_for(method, &slot)?;
-            let callable_decl =
-                callable::lower_imported_method::<S>(idx, ids, owner, method, surface.execution)?;
+            let surface = surface_for(allocator, method, &slot)?;
+            let callable_decl = callable::lower_imported_method::<S>(
+                idx,
+                ids,
+                allocator,
+                owner,
+                method,
+                surface.execution,
+            )?;
             Ok(ImportedMethodDecl::new(
                 MethodId::from_raw(index as u32),
                 CanonicalName::from(&method.name),

@@ -23,6 +23,7 @@ use crate::{Native, Surface, Wasm32, native, wasm32};
 
 use super::async_protocol::AsyncProtocolBuilder;
 use super::callbacks::CallbackProtocolBuilder;
+use super::symbol::SymbolAllocator;
 use super::{LowerError, wasm_closure};
 
 mod sealed {
@@ -88,10 +89,18 @@ pub trait SurfaceLower:
     #[doc(hidden)]
     fn stream_handle_carrier() -> Self::HandleCarrier;
 
-    /// Wire shape used at a closure-parameter registration crossing.
+    /// Wire shape used when a foreign-provided closure enters Rust.
     #[doc(hidden)]
-    fn closure_registration(closure: &ClosureType)
-    -> Result<Self::ClosureRegistration, LowerError>;
+    fn incoming_closure_registration(
+        closure: &ClosureType,
+    ) -> Result<Self::IncomingClosureRegistration, LowerError>;
+
+    /// Wire shape used when a Rust-provided closure leaves Rust.
+    #[doc(hidden)]
+    fn outgoing_closure_registration(
+        allocator: &mut SymbolAllocator,
+        closure: &ClosureType,
+    ) -> Result<Self::OutgoingClosureRegistration, LowerError>;
 }
 
 impl SurfaceLower for Native {
@@ -115,9 +124,16 @@ impl SurfaceLower for Native {
         native::HandleCarrier::U64
     }
 
-    fn closure_registration(
+    fn incoming_closure_registration(
         _closure: &ClosureType,
-    ) -> Result<Self::ClosureRegistration, LowerError> {
+    ) -> Result<Self::IncomingClosureRegistration, LowerError> {
+        Ok(native::ClosureRegistration::InvokeContext)
+    }
+
+    fn outgoing_closure_registration(
+        _allocator: &mut SymbolAllocator,
+        _closure: &ClosureType,
+    ) -> Result<Self::OutgoingClosureRegistration, LowerError> {
         Ok(native::ClosureRegistration::InvokeContext)
     }
 }
@@ -143,9 +159,16 @@ impl SurfaceLower for Wasm32 {
         wasm32::HandleCarrier::U32
     }
 
-    fn closure_registration(
+    fn incoming_closure_registration(
         closure: &ClosureType,
-    ) -> Result<Self::ClosureRegistration, LowerError> {
-        wasm_closure::registration(closure)
+    ) -> Result<Self::IncomingClosureRegistration, LowerError> {
+        wasm_closure::incoming_registration(closure)
+    }
+
+    fn outgoing_closure_registration(
+        allocator: &mut SymbolAllocator,
+        closure: &ClosureType,
+    ) -> Result<Self::OutgoingClosureRegistration, LowerError> {
+        wasm_closure::outgoing_registration(allocator, closure)
     }
 }

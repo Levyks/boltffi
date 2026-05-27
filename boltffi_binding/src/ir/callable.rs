@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, CallableScope,
-    CanonicalName, Direction, ElementMeta, ForeignBody, HandlePresence, HandleTarget, IntegerRepr,
-    IntoRust, NativeSymbol, OutOfRust, Primitive, RustBody, Surface, TypeRef,
+    CanonicalName, ClosureRegistrationIntrospect, Direction, ElementMeta, ForeignBody,
+    HandlePresence, HandleTarget, IntegerRepr, IntoRust, NativeSymbol, OutOfRust, Primitive,
+    RustBody, Surface, TypeRef,
 };
 
 /// One call shape ready to be turned into target code.
@@ -29,8 +30,8 @@ use crate::{
 /// return, `ErrorDecl::None`, and synchronous execution.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, S::ClosureRegistration: Serialize, K::ParamDirection: ParamDirection<S>, K::ReturnDirection: Direction, <K::ParamDirection as ParamDirection<S>>::Payload: Serialize, <K::ReturnDirection as Direction>::Codec: Serialize, <K::ReturnDirection as Direction>::Receive: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, K::ParamDirection: ParamDirection<S>, K::ReturnDirection: Direction, <K::ParamDirection as ParamDirection<S>>::Payload: serde::de::DeserializeOwned, <K::ReturnDirection as Direction>::Codec: serde::de::DeserializeOwned, <K::ReturnDirection as Direction>::Receive: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, S::IncomingClosureRegistration: Serialize, S::OutgoingClosureRegistration: Serialize, K::ParamDirection: ParamDirection<S>, K::ReturnDirection: Direction, <K::ParamDirection as ParamDirection<S>>::Payload: Serialize, <K::ReturnDirection as Direction>::Codec: Serialize, <K::ReturnDirection as Direction>::Receive: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, S::IncomingClosureRegistration: serde::de::DeserializeOwned, S::OutgoingClosureRegistration: serde::de::DeserializeOwned, K::ParamDirection: ParamDirection<S>, K::ReturnDirection: Direction, <K::ParamDirection as ParamDirection<S>>::Payload: serde::de::DeserializeOwned, <K::ReturnDirection as Direction>::Codec: serde::de::DeserializeOwned, <K::ReturnDirection as Direction>::Receive: serde::de::DeserializeOwned"
 ))]
 pub struct CallableDecl<S: Surface, K: CallableScope>
 where
@@ -127,14 +128,14 @@ where
     }
 
     /// Iterates the native symbols this callable references.
-    ///
-    /// Empty for synchronous callables. For async callables, yields the
-    /// async protocol's lifecycle symbols.
     pub fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
-        match &self.execution {
+        let param_symbols = self.params.iter().flat_map(ParamDecl::native_symbols);
+        let execution_symbols: Box<dyn Iterator<Item = &NativeSymbol> + '_> = match &self.execution
+        {
             ExecutionDecl::Synchronous(_) => Box::new(std::iter::empty()),
             ExecutionDecl::Asynchronous(protocol) => protocol.native_symbols(),
-        }
+        };
+        Box::new(param_symbols.chain(execution_symbols))
     }
 }
 
@@ -158,19 +159,22 @@ pub trait ParamDirection<S: Surface>: Direction {
 
     /// Returns the encoded buffer shape when the payload carries one.
     fn buffer_shape(payload: &Self::Payload) -> Option<S::BufferShape>;
+
+    /// Iterates over native symbols referenced by the payload.
+    fn native_symbols(payload: &Self::Payload) -> Box<dyn Iterator<Item = &NativeSymbol> + '_>;
 }
 
 /// One incoming parameter crossing.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::ClosureRegistration: Serialize, S::AsyncProtocol: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::IncomingClosureRegistration: Serialize, S::OutgoingClosureRegistration: Serialize, S::AsyncProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::IncomingClosureRegistration: serde::de::DeserializeOwned, S::OutgoingClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
 ))]
 pub enum IncomingParam<S: Surface> {
     /// One value crossing into Rust.
     Value(ParamPlan<S, IntoRust>),
     /// Inline closure callback crossing into Rust.
-    Closure(ClosureParam<S>),
+    Closure(ClosureParam<S, IntoRust>),
 }
 
 impl<S: Surface> IncomingParam<S> {
@@ -181,7 +185,7 @@ impl<S: Surface> IncomingParam<S> {
         }
     }
 
-    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S>> {
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S, IntoRust>> {
         match self {
             Self::Closure(closure) => Some(closure),
             Self::Value(_) => None,
@@ -190,23 +194,42 @@ impl<S: Surface> IncomingParam<S> {
 }
 
 /// One outgoing parameter crossing.
+///
+/// Mirrors [`IncomingParam`] in the opposite direction. Outgoing
+/// closures appear when Rust hands a closure handle out through a
+/// foreign-implemented callable (callback trait method); the closure
+/// body lives on the Rust side.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::IncomingClosureRegistration: Serialize, S::OutgoingClosureRegistration: Serialize, S::AsyncProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::IncomingClosureRegistration: serde::de::DeserializeOwned, S::OutgoingClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
 ))]
-pub struct OutgoingParam<S: Surface> {
-    plan: ParamPlan<S, OutOfRust>,
+pub enum OutgoingParam<S: Surface> {
+    /// One value crossing out of Rust.
+    Value(ParamPlan<S, OutOfRust>),
+    /// Inline closure callback crossing out of Rust.
+    Closure(ClosureParam<S, OutOfRust>),
 }
 
 impl<S: Surface> OutgoingParam<S> {
-    pub(crate) fn new(plan: ParamPlan<S, OutOfRust>) -> Self {
-        Self { plan }
+    pub(crate) fn from_value(plan: ParamPlan<S, OutOfRust>) -> Self {
+        Self::Value(plan)
     }
 
-    /// Returns the value crossing plan.
-    pub fn plan(&self) -> &ParamPlan<S, OutOfRust> {
-        &self.plan
+    /// Returns the value crossing plan if this payload carries one.
+    pub fn as_value(&self) -> Option<&ParamPlan<S, OutOfRust>> {
+        match self {
+            Self::Value(plan) => Some(plan),
+            Self::Closure(_) => None,
+        }
+    }
+
+    /// Returns the outgoing closure if this payload carries one.
+    pub fn as_closure(&self) -> Option<&ClosureParam<S, OutOfRust>> {
+        match self {
+            Self::Closure(closure) => Some(closure),
+            Self::Value(_) => None,
+        }
     }
 }
 
@@ -223,17 +246,34 @@ impl<S: Surface> ParamDirection<S> for IntoRust {
             IncomingParam::Closure(_) => None,
         }
     }
+
+    fn native_symbols(payload: &Self::Payload) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        match payload {
+            IncomingParam::Value(_) => Box::new(std::iter::empty()),
+            IncomingParam::Closure(closure) => closure.native_symbols(),
+        }
+    }
 }
 
 impl<S: Surface> ParamDirection<S> for OutOfRust {
     type Payload = OutgoingParam<S>;
 
     fn value_payload(plan: ParamPlan<S, Self>) -> Self::Payload {
-        OutgoingParam::new(plan)
+        OutgoingParam::from_value(plan)
     }
 
     fn buffer_shape(payload: &Self::Payload) -> Option<S::BufferShape> {
-        payload.plan().buffer_shape()
+        match payload {
+            OutgoingParam::Value(plan) => plan.buffer_shape(),
+            OutgoingParam::Closure(_) => None,
+        }
+    }
+
+    fn native_symbols(payload: &Self::Payload) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        match payload {
+            OutgoingParam::Value(_) => Box::new(std::iter::empty()),
+            OutgoingParam::Closure(closure) => closure.native_symbols(),
+        }
     }
 }
 
@@ -276,6 +316,10 @@ impl<S: Surface, D: ParamDirection<S>> ParamDecl<S, D> {
     pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
         D::buffer_shape(&self.payload)
     }
+
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        D::native_symbols(&self.payload)
+    }
 }
 
 impl<S: Surface> ParamDecl<S, IntoRust> {
@@ -283,14 +327,14 @@ impl<S: Surface> ParamDecl<S, IntoRust> {
         self.payload.as_value()
     }
 
-    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S>> {
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S, IntoRust>> {
         self.payload.as_closure()
     }
 
     pub(crate) fn closure(
         name: CanonicalName,
         meta: ElementMeta,
-        closure: ClosureParam<S>,
+        closure: ClosureParam<S, IntoRust>,
     ) -> Self {
         Self {
             name,
@@ -302,7 +346,23 @@ impl<S: Surface> ParamDecl<S, IntoRust> {
 
 impl<S: Surface> ParamDecl<S, OutOfRust> {
     pub(crate) fn as_value(&self) -> Option<&ParamPlan<S, OutOfRust>> {
-        Some(self.payload.plan())
+        self.payload.as_value()
+    }
+
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S, OutOfRust>> {
+        self.payload.as_closure()
+    }
+
+    pub(crate) fn closure(
+        name: CanonicalName,
+        meta: ElementMeta,
+        closure: ClosureParam<S, OutOfRust>,
+    ) -> Self {
+        Self {
+            name,
+            meta,
+            payload: OutgoingParam::Closure(closure),
+        }
     }
 }
 
@@ -310,25 +370,47 @@ impl<S: Surface> ParamDecl<S, OutOfRust> {
 ///
 /// `form` records the source spelling (`fn(...)`, `impl Fn`,
 /// `impl FnMut`, `impl FnOnce`). `registration` describes the handle
-/// that crosses when the closure is passed across the boundary.
-/// `invoke` is the call shape Rust uses on each invocation, with the
-/// closure body sitting on the foreign side.
+/// that crosses; its direction `D` is the crossing direction of the
+/// closure parameter itself. `invoke` is the call shape used on each
+/// invocation; its scope is determined by `D` through
+/// [`Direction::InvokeScope`]:
+///
+/// - `D = IntoRust` (closure travels foreign → Rust, e.g. as a
+///   parameter of a Rust-implemented callable): the body lives on the
+///   foreign side and `invoke` is an [`ImportedCallable<S>`]
+///   (`InvokeScope = ForeignBody`).
+/// - `D = OutOfRust` (closure travels Rust → foreign, e.g. as a
+///   parameter of a foreign-implemented callback): the body lives on
+///   the Rust side and `invoke` is an [`ExportedCallable<S>`]
+///   (`InvokeScope = RustBody`).
+///
+/// The `D::Opposite: ParamDirection<S>` bound spells the implication
+/// that the invoke callable's params, whose direction is `D::Opposite`,
+/// satisfy the [`ParamDirection`] contract. The two `Direction` impls
+/// satisfy this without further work; restating it here keeps every
+/// derive in scope.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::ClosureRegistration: Serialize, S::AsyncProtocol: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, D::Receive: Serialize, D::Codec: Serialize, <D as Direction>::ClosureRegistrationShape<S>: Serialize, <D::Opposite as Direction>::Codec: Serialize, <D::Opposite as Direction>::Receive: Serialize, <D::Opposite as ParamDirection<S>>::Payload: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned, D::Codec: serde::de::DeserializeOwned, <D as Direction>::ClosureRegistrationShape<S>: serde::de::DeserializeOwned, <D::Opposite as Direction>::Codec: serde::de::DeserializeOwned, <D::Opposite as Direction>::Receive: serde::de::DeserializeOwned, <D::Opposite as ParamDirection<S>>::Payload: serde::de::DeserializeOwned"
 ))]
-pub struct ClosureParam<S: Surface> {
+pub struct ClosureParam<S: Surface, D: Direction>
+where
+    D::Opposite: ParamDirection<S>,
+{
     form: ClosureForm,
-    registration: ClosureRegistration<S, IntoRust>,
-    invoke: Box<ImportedCallable<S>>,
+    registration: ClosureRegistration<S, D>,
+    invoke: Box<CallableDecl<S, D::InvokeScope>>,
 }
 
-impl<S: Surface> ClosureParam<S> {
+impl<S: Surface, D: Direction> ClosureParam<S, D>
+where
+    D::Opposite: ParamDirection<S>,
+{
     pub(crate) fn new(
         form: ClosureForm,
-        registration: ClosureRegistration<S, IntoRust>,
-        invoke: ImportedCallable<S>,
+        registration: ClosureRegistration<S, D>,
+        invoke: CallableDecl<S, D::InvokeScope>,
     ) -> Self {
         Self {
             form,
@@ -343,13 +425,21 @@ impl<S: Surface> ClosureParam<S> {
     }
 
     /// Returns the handle registration.
-    pub fn registration(&self) -> &ClosureRegistration<S, IntoRust> {
+    pub fn registration(&self) -> &ClosureRegistration<S, D> {
         &self.registration
     }
 
     /// Returns the invocation contract.
-    pub fn invoke(&self) -> &ImportedCallable<S> {
+    pub fn invoke(&self) -> &CallableDecl<S, D::InvokeScope> {
         &self.invoke
+    }
+
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        Box::new(
+            self.registration
+                .native_symbols()
+                .chain(self.invoke.native_symbols()),
+        )
     }
 }
 
@@ -386,22 +476,26 @@ impl From<boltffi_ast::ClosureKind> for ClosureForm {
 /// The handle crossing for a closure parameter.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::ClosureRegistration: Serialize, D: Direction, D::Receive: Serialize",
-    deserialize = "S::ClosureRegistration: serde::de::DeserializeOwned, D: Direction, D::Receive: serde::de::DeserializeOwned"
+    serialize = "D: Direction, <D as Direction>::ClosureRegistrationShape<S>: Serialize, D::Receive: Serialize",
+    deserialize = "D: Direction, <D as Direction>::ClosureRegistrationShape<S>: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned"
 ))]
 pub struct ClosureRegistration<S: Surface, D: Direction> {
-    shape: S::ClosureRegistration,
+    shape: D::ClosureRegistrationShape<S>,
     receive: D::Receive,
 }
 
 impl<S: Surface, D: Direction> ClosureRegistration<S, D> {
-    pub(crate) fn new(shape: S::ClosureRegistration, receive: D::Receive) -> Self {
+    pub(crate) fn new(shape: D::ClosureRegistrationShape<S>, receive: D::Receive) -> Self {
         Self { shape, receive }
     }
 
     /// Returns the surface registration shape.
-    pub fn shape(&self) -> &S::ClosureRegistration {
+    pub fn shape(&self) -> &D::ClosureRegistrationShape<S> {
         &self.shape
+    }
+
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        self.shape.native_symbols()
     }
 
     /// Returns the receive mode of the registration slot.

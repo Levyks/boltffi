@@ -1,13 +1,13 @@
-use boltffi_ast::{ParameterDef, ParameterPassing, TypeExpr};
+use boltffi_ast::{ClosureType, ParameterDef, ParameterPassing, TypeExpr};
 
 use crate::{
-    CanonicalName, ClosureParam, Direction, ElementMeta, HandlePresence, HandleTarget, IntoRust,
-    OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive, Receive, TypeRef, ValueRef,
+    CanonicalName, Direction, ElementMeta, HandlePresence, HandleTarget, IntoRust, OutOfRust,
+    ParamDecl, ParamDirection, ParamPlan, Primitive, Receive, TypeRef, ValueRef,
 };
 
 use super::super::{
     LowerError, codecs, enums, error::UnsupportedType, ids::DeclarationIds, index::Index, metadata,
-    records, surface::SurfaceLower, types,
+    records, surface::SurfaceLower, symbol::SymbolAllocator, types,
 };
 
 use super::{CallableOwner, substitute_self_type};
@@ -20,25 +20,32 @@ use super::{CallableOwner, substitute_self_type};
 /// foreign-implemented callable.
 ///
 /// Value parameters lower through [`ParamPlan`]. Closure parameters
-/// dispatch through the [`ClosureParamSlot`] trait so the direction
-/// decides structurally whether the closure constructor is reachable.
-/// `IntoRust` builds [`ParamDecl::Closure`]; `OutOfRust` returns
-/// [`UnsupportedType::ClosureInForeignBodyCallable`].
+/// dispatch through the [`ClosureParamSlot`] trait so each direction
+/// supplies the AST-to-IR construction for its closure shape; both
+/// directions yield [`ClosureParam<S, D>`](crate::ClosureParam), whose
+/// invoke contract resolves to [`ImportedCallable<S>`] for `IntoRust`
+/// and [`ExportedCallable<S>`] for `OutOfRust` through
+/// [`Direction::InvokeScope`](crate::Direction::InvokeScope).
+///
+/// [`ImportedCallable<S>`]: crate::ImportedCallable
+/// [`ExportedCallable<S>`]: crate::ExportedCallable
 pub(super) fn lower<S: SurfaceLower, D: Direction + ClosureParamSlot<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     owner: CallableOwner<'_>,
     parameters: &[ParameterDef],
 ) -> Result<Vec<ParamDecl<S, D>>, LowerError> {
     parameters
         .iter()
-        .map(|parameter| lower_one::<S, D>(idx, ids, owner, parameter))
+        .map(|parameter| lower_one::<S, D>(idx, ids, allocator, owner, parameter))
         .collect()
 }
 
 fn lower_one<S: SurfaceLower, D: Direction + ClosureParamSlot<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     owner: CallableOwner<'_>,
     parameter: &ParameterDef,
 ) -> Result<ParamDecl<S, D>, LowerError> {
@@ -52,8 +59,7 @@ fn lower_one<S: SurfaceLower, D: Direction + ClosureParamSlot<S>>(
                 UnsupportedType::BorrowedCallbackParameter,
             ));
         }
-        let closure_param = super::lower_closure_param_into_rust::<S>(idx, ids, closure)?;
-        return D::closure_param(canonical_name, meta, closure_param);
+        return D::lower_closure_param(idx, ids, allocator, canonical_name, meta, closure);
     }
     let value = ValueRef::named(canonical_name.clone());
     let plan = lower_plain_plan::<S, D>(idx, ids, &type_expr, value, receive)?;
@@ -203,39 +209,51 @@ fn lower_presence(presence: boltffi_ast::HandlePresence) -> HandlePresence {
     }
 }
 
-/// Structural rule for whether a direction admits a closure parameter.
+/// Lowers a closure parameter at one direction.
 ///
-/// Implemented for [`IntoRust`] (returns a constructed
-/// [`ParamDecl::Closure`]) and for [`OutOfRust`] (returns the dedicated
-/// rejection error). The trait bound on [`lower`] forces every entry
-/// point to commit to a direction whose closure rule is statically
-/// known; no other path leads to a closure-param construction.
+/// Implemented for [`IntoRust`] (closure travels foreign → Rust; the
+/// invoke contract is an [`ImportedCallable<S>`](crate::ImportedCallable))
+/// and for [`OutOfRust`] (closure travels Rust → foreign as a callback
+/// parameter; the invoke contract is an
+/// [`ExportedCallable<S>`](crate::ExportedCallable)). Each direction
+/// supplies the AST-to-IR construction for its own closure shape, so
+/// the param-lowering walk never holds a direction-agnostic
+/// [`ClosureParam`](crate::ClosureParam) value.
 pub(crate) trait ClosureParamSlot<S: SurfaceLower>: ParamDirection<S> + Sized {
-    fn closure_param(
+    fn lower_closure_param(
+        idx: &Index<'_>,
+        ids: &DeclarationIds,
+        allocator: &mut SymbolAllocator,
         name: CanonicalName,
         meta: ElementMeta,
-        closure: ClosureParam<S>,
+        closure: &ClosureType,
     ) -> Result<ParamDecl<S, Self>, LowerError>;
 }
 
 impl<S: SurfaceLower> ClosureParamSlot<S> for IntoRust {
-    fn closure_param(
+    fn lower_closure_param(
+        idx: &Index<'_>,
+        ids: &DeclarationIds,
+        allocator: &mut SymbolAllocator,
         name: CanonicalName,
         meta: ElementMeta,
-        closure: ClosureParam<S>,
+        closure: &ClosureType,
     ) -> Result<ParamDecl<S, IntoRust>, LowerError> {
-        Ok(ParamDecl::closure(name, meta, closure))
+        let param = super::lower_closure_param_into_rust::<S>(idx, ids, allocator, closure)?;
+        Ok(<ParamDecl<S, IntoRust>>::closure(name, meta, param))
     }
 }
 
 impl<S: SurfaceLower> ClosureParamSlot<S> for OutOfRust {
-    fn closure_param(
-        _name: CanonicalName,
-        _meta: ElementMeta,
-        _closure: ClosureParam<S>,
+    fn lower_closure_param(
+        idx: &Index<'_>,
+        ids: &DeclarationIds,
+        allocator: &mut SymbolAllocator,
+        name: CanonicalName,
+        meta: ElementMeta,
+        closure: &ClosureType,
     ) -> Result<ParamDecl<S, OutOfRust>, LowerError> {
-        Err(LowerError::unsupported_type(
-            UnsupportedType::ClosureInForeignBodyCallable,
-        ))
+        let param = super::lower_closure_param_out_of_rust::<S>(idx, ids, allocator, closure)?;
+        Ok(<ParamDecl<S, OutOfRust>>::closure(name, meta, param))
     }
 }

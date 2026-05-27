@@ -120,8 +120,8 @@ pub use op::{
 };
 pub use primitive::{IntegerRepr, Primitive};
 pub use surface::{
-    AsyncProtocolIntrospect, BufferShapeRules, CallbackProtocolIntrospect, Native, Surface, Wasm32,
-    native, wasm32,
+    AsyncProtocolIntrospect, BufferShapeRules, CallbackProtocolIntrospect,
+    ClosureRegistrationIntrospect, Native, Surface, Wasm32, native, wasm32,
 };
 pub use symbol::{
     ImportModule, ImportSymbol, NativeSymbol, NativeSymbolTable, SymbolName, VTableSlot,
