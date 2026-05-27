@@ -2,7 +2,7 @@ use boltffi_ast::{RecordDef as SourceRecord, TypeExpr};
 
 use crate::{
     CanonicalName, DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl,
-    ExportedMethod, FieldKey, InitializerDecl, NativeSymbol, RecordDecl, ValueRef,
+    ExportedMethodDecl, FieldKey, InitializerDecl, NativeSymbol, RecordDecl, ValueRef,
 };
 
 use super::{
@@ -63,7 +63,7 @@ fn lower_direct<S: SurfaceLower>(
     ids: &DeclarationIds,
     record: &SourceRecord,
     initializers: Vec<InitializerDecl<S>>,
-    record_methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    record_methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 ) -> Result<DirectRecordDecl<S>, LowerError> {
     let fields = record
         .fields
@@ -93,7 +93,7 @@ fn lower_encoded<S: SurfaceLower>(
     ids: &DeclarationIds,
     record: &SourceRecord,
     initializers: Vec<InitializerDecl<S>>,
-    record_methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    record_methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 ) -> Result<EncodedRecordDecl<S>, LowerError> {
     let fields = record
         .fields
@@ -142,7 +142,7 @@ mod tests {
     use crate::lower::lower;
     use crate::{
         BindingErrorKind, Bindings, ByteSize, CanonicalName, CodecNode, Decl, DefaultValue,
-        DirectRecordDecl, EncodedRecordDecl, EnumId, ErrorDecl, ExecutionDecl, ExportedMethod,
+        DirectRecordDecl, EncodedRecordDecl, EnumId, ErrorDecl, ExecutionDecl, ExportedMethodDecl,
         FieldKey, InitializerDecl, IntegerValue, IntrinsicOp, LowerError, LowerErrorKind, Native,
         NativeSymbol, OpNode, OutOfRust, ParamPlan, Primitive as BindingPrimitive, ReadPlan,
         Receive, RecordDecl, RecordId, ReturnPlan, SurfaceLower, TypeRef, UnsupportedType,
@@ -350,7 +350,9 @@ mod tests {
         ParameterDef::value(name(param_name), type_expr)
     }
 
-    fn record_decl_methods(bindings: &Bindings<Native>) -> &[ExportedMethod<Native, NativeSymbol>] {
+    fn record_decl_methods(
+        bindings: &Bindings<Native>,
+    ) -> &[ExportedMethodDecl<Native, NativeSymbol>] {
         direct_record(bindings).methods()
     }
 
@@ -391,7 +393,7 @@ mod tests {
     fn record_methods_at<S: SurfaceLower>(
         bindings: &Bindings<S>,
         index: usize,
-    ) -> &[ExportedMethod<S, NativeSymbol>] {
+    ) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         match bindings.decls().get(index) {
             Some(Decl::Record(record)) => match record.as_ref() {
                 RecordDecl::Direct(direct) => direct.methods(),
@@ -711,7 +713,7 @@ mod tests {
 
     fn first_record_methods<S: SurfaceLower>(
         bindings: &Bindings<S>,
-    ) -> &[ExportedMethod<S, NativeSymbol>] {
+    ) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         match first_record(bindings) {
             RecordDecl::Direct(direct) => direct.methods(),
             RecordDecl::Encoded(encoded) => encoded.methods(),

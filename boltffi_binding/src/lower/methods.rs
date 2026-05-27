@@ -2,7 +2,7 @@
 //!
 //! Records, enums, and classes can promote static `Self`-returning methods to
 //! [`InitializerDecl<S>`]. Records, enums, and classes keep every other
-//! method as a [`ExportedMethod<S, NativeSymbol>`]. The callable body is
+//! method as a [`ExportedMethodDecl<S, NativeSymbol>`]. The callable body is
 //! lowered by [`super::callable`]; this module owns the initializer
 //! discriminator, target symbol allocation, and owner-specific constructed
 //! type recorded on an initializer.
@@ -12,8 +12,8 @@ use boltffi_ast::{
 };
 
 use crate::{
-    CanonicalName, ExportedMethod, ImportedMethod, InitializerDecl, InitializerId, MethodId,
-    NativeSymbol, ReturnTypeRef, TypeRef,
+    CanonicalName, ExportedMethodDecl, ImportedMethodDecl, InitializerDecl, InitializerId,
+    MethodId, NativeSymbol, ReturnTypeRef, TypeRef,
 };
 
 use super::{
@@ -59,7 +59,7 @@ pub(super) fn lower_record_methods<S: SurfaceLower>(
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     record: &RecordDef,
-) -> Result<Vec<ExportedMethod<S, NativeSymbol>>, LowerError> {
+) -> Result<Vec<ExportedMethodDecl<S, NativeSymbol>>, LowerError> {
     let owner = callable::CallableOwner::Record(record);
     record
         .methods
@@ -104,7 +104,7 @@ pub(super) fn lower_enum_methods<S: SurfaceLower>(
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     enumeration: &EnumDef,
-) -> Result<Vec<ExportedMethod<S, NativeSymbol>>, LowerError> {
+) -> Result<Vec<ExportedMethodDecl<S, NativeSymbol>>, LowerError> {
     let owner = callable::CallableOwner::Enum(enumeration);
     enumeration
         .methods
@@ -156,7 +156,7 @@ pub(super) fn lower_class_methods<S: SurfaceLower>(
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     class: &ClassDef,
-) -> Result<Vec<ExportedMethod<S, NativeSymbol>>, LowerError> {
+) -> Result<Vec<ExportedMethodDecl<S, NativeSymbol>>, LowerError> {
     let owner = callable::CallableOwner::Class(class);
     class
         .methods
@@ -246,10 +246,10 @@ fn lower_method<S: SurfaceLower>(
     owner: callable::CallableOwner<'_>,
     method: &MethodDef,
     id: MethodId,
-) -> Result<ExportedMethod<S, NativeSymbol>, LowerError> {
+) -> Result<ExportedMethodDecl<S, NativeSymbol>, LowerError> {
     let callable_decl = callable::lower_method::<S, crate::RustBody>(idx, ids, owner, method)?;
     let symbol = mint_method_symbol(allocator, owner, method)?;
-    Ok(ExportedMethod::new(
+    Ok(ExportedMethodDecl::new(
         id,
         CanonicalName::from(&method.name),
         metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),
@@ -298,7 +298,7 @@ pub(super) fn lower_callback_methods<S: SurfaceLower, T, F>(
     ids: &DeclarationIds,
     source_trait: &TraitDef,
     mut target_for: F,
-) -> Result<Vec<ImportedMethod<S, T>>, LowerError>
+) -> Result<Vec<ImportedMethodDecl<S, T>>, LowerError>
 where
     F: FnMut(&CallbackSlot) -> Result<T, LowerError>,
 {
@@ -314,7 +314,7 @@ where
             let raw_method_name = method.name.parts().last().map_or("", |part| part.as_str());
             let slot = CallbackSlot::from_method_name(raw_method_name);
             let target = target_for(&slot)?;
-            Ok(ImportedMethod::new(
+            Ok(ImportedMethodDecl::new(
                 MethodId::from_raw(index as u32),
                 CanonicalName::from(&method.name),
                 metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),

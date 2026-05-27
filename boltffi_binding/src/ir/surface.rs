@@ -167,7 +167,7 @@ pub mod native {
     use serde::{Deserialize, Serialize};
 
     use super::{AsyncProtocolIntrospect, CallbackProtocolIntrospect, Native};
-    use crate::{ImportedCallable, ImportedMethod, NativeSymbol, VTableSlot};
+    use crate::{ImportedCallable, ImportedMethodDecl, NativeSymbol, VTableSlot};
 
     /// How an encoded payload occupies native call slots.
     ///
@@ -271,14 +271,14 @@ pub mod native {
     pub struct CallbackVTable {
         free_slot: VTableSlot,
         clone_slot: VTableSlot,
-        methods: Vec<ImportedMethod<Native, VTableSlot>>,
+        methods: Vec<ImportedMethodDecl<Native, VTableSlot>>,
     }
 
     impl CallbackVTable {
         pub(crate) fn new(
             free_slot: VTableSlot,
             clone_slot: VTableSlot,
-            methods: Vec<ImportedMethod<Native, VTableSlot>>,
+            methods: Vec<ImportedMethodDecl<Native, VTableSlot>>,
         ) -> Self {
             Self {
                 free_slot,
@@ -298,7 +298,7 @@ pub mod native {
         }
 
         /// Returns the methods the foreign implementation must provide.
-        pub fn methods(&self) -> &[ImportedMethod<Native, VTableSlot>] {
+        pub fn methods(&self) -> &[ImportedMethodDecl<Native, VTableSlot>] {
             &self.methods
         }
     }
@@ -377,7 +377,7 @@ pub mod wasm32 {
     use serde::{Deserialize, Serialize};
 
     use super::{AsyncProtocolIntrospect, CallbackProtocolIntrospect, Wasm32};
-    use crate::{ImportSymbol, ImportedCallable, ImportedMethod, NativeSymbol};
+    use crate::{ImportSymbol, ImportedCallable, ImportedMethodDecl, NativeSymbol};
 
     /// How an encoded payload occupies wasm call slots.
     ///
@@ -446,7 +446,7 @@ pub mod wasm32 {
         create_handle: NativeSymbol,
         free: ImportSymbol,
         clone: ImportSymbol,
-        methods: Vec<ImportedMethod<Wasm32, ImportSymbol>>,
+        methods: Vec<ImportedMethodDecl<Wasm32, ImportSymbol>>,
     }
 
     impl CallbackProtocol {
@@ -454,7 +454,7 @@ pub mod wasm32 {
             create_handle: NativeSymbol,
             free: ImportSymbol,
             clone: ImportSymbol,
-            methods: Vec<ImportedMethod<Wasm32, ImportSymbol>>,
+            methods: Vec<ImportedMethodDecl<Wasm32, ImportSymbol>>,
         ) -> Self {
             Self {
                 create_handle,
@@ -482,7 +482,7 @@ pub mod wasm32 {
 
         /// Returns the wasm imports the foreign implementation must
         /// provide for each method.
-        pub fn methods(&self) -> &[ImportedMethod<Wasm32, ImportSymbol>] {
+        pub fn methods(&self) -> &[ImportedMethodDecl<Wasm32, ImportSymbol>] {
             &self.methods
         }
     }

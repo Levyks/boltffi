@@ -289,7 +289,7 @@ pub struct DirectRecordDecl<S: Surface> {
     meta: DeclMeta,
     fields: Vec<DirectFieldDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     layout: RecordLayout,
 }
 
@@ -300,7 +300,7 @@ impl<S: Surface> DirectRecordDecl<S> {
         meta: DeclMeta,
         fields: Vec<DirectFieldDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<ExportedMethod<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
         layout: RecordLayout,
     ) -> Self {
         Self {
@@ -340,7 +340,7 @@ impl<S: Surface> DirectRecordDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[ExportedMethod<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 
@@ -366,7 +366,7 @@ pub struct EncodedRecordDecl<S: Surface> {
     meta: DeclMeta,
     fields: Vec<EncodedFieldDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     codec: CodecPlan,
 }
 
@@ -377,7 +377,7 @@ impl<S: Surface> EncodedRecordDecl<S> {
         meta: DeclMeta,
         fields: Vec<EncodedFieldDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<ExportedMethod<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
         codec: CodecPlan,
     ) -> Self {
         Self {
@@ -417,7 +417,7 @@ impl<S: Surface> EncodedRecordDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[ExportedMethod<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 
@@ -581,7 +581,7 @@ pub struct CStyleEnumDecl<S: Surface> {
     repr: IntegerRepr,
     variants: Vec<CStyleVariantDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 }
 
 impl<S: Surface> CStyleEnumDecl<S> {
@@ -592,7 +592,7 @@ impl<S: Surface> CStyleEnumDecl<S> {
         repr: IntegerRepr,
         variants: Vec<CStyleVariantDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<ExportedMethod<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     ) -> Self {
         Self {
             id,
@@ -636,7 +636,7 @@ impl<S: Surface> CStyleEnumDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[ExportedMethod<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 }
@@ -686,7 +686,7 @@ pub struct DataEnumDecl<S: Surface> {
     meta: DeclMeta,
     variants: Vec<DataVariantDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     codec: CodecPlan,
 }
 
@@ -697,7 +697,7 @@ impl<S: Surface> DataEnumDecl<S> {
         meta: DeclMeta,
         variants: Vec<DataVariantDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<ExportedMethod<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
         codec: CodecPlan,
     ) -> Self {
         Self {
@@ -737,7 +737,7 @@ impl<S: Surface> DataEnumDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[ExportedMethod<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 
@@ -915,7 +915,7 @@ pub struct ClassDecl<S: Surface> {
     handle: S::HandleCarrier,
     release: NativeSymbol,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 }
 
 impl<S: Surface> ClassDecl<S> {
@@ -926,7 +926,7 @@ impl<S: Surface> ClassDecl<S> {
         handle: S::HandleCarrier,
         release: NativeSymbol,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<ExportedMethod<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     ) -> Self {
         Self {
             id,
@@ -970,7 +970,7 @@ impl<S: Surface> ClassDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[ExportedMethod<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 }
@@ -1313,8 +1313,8 @@ impl CustomTypeDecl {
 ///
 /// Owned by its parent declaration. Generic over the surface `S`, the
 /// callable scope `K` (which side implements the body), and the
-/// dispatch-target type `T`. Use the [`ExportedMethod`] alias when
-/// `K = RustBody` and [`ImportedMethod`] when `K = ForeignBody`. `T`
+/// dispatch-target type `T`. Use the [`ExportedMethodDecl`] alias when
+/// `K = RustBody` and [`ImportedMethodDecl`] when `K = ForeignBody`. `T`
 /// is [`NativeSymbol`] for methods on records, enums, and classes;
 /// callback trait methods use whichever target name the surface's
 /// callback protocol picks ([`VTableSlot`] on native, [`ImportSymbol`]
@@ -1387,13 +1387,13 @@ where
 /// A method whose body is implemented in Rust. The contained
 /// callable flows params [`IntoRust`](crate::IntoRust) and returns
 /// [`OutOfRust`](crate::OutOfRust).
-pub type ExportedMethod<S, T> = MethodDecl<S, RustBody, T>;
+pub type ExportedMethodDecl<S, T> = MethodDecl<S, RustBody, T>;
 
 /// A method whose body is implemented in foreign code. The contained
 /// callable flows params [`OutOfRust`](crate::OutOfRust) (Rust pushes
 /// args) and returns [`IntoRust`](crate::IntoRust) (foreign produces
 /// the return).
-pub type ImportedMethod<S, T> = MethodDecl<S, crate::ForeignBody, T>;
+pub type ImportedMethodDecl<S, T> = MethodDecl<S, crate::ForeignBody, T>;
 
 /// A callable selected to be exposed as a target language constructor.
 ///

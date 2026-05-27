@@ -4,7 +4,7 @@ use boltffi_ast::{
 
 use crate::{
     CStyleEnumDecl, CStyleVariantDecl, CanonicalName, DataEnumDecl, DataVariantDecl,
-    DataVariantPayload, EncodedFieldDecl, EnumDecl, ExportedMethod, FieldKey, InitializerDecl,
+    DataVariantPayload, EncodedFieldDecl, EnumDecl, ExportedMethodDecl, FieldKey, InitializerDecl,
     IntegerRepr, IntegerValue, NativeSymbol, ValueRef, VariantTag,
 };
 
@@ -66,7 +66,7 @@ fn lower_c_style<S: SurfaceLower>(
     ids: &DeclarationIds,
     enumeration: &SourceEnum,
     initializers: Vec<InitializerDecl<S>>,
-    enum_methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    enum_methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 ) -> Result<CStyleEnumDecl<S>, LowerError> {
     Ok(CStyleEnumDecl::new(
         ids.enumeration(&enumeration.id)?,
@@ -94,7 +94,7 @@ fn lower_data<S: SurfaceLower>(
     ids: &DeclarationIds,
     enumeration: &SourceEnum,
     initializers: Vec<InitializerDecl<S>>,
-    enum_methods: Vec<ExportedMethod<S, NativeSymbol>>,
+    enum_methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 ) -> Result<DataEnumDecl<S>, LowerError> {
     Ok(DataEnumDecl::new(
         ids.enumeration(&enumeration.id)?,
@@ -210,7 +210,7 @@ mod tests {
     use crate::{
         BindingErrorKind, Bindings, CStyleEnumDecl, CanonicalName, CodecNode, DataEnumDecl,
         DataVariantPayload, Decl, DefaultValue, EncodedFieldDecl, EnumDecl, EnumId, ErrorDecl,
-        ExecutionDecl, ExportedMethod, FieldKey, InitializerDecl, IntegerRepr, IntegerValue,
+        ExecutionDecl, ExportedMethodDecl, FieldKey, InitializerDecl, IntegerRepr, IntegerValue,
         LowerError, LowerErrorKind, Native, NativeSymbol, OutOfRust, ParamPlan,
         Primitive as BindingPrimitive, ReadPlan, Receive, RecordId, ReturnPlan, SurfaceLower,
         TypeRef, UnsupportedType, ValueRef, Wasm32, native, wasm32,
@@ -405,7 +405,7 @@ mod tests {
     fn enum_methods_at<S: SurfaceLower>(
         bindings: &Bindings<S>,
         index: usize,
-    ) -> &[ExportedMethod<S, NativeSymbol>] {
+    ) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         match enum_decl_at(bindings, index) {
             EnumDecl::CStyle(enumeration) => enumeration.methods(),
             EnumDecl::Data(enumeration) => enumeration.methods(),
@@ -422,7 +422,9 @@ mod tests {
         }
     }
 
-    fn only_method<S: SurfaceLower>(bindings: &Bindings<S>) -> &ExportedMethod<S, NativeSymbol> {
+    fn only_method<S: SurfaceLower>(
+        bindings: &Bindings<S>,
+    ) -> &ExportedMethodDecl<S, NativeSymbol> {
         let methods = enum_methods_at(bindings, 0);
         assert_eq!(methods.len(), 1);
         &methods[0]

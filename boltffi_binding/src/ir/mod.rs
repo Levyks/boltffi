@@ -98,8 +98,8 @@ pub use contract::{Bindings, ContractVersion, PackageInfo, SerializedBindings};
 pub use decl::{
     CStyleEnumDecl, CStyleVariantDecl, CallbackDecl, ClassDecl, ConstantDecl, ConstantValueDecl,
     CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl, DirectFieldDecl,
-    DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl, ExportedMethod, FieldKey,
-    FunctionDecl, ImportedMethod, InitializerDecl, MethodDecl, RecordDecl, StreamDecl,
+    DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl, ExportedMethodDecl, FieldKey,
+    FunctionDecl, ImportedMethodDecl, InitializerDecl, MethodDecl, RecordDecl, StreamDecl,
     StreamProtocol, VariantTag,
 };
 pub use direction::{CallableScope, Direction, ForeignBody, IntoRust, OutOfRust, RustBody};
