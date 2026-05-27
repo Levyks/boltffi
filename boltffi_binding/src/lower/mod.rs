@@ -38,6 +38,7 @@
 
 #![allow(dead_code)]
 
+mod async_protocol;
 mod callable;
 mod callbacks;
 mod classes;

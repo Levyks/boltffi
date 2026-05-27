@@ -725,6 +725,12 @@ impl<S: Surface> ExecutionDecl<S> {
     pub fn synchronous() -> Self {
         Self::Synchronous(PhantomData)
     }
+
+    /// Returns the asynchronous variant carrying the surface's async
+    /// protocol value.
+    pub fn asynchronous(protocol: S::AsyncProtocol) -> Self {
+        Self::Asynchronous(protocol)
+    }
 }
 
 /// How the inner Rust function receives a parameter or receiver.

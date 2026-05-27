@@ -337,6 +337,9 @@ pub mod native {
             /// operation.
             panic_message: NativeSymbol,
         },
+        /// Foreign completes a callback method by invoking the
+        /// completion function pointer passed in the vtable call.
+        CallbackCompletion,
     }
 
     impl CallbackProtocolIntrospect<Native> for CallbackProtocol {
@@ -357,7 +360,7 @@ pub mod native {
     impl AsyncProtocolIntrospect for AsyncProtocol {
         fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
             match self {
-                Self::NativeFuture => Box::new(std::iter::empty()),
+                Self::NativeFuture | Self::CallbackCompletion => Box::new(std::iter::empty()),
                 Self::Continuation { symbol } => Box::new(std::iter::once(symbol)),
                 Self::PollHandle {
                     poll,
@@ -513,6 +516,13 @@ pub mod wasm32 {
             /// operation.
             panic_message: NativeSymbol,
         },
+        /// Foreign starts a callback method through an import and
+        /// completes it by calling this Rust export.
+        CallbackCompletion {
+            /// Symbol foreign code calls to complete the pending
+            /// callback request.
+            complete: NativeSymbol,
+        },
     }
 
     impl CallbackProtocolIntrospect<Wasm32> for CallbackProtocol {
@@ -536,6 +546,7 @@ pub mod wasm32 {
                     panic_message,
                     ..
                 } => Box::new([poll_sync, complete, cancel, free, panic_message].into_iter()),
+                Self::CallbackCompletion { complete } => Box::new(std::iter::once(complete)),
             }
         }
     }

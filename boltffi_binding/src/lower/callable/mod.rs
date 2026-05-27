@@ -8,18 +8,27 @@
 //! [`CallableDecl`] carries every decision a renderer needs without
 //! re-running the dispatch.
 //!
-//! Scope:
+//! Scope splits along which side implements the body:
 //!
-//! - [`lower_method`] and [`lower_function`] produce
+//! - [`lower_exported_method`] and [`lower_function`] produce
 //!   [`ExportedCallable<S>`] (`K = RustBody`): Rust implements, foreign
-//!   calls in.
+//!   calls in. They take a [`SymbolAllocator`] and the start callable's
+//!   symbol name because async exported callables mint the lifecycle
+//!   symbols on [`Surface::AsyncProtocol`] from that prefix.
+//! - [`lower_imported_method`] produces an [`ImportedCallable<S>`]
+//!   used by callback-trait dispatch (`K = ForeignBody`): foreign
+//!   implements, Rust calls out. Imported async callables carry the
+//!   surface protocol used by callback-trait dispatch.
 //! - [`lower_closure_param_into_rust`] produces a [`ClosureParam<S>`]
-//!   whose invoke contract is an [`ImportedCallable<S>`]
-//!   (`K = ForeignBody`): foreign implements, Rust calls out.
+//!   whose invoke contract is an [`ImportedCallable<S>`]. Closure
+//!   signatures have no execution axis in the AST, so the invoke is
+//!   always synchronous.
 //!
 //! What this module supports today:
 //!
-//! - synchronous callables;
+//! - synchronous and async exported callables, the latter through the
+//!   surface's [`Surface::AsyncProtocol`] value built by
+//!   [`super::async_protocol`];
 //! - by-value, by-ref, and by-mut-ref receivers;
 //! - callback-trait params and returns in all four shapes
 //!   ([`TraitUseForm`](boltffi_ast::TraitUseForm) crossed with
@@ -32,7 +41,6 @@
 //!
 //! What it rejects with a precise error (each is a follow-up gap):
 //!
-//! - `async fn` ([`UnsupportedType::AsyncCallable`]);
 //! - the unit type `()` outside the `Result<(), E>` success channel
 //!   ([`UnsupportedType::UnitInValuePosition`]);
 //! - `Self` referenced from a callback-trait method signature
@@ -44,6 +52,7 @@
 //! [`ExportedCallable<S>`]: crate::ExportedCallable
 //! [`ImportedCallable<S>`]: crate::ImportedCallable
 //! [`ClosureParam<S>`]: crate::ClosureParam
+//! [`Surface::AsyncProtocol`]: crate::Surface::AsyncProtocol
 
 mod params;
 mod returns;
@@ -54,15 +63,14 @@ use boltffi_ast::{
 };
 
 use crate::{
-    CallableDecl, CallableScope, ClosureForm, ClosureParam, ClosureRegistration, ExecutionDecl,
-    ExportedCallable, ImportedCallable, IntoRust, Receive,
+    ClosureForm, ClosureParam, ClosureRegistration, ExecutionDecl, ExportedCallable,
+    ImportedCallable, IntoRust, OutOfRust, Receive,
 };
 
 use super::{
     LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, surface::SurfaceLower,
+    symbol::SymbolAllocator,
 };
-
-use params::ClosureParamSlot;
 
 /// Names the declaration that owns a callable.
 ///
@@ -122,41 +130,58 @@ impl<'src> CallableOwner<'src> {
     }
 }
 
-/// Lowers one [`MethodDef`] into a [`CallableDecl<S, K>`].
+/// Lowers a Rust-implemented [`MethodDef`] into an
+/// [`ExportedCallable<S>`].
 ///
-/// The caller picks the scope. Record, enum, class methods, and
-/// initializers pass `K = RustBody`; callback trait methods pass
-/// `K = ForeignBody`. `K` propagates into the parameter and return
-/// directions through `K::ParamDirection` and `K::ReturnDirection`.
+/// `start_symbol_name` is the symbol foreign code links against to
+/// invoke this callable. For sync methods it is the only symbol the
+/// callable references; for async methods it is the prefix used to
+/// mint the lifecycle symbols on [`Surface::AsyncProtocol`]. The
+/// allocator hands out fresh ids for each lifecycle symbol.
 ///
 /// The owner context resolves `Self` inside parameter and return type
-/// expressions. The receiver follows the source. Async callables are
-/// rejected with [`UnsupportedType::AsyncCallable`] so the gap is
-/// visible to the caller.
-pub(super) fn lower_method<S: SurfaceLower, K: CallableScope>(
+/// expressions. The receiver follows the source.
+pub(super) fn lower_exported_method<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    owner: CallableOwner<'_>,
+    method: &MethodDef,
+    start_symbol_name: &str,
+) -> Result<ExportedCallable<S>, LowerError> {
+    let receiver = lower_receiver(method.receiver);
+    let parameters = params::lower::<S, IntoRust>(idx, ids, owner, &method.parameters)?;
+    let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &method.returns)?;
+    let execution = lower_execution::<S>(allocator, method.execution, start_symbol_name)?;
+
+    Ok(ExportedCallable::<S>::new(
+        receiver, parameters, returns, error, execution,
+    )?)
+}
+
+/// Lowers a foreign-implemented callback trait [`MethodDef`] into an
+/// [`ImportedCallable<S>`].
+///
+/// Callback methods cross in the opposite direction from exported
+/// methods: Rust pushes arguments out and reads the return back in.
+/// Their dispatch target is not a [`NativeSymbol`](crate::NativeSymbol)
+/// but a per-surface slot ([`crate::VTableSlot`] on native, an
+/// [`crate::ImportSymbol`] on wasm32), so no allocator threads through
+/// here.
+///
+pub(super) fn lower_imported_method<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     owner: CallableOwner<'_>,
     method: &MethodDef,
-) -> Result<CallableDecl<S, K>, LowerError>
-where
-    K::ParamDirection: ClosureParamSlot<S>,
-{
-    if matches!(method.execution, ExecutionKind::Async) {
-        return Err(LowerError::unsupported_type(UnsupportedType::AsyncCallable));
-    }
-
+    execution: ExecutionDecl<S>,
+) -> Result<ImportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters = params::lower::<S, K::ParamDirection>(idx, ids, owner, &method.parameters)?;
-    let (returns, error) =
-        returns::lower::<S, K::ReturnDirection>(idx, ids, owner, &method.returns)?;
+    let parameters = params::lower::<S, OutOfRust>(idx, ids, owner, &method.parameters)?;
+    let (returns, error) = returns::lower::<S, IntoRust>(idx, ids, owner, &method.returns)?;
 
-    Ok(CallableDecl::<S, K>::new(
-        receiver,
-        parameters,
-        returns,
-        error,
-        ExecutionDecl::synchronous(),
+    Ok(ImportedCallable::<S>::new(
+        receiver, parameters, returns, error, execution,
     )?)
 }
 
@@ -171,7 +196,9 @@ where
 /// [`IntoRust`](crate::IntoRust). The registration uses
 /// [`Receive::ByValue`] and the surface's closure-registration shape.
 ///
-/// `Self` references and async closures are rejected explicitly.
+/// Closure signatures have no execution axis in the AST, so the invoke
+/// is always synchronous. `Self` references reach the function-scoped
+/// substitution path and are rejected there.
 pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
@@ -213,28 +240,47 @@ pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
 ///
 /// Free functions have no receiver and no `Self`; the owner context is
 /// [`CallableOwner::Function`], which rejects any `Self` reference
-/// found while walking parameter and return types. Async functions are
-/// rejected with [`UnsupportedType::AsyncCallable`].
+/// found while walking parameter and return types. Async free
+/// functions lower through the same lifecycle protocol as async
+/// methods; `start_symbol_name` names the start symbol foreign code
+/// links to invoke the operation, and the lifecycle symbols are minted
+/// with that name as prefix.
 pub(super) fn lower_function<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     function: &FunctionDef,
+    start_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
-    if matches!(function.execution, ExecutionKind::Async) {
-        return Err(LowerError::unsupported_type(UnsupportedType::AsyncCallable));
-    }
-
     let owner = CallableOwner::Function;
     let parameters = params::lower::<S, IntoRust>(idx, ids, owner, &function.parameters)?;
     let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &function.returns)?;
+    let execution = lower_execution::<S>(allocator, function.execution, start_symbol_name)?;
 
     Ok(ExportedCallable::<S>::new(
-        None,
-        parameters,
-        returns,
-        error,
-        ExecutionDecl::synchronous(),
+        None, parameters, returns, error, execution,
     )?)
+}
+
+/// Builds the [`ExecutionDecl<S>`] for an exported callable.
+///
+/// Sync callables yield [`ExecutionDecl::synchronous`] without touching
+/// the allocator. Async callables defer to the surface's
+/// [`AsyncProtocolBuilder`] to mint the lifecycle symbols from the
+/// start symbol prefix and wrap them in
+/// [`ExecutionDecl::asynchronous`].
+fn lower_execution<S: SurfaceLower>(
+    allocator: &mut SymbolAllocator,
+    execution: ExecutionKind,
+    start_symbol_name: &str,
+) -> Result<ExecutionDecl<S>, LowerError> {
+    match execution {
+        ExecutionKind::Sync => Ok(ExecutionDecl::synchronous()),
+        ExecutionKind::Async => {
+            let protocol = S::build_protocol(allocator, start_symbol_name)?;
+            Ok(ExecutionDecl::asynchronous(protocol))
+        }
+    }
 }
 
 fn lower_receiver(receiver: Receiver) -> Option<Receive> {

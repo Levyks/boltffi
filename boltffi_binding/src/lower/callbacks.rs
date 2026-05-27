@@ -14,11 +14,11 @@
 //! function carries the private bound under `#[allow(private_bounds)]`
 //! so callers only see the [`SurfaceLower`] contract.
 
-use boltffi_ast::TraitDef as SourceTrait;
+use boltffi_ast::{ExecutionKind, MethodDef, TraitDef as SourceTrait};
 
 use crate::{
-    CallbackDecl, CanonicalName, ImportModule, ImportSymbol, Native, Surface, SymbolName,
-    VTableSlot, Wasm32, native, wasm32,
+    CallbackDecl, CanonicalName, ExecutionDecl, ImportModule, ImportSymbol, Native, Surface,
+    SymbolName, VTableSlot, Wasm32, native, wasm32,
 };
 
 use super::{
@@ -114,10 +114,19 @@ impl CallbackProtocolBuilder for Native {
         let create_handle = allocator.mint(symbol::callback_create_handle_symbol_name(
             callback.id.as_str(),
         ))?;
-        let methods =
-            methods::lower_callback_methods::<Self, VTableSlot, _>(idx, ids, callback, |slot| {
-                VTableSlot::parse(slot.as_str().to_owned()).map_err(LowerError::from)
-            })?;
+        let methods = methods::lower_callback_methods::<Self, VTableSlot, _>(
+            idx,
+            ids,
+            callback,
+            |method, slot| {
+                let target =
+                    VTableSlot::parse(slot.as_str().to_owned()).map_err(LowerError::from)?;
+                Ok(methods::CallbackMethodSurface::new(
+                    target,
+                    native_callback_execution(method),
+                ))
+            },
+        )?;
         let vtable = native::CallbackVTable::new(
             VTableSlot::parse(VTABLE_FREE_SLOT_NAME.to_owned())?,
             VTableSlot::parse(VTABLE_CLONE_SLOT_NAME.to_owned())?,
@@ -151,13 +160,14 @@ impl CallbackProtocolBuilder for Wasm32 {
             symbol::callback_wasm_import_clone_name(callback.id.as_str()),
         )?;
         let callback_id = callback.id.as_str();
-        let methods =
-            methods::lower_callback_methods::<Self, ImportSymbol, _>(idx, ids, callback, |slot| {
-                wasm_import(
-                    &module,
-                    symbol::callback_wasm_import_method_name(callback_id, slot),
-                )
-            })?;
+        let methods = methods::lower_callback_methods::<Self, ImportSymbol, _>(
+            idx,
+            ids,
+            callback,
+            |method, slot| {
+                wasm_callback_method_surface(allocator, &module, callback_id, method, slot)
+            },
+        )?;
         Ok(wasm32::CallbackProtocol::new(
             create_handle,
             free,
@@ -169,6 +179,47 @@ impl CallbackProtocolBuilder for Wasm32 {
 
 fn wasm_import(module: &ImportModule, name: String) -> Result<ImportSymbol, LowerError> {
     Ok(ImportSymbol::new(module.clone(), SymbolName::parse(name)?))
+}
+
+fn native_callback_execution(method: &MethodDef) -> ExecutionDecl<Native> {
+    match method.execution {
+        ExecutionKind::Sync => ExecutionDecl::synchronous(),
+        ExecutionKind::Async => {
+            ExecutionDecl::asynchronous(native::AsyncProtocol::CallbackCompletion)
+        }
+    }
+}
+
+fn wasm_callback_method_surface(
+    allocator: &mut SymbolAllocator,
+    module: &ImportModule,
+    callback_id: &str,
+    method: &MethodDef,
+    slot: &CallbackSlot,
+) -> Result<methods::CallbackMethodSurface<Wasm32, ImportSymbol>, LowerError> {
+    match method.execution {
+        ExecutionKind::Sync => Ok(methods::CallbackMethodSurface::new(
+            wasm_import(
+                module,
+                symbol::callback_wasm_import_method_name(callback_id, slot),
+            )?,
+            ExecutionDecl::synchronous(),
+        )),
+        ExecutionKind::Async => {
+            let target = wasm_import(
+                module,
+                symbol::callback_wasm_import_start_name(callback_id, slot),
+            )?;
+            let complete = allocator.mint(symbol::callback_wasm_complete_symbol_name(
+                callback_id,
+                slot,
+            ))?;
+            Ok(methods::CallbackMethodSurface::new(
+                target,
+                ExecutionDecl::asynchronous(wasm32::AsyncProtocol::CallbackCompletion { complete }),
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1194,5 +1245,80 @@ mod tests {
             ExecutionDecl::Synchronous(_)
         ));
         assert!(matches!(callable.error(), ErrorDecl::None(_)));
+    }
+
+    #[test]
+    fn native_async_callback_method_lowers_to_callback_completion_protocol() {
+        let mut callback = listener_callback();
+        let mut on_event = method("on_event", Receiver::Shared);
+        on_event.execution = boltffi_ast::ExecutionKind::Async;
+        on_event.parameters = vec![value_param("value", TypeExpr::Primitive(Primitive::I32))];
+        on_event.returns = ReturnDef::Value(TypeExpr::String);
+        callback.methods.push(on_event);
+
+        let bindings = lower_callback::<Native>(callback);
+        let method = &first_callback(&bindings).protocol().vtable().methods()[0];
+        let callable = method.callable();
+
+        assert_eq!(method.target().as_str(), "on_event");
+        assert!(matches!(
+            callable.execution(),
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::CallbackCompletion)
+        ));
+        assert!(matches!(
+            callable.params()[0].as_value().unwrap(),
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(crate::Primitive::I32),
+                receive: (),
+            }
+        ));
+        match callable.returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
+                ty: TypeRef::String,
+                codec,
+                shape: native::BufferShape::Buffer,
+            } => {
+                assert_eq!(codec.value(), &ValueRef::self_value());
+                assert_eq!(codec.root(), &CodecNode::String);
+            }
+            other => panic!("expected encoded async callback return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wasm_async_callback_method_uses_start_import_and_complete_export() {
+        let mut callback = listener_callback();
+        let mut on_event = method("on_event", Receiver::Shared);
+        on_event.execution = boltffi_ast::ExecutionKind::Async;
+        on_event.parameters = vec![value_param("value", TypeExpr::Primitive(Primitive::I32))];
+        on_event.returns = ReturnDef::Value(TypeExpr::String);
+        callback.methods.push(on_event);
+
+        let bindings = lower_callback::<Wasm32>(callback);
+        let callback = first_callback(&bindings);
+        let method = &callback.protocol().methods()[0];
+
+        assert_eq!(method.target().module().as_str(), "env");
+        assert_eq!(
+            method.target().name().as_str(),
+            "__boltffi_callback_demo_listener_on_event_start"
+        );
+        match method.callable().execution() {
+            ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::CallbackCompletion { complete }) => {
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_callback_demo_listener_on_event_complete"
+                );
+            }
+            other => panic!("expected wasm callback completion protocol, got {other:?}"),
+        }
+
+        let names: Vec<&str> = bindings
+            .symbols()
+            .symbols()
+            .iter()
+            .map(|symbol| symbol.name().as_str())
+            .collect();
+        assert!(names.contains(&"boltffi_callback_demo_listener_on_event_complete"));
     }
 }

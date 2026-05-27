@@ -783,4 +783,103 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn async_class_method_lowers_to_poll_handle_protocol_on_native() {
+        let mut compute = method("compute", Receiver::Shared, ReturnDef::Void);
+        compute.execution = boltffi_ast::ExecutionKind::Async;
+        let bindings = lower_class::<Native>(class("demo::Engine", "Engine", vec![compute]));
+        let methods = class_by_id(&bindings, ClassId::from_raw(0)).methods();
+
+        assert_eq!(
+            methods[0].target().name().as_str(),
+            "boltffi_method_class_demo_engine_compute"
+        );
+        match methods[0].callable().execution() {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                handle,
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &native::HandleCarrier::U64);
+                assert_eq!(
+                    poll.name().as_str(),
+                    "boltffi_method_class_demo_engine_compute_poll"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_method_class_demo_engine_compute_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_method_class_demo_engine_compute_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_method_class_demo_engine_compute_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_method_class_demo_engine_compute_panic_message"
+                );
+            }
+            other => panic!("expected native PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_class_initializer_lowers_to_poll_handle_protocol_on_wasm32() {
+        let mut new_engine = method(
+            "new",
+            Receiver::None,
+            ReturnDef::Value(TypeExpr::class(
+                "demo::Engine".into(),
+                SourcePresence::Required,
+            )),
+        );
+        new_engine.execution = boltffi_ast::ExecutionKind::Async;
+        let bindings = lower_class::<Wasm32>(class("demo::Engine", "Engine", vec![new_engine]));
+        let initializers = class_by_id(&bindings, ClassId::from_raw(0)).initializers();
+
+        assert_eq!(
+            initializers[0].symbol().name().as_str(),
+            "boltffi_init_class_demo_engine_new"
+        );
+        match initializers[0].callable().execution() {
+            ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::PollHandle {
+                handle,
+                poll_sync,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &wasm32::HandleCarrier::U32);
+                assert_eq!(
+                    poll_sync.name().as_str(),
+                    "boltffi_init_class_demo_engine_new_poll_sync"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_init_class_demo_engine_new_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_init_class_demo_engine_new_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_init_class_demo_engine_new_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_init_class_demo_engine_new_panic_message"
+                );
+            }
+            other => panic!("expected wasm32 PollHandle protocol, got {other:?}"),
+        }
+    }
 }

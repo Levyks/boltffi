@@ -21,6 +21,7 @@ use boltffi_ast::ClosureType;
 
 use crate::{Native, Surface, Wasm32, native, wasm32};
 
+use super::async_protocol::AsyncProtocolBuilder;
 use super::callbacks::CallbackProtocolBuilder;
 use super::{LowerError, wasm_closure};
 
@@ -47,7 +48,9 @@ mod sealed {
 /// `Self::CallbackProtocol` so the constructor never appears in this
 /// trait's public method set.
 #[allow(private_bounds)]
-pub trait SurfaceLower: Surface + sealed::Sealed + CallbackProtocolBuilder {
+pub trait SurfaceLower:
+    Surface + sealed::Sealed + CallbackProtocolBuilder + AsyncProtocolBuilder
+{
     /// Buffer shape used for an encoded parameter crossing.
     ///
     /// Encoded params (strings, vecs, encoded records, ...) cross as

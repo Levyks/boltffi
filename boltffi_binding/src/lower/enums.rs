@@ -213,7 +213,7 @@ mod tests {
         ExecutionDecl, ExportedMethodDecl, FieldKey, InitializerDecl, IntegerRepr, IntegerValue,
         LowerError, LowerErrorKind, Native, NativeSymbol, OutOfRust, ParamPlan,
         Primitive as BindingPrimitive, ReadPlan, Receive, RecordId, ReturnPlan, SurfaceLower,
-        TypeRef, UnsupportedType, ValueRef, Wasm32, native, wasm32,
+        TypeRef, ValueRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -866,15 +866,138 @@ mod tests {
     }
 
     #[test]
-    fn enum_method_rejects_async() {
-        let mut method = method("compute", Receiver::Shared);
-        method.execution = ExecutionKind::Async;
-        let error = lower_enum_result::<Native>(enum_with_methods(direction_enum(), vec![method]))
-            .expect_err("async should reject");
+    fn async_enum_method_lowers_to_poll_handle_protocol_on_native() {
+        let mut async_method = method("compute", Receiver::Shared);
+        async_method.execution = ExecutionKind::Async;
+        let bindings =
+            lower_enum::<Native>(enum_with_methods(direction_enum(), vec![async_method]));
+        let method = only_method(&bindings);
 
-        match error.kind() {
-            LowerErrorKind::UnsupportedType(UnsupportedType::AsyncCallable) => {}
-            other => panic!("expected AsyncCallable, got {other:?}"),
+        assert_eq!(
+            method.target().name().as_str(),
+            "boltffi_method_enum_demo_direction_compute"
+        );
+        match method.callable().execution() {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                handle,
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &native::HandleCarrier::U64);
+                assert_eq!(
+                    poll.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_poll"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_panic_message"
+                );
+            }
+            other => panic!("expected native PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_enum_method_lowers_to_poll_handle_protocol_on_wasm32() {
+        let mut async_method = method("compute", Receiver::Shared);
+        async_method.execution = ExecutionKind::Async;
+        let bindings =
+            lower_enum::<Wasm32>(enum_with_methods(direction_enum(), vec![async_method]));
+        let methods = enum_methods_at(&bindings, 0);
+
+        match methods[0].callable().execution() {
+            ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::PollHandle {
+                handle,
+                poll_sync,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &wasm32::HandleCarrier::U32);
+                assert_eq!(
+                    poll_sync.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_poll_sync"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_method_enum_demo_direction_compute_panic_message"
+                );
+            }
+            other => panic!("expected wasm32 PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_enum_initializer_lowers_to_poll_handle_protocol() {
+        let mut parse = method("parse", Receiver::None);
+        parse.execution = ExecutionKind::Async;
+        parse.returns = ReturnDef::Value(TypeExpr::SelfType);
+        let bindings = lower_enum::<Native>(enum_with_methods(direction_enum(), vec![parse]));
+        let initializer = only_initializer(&bindings);
+
+        assert_eq!(
+            initializer.symbol().name().as_str(),
+            "boltffi_init_enum_demo_direction_parse"
+        );
+        match initializer.callable().execution() {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+                ..
+            }) => {
+                assert_eq!(
+                    poll.name().as_str(),
+                    "boltffi_init_enum_demo_direction_parse_poll"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_init_enum_demo_direction_parse_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_init_enum_demo_direction_parse_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_init_enum_demo_direction_parse_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_init_enum_demo_direction_parse_panic_message"
+                );
+            }
+            other => panic!("expected native PollHandle protocol, got {other:?}"),
         }
     }
 

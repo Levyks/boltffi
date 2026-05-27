@@ -153,6 +153,22 @@ pub(super) fn callback_wasm_import_method_name(callback_id: &str, slot: &Callbac
     wasm_callback_import_name(&symbol_path(callback_id), slot.as_str())
 }
 
+pub(super) fn callback_wasm_import_start_name(callback_id: &str, slot: &CallbackSlot) -> String {
+    wasm_callback_import_name(
+        &symbol_path(callback_id),
+        &format!("{}_start", slot.as_str()),
+    )
+}
+
+pub(super) fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &CallbackSlot) -> String {
+    format!(
+        "{}_callback_{}_{}_complete",
+        FFI_PREFIX,
+        symbol_path(callback_id),
+        slot.as_str()
+    )
+}
+
 /// Builds the wasm import name foreign code provides to drop a handle.
 pub(super) fn callback_wasm_import_free_name(callback_id: &str) -> String {
     wasm_callback_import_name(&symbol_path(callback_id), "free")
@@ -161,6 +177,52 @@ pub(super) fn callback_wasm_import_free_name(callback_id: &str) -> String {
 /// Builds the wasm import name foreign code provides to duplicate a handle.
 pub(super) fn callback_wasm_import_clone_name(callback_id: &str) -> String {
     wasm_callback_import_name(&symbol_path(callback_id), "clone")
+}
+
+/// Names one symbol in the async lifecycle protocol of a single callable.
+///
+/// The lifecycle symbols share the start callable's symbol name as a
+/// prefix so every symbol attached to one async operation groups when
+/// grepped or sorted: a method `compute` on `demo::Engine` mints
+/// `boltffi_method_record_demo_engine_compute_poll`,
+/// `..._complete`, and so on.
+#[derive(Clone, Copy)]
+pub(super) enum AsyncLifecycle {
+    /// Foreign-side step that advances the async state without blocking.
+    Poll,
+    /// Wasm-side step that advances the async state synchronously.
+    PollSync,
+    /// Foreign-side step that extracts the resolved value once ready.
+    Complete,
+    /// Foreign-side step that requests cancellation.
+    Cancel,
+    /// Foreign-side step that releases the async state.
+    Free,
+    /// Foreign-side step that retrieves the panic message after a
+    /// failed operation.
+    Panic,
+}
+
+impl AsyncLifecycle {
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::Poll => "poll",
+            Self::PollSync => "poll_sync",
+            Self::Complete => "complete",
+            Self::Cancel => "cancel",
+            Self::Free => "free",
+            Self::Panic => "panic_message",
+        }
+    }
+}
+
+/// Builds a lifecycle symbol name from the start callable's symbol name.
+///
+pub(super) fn async_lifecycle_symbol_name(
+    start_symbol_name: &str,
+    action: AsyncLifecycle,
+) -> String {
+    format!("{}_{}", start_symbol_name, action.suffix())
 }
 
 /// The canonical snake-cased name of a callback method's dispatch slot.
@@ -330,6 +392,35 @@ mod tests {
         assert_eq!(
             wasm_callback_import_name("demo_listener", "on_event"),
             "__boltffi_callback_demo_listener_on_event"
+        );
+    }
+
+    #[test]
+    fn async_lifecycle_symbol_names_append_runtime_suffixes() {
+        assert_eq!(
+            async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::Poll),
+            "boltffi_function_demo_spin_poll"
+        );
+        assert_eq!(
+            async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::PollSync),
+            "boltffi_function_demo_spin_poll_sync"
+        );
+        assert_eq!(
+            async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::Complete),
+            "boltffi_function_demo_spin_complete"
+        );
+    }
+
+    #[test]
+    fn wasm_async_callback_names_use_start_import_and_complete_export() {
+        let slot = CallbackSlot::from_method_name("onEvent");
+        assert_eq!(
+            callback_wasm_import_start_name("demo::Listener", &slot),
+            "__boltffi_callback_demo_listener_on_event_start"
+        );
+        assert_eq!(
+            callback_wasm_complete_symbol_name("demo::Listener", &slot),
+            "boltffi_callback_demo_listener_on_event_complete"
         );
     }
 }

@@ -12,8 +12,8 @@ use boltffi_ast::{
 };
 
 use crate::{
-    CanonicalName, ExportedMethodDecl, ImportedMethodDecl, InitializerDecl, InitializerId,
-    MethodId, NativeSymbol, ReturnTypeRef, TypeRef,
+    CanonicalName, ExecutionDecl, ExportedMethodDecl, ImportedMethodDecl, InitializerDecl,
+    InitializerId, MethodId, NativeSymbol, ReturnTypeRef, TypeRef,
 };
 
 use super::{
@@ -227,8 +227,15 @@ fn lower_initializer<S: SurfaceLower>(
     id: InitializerId,
     returns: TypeRef,
 ) -> Result<InitializerDecl<S>, LowerError> {
-    let callable_decl = callable::lower_method::<S, crate::RustBody>(idx, ids, owner, method)?;
     let symbol = mint_initializer_symbol(allocator, owner, method)?;
+    let callable_decl = callable::lower_exported_method::<S>(
+        idx,
+        ids,
+        allocator,
+        owner,
+        method,
+        symbol.name().as_str(),
+    )?;
     Ok(InitializerDecl::new(
         id,
         CanonicalName::from(&method.name),
@@ -247,8 +254,15 @@ fn lower_method<S: SurfaceLower>(
     method: &MethodDef,
     id: MethodId,
 ) -> Result<ExportedMethodDecl<S, NativeSymbol>, LowerError> {
-    let callable_decl = callable::lower_method::<S, crate::RustBody>(idx, ids, owner, method)?;
     let symbol = mint_method_symbol(allocator, owner, method)?;
+    let callable_decl = callable::lower_exported_method::<S>(
+        idx,
+        ids,
+        allocator,
+        owner,
+        method,
+        symbol.name().as_str(),
+    )?;
     Ok(ExportedMethodDecl::new(
         id,
         CanonicalName::from(&method.name),
@@ -297,10 +311,10 @@ pub(super) fn lower_callback_methods<S: SurfaceLower, T, F>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     source_trait: &TraitDef,
-    mut target_for: F,
+    mut surface_for: F,
 ) -> Result<Vec<ImportedMethodDecl<S, T>>, LowerError>
 where
-    F: FnMut(&CallbackSlot) -> Result<T, LowerError>,
+    F: FnMut(&MethodDef, &CallbackSlot) -> Result<CallbackMethodSurface<S, T>, LowerError>,
 {
     let owner = callable::CallableOwner::Trait(source_trait);
     source_trait
@@ -309,20 +323,31 @@ where
         .enumerate()
         .map(|(index, method)| {
             require_callback_receiver(method.receiver)?;
-            let callable_decl =
-                callable::lower_method::<S, crate::ForeignBody>(idx, ids, owner, method)?;
             let raw_method_name = method.name.parts().last().map_or("", |part| part.as_str());
             let slot = CallbackSlot::from_method_name(raw_method_name);
-            let target = target_for(&slot)?;
+            let surface = surface_for(method, &slot)?;
+            let callable_decl =
+                callable::lower_imported_method::<S>(idx, ids, owner, method, surface.execution)?;
             Ok(ImportedMethodDecl::new(
                 MethodId::from_raw(index as u32),
                 CanonicalName::from(&method.name),
                 metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),
-                target,
+                surface.target,
                 callable_decl,
             ))
         })
         .collect()
+}
+
+pub(super) struct CallbackMethodSurface<S: SurfaceLower, T> {
+    target: T,
+    execution: ExecutionDecl<S>,
+}
+
+impl<S: SurfaceLower, T> CallbackMethodSurface<S, T> {
+    pub(super) fn new(target: T, execution: ExecutionDecl<S>) -> Self {
+        Self { target, execution }
+    }
 }
 
 fn require_callback_receiver(receiver: Receiver) -> Result<(), LowerError> {

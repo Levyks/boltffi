@@ -44,8 +44,9 @@ fn lower_one<S: SurfaceLower>(
     }
 
     let function_id = ids.function(&function.id)?;
-    let callable_decl = callable::lower_function::<S>(idx, ids, function)?;
     let symbol = allocator.mint(function_symbol_name(function.id.as_str()))?;
+    let callable_decl =
+        callable::lower_function::<S>(idx, ids, allocator, function, symbol.name().as_str())?;
     Ok(FunctionDecl::new(
         function_id,
         CanonicalName::from(&function.name),
@@ -352,19 +353,169 @@ mod tests {
     }
 
     #[test]
-    fn async_function_is_rejected() {
+    fn async_free_function_lowers_to_poll_handle_protocol_on_native() {
         let mut spin = function("demo::spin", "spin");
         spin.execution = ExecutionKind::Async;
 
-        let error = TestContract::new()
-            .with_function(spin)
-            .lower::<Native>()
-            .expect_err("async free function must reject until async support lands");
+        let bindings = TestContract::new().with_function(spin).lower_ok::<Native>();
+        let function = first_function(&bindings);
+
+        assert_eq!(
+            function.symbol().name().as_str(),
+            "boltffi_function_demo_spin"
+        );
+        match function.callable().execution() {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                handle,
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &native::HandleCarrier::U64);
+                assert_eq!(poll.name().as_str(), "boltffi_function_demo_spin_poll");
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_function_demo_spin_complete"
+                );
+                assert_eq!(cancel.name().as_str(), "boltffi_function_demo_spin_cancel");
+                assert_eq!(free.name().as_str(), "boltffi_function_demo_spin_free");
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_function_demo_spin_panic_message"
+                );
+            }
+            other => panic!("expected native PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_free_function_lowers_to_poll_handle_protocol_on_wasm32() {
+        let mut spin = function("demo::spin", "spin");
+        spin.execution = ExecutionKind::Async;
+
+        let bindings = TestContract::new().with_function(spin).lower_ok::<Wasm32>();
+        let function = first_function(&bindings);
+
+        match function.callable().execution() {
+            ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::PollHandle {
+                handle,
+                poll_sync,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &wasm32::HandleCarrier::U32);
+                assert_eq!(
+                    poll_sync.name().as_str(),
+                    "boltffi_function_demo_spin_poll_sync"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_function_demo_spin_complete"
+                );
+                assert_eq!(cancel.name().as_str(), "boltffi_function_demo_spin_cancel");
+                assert_eq!(free.name().as_str(), "boltffi_function_demo_spin_free");
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_function_demo_spin_panic_message"
+                );
+            }
+            other => panic!("expected wasm32 PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_free_function_registers_lifecycle_symbols_in_symbol_table() {
+        let mut spin = function("demo::spin", "spin");
+        spin.execution = ExecutionKind::Async;
+
+        let bindings = TestContract::new().with_function(spin).lower_ok::<Native>();
+        let names = symbol_names(&bindings);
+
+        assert!(names.contains(&"boltffi_function_demo_spin"));
+        assert!(names.contains(&"boltffi_function_demo_spin_poll"));
+        assert!(names.contains(&"boltffi_function_demo_spin_complete"));
+        assert!(names.contains(&"boltffi_function_demo_spin_cancel"));
+        assert!(names.contains(&"boltffi_function_demo_spin_free"));
+        assert!(names.contains(&"boltffi_function_demo_spin_panic_message"));
+    }
+
+    #[test]
+    fn async_result_unit_success_keeps_void_success_and_encoded_error() {
+        let mut run = function("demo::run", "run");
+        run.execution = ExecutionKind::Async;
+        run.returns = ReturnDef::Value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String));
+
+        let bindings = TestContract::new().with_function(run).lower_ok::<Native>();
+        let callable = first_function(&bindings).callable();
 
         assert!(matches!(
-            error.kind(),
-            LowerErrorKind::UnsupportedType(UnsupportedType::AsyncCallable)
+            callable.execution(),
+            ExecutionDecl::Asynchronous(_)
         ));
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
+        assert_native_string_error(callable.error());
+    }
+
+    #[test]
+    fn async_option_scalar_return_keeps_scalar_option_plan() {
+        let mut maybe_count = function("demo::maybe_count", "maybe_count");
+        maybe_count.execution = ExecutionKind::Async;
+        maybe_count.returns = ReturnDef::Value(TypeExpr::Option(Box::new(TypeExpr::Primitive(
+            Primitive::I32,
+        ))));
+
+        let bindings = TestContract::new()
+            .with_function(maybe_count)
+            .lower_ok::<Wasm32>();
+        let callable = first_function(&bindings).callable();
+
+        assert_eq!(
+            callable.returns().plan(),
+            &ReturnPlan::ScalarOptionViaReturnSlot {
+                primitive: BindingPrimitive::I32,
+            }
+        );
+        assert!(matches!(callable.error(), ErrorDecl::None(_)));
+    }
+
+    #[test]
+    fn async_result_vec_success_falls_back_to_encoded_out_pointer() {
+        let mut load_all = function("demo::load_all", "load_all");
+        load_all.execution = ExecutionKind::Async;
+        load_all.returns = ReturnDef::Value(TypeExpr::result(
+            TypeExpr::Vec(Box::new(TypeExpr::Primitive(Primitive::I32))),
+            TypeExpr::String,
+        ));
+
+        let bindings = TestContract::new()
+            .with_function(load_all)
+            .lower_ok::<Native>();
+        let callable = first_function(&bindings).callable();
+
+        match callable.returns().plan() {
+            ReturnPlan::EncodedViaOutPointer { ty, codec, shape } => {
+                assert_eq!(
+                    ty,
+                    &TypeRef::Sequence(Box::new(TypeRef::Primitive(BindingPrimitive::I32)))
+                );
+                match codec.root() {
+                    CodecNode::Sequence { element, .. } => {
+                        assert_eq!(
+                            element.as_ref(),
+                            &CodecNode::Primitive(BindingPrimitive::I32)
+                        );
+                    }
+                    other => panic!("expected sequence codec, got {other:?}"),
+                }
+                assert_eq!(shape, &native::BufferShape::Buffer);
+            }
+            other => panic!("expected encoded async result vec success, got {other:?}"),
+        }
+        assert_native_string_error(callable.error());
     }
 
     #[test]

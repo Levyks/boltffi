@@ -247,8 +247,6 @@ pub enum UnsupportedType {
     FallibleClosureReturn,
     /// A default value cannot be emitted as binding metadata yet.
     DefaultValue,
-    /// An `async` callable cannot be lowered yet.
-    AsyncCallable,
     /// `()` appeared in a position that requires a value-shaped type (a field
     /// or parameter). Unit is only meaningful as a callable result; carrying
     /// it as a value would force every consumer to special-case empty data.
@@ -291,7 +289,6 @@ impl fmt::Display for UnsupportedType {
             Self::TypeParameter => "type parameter",
             Self::FallibleClosureReturn => "fallible closure return",
             Self::DefaultValue => "default value",
-            Self::AsyncCallable => "async callable",
             Self::UnitInValuePosition => "unit type `()` in a value position",
             Self::SelfInCallbackTrait => "Self in callback trait method",
             Self::CallbackMethodSlotCollision => "callback method name collides with vtable slot",

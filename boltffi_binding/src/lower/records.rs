@@ -588,17 +588,167 @@ mod tests {
     }
 
     #[test]
-    fn rejects_async_method_with_specific_error() {
+    fn async_record_method_lowers_to_poll_handle_protocol_on_native() {
         let mut async_method = method("compute", Receiver::Shared);
         async_method.execution = ExecutionKind::Async;
-        let mut record = point_record();
-        record.methods.push(async_method);
 
-        let error = lower_record_result::<Native>(record).expect_err("async should reject");
+        let bindings = lower_point_method::<Native>(async_method);
+        let methods = record_decl_methods(&bindings);
+        let callable = methods[0].callable();
+        let start_symbol = methods[0].target();
 
-        match error.kind() {
-            LowerErrorKind::UnsupportedType(UnsupportedType::AsyncCallable) => {}
-            other => panic!("expected AsyncCallable, got {other:?}"),
+        assert_eq!(
+            start_symbol.name().as_str(),
+            "boltffi_method_record_demo_point_compute"
+        );
+        match callable.execution() {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                handle,
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &native::HandleCarrier::U64);
+                assert_eq!(
+                    poll.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_poll"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_panic_message"
+                );
+            }
+            other => panic!("expected native PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_record_method_lowers_to_poll_handle_protocol_on_wasm32() {
+        let mut async_method = method("compute", Receiver::Shared);
+        async_method.execution = ExecutionKind::Async;
+
+        let bindings = lower_point_method::<Wasm32>(async_method);
+        let methods = record_methods_at(&bindings, 0);
+        let callable = methods[0].callable();
+
+        match callable.execution() {
+            ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::PollHandle {
+                handle,
+                poll_sync,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            }) => {
+                assert_eq!(handle, &wasm32::HandleCarrier::U32);
+                assert_eq!(
+                    poll_sync.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_poll_sync"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_method_record_demo_point_compute_panic_message"
+                );
+            }
+            other => panic!("expected wasm32 PollHandle protocol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_record_method_registers_lifecycle_symbols_in_symbol_table() {
+        let mut async_method = method("compute", Receiver::Shared);
+        async_method.execution = ExecutionKind::Async;
+
+        let bindings = lower_point_method::<Native>(async_method);
+        let names: Vec<&str> = bindings
+            .symbols()
+            .symbols()
+            .iter()
+            .map(|symbol| symbol.name().as_str())
+            .collect();
+
+        assert!(names.contains(&"boltffi_method_record_demo_point_compute"));
+        assert!(names.contains(&"boltffi_method_record_demo_point_compute_poll"));
+        assert!(names.contains(&"boltffi_method_record_demo_point_compute_complete"));
+        assert!(names.contains(&"boltffi_method_record_demo_point_compute_cancel"));
+        assert!(names.contains(&"boltffi_method_record_demo_point_compute_free"));
+        assert!(names.contains(&"boltffi_method_record_demo_point_compute_panic_message"));
+    }
+
+    #[test]
+    fn async_record_initializer_lowers_to_poll_handle_protocol() {
+        let mut new_point = method_with(
+            "new",
+            Receiver::None,
+            Vec::new(),
+            ReturnDef::Value(TypeExpr::SelfType),
+        );
+        new_point.execution = ExecutionKind::Async;
+
+        let bindings = lower_point_method::<Native>(new_point);
+        let initializers = record_decl_initializers(&bindings);
+
+        assert_eq!(
+            initializers[0].symbol().name().as_str(),
+            "boltffi_init_record_demo_point_new"
+        );
+        match initializers[0].callable().execution() {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+                ..
+            }) => {
+                assert_eq!(
+                    poll.name().as_str(),
+                    "boltffi_init_record_demo_point_new_poll"
+                );
+                assert_eq!(
+                    complete.name().as_str(),
+                    "boltffi_init_record_demo_point_new_complete"
+                );
+                assert_eq!(
+                    cancel.name().as_str(),
+                    "boltffi_init_record_demo_point_new_cancel"
+                );
+                assert_eq!(
+                    free.name().as_str(),
+                    "boltffi_init_record_demo_point_new_free"
+                );
+                assert_eq!(
+                    panic_message.name().as_str(),
+                    "boltffi_init_record_demo_point_new_panic_message"
+                );
+            }
+            other => panic!("expected native PollHandle protocol, got {other:?}"),
         }
     }
 
