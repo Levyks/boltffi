@@ -162,7 +162,8 @@ fn lower_return_plan<S: SurfaceLower, D: Direction>(
         | TypeExpr::Option(_)
         | TypeExpr::Tuple(_)
         | TypeExpr::Result { .. }
-        | TypeExpr::Map { .. } => {
+        | TypeExpr::Map { .. }
+        | TypeExpr::Custom(_) => {
             let ty = types::lower(ids, type_expr)?;
             let codec_node = codecs::node(idx, ids, type_expr, ValueRef::self_value())?;
             Ok(ReturnPlan::EncodedViaReturnSlot {
@@ -186,10 +187,6 @@ fn lower_return_plan<S: SurfaceLower, D: Direction>(
             carrier: S::callback_handle_carrier(),
             presence: lower_presence(*presence),
         }),
-        TypeExpr::Custom(_) => {
-            let _ = types::lower(ids, type_expr)?;
-            Err(LowerError::unsupported_type(UnsupportedType::SelfType))
-        }
         TypeExpr::SelfType | TypeExpr::Parameter(_) => {
             Err(types::lower(ids, type_expr).expect_err("unsupported value-position type expr"))
         }

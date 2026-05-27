@@ -84,6 +84,10 @@ pub trait SurfaceLower:
     #[doc(hidden)]
     fn callback_handle_carrier() -> Self::HandleCarrier;
 
+    /// Handle carrier used for a stream subscription crossing.
+    #[doc(hidden)]
+    fn stream_handle_carrier() -> Self::HandleCarrier;
+
     /// Wire shape used at a closure-parameter registration crossing.
     #[doc(hidden)]
     fn closure_registration(closure: &ClosureType)
@@ -107,6 +111,10 @@ impl SurfaceLower for Native {
         native::HandleCarrier::CallbackHandle
     }
 
+    fn stream_handle_carrier() -> Self::HandleCarrier {
+        native::HandleCarrier::U64
+    }
+
     fn closure_registration(
         _closure: &ClosureType,
     ) -> Result<Self::ClosureRegistration, LowerError> {
@@ -128,6 +136,10 @@ impl SurfaceLower for Wasm32 {
     }
 
     fn callback_handle_carrier() -> Self::HandleCarrier {
+        wasm32::HandleCarrier::U32
+    }
+
+    fn stream_handle_carrier() -> Self::HandleCarrier {
         wasm32::HandleCarrier::U32
     }
 

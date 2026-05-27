@@ -15,7 +15,7 @@
 //! The protocol's symbol names are derived from the start callable's
 //! own symbol so every async operation's symbols group together when
 //! grepped: a method `compute` on `demo::Engine` adds
-//! `boltffi_method_record_demo_engine_compute_poll`, and so on.
+//! `boltffi_async_method_record_demo_engine_compute_poll`, and so on.
 //!
 //! [`CallableDecl`]: crate::CallableDecl
 //! [`ExecutionDecl::Asynchronous`]: crate::ExecutionDecl::Asynchronous

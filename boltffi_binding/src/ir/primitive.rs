@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::{layout::ByteSize, surface::Surface};
+
 /// The set of scalar values that can cross the FFI boundary directly.
 ///
 /// These are the shapes whose ABI representation is the same on both sides:
@@ -39,6 +41,19 @@ pub enum Primitive {
     F32,
     /// Rust `f64`.
     F64,
+}
+
+impl Primitive {
+    /// Returns the ABI byte width of this primitive.
+    pub const fn byte_size<S: Surface>(self) -> ByteSize {
+        ByteSize::new(match self {
+            Self::Bool | Self::I8 | Self::U8 => 1,
+            Self::I16 | Self::U16 => 2,
+            Self::I32 | Self::U32 | Self::F32 => 4,
+            Self::I64 | Self::U64 | Self::F64 => 8,
+            Self::ISize | Self::USize => S::POINTER_SIZE.get(),
+        })
+    }
 }
 
 /// The integer-sized scalars allowed for enum tags and status codes.

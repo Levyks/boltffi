@@ -53,6 +53,18 @@ impl LowerError {
         Self::new(LowerErrorKind::UnknownCustom(id.to_string()))
     }
 
+    pub(crate) fn unknown_constant(id: impl fmt::Display) -> Self {
+        Self::new(LowerErrorKind::UnknownConstant(id.to_string()))
+    }
+
+    pub(crate) fn invalid_constant_value(id: impl fmt::Display) -> Self {
+        Self::new(LowerErrorKind::InvalidConstantValue(id.to_string()))
+    }
+
+    pub(crate) fn unknown_stream(id: impl fmt::Display) -> Self {
+        Self::new(LowerErrorKind::UnknownStream(id.to_string()))
+    }
+
     pub(crate) fn unknown_function(id: impl fmt::Display) -> Self {
         Self::new(LowerErrorKind::UnknownFunction(id.to_string()))
     }
@@ -113,6 +125,18 @@ impl fmt::Display for LowerError {
             LowerErrorKind::UnknownCustom(custom) => {
                 write!(formatter, "unknown custom type id `{custom}`")
             }
+            LowerErrorKind::UnknownConstant(constant) => {
+                write!(formatter, "unknown constant id `{constant}`")
+            }
+            LowerErrorKind::InvalidConstantValue(constant) => {
+                write!(
+                    formatter,
+                    "constant `{constant}` value does not match its declared type"
+                )
+            }
+            LowerErrorKind::UnknownStream(stream) => {
+                write!(formatter, "unknown stream id `{stream}`")
+            }
             LowerErrorKind::UnknownFunction(function) => {
                 write!(formatter, "unknown function id `{function}`")
             }
@@ -169,6 +193,12 @@ pub enum LowerErrorKind {
     UnknownCallback(String),
     /// A custom type reference could not be resolved inside the source contract.
     UnknownCustom(String),
+    /// A constant reference could not be resolved inside the source contract.
+    UnknownConstant(String),
+    /// A constant literal cannot inhabit its declared type.
+    InvalidConstantValue(String),
+    /// A stream reference could not be resolved inside the source contract.
+    UnknownStream(String),
     /// A free function reference could not be resolved inside the source contract.
     UnknownFunction(String),
     /// A computed record alignment was not a valid ABI alignment.
@@ -278,6 +308,8 @@ pub enum UnsupportedType {
     /// closure invocation). The macro does not generate code for
     /// closures leaving Rust; the lower pass refuses to plan one.
     ClosureInForeignBodyCallable,
+    /// A stream item type was not wire-encodable.
+    StreamItem,
 }
 
 impl fmt::Display for UnsupportedType {
@@ -300,6 +332,7 @@ impl fmt::Display for UnsupportedType {
             Self::ClosureInForeignBodyCallable => {
                 "closure parameter inside a foreign-body callable"
             }
+            Self::StreamItem => "stream item type",
         })
     }
 }

@@ -155,7 +155,8 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
         | TypeExpr::Option(_)
         | TypeExpr::Tuple(_)
         | TypeExpr::Result { .. }
-        | TypeExpr::Map { .. } => {
+        | TypeExpr::Map { .. }
+        | TypeExpr::Custom(_) => {
             let ty = types::lower(ids, type_expr)?;
             let codec_node = codecs::node(idx, ids, type_expr, value.clone())?;
             Ok(ParamPlan::Encoded {
@@ -189,9 +190,6 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
                 receive: D::receive_from(receive),
             })
         }
-        TypeExpr::Custom(_) => Err(types::lower(ids, type_expr)
-            .err()
-            .unwrap_or_else(|| LowerError::unsupported_type(UnsupportedType::SelfType))),
         TypeExpr::Unit | TypeExpr::SelfType | TypeExpr::Parameter(_) => {
             Err(types::lower(ids, type_expr).expect_err("unsupported value-position type expr"))
         }

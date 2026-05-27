@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CallableScope, CallbackId, CallbackProtocolIntrospect, CanonicalName, ClassId, CodecPlan,
-    ConstantId, CustomTypeId, DeclMeta, DeclarationId, DefaultValue, ElementMeta, EnumId,
-    ExportedCallable, FunctionId, ImportedCallable, InitializerId, IntegerRepr, IntegerValue,
-    MethodId, NativeSymbol, ReadPlan, RecordId, RecordLayout, ReturnTypeRef, RustBody, StreamId,
-    Surface, TypeRef, WritePlan,
+    BufferShapeRules, ByteSize, CallableScope, CallbackId, CallbackProtocolIntrospect,
+    CanonicalName, ClassId, CodecPlan, ConstantId, CustomTypeId, DeclMeta, DeclarationId,
+    DefaultValue, ElementMeta, EnumId, ExportedCallable, FunctionId, ImportedCallable,
+    InitializerId, IntegerRepr, IntegerValue, MethodId, NativeSymbol, ReadPlan, RecordId,
+    RecordLayout, ReturnTypeRef, RustBody, StreamId, Surface, TypeRef, WritePlan,
 };
 
 /// One classified declaration in a binding contract.
@@ -1045,34 +1045,42 @@ impl<S: Surface> CallbackDecl<S> {
 /// finished.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::HandleCarrier: Serialize",
-    deserialize = "S::HandleCarrier: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned"
 ))]
 pub struct StreamDecl<S: Surface> {
     id: StreamId,
     name: CanonicalName,
     meta: DeclMeta,
+    owner: Option<ClassId>,
+    mode: StreamMode,
     handle: S::HandleCarrier,
-    item: TypeRef,
+    item: StreamItemPlan<S>,
     protocol: StreamProtocol,
 }
 
+pub(crate) struct StreamDeclParts<S: Surface> {
+    pub(crate) id: StreamId,
+    pub(crate) name: CanonicalName,
+    pub(crate) meta: DeclMeta,
+    pub(crate) owner: Option<ClassId>,
+    pub(crate) mode: StreamMode,
+    pub(crate) handle: S::HandleCarrier,
+    pub(crate) item: StreamItemPlan<S>,
+    pub(crate) protocol: StreamProtocol,
+}
+
 impl<S: Surface> StreamDecl<S> {
-    pub(crate) fn new(
-        id: StreamId,
-        name: CanonicalName,
-        meta: DeclMeta,
-        handle: S::HandleCarrier,
-        item: TypeRef,
-        protocol: StreamProtocol,
-    ) -> Self {
+    pub(crate) fn new(parts: StreamDeclParts<S>) -> Self {
         Self {
-            id,
-            name,
-            meta,
-            handle,
-            item,
-            protocol,
+            id: parts.id,
+            name: parts.name,
+            meta: parts.meta,
+            owner: parts.owner,
+            mode: parts.mode,
+            handle: parts.handle,
+            item: parts.item,
+            protocol: parts.protocol,
         }
     }
 
@@ -1091,19 +1099,86 @@ impl<S: Surface> StreamDecl<S> {
         &self.meta
     }
 
+    /// Returns the owning class, when the stream is attached to one.
+    pub const fn owner(&self) -> Option<ClassId> {
+        self.owner
+    }
+
+    /// Returns the source stream mode.
+    pub const fn mode(&self) -> StreamMode {
+        self.mode
+    }
+
     /// Returns the handle carrier.
     pub fn handle(&self) -> S::HandleCarrier {
         self.handle
     }
 
-    /// Returns the item type.
-    pub fn item(&self) -> &TypeRef {
+    /// Returns the item transport plan.
+    pub fn item(&self) -> &StreamItemPlan<S> {
         &self.item
     }
 
     /// Returns the consumer-side protocol.
     pub fn protocol(&self) -> &StreamProtocol {
         &self.protocol
+    }
+}
+
+/// Source mode requested for a stream.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum StreamMode {
+    /// Values are surfaced as an asynchronous sequence.
+    #[default]
+    Async,
+    /// Values are surfaced through batched reads.
+    Batch,
+    /// Values are surfaced through callback delivery.
+    Callback,
+}
+
+/// How a yielded stream item crosses to the foreign consumer.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned"
+))]
+#[non_exhaustive]
+pub enum StreamItemPlan<S: Surface> {
+    /// Items are copied directly into the batch output buffer.
+    Direct {
+        /// Item type.
+        ty: TypeRef,
+        /// Size of one item in bytes.
+        size: ByteSize,
+    },
+    /// Items are read from an encoded batch buffer.
+    Encoded {
+        /// Item type.
+        ty: TypeRef,
+        /// Foreign-side decoder for one item.
+        read: ReadPlan,
+        /// Buffer shape used for the encoded batch.
+        shape: S::BufferShape,
+    },
+}
+
+impl<S: Surface> StreamItemPlan<S> {
+    pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
+        match self {
+            Self::Encoded { shape, .. } => Some(*shape),
+            Self::Direct { .. } => None,
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), crate::BindingError> {
+        match self.buffer_shape() {
+            Some(shape) if !shape.is_valid_in_return() => Err(crate::BindingError::new(
+                crate::BindingErrorKind::SliceInReturnPosition,
+            )),
+            _ => Ok(()),
+        }
     }
 }
 

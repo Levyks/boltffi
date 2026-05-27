@@ -46,6 +46,12 @@ pub(super) fn is_c_style(enumeration: &SourceEnum) -> bool {
         && effective_integer_repr(enumeration).is_some()
 }
 
+pub(super) fn c_style_repr(enumeration: &SourceEnum) -> Option<IntegerRepr> {
+    is_c_style(enumeration)
+        .then(|| effective_integer_repr(enumeration))
+        .flatten()
+}
+
 fn lower_one<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
@@ -889,23 +895,23 @@ mod tests {
                 assert_eq!(handle, &native::HandleCarrier::U64);
                 assert_eq!(
                     poll.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_poll"
+                    "boltffi_async_method_enum_demo_direction_compute_poll"
                 );
                 assert_eq!(
                     complete.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_complete"
+                    "boltffi_async_method_enum_demo_direction_compute_complete"
                 );
                 assert_eq!(
                     cancel.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_cancel"
+                    "boltffi_async_method_enum_demo_direction_compute_cancel"
                 );
                 assert_eq!(
                     free.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_free"
+                    "boltffi_async_method_enum_demo_direction_compute_free"
                 );
                 assert_eq!(
                     panic_message.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_panic_message"
+                    "boltffi_async_method_enum_demo_direction_compute_panic_message"
                 );
             }
             other => panic!("expected native PollHandle protocol, got {other:?}"),
@@ -932,23 +938,23 @@ mod tests {
                 assert_eq!(handle, &wasm32::HandleCarrier::U32);
                 assert_eq!(
                     poll_sync.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_poll_sync"
+                    "boltffi_async_method_enum_demo_direction_compute_poll_sync"
                 );
                 assert_eq!(
                     complete.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_complete"
+                    "boltffi_async_method_enum_demo_direction_compute_complete"
                 );
                 assert_eq!(
                     cancel.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_cancel"
+                    "boltffi_async_method_enum_demo_direction_compute_cancel"
                 );
                 assert_eq!(
                     free.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_free"
+                    "boltffi_async_method_enum_demo_direction_compute_free"
                 );
                 assert_eq!(
                     panic_message.name().as_str(),
-                    "boltffi_method_enum_demo_direction_compute_panic_message"
+                    "boltffi_async_method_enum_demo_direction_compute_panic_message"
                 );
             }
             other => panic!("expected wasm32 PollHandle protocol, got {other:?}"),
@@ -978,23 +984,23 @@ mod tests {
             }) => {
                 assert_eq!(
                     poll.name().as_str(),
-                    "boltffi_init_enum_demo_direction_parse_poll"
+                    "boltffi_async_init_enum_demo_direction_parse_poll"
                 );
                 assert_eq!(
                     complete.name().as_str(),
-                    "boltffi_init_enum_demo_direction_parse_complete"
+                    "boltffi_async_init_enum_demo_direction_parse_complete"
                 );
                 assert_eq!(
                     cancel.name().as_str(),
-                    "boltffi_init_enum_demo_direction_parse_cancel"
+                    "boltffi_async_init_enum_demo_direction_parse_cancel"
                 );
                 assert_eq!(
                     free.name().as_str(),
-                    "boltffi_init_enum_demo_direction_parse_free"
+                    "boltffi_async_init_enum_demo_direction_parse_free"
                 );
                 assert_eq!(
                     panic_message.name().as_str(),
-                    "boltffi_init_enum_demo_direction_parse_panic_message"
+                    "boltffi_async_init_enum_demo_direction_parse_panic_message"
                 );
             }
             other => panic!("expected native PollHandle protocol, got {other:?}"),

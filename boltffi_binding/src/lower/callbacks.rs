@@ -407,12 +407,12 @@ mod tests {
         assert_eq!(protocol.free().module().as_str(), "env");
         assert_eq!(
             protocol.free().name().as_str(),
-            "__boltffi_callback_demo_listener_free"
+            "__boltffi_callback_lifecycle_demo_listener_free"
         );
         assert_eq!(protocol.clone_import().module().as_str(), "env");
         assert_eq!(
             protocol.clone_import().name().as_str(),
-            "__boltffi_callback_demo_listener_clone"
+            "__boltffi_callback_lifecycle_demo_listener_clone"
         );
     }
 
@@ -441,7 +441,7 @@ mod tests {
         assert_eq!(methods[0].target().module().as_str(), "env");
         assert_eq!(
             methods[0].target().name().as_str(),
-            "__boltffi_callback_demo_listener_on_event"
+            "__boltffi_callback_method_demo_listener_on_event"
         );
     }
 
@@ -1145,7 +1145,7 @@ mod tests {
         assert_eq!(methods.len(), 1);
         assert_eq!(
             methods[0].target().name().as_str(),
-            "__boltffi_callback_demo_listener_on_url"
+            "__boltffi_callback_method_demo_listener_on_url"
         );
     }
 
@@ -1161,7 +1161,7 @@ mod tests {
 
         assert_eq!(
             methods[0].target().name().as_str(),
-            "__boltffi_callback_demo_listener_handle_http_request"
+            "__boltffi_callback_method_demo_listener_handle_http_request"
         );
     }
 
@@ -1187,7 +1187,7 @@ mod tests {
             .as_str()
             .to_owned();
         let wasm_suffix = wasm_import
-            .strip_prefix("__boltffi_callback_demo_listener_")
+            .strip_prefix("__boltffi_callback_method_demo_listener_")
             .expect("wasm import must use the documented prefix");
 
         assert_eq!(
@@ -1227,7 +1227,7 @@ mod tests {
         let wasm_cb = first_callback(&wasm_bindings);
         assert_eq!(
             wasm_cb.protocol().methods()[0].target().name().as_str(),
-            "__boltffi_callback_demo_http_listener_on_request"
+            "__boltffi_callback_method_demo_http_listener_on_request"
         );
     }
 
@@ -1301,7 +1301,7 @@ mod tests {
         assert_eq!(method.target().module().as_str(), "env");
         assert_eq!(
             method.target().name().as_str(),
-            "__boltffi_callback_demo_listener_on_event_start"
+            "__boltffi_callback_async_start_demo_listener_on_event"
         );
         match method.callable().execution() {
             ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::CallbackCompletion { complete }) => {
@@ -1320,5 +1320,25 @@ mod tests {
             .map(|symbol| symbol.name().as_str())
             .collect();
         assert!(names.contains(&"boltffi_callback_demo_listener_on_event_complete"));
+    }
+
+    #[test]
+    fn wasm_async_callback_start_import_does_not_collide_with_sync_start_suffix_method() {
+        let mut callback = listener_callback();
+        let mut foo = method("foo", Receiver::Shared);
+        foo.execution = boltffi_ast::ExecutionKind::Async;
+        callback.methods.push(foo);
+        callback.methods.push(method("foo_start", Receiver::Shared));
+
+        let bindings = lower_callback::<Wasm32>(callback);
+        let imports: Vec<&str> = first_callback(&bindings)
+            .protocol()
+            .methods()
+            .iter()
+            .map(|method| method.target().name().as_str())
+            .collect();
+
+        assert!(imports.contains(&"__boltffi_callback_async_start_demo_listener_foo"));
+        assert!(imports.contains(&"__boltffi_callback_method_demo_listener_foo_start"));
     }
 }

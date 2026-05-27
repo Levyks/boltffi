@@ -32,7 +32,7 @@ use std::hash::Hash;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ImportedCallable, NativeSymbol};
+use crate::{ByteSize, ImportedCallable, NativeSymbol};
 
 /// A target whose call surface a binding contract describes.
 ///
@@ -48,6 +48,9 @@ use crate::{ImportedCallable, NativeSymbol};
 pub trait Surface:
     'static + Sized + Clone + Copy + Debug + Default + Eq + Hash + PartialEq
 {
+    /// Size of a pointer on this surface.
+    const POINTER_SIZE: ByteSize;
+
     /// Protocol foreign code uses to install and dispatch a callback
     /// trait. Native targets bind a vtable struct; wasm targets bind a
     /// set of imported functions.
@@ -138,6 +141,8 @@ pub trait AsyncProtocolIntrospect {
 pub struct Native;
 
 impl Surface for Native {
+    const POINTER_SIZE: ByteSize = ByteSize::new(8);
+
     type CallbackProtocol = native::CallbackProtocol;
     type BufferShape = native::BufferShape;
     type HandleCarrier = native::HandleCarrier;
@@ -155,6 +160,8 @@ impl Surface for Native {
 pub struct Wasm32;
 
 impl Surface for Wasm32 {
+    const POINTER_SIZE: ByteSize = ByteSize::new(4);
+
     type CallbackProtocol = wasm32::CallbackProtocol;
     type BufferShape = wasm32::BufferShape;
     type HandleCarrier = wasm32::HandleCarrier;

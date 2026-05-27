@@ -95,12 +95,13 @@ pub use callable::{
 };
 pub use codec::{CodecNode, CodecPlan, ReadPlan, WritePlan};
 pub use contract::{Bindings, ContractVersion, PackageInfo, SerializedBindings};
+pub(crate) use decl::StreamDeclParts;
 pub use decl::{
     CStyleEnumDecl, CStyleVariantDecl, CallbackDecl, ClassDecl, ConstantDecl, ConstantValueDecl,
     CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl, DirectFieldDecl,
     DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl, ExportedMethodDecl, FieldKey,
     FunctionDecl, ImportedMethodDecl, InitializerDecl, MethodDecl, RecordDecl, StreamDecl,
-    StreamProtocol, VariantTag,
+    StreamItemPlan, StreamMode, StreamProtocol, VariantTag,
 };
 pub use direction::{CallableScope, Direction, ForeignBody, IntoRust, OutOfRust, RustBody};
 pub use error::{BindingError, BindingErrorKind};

@@ -177,6 +177,7 @@ impl<S: Surface> Bindings<S> {
         validate_contract_version(self.version)?;
         self.symbols.validate()?;
         self.validate_unique_decl_ids()?;
+        self.validate_streams()?;
         self.validate_callables()?;
         self.validate_symbol_membership()
     }
@@ -221,6 +222,15 @@ impl<S: Surface> Bindings<S> {
             }
             for callable in decl.imported_callables() {
                 callable.validate()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_streams(&self) -> Result<(), BindingError> {
+        for decl in &self.decls {
+            if let Decl::Stream(stream) = decl {
+                stream.item().validate()?;
             }
         }
         Ok(())

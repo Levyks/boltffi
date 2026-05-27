@@ -21,7 +21,7 @@ fn import_symbol(
     signature: &str,
     action: &str,
 ) -> Result<ImportSymbol, LowerError> {
-    let name = symbol::wasm_callback_import_name(signature, action);
+    let name = symbol::wasm_callback_import_name("closure", signature, action);
     Ok(ImportSymbol::new(module, SymbolName::parse(name)?))
 }
 
@@ -187,11 +187,11 @@ mod tests {
         );
         assert_eq!(
             registration.call().name().as_str(),
-            "__boltffi_callback____closure__f64_call"
+            "__boltffi_callback_closure____closure__f64_call"
         );
         assert_eq!(
             registration.free().name().as_str(),
-            "__boltffi_callback____closure__f64_free"
+            "__boltffi_callback_closure____closure__f64_free"
         );
     }
 

@@ -613,23 +613,23 @@ mod tests {
                 assert_eq!(handle, &native::HandleCarrier::U64);
                 assert_eq!(
                     poll.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_poll"
+                    "boltffi_async_method_record_demo_point_compute_poll"
                 );
                 assert_eq!(
                     complete.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_complete"
+                    "boltffi_async_method_record_demo_point_compute_complete"
                 );
                 assert_eq!(
                     cancel.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_cancel"
+                    "boltffi_async_method_record_demo_point_compute_cancel"
                 );
                 assert_eq!(
                     free.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_free"
+                    "boltffi_async_method_record_demo_point_compute_free"
                 );
                 assert_eq!(
                     panic_message.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_panic_message"
+                    "boltffi_async_method_record_demo_point_compute_panic_message"
                 );
             }
             other => panic!("expected native PollHandle protocol, got {other:?}"),
@@ -657,23 +657,23 @@ mod tests {
                 assert_eq!(handle, &wasm32::HandleCarrier::U32);
                 assert_eq!(
                     poll_sync.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_poll_sync"
+                    "boltffi_async_method_record_demo_point_compute_poll_sync"
                 );
                 assert_eq!(
                     complete.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_complete"
+                    "boltffi_async_method_record_demo_point_compute_complete"
                 );
                 assert_eq!(
                     cancel.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_cancel"
+                    "boltffi_async_method_record_demo_point_compute_cancel"
                 );
                 assert_eq!(
                     free.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_free"
+                    "boltffi_async_method_record_demo_point_compute_free"
                 );
                 assert_eq!(
                     panic_message.name().as_str(),
-                    "boltffi_method_record_demo_point_compute_panic_message"
+                    "boltffi_async_method_record_demo_point_compute_panic_message"
                 );
             }
             other => panic!("expected wasm32 PollHandle protocol, got {other:?}"),
@@ -694,11 +694,29 @@ mod tests {
             .collect();
 
         assert!(names.contains(&"boltffi_method_record_demo_point_compute"));
+        assert!(names.contains(&"boltffi_async_method_record_demo_point_compute_poll"));
+        assert!(names.contains(&"boltffi_async_method_record_demo_point_compute_complete"));
+        assert!(names.contains(&"boltffi_async_method_record_demo_point_compute_cancel"));
+        assert!(names.contains(&"boltffi_async_method_record_demo_point_compute_free"));
+        assert!(names.contains(&"boltffi_async_method_record_demo_point_compute_panic_message"));
+    }
+
+    #[test]
+    fn async_lifecycle_symbols_do_not_collide_with_user_suffix_method_names() {
+        let mut async_compute = method("compute", Receiver::Shared);
+        async_compute.execution = ExecutionKind::Async;
+        let sync_compute_poll = method("compute_poll", Receiver::Shared);
+
+        let bindings = lower_point_methods::<Native>(vec![async_compute, sync_compute_poll]);
+        let names: Vec<&str> = bindings
+            .symbols()
+            .symbols()
+            .iter()
+            .map(|symbol| symbol.name().as_str())
+            .collect();
+
+        assert!(names.contains(&"boltffi_async_method_record_demo_point_compute_poll"));
         assert!(names.contains(&"boltffi_method_record_demo_point_compute_poll"));
-        assert!(names.contains(&"boltffi_method_record_demo_point_compute_complete"));
-        assert!(names.contains(&"boltffi_method_record_demo_point_compute_cancel"));
-        assert!(names.contains(&"boltffi_method_record_demo_point_compute_free"));
-        assert!(names.contains(&"boltffi_method_record_demo_point_compute_panic_message"));
     }
 
     #[test]
@@ -729,23 +747,23 @@ mod tests {
             }) => {
                 assert_eq!(
                     poll.name().as_str(),
-                    "boltffi_init_record_demo_point_new_poll"
+                    "boltffi_async_init_record_demo_point_new_poll"
                 );
                 assert_eq!(
                     complete.name().as_str(),
-                    "boltffi_init_record_demo_point_new_complete"
+                    "boltffi_async_init_record_demo_point_new_complete"
                 );
                 assert_eq!(
                     cancel.name().as_str(),
-                    "boltffi_init_record_demo_point_new_cancel"
+                    "boltffi_async_init_record_demo_point_new_cancel"
                 );
                 assert_eq!(
                     free.name().as_str(),
-                    "boltffi_init_record_demo_point_new_free"
+                    "boltffi_async_init_record_demo_point_new_free"
                 );
                 assert_eq!(
                     panic_message.name().as_str(),
-                    "boltffi_init_record_demo_point_new_panic_message"
+                    "boltffi_async_init_record_demo_point_new_panic_message"
                 );
             }
             other => panic!("expected native PollHandle protocol, got {other:?}"),
@@ -1744,11 +1762,11 @@ mod tests {
             .expect("expected ParamPlan::Closure on wasm32");
         assert_eq!(
             closure.registration().shape().call().name().as_str(),
-            "__boltffi_callback____closure__f64_call"
+            "__boltffi_callback_closure____closure__f64_call"
         );
         assert_eq!(
             closure.registration().shape().free().name().as_str(),
-            "__boltffi_callback____closure__f64_free"
+            "__boltffi_callback_closure____closure__f64_free"
         );
         let callable = closure.invoke();
         let params = callable.params();

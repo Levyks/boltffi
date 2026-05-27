@@ -150,14 +150,11 @@ pub(super) fn callback_create_handle_symbol_name(callback_id: &str) -> String {
 /// construction; there is no `&str` precondition for a caller to
 /// remember or violate.
 pub(super) fn callback_wasm_import_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    wasm_callback_import_name(&symbol_path(callback_id), slot.as_str())
+    wasm_callback_import_name("method", &symbol_path(callback_id), slot.as_str())
 }
 
 pub(super) fn callback_wasm_import_start_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    wasm_callback_import_name(
-        &symbol_path(callback_id),
-        &format!("{}_start", slot.as_str()),
-    )
+    wasm_callback_import_name("async_start", &symbol_path(callback_id), slot.as_str())
 }
 
 pub(super) fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &CallbackSlot) -> String {
@@ -171,20 +168,73 @@ pub(super) fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &Callb
 
 /// Builds the wasm import name foreign code provides to drop a handle.
 pub(super) fn callback_wasm_import_free_name(callback_id: &str) -> String {
-    wasm_callback_import_name(&symbol_path(callback_id), "free")
+    wasm_callback_import_name("lifecycle", &symbol_path(callback_id), "free")
 }
 
 /// Builds the wasm import name foreign code provides to duplicate a handle.
 pub(super) fn callback_wasm_import_clone_name(callback_id: &str) -> String {
-    wasm_callback_import_name(&symbol_path(callback_id), "clone")
+    wasm_callback_import_name("lifecycle", &symbol_path(callback_id), "clone")
+}
+
+/// Names one symbol in the consumer-side stream protocol.
+///
+/// Every stream the contract exposes mints one symbol per action below.
+/// The action suffix is appended to the stream's snake-cased canonical
+/// id so the six symbols attached to one stream group together when
+/// grepped: a stream `demo::events` mints
+/// `boltffi_stream_demo_events_subscribe`, `..._pop_batch`, and so on.
+#[derive(Clone, Copy)]
+pub(super) enum StreamLifecycle {
+    /// Opens a subscription and returns the session handle.
+    Subscribe,
+    /// Drains a batch of buffered items into the foreign side.
+    PopBatch,
+    /// Blocks the foreign caller until at least one item is ready.
+    Wait,
+    /// Reports readiness without blocking.
+    Poll,
+    /// Closes a subscription.
+    Unsubscribe,
+    /// Drops the stream itself.
+    Free,
+}
+
+impl StreamLifecycle {
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::Subscribe => "subscribe",
+            Self::PopBatch => "pop_batch",
+            Self::Wait => "wait",
+            Self::Poll => "poll",
+            Self::Unsubscribe => "unsubscribe",
+            Self::Free => "free",
+        }
+    }
+}
+
+/// Builds the symbol foreign code links to invoke one stream-protocol
+/// action.
+///
+/// `stream_id` is the canonical Rust path of the source declaration.
+/// Class-owned streams already carry the class path in their id, so the
+/// resulting symbol distinguishes them from standalone streams without
+/// a separate lane.
+pub(super) fn stream_symbol_name(stream_id: &str, action: StreamLifecycle) -> String {
+    format!(
+        "{}_stream_{}_{}",
+        FFI_PREFIX,
+        symbol_path(stream_id),
+        action.suffix()
+    )
 }
 
 /// Names one symbol in the async lifecycle protocol of a single callable.
 ///
 /// The lifecycle symbols share the start callable's symbol name as a
-/// prefix so every symbol attached to one async operation groups when
-/// grepped or sorted: a method `compute` on `demo::Engine` mints
-/// `boltffi_method_record_demo_engine_compute_poll`,
+/// prefix in the async lane so every symbol attached to one async
+/// operation groups when grepped or sorted without sharing the user's
+/// callable namespace: a method `compute` on `demo::Engine` mints
+/// `boltffi_async_method_record_demo_engine_compute_poll`,
 /// `..._complete`, and so on.
 #[derive(Clone, Copy)]
 pub(super) enum AsyncLifecycle {
@@ -217,12 +267,19 @@ impl AsyncLifecycle {
 }
 
 /// Builds a lifecycle symbol name from the start callable's symbol name.
-///
 pub(super) fn async_lifecycle_symbol_name(
     start_symbol_name: &str,
     action: AsyncLifecycle,
 ) -> String {
-    format!("{}_{}", start_symbol_name, action.suffix())
+    let start_without_prefix = start_symbol_name
+        .strip_prefix(&format!("{FFI_PREFIX}_"))
+        .unwrap_or(start_symbol_name);
+    format!(
+        "{}_async_{}_{}",
+        FFI_PREFIX,
+        start_without_prefix,
+        action.suffix()
+    )
 }
 
 /// The canonical snake-cased name of a callback method's dispatch slot.
@@ -267,8 +324,8 @@ fn symbol_path(source_id: &str) -> String {
         .join("_")
 }
 
-pub(super) fn wasm_callback_import_name(owner: &str, action: &str) -> String {
-    format!("__{}_callback_{}_{}", FFI_PREFIX, owner, action)
+pub(super) fn wasm_callback_import_name(lane: &str, owner: &str, action: &str) -> String {
+    format!("__{}_callback_{}_{}_{}", FFI_PREFIX, lane, owner, action)
 }
 
 /// Lowercases `name` and inserts an underscore at every word boundary.
@@ -390,8 +447,8 @@ mod tests {
     #[test]
     fn wasm_callback_import_name_uses_shared_callback_lane() {
         assert_eq!(
-            wasm_callback_import_name("demo_listener", "on_event"),
-            "__boltffi_callback_demo_listener_on_event"
+            wasm_callback_import_name("method", "demo_listener", "on_event"),
+            "__boltffi_callback_method_demo_listener_on_event"
         );
     }
 
@@ -399,15 +456,15 @@ mod tests {
     fn async_lifecycle_symbol_names_append_runtime_suffixes() {
         assert_eq!(
             async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::Poll),
-            "boltffi_function_demo_spin_poll"
+            "boltffi_async_function_demo_spin_poll"
         );
         assert_eq!(
             async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::PollSync),
-            "boltffi_function_demo_spin_poll_sync"
+            "boltffi_async_function_demo_spin_poll_sync"
         );
         assert_eq!(
             async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::Complete),
-            "boltffi_function_demo_spin_complete"
+            "boltffi_async_function_demo_spin_complete"
         );
     }
 
@@ -416,7 +473,7 @@ mod tests {
         let slot = CallbackSlot::from_method_name("onEvent");
         assert_eq!(
             callback_wasm_import_start_name("demo::Listener", &slot),
-            "__boltffi_callback_demo_listener_on_event_start"
+            "__boltffi_callback_async_start_demo_listener_on_event"
         );
         assert_eq!(
             callback_wasm_complete_symbol_name("demo::Listener", &slot),

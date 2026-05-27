@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use boltffi_ast::{
-    ClassId as SourceClassId, CustomTypeId as SourceCustomTypeId, EnumId as SourceEnumId,
-    FunctionId as SourceFunctionId, RecordId as SourceRecordId, SourceContract,
-    TraitId as SourceTraitId,
+    ClassId as SourceClassId, ConstantId as SourceConstantId, CustomTypeId as SourceCustomTypeId,
+    EnumId as SourceEnumId, FunctionId as SourceFunctionId, RecordId as SourceRecordId,
+    SourceContract, StreamId as SourceStreamId, TraitId as SourceTraitId,
 };
 
-use crate::{CallbackId, ClassId, CustomTypeId, EnumId, FunctionId, RecordId};
+use crate::{
+    CallbackId, ClassId, ConstantId, CustomTypeId, EnumId, FunctionId, RecordId, StreamId,
+};
 
 use super::{LowerError, error::DeclarationFamily};
 
@@ -23,6 +25,8 @@ pub(super) struct DeclarationIds {
     classes: HashMap<String, ClassId>,
     callbacks: HashMap<String, CallbackId>,
     customs: HashMap<String, CustomTypeId>,
+    constants: HashMap<String, ConstantId>,
+    streams: HashMap<String, StreamId>,
     functions: HashMap<String, FunctionId>,
 }
 
@@ -58,6 +62,18 @@ impl DeclarationIds {
                 DeclarationFamily::CustomTypes,
                 |custom| custom.id.as_str(),
                 CustomTypeId::from_raw,
+            )?,
+            constants: collect_ids(
+                source.constants.iter(),
+                DeclarationFamily::Constants,
+                |constant| constant.id.as_str(),
+                ConstantId::from_raw,
+            )?,
+            streams: collect_ids(
+                source.streams.iter(),
+                DeclarationFamily::Streams,
+                |stream| stream.id.as_str(),
+                StreamId::from_raw,
             )?,
             functions: collect_ids(
                 source.functions.iter(),
@@ -101,6 +117,20 @@ impl DeclarationIds {
             .get(id.as_str())
             .copied()
             .ok_or_else(|| LowerError::unknown_custom(id))
+    }
+
+    pub(super) fn constant(&self, id: &SourceConstantId) -> Result<ConstantId, LowerError> {
+        self.constants
+            .get(id.as_str())
+            .copied()
+            .ok_or_else(|| LowerError::unknown_constant(id))
+    }
+
+    pub(super) fn stream(&self, id: &SourceStreamId) -> Result<StreamId, LowerError> {
+        self.streams
+            .get(id.as_str())
+            .copied()
+            .ok_or_else(|| LowerError::unknown_stream(id))
     }
 
     pub(super) fn function(&self, id: &SourceFunctionId) -> Result<FunctionId, LowerError> {
