@@ -2,13 +2,14 @@
 //!
 //! A binding contract is parameterized by a [`Surface`]: the concrete
 //! target whose ABI the contract describes. Each surface picks its own
-//! shape for the four target-divergent concepts the IR carries:
+//! shape for the target-divergent concepts the IR carries:
 //!
 //! - the protocol foreign code uses to install and dispatch a callback
 //!   trait,
 //! - the layout of an encoded buffer across native call slots,
 //! - the carrier that names the integer or struct used for an opaque
 //!   handle,
+//! - the registration surface used for inline closures,
 //! - the protocol used to drive an asynchronous callable to completion.
 //!
 //! The trait associates each of these to one concrete type per surface;
@@ -31,7 +32,7 @@ use std::hash::Hash;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CallableDecl, NativeSymbol};
+use crate::{ImportedCallable, NativeSymbol};
 
 /// A target whose call surface a binding contract describes.
 ///
@@ -77,6 +78,20 @@ pub trait Surface:
         + PartialEq
         + Serialize
         + for<'de> Deserialize<'de>;
+    /// Wire shape used when a closure registers across the boundary.
+    ///
+    /// Distinct from [`HandleCarrier`](Self::HandleCarrier) because
+    /// closure registration is not the same contract as a class or
+    /// callback-trait handle. Native carries an invoke function and a
+    /// context pointer; wasm32 carries a handle plus the imports Rust
+    /// calls to invoke and release it.
+    type ClosureRegistration: Clone
+        + Debug
+        + Eq
+        + Hash
+        + PartialEq
+        + Serialize
+        + for<'de> Deserialize<'de>;
     /// Protocol used to drive an asynchronous callable to completion.
     type AsyncProtocol: Clone
         + Debug
@@ -94,10 +109,16 @@ pub trait Surface:
 /// callback declaration, regardless of how the surface lays out its
 /// dispatch surface, and to collect every native symbol the protocol
 /// references so the symbol-table membership invariant can be checked.
+///
+/// Callback methods are [`ImportedCallable<S>`] because foreign code
+/// implements them and Rust calls in. The contained callables flow
+/// params [`OutOfRust`](crate::OutOfRust) (Rust pushes args to the
+/// foreign implementation) and returns [`IntoRust`](crate::IntoRust)
+/// (foreign returns back to Rust).
 pub trait CallbackProtocolIntrospect<S: Surface> {
     /// Iterates over the call shape of every method the protocol
     /// exposes.
-    fn method_callables(&self) -> Box<dyn Iterator<Item = &CallableDecl<S>> + '_>;
+    fn method_callables(&self) -> Box<dyn Iterator<Item = &ImportedCallable<S>> + '_>;
     /// Iterates over every native symbol the protocol references.
     fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_>;
 }
@@ -120,6 +141,7 @@ impl Surface for Native {
     type CallbackProtocol = native::CallbackProtocol;
     type BufferShape = native::BufferShape;
     type HandleCarrier = native::HandleCarrier;
+    type ClosureRegistration = native::ClosureRegistration;
     type AsyncProtocol = native::AsyncProtocol;
 }
 
@@ -136,6 +158,7 @@ impl Surface for Wasm32 {
     type CallbackProtocol = wasm32::CallbackProtocol;
     type BufferShape = wasm32::BufferShape;
     type HandleCarrier = wasm32::HandleCarrier;
+    type ClosureRegistration = wasm32::ClosureRegistration;
     type AsyncProtocol = wasm32::AsyncProtocol;
 }
 
@@ -144,7 +167,7 @@ pub mod native {
     use serde::{Deserialize, Serialize};
 
     use super::{AsyncProtocolIntrospect, CallbackProtocolIntrospect, Native};
-    use crate::{CallableDecl, MethodDecl, NativeSymbol, VTableSlot};
+    use crate::{ImportedCallable, ImportedMethodDecl, NativeSymbol, VTableSlot};
 
     /// How an encoded payload occupies native call slots.
     ///
@@ -179,6 +202,18 @@ pub mod native {
         USize,
         /// `boltffi::CallbackHandle` struct (handle plus vtable pointer).
         CallbackHandle,
+    }
+
+    /// Wire shape used when a closure registers across the native
+    /// boundary.
+    ///
+    /// Closures cross as an invoke function pointer paired with a
+    /// context pointer.
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+    #[non_exhaustive]
+    pub enum ClosureRegistration {
+        /// Invoke function plus context pointer.
+        InvokeContext,
     }
 
     /// Protocol foreign code uses to install and dispatch a callback
@@ -236,14 +271,14 @@ pub mod native {
     pub struct CallbackVTable {
         free_slot: VTableSlot,
         clone_slot: VTableSlot,
-        methods: Vec<MethodDecl<Native, VTableSlot>>,
+        methods: Vec<ImportedMethodDecl<Native, VTableSlot>>,
     }
 
     impl CallbackVTable {
         pub(crate) fn new(
             free_slot: VTableSlot,
             clone_slot: VTableSlot,
-            methods: Vec<MethodDecl<Native, VTableSlot>>,
+            methods: Vec<ImportedMethodDecl<Native, VTableSlot>>,
         ) -> Self {
             Self {
                 free_slot,
@@ -263,7 +298,7 @@ pub mod native {
         }
 
         /// Returns the methods the foreign implementation must provide.
-        pub fn methods(&self) -> &[MethodDecl<Native, VTableSlot>] {
+        pub fn methods(&self) -> &[ImportedMethodDecl<Native, VTableSlot>] {
             &self.methods
         }
     }
@@ -305,7 +340,7 @@ pub mod native {
     }
 
     impl CallbackProtocolIntrospect<Native> for CallbackProtocol {
-        fn method_callables(&self) -> Box<dyn Iterator<Item = &CallableDecl<Native>> + '_> {
+        fn method_callables(&self) -> Box<dyn Iterator<Item = &ImportedCallable<Native>> + '_> {
             Box::new(
                 self.vtable()
                     .methods()
@@ -342,7 +377,7 @@ pub mod wasm32 {
     use serde::{Deserialize, Serialize};
 
     use super::{AsyncProtocolIntrospect, CallbackProtocolIntrospect, Wasm32};
-    use crate::{CallableDecl, ImportSymbol, MethodDecl, NativeSymbol};
+    use crate::{ImportSymbol, ImportedCallable, ImportedMethodDecl, NativeSymbol};
 
     /// How an encoded payload occupies wasm call slots.
     ///
@@ -371,6 +406,33 @@ pub mod wasm32 {
         U32,
     }
 
+    /// Wire shape used when a closure registers across the wasm
+    /// boundary.
+    ///
+    /// Closures cross as a handle backed by imported invoke and release
+    /// functions.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+    pub struct ClosureRegistration {
+        call: ImportSymbol,
+        free: ImportSymbol,
+    }
+
+    impl ClosureRegistration {
+        pub(crate) fn new(call: ImportSymbol, free: ImportSymbol) -> Self {
+            Self { call, free }
+        }
+
+        /// Returns the import Rust calls to invoke the closure.
+        pub fn call(&self) -> &ImportSymbol {
+            &self.call
+        }
+
+        /// Returns the import Rust calls when the closure handle is released.
+        pub fn free(&self) -> &ImportSymbol {
+            &self.free
+        }
+    }
+
     /// Protocol foreign code uses to install and dispatch a callback
     /// trait on the wasm surface.
     ///
@@ -384,7 +446,7 @@ pub mod wasm32 {
         create_handle: NativeSymbol,
         free: ImportSymbol,
         clone: ImportSymbol,
-        methods: Vec<MethodDecl<Wasm32, ImportSymbol>>,
+        methods: Vec<ImportedMethodDecl<Wasm32, ImportSymbol>>,
     }
 
     impl CallbackProtocol {
@@ -392,7 +454,7 @@ pub mod wasm32 {
             create_handle: NativeSymbol,
             free: ImportSymbol,
             clone: ImportSymbol,
-            methods: Vec<MethodDecl<Wasm32, ImportSymbol>>,
+            methods: Vec<ImportedMethodDecl<Wasm32, ImportSymbol>>,
         ) -> Self {
             Self {
                 create_handle,
@@ -420,7 +482,7 @@ pub mod wasm32 {
 
         /// Returns the wasm imports the foreign implementation must
         /// provide for each method.
-        pub fn methods(&self) -> &[MethodDecl<Wasm32, ImportSymbol>] {
+        pub fn methods(&self) -> &[ImportedMethodDecl<Wasm32, ImportSymbol>] {
             &self.methods
         }
     }
@@ -454,7 +516,7 @@ pub mod wasm32 {
     }
 
     impl CallbackProtocolIntrospect<Wasm32> for CallbackProtocol {
-        fn method_callables(&self) -> Box<dyn Iterator<Item = &CallableDecl<Wasm32>> + '_> {
+        fn method_callables(&self) -> Box<dyn Iterator<Item = &ImportedCallable<Wasm32>> + '_> {
             Box::new(self.methods().iter().map(|method| method.callable()))
         }
 

@@ -2,7 +2,7 @@
 //!
 //! Records, enums, and classes can promote static `Self`-returning methods to
 //! [`InitializerDecl<S>`]. Records, enums, and classes keep every other
-//! method as a [`MethodDecl<S, NativeSymbol>`]. The callable body is
+//! method as a [`ExportedMethodDecl<S, NativeSymbol>`]. The callable body is
 //! lowered by [`super::callable`]; this module owns the initializer
 //! discriminator, target symbol allocation, and owner-specific constructed
 //! type recorded on an initializer.
@@ -12,8 +12,8 @@ use boltffi_ast::{
 };
 
 use crate::{
-    CanonicalName, InitializerDecl, InitializerId, MethodDecl, MethodId, NativeSymbol,
-    ReturnTypeRef, TypeRef,
+    CanonicalName, ExportedMethodDecl, ImportedMethodDecl, InitializerDecl, InitializerId,
+    MethodId, NativeSymbol, ReturnTypeRef, TypeRef,
 };
 
 use super::{
@@ -59,7 +59,7 @@ pub(super) fn lower_record_methods<S: SurfaceLower>(
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     record: &RecordDef,
-) -> Result<Vec<MethodDecl<S, NativeSymbol>>, LowerError> {
+) -> Result<Vec<ExportedMethodDecl<S, NativeSymbol>>, LowerError> {
     let owner = callable::CallableOwner::Record(record);
     record
         .methods
@@ -104,7 +104,7 @@ pub(super) fn lower_enum_methods<S: SurfaceLower>(
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     enumeration: &EnumDef,
-) -> Result<Vec<MethodDecl<S, NativeSymbol>>, LowerError> {
+) -> Result<Vec<ExportedMethodDecl<S, NativeSymbol>>, LowerError> {
     let owner = callable::CallableOwner::Enum(enumeration);
     enumeration
         .methods
@@ -156,7 +156,7 @@ pub(super) fn lower_class_methods<S: SurfaceLower>(
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     class: &ClassDef,
-) -> Result<Vec<MethodDecl<S, NativeSymbol>>, LowerError> {
+) -> Result<Vec<ExportedMethodDecl<S, NativeSymbol>>, LowerError> {
     let owner = callable::CallableOwner::Class(class);
     class
         .methods
@@ -227,7 +227,7 @@ fn lower_initializer<S: SurfaceLower>(
     id: InitializerId,
     returns: TypeRef,
 ) -> Result<InitializerDecl<S>, LowerError> {
-    let callable_decl = callable::lower_method::<S>(idx, ids, owner, method)?;
+    let callable_decl = callable::lower_method::<S, crate::RustBody>(idx, ids, owner, method)?;
     let symbol = mint_initializer_symbol(allocator, owner, method)?;
     Ok(InitializerDecl::new(
         id,
@@ -246,10 +246,10 @@ fn lower_method<S: SurfaceLower>(
     owner: callable::CallableOwner<'_>,
     method: &MethodDef,
     id: MethodId,
-) -> Result<MethodDecl<S, NativeSymbol>, LowerError> {
-    let callable_decl = callable::lower_method::<S>(idx, ids, owner, method)?;
+) -> Result<ExportedMethodDecl<S, NativeSymbol>, LowerError> {
+    let callable_decl = callable::lower_method::<S, crate::RustBody>(idx, ids, owner, method)?;
     let symbol = mint_method_symbol(allocator, owner, method)?;
-    Ok(MethodDecl::new(
+    Ok(ExportedMethodDecl::new(
         id,
         CanonicalName::from(&method.name),
         metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),
@@ -298,7 +298,7 @@ pub(super) fn lower_callback_methods<S: SurfaceLower, T, F>(
     ids: &DeclarationIds,
     source_trait: &TraitDef,
     mut target_for: F,
-) -> Result<Vec<MethodDecl<S, T>>, LowerError>
+) -> Result<Vec<ImportedMethodDecl<S, T>>, LowerError>
 where
     F: FnMut(&CallbackSlot) -> Result<T, LowerError>,
 {
@@ -309,11 +309,12 @@ where
         .enumerate()
         .map(|(index, method)| {
             require_callback_receiver(method.receiver)?;
-            let callable_decl = callable::lower_method::<S>(idx, ids, owner, method)?;
+            let callable_decl =
+                callable::lower_method::<S, crate::ForeignBody>(idx, ids, owner, method)?;
             let raw_method_name = method.name.parts().last().map_or("", |part| part.as_str());
             let slot = CallbackSlot::from_method_name(raw_method_name);
             let target = target_for(&slot)?;
-            Ok(MethodDecl::new(
+            Ok(ImportedMethodDecl::new(
                 MethodId::from_raw(index as u32),
                 CanonicalName::from(&method.name),
                 metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),

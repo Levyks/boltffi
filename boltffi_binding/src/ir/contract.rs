@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BindingError, BindingErrorKind, CallableDecl, CanonicalName, Decl, Native, NativeSymbol,
-    NativeSymbolTable, Surface, Wasm32,
+    BindingError, BindingErrorKind, CanonicalName, Decl, Native, NativeSymbol, NativeSymbolTable,
+    Surface, Wasm32,
 };
 
 /// Schema marker carried in every serialized binding contract.
@@ -215,10 +215,15 @@ impl<S: Surface> Bindings<S> {
     }
 
     fn validate_callables(&self) -> Result<(), BindingError> {
-        self.decls
-            .iter()
-            .flat_map(Decl::callables)
-            .try_for_each(CallableDecl::validate)
+        for decl in &self.decls {
+            for callable in decl.exported_callables() {
+                callable.validate()?;
+            }
+            for callable in decl.imported_callables() {
+                callable.validate()?;
+            }
+        }
+        Ok(())
     }
 
     fn validate_symbol_membership(&self) -> Result<(), BindingError> {

@@ -5,9 +5,7 @@
 //! `AsyncProtocol`, `CallbackProtocol`. It does not say which value to
 //! pick at a given call site. The lowering pass needs that pick: a
 //! string parameter on Wasm32 must cross as `Slice`, a record returned
-//! by value on Wasm32 must cross as `Packed`, and so on. Those rules
-//! used to live in `boltffi_ffi_rules`; with that crate retired, the
-//! rules live here.
+//! by value on Wasm32 must cross as `Packed`, and so on.
 //!
 //! [`SurfaceLower`] adds those decisions to a [`Surface`] without
 //! touching the IR. It is sealed: only [`Native`] and [`Wasm32`] can
@@ -19,9 +17,12 @@
 //! [`Native`]: crate::Native
 //! [`Wasm32`]: crate::Wasm32
 
+use boltffi_ast::ClosureType;
+
 use crate::{Native, Surface, Wasm32, native, wasm32};
 
 use super::callbacks::CallbackProtocolBuilder;
+use super::{LowerError, wasm_closure};
 
 mod sealed {
     /// Seals [`super::SurfaceLower`].
@@ -62,15 +63,6 @@ pub trait SurfaceLower: Surface + sealed::Sealed + CallbackProtocolBuilder {
     #[doc(hidden)]
     fn encoded_return_shape() -> Self::BufferShape;
 
-    /// Handle carrier used for an inline closure crossing.
-    ///
-    /// On native, a closure crosses through the runtime's
-    /// [`native::HandleCarrier::CallbackHandle`] struct so the inner
-    /// vtable pointer travels with the handle. On wasm32, the closure
-    /// crosses as a 32-bit handle.
-    #[doc(hidden)]
-    fn closure_handle_carrier() -> Self::HandleCarrier;
-
     /// Handle carrier used for a class instance crossing.
     ///
     /// Native classes cross as a 64-bit token
@@ -88,6 +80,11 @@ pub trait SurfaceLower: Surface + sealed::Sealed + CallbackProtocolBuilder {
     /// imports resolved at link time.
     #[doc(hidden)]
     fn callback_handle_carrier() -> Self::HandleCarrier;
+
+    /// Wire shape used at a closure-parameter registration crossing.
+    #[doc(hidden)]
+    fn closure_registration(closure: &ClosureType)
+    -> Result<Self::ClosureRegistration, LowerError>;
 }
 
 impl SurfaceLower for Native {
@@ -99,16 +96,18 @@ impl SurfaceLower for Native {
         native::BufferShape::Buffer
     }
 
-    fn closure_handle_carrier() -> Self::HandleCarrier {
-        native::HandleCarrier::CallbackHandle
-    }
-
     fn class_handle_carrier() -> Self::HandleCarrier {
         native::HandleCarrier::U64
     }
 
     fn callback_handle_carrier() -> Self::HandleCarrier {
         native::HandleCarrier::CallbackHandle
+    }
+
+    fn closure_registration(
+        _closure: &ClosureType,
+    ) -> Result<Self::ClosureRegistration, LowerError> {
+        Ok(native::ClosureRegistration::InvokeContext)
     }
 }
 
@@ -121,15 +120,17 @@ impl SurfaceLower for Wasm32 {
         wasm32::BufferShape::Packed
     }
 
-    fn closure_handle_carrier() -> Self::HandleCarrier {
-        wasm32::HandleCarrier::U32
-    }
-
     fn class_handle_carrier() -> Self::HandleCarrier {
         wasm32::HandleCarrier::U32
     }
 
     fn callback_handle_carrier() -> Self::HandleCarrier {
         wasm32::HandleCarrier::U32
+    }
+
+    fn closure_registration(
+        closure: &ClosureType,
+    ) -> Result<Self::ClosureRegistration, LowerError> {
+        wasm_closure::registration(closure)
     }
 }

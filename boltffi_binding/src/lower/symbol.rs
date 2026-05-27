@@ -150,30 +150,17 @@ pub(super) fn callback_create_handle_symbol_name(callback_id: &str) -> String {
 /// construction; there is no `&str` precondition for a caller to
 /// remember or violate.
 pub(super) fn callback_wasm_import_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    format!(
-        "__{}_callback_{}_{}",
-        FFI_PREFIX,
-        symbol_path(callback_id),
-        slot.as_str()
-    )
+    wasm_callback_import_name(&symbol_path(callback_id), slot.as_str())
 }
 
 /// Builds the wasm import name foreign code provides to drop a handle.
 pub(super) fn callback_wasm_import_free_name(callback_id: &str) -> String {
-    format!(
-        "__{}_callback_{}_free",
-        FFI_PREFIX,
-        symbol_path(callback_id)
-    )
+    wasm_callback_import_name(&symbol_path(callback_id), "free")
 }
 
 /// Builds the wasm import name foreign code provides to duplicate a handle.
 pub(super) fn callback_wasm_import_clone_name(callback_id: &str) -> String {
-    format!(
-        "__{}_callback_{}_clone",
-        FFI_PREFIX,
-        symbol_path(callback_id)
-    )
+    wasm_callback_import_name(&symbol_path(callback_id), "clone")
 }
 
 /// The canonical snake-cased name of a callback method's dispatch slot.
@@ -216,6 +203,10 @@ fn symbol_path(source_id: &str) -> String {
         .map(to_snake_case)
         .collect::<Vec<_>>()
         .join("_")
+}
+
+pub(super) fn wasm_callback_import_name(owner: &str, action: &str) -> String {
+    format!("__{}_callback_{}_{}", FFI_PREFIX, owner, action)
 }
 
 /// Lowercases `name` and inserts an underscore at every word boundary.
@@ -332,5 +323,13 @@ mod tests {
         assert_ne!(first.id(), second.id());
         assert_eq!(first.id().raw(), 0);
         assert_eq!(second.id().raw(), 1);
+    }
+
+    #[test]
+    fn wasm_callback_import_name_uses_shared_callback_lane() {
+        assert_eq!(
+            wasm_callback_import_name("demo_listener", "on_event"),
+            "__boltffi_callback_demo_listener_on_event"
+        );
     }
 }

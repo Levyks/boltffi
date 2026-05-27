@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CallbackId, ClassId, ClosureTypeRef, CustomTypeId, ElementCount, EnumId, Op, Primitive,
-    RecordId, ValueRef,
+    CallbackId, ClassId, CustomTypeId, ElementCount, EnumId, Op, Primitive, RecordId, ValueRef,
 };
 
 /// Instructions for reconstructing one value from its boundary bytes.
@@ -121,8 +120,6 @@ pub enum CodecNode {
     ClassHandle(ClassId),
     /// Callback object carried by a handle.
     CallbackHandle(CallbackId),
-    /// Inline closure carried by a handle.
-    ClosureHandle(ClosureTypeRef),
     /// Custom type carried through its selected representation.
     Custom(CustomTypeId),
     /// Optional value with a presence marker followed by the inner value.

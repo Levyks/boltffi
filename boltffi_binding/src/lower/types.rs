@@ -1,6 +1,6 @@
-use boltffi_ast::{ClosureType, ReturnDef, TypeExpr};
+use boltffi_ast::TypeExpr;
 
-use crate::{ClosureTypeRef, Primitive, ReturnTypeRef, TypeRef};
+use crate::{Primitive, TypeRef};
 
 use super::{LowerError, error::UnsupportedType, ids::DeclarationIds};
 
@@ -21,7 +21,6 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
         TypeExpr::Enum(id) => TypeRef::Enum(ids.enumeration(id)?),
         TypeExpr::Class { id, .. } => TypeRef::Class(ids.class(id)?),
         TypeExpr::Trait { id, .. } => TypeRef::Callback(ids.callback(id)?),
-        TypeExpr::Closure(closure) => TypeRef::Closure(Box::new(lower_closure(ids, closure)?)),
         TypeExpr::Custom(id) => TypeRef::Custom(ids.custom(id)?),
         TypeExpr::Vec(element) => TypeRef::Sequence(Box::new(lower(ids, element)?)),
         TypeExpr::Option(inner) => TypeRef::Optional(Box::new(lower(ids, inner)?)),
@@ -39,6 +38,11 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
             key: Box::new(lower(ids, key)?),
             value: Box::new(lower(ids, value)?),
         },
+        TypeExpr::Closure(_) => {
+            return Err(LowerError::unsupported_type(
+                UnsupportedType::ClosureInValuePosition,
+            ));
+        }
         TypeExpr::Unit => {
             return Err(LowerError::unsupported_type(
                 UnsupportedType::UnitInValuePosition,
@@ -51,31 +55,4 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
             return Err(LowerError::unsupported_type(UnsupportedType::TypeParameter));
         }
     })
-}
-
-/// Lowers a source closure shape into a [`ClosureTypeRef`].
-///
-/// Shared between [`lower`] (for the [`TypeRef::Closure`] payload) and
-/// the codec lane (for [`crate::CodecNode::ClosureHandle`]) so the two
-/// always agree on the closure's parameter and return shape.
-pub(super) fn lower_closure(
-    ids: &DeclarationIds,
-    closure: &ClosureType,
-) -> Result<ClosureTypeRef, LowerError> {
-    Ok(ClosureTypeRef::new(
-        closure
-            .parameters
-            .iter()
-            .map(|parameter| lower(ids, parameter))
-            .collect::<Result<Vec<_>, LowerError>>()?,
-        match &closure.returns {
-            ReturnDef::Void => ReturnTypeRef::Void,
-            ReturnDef::Value(TypeExpr::Result { .. }) => {
-                return Err(LowerError::unsupported_type(
-                    UnsupportedType::FallibleClosureReturn,
-                ));
-            }
-            ReturnDef::Value(value) => ReturnTypeRef::Value(lower(ids, value)?),
-        },
-    ))
 }

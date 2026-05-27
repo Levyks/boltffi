@@ -3,10 +3,11 @@ use std::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CallableDecl, CallbackId, CallbackProtocolIntrospect, CanonicalName, ClassId, CodecPlan,
+    CallableScope, CallbackId, CallbackProtocolIntrospect, CanonicalName, ClassId, CodecPlan,
     ConstantId, CustomTypeId, DeclMeta, DeclarationId, DefaultValue, ElementMeta, EnumId,
-    FunctionId, InitializerId, IntegerRepr, IntegerValue, MethodId, NativeSymbol, ReadPlan,
-    RecordId, RecordLayout, ReturnTypeRef, StreamId, Surface, TypeRef, WritePlan,
+    ExportedCallable, FunctionId, ImportedCallable, InitializerId, IntegerRepr, IntegerValue,
+    MethodId, NativeSymbol, ReadPlan, RecordId, RecordLayout, ReturnTypeRef, RustBody, StreamId,
+    Surface, TypeRef, WritePlan,
 };
 
 /// One classified declaration in a binding contract.
@@ -58,15 +59,16 @@ impl<S: Surface> Decl<S> {
         }
     }
 
-    /// Iterates over every callable shape this declaration owns.
+    /// Iterates over every Rust-implemented callable this declaration
+    /// owns.
     ///
-    /// Records and enums yield their initializers and methods. A
-    /// function yields its single callable. A class yields its
-    /// initializers and methods. A callback yields the call shape of
-    /// every method its protocol exposes. A constant yields the
-    /// accessor's callable when it has one. Custom types and streams
-    /// yield nothing.
-    pub fn callables(&self) -> Box<dyn Iterator<Item = &CallableDecl<S>> + '_> {
+    /// Records, enums, and classes yield their initializers and
+    /// methods. A function yields its single callable. A constant
+    /// yields the accessor's callable when it has one. Callback,
+    /// stream, and custom-type declarations yield nothing here;
+    /// callback methods are foreign-implemented and live on
+    /// [`imported_callables`](Self::imported_callables).
+    pub fn exported_callables(&self) -> Box<dyn Iterator<Item = &ExportedCallable<S>> + '_> {
         match self {
             Self::Record(record) => match record.as_ref() {
                 RecordDecl::Direct(direct) => Box::new(
@@ -107,14 +109,27 @@ impl<S: Surface> Decl<S> {
                     .map(|initializer| initializer.callable())
                     .chain(class.methods().iter().map(|method| method.callable())),
             ),
-            Self::Callback(callback) => callback.protocol().method_callables(),
             Self::Constant(constant) => match constant.value() {
                 ConstantValueDecl::Inline { .. } => Box::new(std::iter::empty()),
                 ConstantValueDecl::Accessor { callable, .. } => {
                     Box::new(std::iter::once(callable.as_ref()))
                 }
             },
-            Self::Stream(_) | Self::CustomType(_) => Box::new(std::iter::empty()),
+            Self::Callback(_) | Self::Stream(_) | Self::CustomType(_) => {
+                Box::new(std::iter::empty())
+            }
+        }
+    }
+
+    /// Iterates over every foreign-implemented callable this
+    /// declaration owns.
+    ///
+    /// Callback declarations yield one entry per method the protocol
+    /// exposes. Every other declaration kind yields nothing.
+    pub fn imported_callables(&self) -> Box<dyn Iterator<Item = &ImportedCallable<S>> + '_> {
+        match self {
+            Self::Callback(callback) => callback.protocol().method_callables(),
+            _ => Box::new(std::iter::empty()),
         }
     }
 
@@ -125,7 +140,13 @@ impl<S: Surface> Decl<S> {
     /// constant accessor) with the symbols every nested callable
     /// references through its async protocol.
     pub fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
-        let nested = self.callables().flat_map(CallableDecl::native_symbols);
+        let nested = self
+            .exported_callables()
+            .flat_map(ExportedCallable::native_symbols)
+            .chain(
+                self.imported_callables()
+                    .flat_map(ImportedCallable::native_symbols),
+            );
         match self {
             Self::Record(record) => match record.as_ref() {
                 RecordDecl::Direct(direct) => Box::new(
@@ -268,7 +289,7 @@ pub struct DirectRecordDecl<S: Surface> {
     meta: DeclMeta,
     fields: Vec<DirectFieldDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<MethodDecl<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     layout: RecordLayout,
 }
 
@@ -279,7 +300,7 @@ impl<S: Surface> DirectRecordDecl<S> {
         meta: DeclMeta,
         fields: Vec<DirectFieldDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<MethodDecl<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
         layout: RecordLayout,
     ) -> Self {
         Self {
@@ -319,7 +340,7 @@ impl<S: Surface> DirectRecordDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[MethodDecl<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 
@@ -345,7 +366,7 @@ pub struct EncodedRecordDecl<S: Surface> {
     meta: DeclMeta,
     fields: Vec<EncodedFieldDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<MethodDecl<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     codec: CodecPlan,
 }
 
@@ -356,7 +377,7 @@ impl<S: Surface> EncodedRecordDecl<S> {
         meta: DeclMeta,
         fields: Vec<EncodedFieldDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<MethodDecl<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
         codec: CodecPlan,
     ) -> Self {
         Self {
@@ -396,7 +417,7 @@ impl<S: Surface> EncodedRecordDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[MethodDecl<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 
@@ -560,7 +581,7 @@ pub struct CStyleEnumDecl<S: Surface> {
     repr: IntegerRepr,
     variants: Vec<CStyleVariantDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<MethodDecl<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 }
 
 impl<S: Surface> CStyleEnumDecl<S> {
@@ -571,7 +592,7 @@ impl<S: Surface> CStyleEnumDecl<S> {
         repr: IntegerRepr,
         variants: Vec<CStyleVariantDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<MethodDecl<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     ) -> Self {
         Self {
             id,
@@ -615,7 +636,7 @@ impl<S: Surface> CStyleEnumDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[MethodDecl<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 }
@@ -665,7 +686,7 @@ pub struct DataEnumDecl<S: Surface> {
     meta: DeclMeta,
     variants: Vec<DataVariantDecl>,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<MethodDecl<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     codec: CodecPlan,
 }
 
@@ -676,7 +697,7 @@ impl<S: Surface> DataEnumDecl<S> {
         meta: DeclMeta,
         variants: Vec<DataVariantDecl>,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<MethodDecl<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
         codec: CodecPlan,
     ) -> Self {
         Self {
@@ -716,7 +737,7 @@ impl<S: Surface> DataEnumDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[MethodDecl<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 
@@ -828,7 +849,7 @@ pub struct FunctionDecl<S: Surface> {
     name: CanonicalName,
     meta: DeclMeta,
     symbol: NativeSymbol,
-    callable: CallableDecl<S>,
+    callable: ExportedCallable<S>,
 }
 
 impl<S: Surface> FunctionDecl<S> {
@@ -837,7 +858,7 @@ impl<S: Surface> FunctionDecl<S> {
         name: CanonicalName,
         meta: DeclMeta,
         symbol: NativeSymbol,
-        callable: CallableDecl<S>,
+        callable: ExportedCallable<S>,
     ) -> Self {
         Self {
             id,
@@ -869,7 +890,7 @@ impl<S: Surface> FunctionDecl<S> {
     }
 
     /// Returns the callable.
-    pub fn callable(&self) -> &CallableDecl<S> {
+    pub fn callable(&self) -> &ExportedCallable<S> {
         &self.callable
     }
 }
@@ -894,7 +915,7 @@ pub struct ClassDecl<S: Surface> {
     handle: S::HandleCarrier,
     release: NativeSymbol,
     initializers: Vec<InitializerDecl<S>>,
-    methods: Vec<MethodDecl<S, NativeSymbol>>,
+    methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 }
 
 impl<S: Surface> ClassDecl<S> {
@@ -905,7 +926,7 @@ impl<S: Surface> ClassDecl<S> {
         handle: S::HandleCarrier,
         release: NativeSymbol,
         initializers: Vec<InitializerDecl<S>>,
-        methods: Vec<MethodDecl<S, NativeSymbol>>,
+        methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
     ) -> Self {
         Self {
             id,
@@ -949,7 +970,7 @@ impl<S: Surface> ClassDecl<S> {
     }
 
     /// Returns the methods.
-    pub fn methods(&self) -> &[MethodDecl<S, NativeSymbol>] {
+    pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
     }
 }
@@ -1224,7 +1245,7 @@ pub enum ConstantValueDecl<S: Surface> {
         /// Native symbol the accessor links against.
         symbol: NativeSymbol,
         /// Call shape of the accessor.
-        callable: Box<CallableDecl<S>>,
+        callable: Box<ExportedCallable<S>>,
     },
 }
 
@@ -1290,32 +1311,43 @@ impl CustomTypeDecl {
 
 /// A method on a record, enum, class, or callback trait.
 ///
-/// Owned by its parent declaration. Generic over `S` (the surface
-/// against which the call shape was classified) and `T` (the call
-/// target type). `T` is [`NativeSymbol`] for methods on records, enums,
-/// and classes; for methods on a callback trait it is whichever target
-/// name the surface's callback protocol uses (a vtable slot on native,
-/// a wasm import on wasm).
+/// Owned by its parent declaration. Generic over the surface `S`, the
+/// callable scope `K` (which side implements the body), and the
+/// dispatch-target type `T`. Use the [`ExportedMethodDecl`] alias when
+/// `K = RustBody` and [`ImportedMethodDecl`] when `K = ForeignBody`. `T`
+/// is [`NativeSymbol`] for methods on records, enums, and classes;
+/// callback trait methods use whichever target name the surface's
+/// callback protocol picks ([`VTableSlot`] on native, [`ImportSymbol`]
+/// on wasm32).
+///
+/// [`VTableSlot`]: crate::VTableSlot
+/// [`ImportSymbol`]: crate::ImportSymbol
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "T: Serialize, S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize",
-    deserialize = "T: serde::de::DeserializeOwned, S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+    serialize = "T: Serialize, S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::ClosureRegistration: Serialize, S::AsyncProtocol: Serialize, K::ParamDirection: crate::ParamDirection<S>, K::ReturnDirection: crate::Direction, <K::ParamDirection as crate::ParamDirection<S>>::Payload: Serialize, <K::ReturnDirection as crate::Direction>::Codec: Serialize, <K::ReturnDirection as crate::Direction>::Receive: Serialize",
+    deserialize = "T: serde::de::DeserializeOwned, S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, K::ParamDirection: crate::ParamDirection<S>, K::ReturnDirection: crate::Direction, <K::ParamDirection as crate::ParamDirection<S>>::Payload: serde::de::DeserializeOwned, <K::ReturnDirection as crate::Direction>::Codec: serde::de::DeserializeOwned, <K::ReturnDirection as crate::Direction>::Receive: serde::de::DeserializeOwned"
 ))]
-pub struct MethodDecl<S: Surface, T> {
+pub struct MethodDecl<S: Surface, K: CallableScope, T>
+where
+    K::ParamDirection: crate::ParamDirection<S>,
+{
     id: MethodId,
     name: CanonicalName,
     meta: DeclMeta,
     target: T,
-    callable: CallableDecl<S>,
+    callable: crate::CallableDecl<S, K>,
 }
 
-impl<S: Surface, T> MethodDecl<S, T> {
+impl<S: Surface, K: CallableScope, T> MethodDecl<S, K, T>
+where
+    K::ParamDirection: crate::ParamDirection<S>,
+{
     pub(crate) fn new(
         id: MethodId,
         name: CanonicalName,
         meta: DeclMeta,
         target: T,
-        callable: CallableDecl<S>,
+        callable: crate::CallableDecl<S, K>,
     ) -> Self {
         Self {
             id,
@@ -1347,10 +1379,21 @@ impl<S: Surface, T> MethodDecl<S, T> {
     }
 
     /// Returns the callable.
-    pub fn callable(&self) -> &CallableDecl<S> {
+    pub fn callable(&self) -> &crate::CallableDecl<S, K> {
         &self.callable
     }
 }
+
+/// A method whose body is implemented in Rust. The contained
+/// callable flows params [`IntoRust`](crate::IntoRust) and returns
+/// [`OutOfRust`](crate::OutOfRust).
+pub type ExportedMethodDecl<S, T> = MethodDecl<S, RustBody, T>;
+
+/// A method whose body is implemented in foreign code. The contained
+/// callable flows params [`OutOfRust`](crate::OutOfRust) (Rust pushes
+/// args) and returns [`IntoRust`](crate::IntoRust) (foreign produces
+/// the return).
+pub type ImportedMethodDecl<S, T> = MethodDecl<S, crate::ForeignBody, T>;
 
 /// A callable selected to be exposed as a target language constructor.
 ///
@@ -1369,7 +1412,7 @@ pub struct InitializerDecl<S: Surface> {
     name: CanonicalName,
     meta: DeclMeta,
     symbol: NativeSymbol,
-    callable: CallableDecl<S>,
+    callable: ExportedCallable<S>,
     returns: ReturnTypeRef,
 }
 
@@ -1379,7 +1422,7 @@ impl<S: Surface> InitializerDecl<S> {
         name: CanonicalName,
         meta: DeclMeta,
         symbol: NativeSymbol,
-        callable: CallableDecl<S>,
+        callable: ExportedCallable<S>,
         returns: ReturnTypeRef,
     ) -> Self {
         Self {
@@ -1413,7 +1456,7 @@ impl<S: Surface> InitializerDecl<S> {
     }
 
     /// Returns the callable.
-    pub fn callable(&self) -> &CallableDecl<S> {
+    pub fn callable(&self) -> &ExportedCallable<S> {
         &self.callable
     }
 

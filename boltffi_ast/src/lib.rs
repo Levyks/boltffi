@@ -51,4 +51,6 @@ pub use record::{FieldDef, RecordDef};
 pub use source::{Source, SourceFile, SourceSpan, Visibility};
 pub use stream::{StreamDef, StreamMode};
 pub use trait_def::TraitDef;
-pub use type_expr::{ClosureType, HandlePresence, TraitUseForm, TypeExpr, TypeParameter};
+pub use type_expr::{
+    ClosureKind, ClosureType, HandlePresence, TraitUseForm, TypeExpr, TypeParameter,
+};

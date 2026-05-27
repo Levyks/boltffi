@@ -65,10 +65,10 @@ mod tests {
     use crate::lower::lower;
     use crate::{
         BindingErrorKind, Bindings, CanonicalName, ClassDecl, ClassId, CodecNode, Decl, EnumId,
-        ErrorDecl, ExecutionDecl, HandlePresence, HandleTarget, InitializerId, LiftPlan,
-        LowerError, LowerErrorKind, LowerPlan, MethodId, Native, NativeSymbol, ParamDecl,
-        Primitive as BindingPrimitive, Receive, RecordId, ReturnTypeRef, Surface, SurfaceLower,
-        TypeRef, UnsupportedType, Wasm32, native, wasm32,
+        ErrorDecl, ExecutionDecl, HandlePresence, HandleTarget, InitializerId, LowerError,
+        LowerErrorKind, MethodId, Native, NativeSymbol, ParamPlan, Primitive as BindingPrimitive,
+        Receive, RecordId, ReturnPlan, ReturnTypeRef, Surface, SurfaceLower, TypeRef,
+        UnsupportedType, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -211,15 +211,15 @@ mod tests {
                 .callable()
                 .params()
                 .first()
-                .map(|param| param.lower()),
-            Some(&LowerPlan::Direct {
+                .map(|param| param.as_value().unwrap()),
+            Some(&ParamPlan::Direct {
                 ty: TypeRef::Primitive(BindingPrimitive::U64),
                 receive: Receive::ByValue,
             })
         );
         assert_eq!(
-            initializer.callable().returns().lift(),
-            &LiftPlan::Handle {
+            initializer.callable().returns().plan(),
+            &ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: native::HandleCarrier::U64,
                 presence: HandlePresence::Required,
@@ -240,7 +240,7 @@ mod tests {
             "boltffi_method_class_demo_engine_start"
         );
         assert_eq!(class_method.callable().receiver(), Some(Receive::ByMutRef));
-        assert_eq!(class_method.callable().returns().lift(), &LiftPlan::Void);
+        assert_eq!(class_method.callable().returns().plan(), &ReturnPlan::Void);
     }
 
     #[test]
@@ -264,21 +264,21 @@ mod tests {
             "boltffi_init_class_demo_engine_try_new"
         );
         assert_eq!(
-            initializer.callable().returns().lift(),
-            &LiftPlan::HandleOut {
+            initializer.callable().returns().plan(),
+            &ReturnPlan::HandleViaOutPointer {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: native::HandleCarrier::U64,
                 presence: HandlePresence::Required,
             }
         );
         match initializer.callable().error() {
-            ErrorDecl::EncodedReturn {
+            ErrorDecl::EncodedViaReturnSlot {
                 ty,
-                read,
+                codec,
                 shape: native::BufferShape::Buffer,
             } => {
                 assert_eq!(ty, &TypeRef::String);
-                assert_eq!(read.root(), &CodecNode::String);
+                assert_eq!(codec.root(), &CodecNode::String);
             }
             other => panic!("expected encoded string error, got {other:?}"),
         }
@@ -303,8 +303,8 @@ mod tests {
             "boltffi_method_class_demo_engine_version"
         );
         assert_eq!(
-            class_method.callable().returns().lift(),
-            &LiftPlan::Direct {
+            class_method.callable().returns().plan(),
+            &ReturnPlan::DirectViaReturnSlot {
                 ty: TypeRef::Primitive(BindingPrimitive::I32),
             }
         );
@@ -336,8 +336,8 @@ mod tests {
                 .callable()
                 .params()
                 .first()
-                .map(|param| param.lower()),
-            Some(&LowerPlan::Handle {
+                .map(|param| param.as_value().unwrap()),
+            Some(&ParamPlan::Handle {
                 target: HandleTarget::Class(ClassId::from_raw(1)),
                 carrier: native::HandleCarrier::U64,
                 receive: Receive::ByValue,
@@ -349,8 +349,8 @@ mod tests {
                 .callable()
                 .params()
                 .get(1)
-                .map(|param| param.lower()),
-            Some(&LowerPlan::Handle {
+                .map(|param| param.as_value().unwrap()),
+            Some(&ParamPlan::Handle {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: native::HandleCarrier::U64,
                 receive: Receive::ByValue,
@@ -358,8 +358,8 @@ mod tests {
             })
         );
         assert_eq!(
-            class_method.callable().returns().lift(),
-            &LiftPlan::Handle {
+            class_method.callable().returns().plan(),
+            &ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Class(ClassId::from_raw(1)),
                 carrier: native::HandleCarrier::U64,
                 presence: HandlePresence::Required,
@@ -385,8 +385,8 @@ mod tests {
                 .callable()
                 .params()
                 .first()
-                .map(|param| param.lower()),
-            Some(&LowerPlan::Handle {
+                .map(|param| param.as_value().unwrap()),
+            Some(&ParamPlan::Handle {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: wasm32::HandleCarrier::U32,
                 receive: Receive::ByValue,
@@ -394,8 +394,8 @@ mod tests {
             })
         );
         assert_eq!(
-            class_method.callable().returns().lift(),
-            &LiftPlan::Handle {
+            class_method.callable().returns().plan(),
+            &ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: wasm32::HandleCarrier::U32,
                 presence: HandlePresence::Required,
@@ -549,8 +549,8 @@ mod tests {
             class
                 .methods()
                 .first()
-                .map(|method| method.callable().returns().lift()),
-            Some(&LiftPlan::Direct {
+                .map(|method| method.callable().returns().plan()),
+            Some(&ReturnPlan::DirectViaReturnSlot {
                 ty: TypeRef::Record(RecordId::from_raw(0)),
             })
         );
@@ -558,8 +558,8 @@ mod tests {
             class
                 .methods()
                 .get(1)
-                .map(|method| method.callable().returns().lift()),
-            Some(&LiftPlan::Direct {
+                .map(|method| method.callable().returns().plan()),
+            Some(&ReturnPlan::DirectViaReturnSlot {
                 ty: TypeRef::Enum(EnumId::from_raw(0)),
             })
         );
@@ -589,8 +589,8 @@ mod tests {
                 .callable()
                 .params()
                 .first()
-                .map(ParamDecl::lower),
-            Some(&LowerPlan::Handle {
+                .and_then(|param| param.as_value()),
+            Some(&ParamPlan::Handle {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: native::HandleCarrier::U64,
                 receive: Receive::ByValue,
@@ -623,8 +623,8 @@ mod tests {
                 .callable()
                 .params()
                 .first()
-                .map(ParamDecl::lower),
-            Some(&LowerPlan::Handle {
+                .and_then(|param| param.as_value()),
+            Some(&ParamPlan::Handle {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: native::HandleCarrier::U64,
                 receive: Receive::ByValue,
@@ -657,8 +657,57 @@ mod tests {
             .clone();
 
         assert_eq!(
-            class_method.callable().returns().lift(),
-            &LiftPlan::Handle {
+            class_method.callable().returns().plan(),
+            &ReturnPlan::HandleViaReturnSlot {
+                target: HandleTarget::Class(ClassId::from_raw(0)),
+                carrier: native::HandleCarrier::U64,
+                presence: HandlePresence::Nullable,
+            }
+        );
+    }
+
+    #[test]
+    fn static_nullable_class_return_stays_method_not_initializer() {
+        let method = method(
+            "maybe_new",
+            Receiver::None,
+            ReturnDef::Value(TypeExpr::class(
+                "demo::Engine".into(),
+                SourcePresence::Nullable,
+            )),
+        );
+        let bindings = lower_class::<Native>(class("demo::Engine", "Engine", vec![method]));
+        let class = class_by_id(&bindings, ClassId::from_raw(0));
+
+        assert!(class.initializers().is_empty());
+        let class_method = class.methods().first().expect("expected method");
+        assert_eq!(class_method.name(), &CanonicalName::single("maybe_new"));
+        assert_eq!(
+            class_method.callable().returns().plan(),
+            &ReturnPlan::HandleViaReturnSlot {
+                target: HandleTarget::Class(ClassId::from_raw(0)),
+                carrier: native::HandleCarrier::U64,
+                presence: HandlePresence::Nullable,
+            }
+        );
+    }
+
+    #[test]
+    fn option_self_return_lowers_to_nullable_class_handle() {
+        let method = method(
+            "maybe_self",
+            Receiver::Shared,
+            ReturnDef::Value(TypeExpr::option(TypeExpr::SelfType)),
+        );
+        let bindings = lower_class::<Native>(class("demo::Engine", "Engine", vec![method]));
+        let class_method = class_by_id(&bindings, ClassId::from_raw(0))
+            .methods()
+            .first()
+            .expect("expected method");
+
+        assert_eq!(
+            class_method.callable().returns().plan(),
+            &ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: native::HandleCarrier::U64,
                 presence: HandlePresence::Nullable,
@@ -690,12 +739,12 @@ mod tests {
         let bindings = lower_contract::<Native>(contract).expect("contract should lower");
         let methods = class_by_id(&bindings, ClassId::from_raw(1)).methods();
 
-        let required_carrier = match methods[0].callable().params()[0].lower() {
-            LowerPlan::Handle { carrier, .. } => *carrier,
+        let required_carrier = match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Handle { carrier, .. } => *carrier,
             other => panic!("expected handle, got {other:?}"),
         };
-        let nullable_carrier = match methods[1].callable().params()[0].lower() {
-            LowerPlan::Handle { carrier, .. } => *carrier,
+        let nullable_carrier = match methods[1].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Handle { carrier, .. } => *carrier,
             other => panic!("expected handle, got {other:?}"),
         };
         assert_eq!(required_carrier, nullable_carrier);
@@ -725,8 +774,8 @@ mod tests {
                 .callable()
                 .params()
                 .first()
-                .map(ParamDecl::lower),
-            Some(&LowerPlan::Handle {
+                .and_then(|param| param.as_value()),
+            Some(&ParamPlan::Handle {
                 target: HandleTarget::Class(ClassId::from_raw(0)),
                 carrier: wasm32::HandleCarrier::U32,
                 receive: Receive::ByValue,

@@ -1,8 +1,8 @@
 use boltffi_ast::{ParameterDef, ParameterPassing, TypeExpr};
 
 use crate::{
-    CanonicalName, HandlePresence, HandleTarget, LowerPlan, ParamDecl, Primitive, Receive, TypeRef,
-    ValueRef, WritePlan,
+    CanonicalName, ClosureParam, Direction, ElementMeta, HandlePresence, HandleTarget, IntoRust,
+    OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive, Receive, TypeRef, ValueRef,
 };
 
 use super::super::{
@@ -12,61 +12,82 @@ use super::super::{
 
 use super::{CallableOwner, substitute_self_type};
 
-pub(super) fn lower<S: SurfaceLower>(
+/// Lowers the parameter list of a callable in direction `D`.
+///
+/// The caller picks `D` from the enclosing scope's `ParamDirection`:
+/// [`IntoRust`](crate::IntoRust) for parameters of a Rust-implemented
+/// callable, [`OutOfRust`](crate::OutOfRust) for parameters of a
+/// foreign-implemented callable.
+///
+/// Value parameters lower through [`ParamPlan`]. Closure parameters
+/// dispatch through the [`ClosureParamSlot`] trait so the direction
+/// decides structurally whether the closure constructor is reachable.
+/// `IntoRust` builds [`ParamDecl::Closure`]; `OutOfRust` returns
+/// [`UnsupportedType::ClosureInForeignBodyCallable`].
+pub(super) fn lower<S: SurfaceLower, D: Direction + ClosureParamSlot<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     owner: CallableOwner<'_>,
     parameters: &[ParameterDef],
-) -> Result<Vec<ParamDecl<S>>, LowerError> {
+) -> Result<Vec<ParamDecl<S, D>>, LowerError> {
     parameters
         .iter()
-        .map(|parameter| lower_one::<S>(idx, ids, owner, parameter))
+        .map(|parameter| lower_one::<S, D>(idx, ids, owner, parameter))
         .collect()
 }
 
-fn lower_one<S: SurfaceLower>(
+fn lower_one<S: SurfaceLower, D: Direction + ClosureParamSlot<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     owner: CallableOwner<'_>,
     parameter: &ParameterDef,
-) -> Result<ParamDecl<S>, LowerError> {
+) -> Result<ParamDecl<S, D>, LowerError> {
     let type_expr = substitute_self_type(owner, &parameter.type_expr)?;
     let receive = receive_for_passing(parameter.passing);
     let canonical_name = CanonicalName::from(&parameter.name);
-    let value = ValueRef::named(canonical_name.clone());
-    let plan = lower_plain_plan::<S>(idx, ids, &type_expr, value, receive)?;
     let meta = metadata::element_meta(parameter.doc.as_ref(), None, parameter.default.as_ref())?;
-    Ok(ParamDecl::new(canonical_name, meta, plan))
+    if let TypeExpr::Closure(closure) = &type_expr {
+        if !matches!(receive, Receive::ByValue) {
+            return Err(LowerError::unsupported_type(
+                UnsupportedType::BorrowedCallbackParameter,
+            ));
+        }
+        let closure_param = super::lower_closure_param_into_rust::<S>(idx, ids, closure)?;
+        return D::closure_param(canonical_name, meta, closure_param);
+    }
+    let value = ValueRef::named(canonical_name.clone());
+    let plan = lower_plain_plan::<S, D>(idx, ids, &type_expr, value, receive)?;
+    Ok(ParamDecl::value(canonical_name, meta, plan))
 }
 
-fn lower_plain_plan<S: SurfaceLower>(
+fn lower_plain_plan<S: SurfaceLower, D: Direction>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
     value: ValueRef,
     receive: Receive,
-) -> Result<LowerPlan<S>, LowerError> {
-    match specialize_param::<S>(idx, ids, type_expr, receive)? {
+) -> Result<ParamPlan<S, D>, LowerError> {
+    match specialize_param::<S, D>(idx, ids, type_expr, receive)? {
         Some(plan) => Ok(plan),
-        None => lower_plan::<S>(idx, ids, type_expr, value, receive),
+        None => lower_plan::<S, D>(idx, ids, type_expr, value, receive),
     }
 }
 
-fn specialize_param<S: SurfaceLower>(
+fn specialize_param<S: SurfaceLower, D: Direction>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
     receive: Receive,
-) -> Result<Option<LowerPlan<S>>, LowerError> {
+) -> Result<Option<ParamPlan<S, D>>, LowerError> {
     if !matches!(receive, Receive::ByValue) {
         return Ok(None);
     }
     Ok(match type_expr {
         TypeExpr::Option(inner) => {
-            primitive(inner).map(|primitive| LowerPlan::ScalarOption { primitive })
+            primitive(inner).map(|primitive| ParamPlan::ScalarOption { primitive })
         }
         TypeExpr::Vec(inner) => {
-            direct_vec_element(idx, ids, inner)?.map(|element| LowerPlan::DirectVec { element })
+            direct_vec_element(idx, ids, inner)?.map(|element| ParamPlan::DirectVec { element })
         }
         _ => None,
     })
@@ -102,39 +123,28 @@ fn receive_for_passing(passing: ParameterPassing) -> Receive {
     }
 }
 
-/// Picks the [`LowerPlan`] for one parameter from its source type.
-///
-/// Each handle-shaped [`TypeExpr`] carries the dimensions the boundary
-/// needs (callback presence, class identity, closure signature) directly
-/// in its variant. The lowering pass is a structural transform with no
-/// `(passing, type_expr)` cross-product: source like
-/// `Option<Box<dyn Listener>>` has already collapsed into
-/// `TypeExpr::Trait { form: BoxedDyn, presence: Nullable }` at the
-/// scanner, and the surface spelling
-/// [`TraitUseForm`](boltffi_ast::TraitUseForm) is invisible here
-/// because the wire carrier is identical across the supported forms.
-fn lower_plan<S: SurfaceLower>(
+fn lower_plan<S: SurfaceLower, D: Direction>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
     value: ValueRef,
     receive: Receive,
-) -> Result<LowerPlan<S>, LowerError> {
+) -> Result<ParamPlan<S, D>, LowerError> {
     match type_expr {
-        TypeExpr::Primitive(_) => Ok(LowerPlan::Direct {
+        TypeExpr::Primitive(_) => Ok(ParamPlan::Direct {
             ty: types::lower(ids, type_expr)?,
-            receive,
+            receive: D::receive_from(receive),
         }),
         TypeExpr::Record(id) if idx.record(id).is_some_and(records::is_direct) => {
-            Ok(LowerPlan::Direct {
+            Ok(ParamPlan::Direct {
                 ty: types::lower(ids, type_expr)?,
-                receive,
+                receive: D::receive_from(receive),
             })
         }
         TypeExpr::Enum(id) if idx.enumeration(id).is_some_and(enums::is_c_style) => {
-            Ok(LowerPlan::Direct {
+            Ok(ParamPlan::Direct {
                 ty: types::lower(ids, type_expr)?,
-                receive,
+                receive: D::receive_from(receive),
             })
         }
         TypeExpr::String
@@ -147,25 +157,20 @@ fn lower_plan<S: SurfaceLower>(
         | TypeExpr::Result { .. }
         | TypeExpr::Map { .. } => {
             let ty = types::lower(ids, type_expr)?;
-            let codec = codecs::node(idx, ids, type_expr, value.clone())?;
-            Ok(LowerPlan::Encoded {
+            let codec_node = codecs::node(idx, ids, type_expr, value.clone())?;
+            Ok(ParamPlan::Encoded {
                 ty,
-                write: WritePlan::new(value, codec),
+                codec: D::make_codec(value, codec_node),
                 shape: S::encoded_param_shape(),
-                receive,
+                receive: D::receive_from(receive),
             })
         }
-        TypeExpr::Closure(closure) => Ok(LowerPlan::Handle {
-            target: HandleTarget::Closure(Box::new(types::lower_closure(ids, closure)?)),
-            carrier: S::closure_handle_carrier(),
-            receive,
-            presence: HandlePresence::Required,
-        }),
-        TypeExpr::Class { id, presence } => Ok(LowerPlan::Handle {
+        TypeExpr::Closure(_) => unreachable!("closures are handled before lower_plan"),
+        TypeExpr::Class { id, presence } => Ok(ParamPlan::Handle {
             target: HandleTarget::Class(ids.class(id)?),
             carrier: S::class_handle_carrier(),
-            receive,
             presence: lower_presence(*presence),
+            receive: D::receive_from(receive),
         }),
         TypeExpr::Trait {
             id,
@@ -177,11 +182,11 @@ fn lower_plan<S: SurfaceLower>(
                     UnsupportedType::BorrowedCallbackParameter,
                 ));
             }
-            Ok(LowerPlan::Handle {
+            Ok(ParamPlan::Handle {
                 target: HandleTarget::Callback(ids.callback(id)?),
                 carrier: S::callback_handle_carrier(),
-                receive,
                 presence: lower_presence(*presence),
+                receive: D::receive_from(receive),
             })
         }
         TypeExpr::Custom(_) => Err(types::lower(ids, type_expr)
@@ -197,5 +202,42 @@ fn lower_presence(presence: boltffi_ast::HandlePresence) -> HandlePresence {
     match presence {
         boltffi_ast::HandlePresence::Required => HandlePresence::Required,
         boltffi_ast::HandlePresence::Nullable => HandlePresence::Nullable,
+    }
+}
+
+/// Structural rule for whether a direction admits a closure parameter.
+///
+/// Implemented for [`IntoRust`] (returns a constructed
+/// [`ParamDecl::Closure`]) and for [`OutOfRust`] (returns the dedicated
+/// rejection error). The trait bound on [`lower`] forces every entry
+/// point to commit to a direction whose closure rule is statically
+/// known; no other path leads to a closure-param construction.
+pub(crate) trait ClosureParamSlot<S: SurfaceLower>: ParamDirection<S> + Sized {
+    fn closure_param(
+        name: CanonicalName,
+        meta: ElementMeta,
+        closure: ClosureParam<S>,
+    ) -> Result<ParamDecl<S, Self>, LowerError>;
+}
+
+impl<S: SurfaceLower> ClosureParamSlot<S> for IntoRust {
+    fn closure_param(
+        name: CanonicalName,
+        meta: ElementMeta,
+        closure: ClosureParam<S>,
+    ) -> Result<ParamDecl<S, IntoRust>, LowerError> {
+        Ok(ParamDecl::closure(name, meta, closure))
+    }
+}
+
+impl<S: SurfaceLower> ClosureParamSlot<S> for OutOfRust {
+    fn closure_param(
+        _name: CanonicalName,
+        _meta: ElementMeta,
+        _closure: ClosureParam<S>,
+    ) -> Result<ParamDecl<S, OutOfRust>, LowerError> {
+        Err(LowerError::unsupported_type(
+            UnsupportedType::ClosureInForeignBodyCallable,
+        ))
     }
 }

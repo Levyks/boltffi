@@ -1,5 +1,5 @@
 //! Lowers AST callables (methods, initializers, free functions) into
-//! [`CallableDecl<S>`].
+//! the [`CallableDecl<S, K>`] family.
 //!
 //! Each axis of the IR's call shape (receiver mode, parameter
 //! crossings, return crossing, error transport, execution kind) is
@@ -7,6 +7,15 @@
 //! surrounding [`CallableOwner`] context. The resulting
 //! [`CallableDecl`] carries every decision a renderer needs without
 //! re-running the dispatch.
+//!
+//! Scope:
+//!
+//! - [`lower_method`] and [`lower_function`] produce
+//!   [`ExportedCallable<S>`] (`K = RustBody`): Rust implements, foreign
+//!   calls in.
+//! - [`lower_closure_param_into_rust`] produces a [`ClosureParam<S>`]
+//!   whose invoke contract is an [`ImportedCallable<S>`]
+//!   (`K = ForeignBody`): foreign implements, Rust calls out.
 //!
 //! What this module supports today:
 //!
@@ -16,7 +25,7 @@
 //!   ([`TraitUseForm`](boltffi_ast::TraitUseForm) crossed with
 //!   [`HandlePresence`](boltffi_ast::HandlePresence)), routed as
 //!   nullable or required callback handles;
-//! - `Result<(), E>` returns, which produce a void lift plus an
+//! - `Result<(), E>` returns, which produce a void plan plus an
 //!   encoded error channel;
 //! - parameter and return types that lower through the existing
 //!   [`super::types`] and [`super::codecs`] passes.
@@ -31,17 +40,29 @@
 //! - parameters whose type references a declaration family the pass
 //!   has not yet lowered. Those are caught upstream by
 //!   [`super::reject_unsupported`] so they cannot reach here.
+//!
+//! [`ExportedCallable<S>`]: crate::ExportedCallable
+//! [`ImportedCallable<S>`]: crate::ImportedCallable
+//! [`ClosureParam<S>`]: crate::ClosureParam
 
 mod params;
 mod returns;
 
-use boltffi_ast::{ExecutionKind, FunctionDef, MethodDef, Receiver};
+use boltffi_ast::{
+    CanonicalName as SourceName, ClosureType, ExecutionKind, FunctionDef, MethodDef, ParameterDef,
+    Receiver,
+};
 
-use crate::{CallableDecl, ExecutionDecl, Receive};
+use crate::{
+    CallableDecl, CallableScope, ClosureForm, ClosureParam, ClosureRegistration, ExecutionDecl,
+    ExportedCallable, ImportedCallable, IntoRust, Receive,
+};
 
 use super::{
     LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, surface::SurfaceLower,
 };
+
+use params::ClosureParamSlot;
 
 /// Names the declaration that owns a callable.
 ///
@@ -86,7 +107,13 @@ impl<'src> CallableOwner<'src> {
             (_, boltffi_ast::TypeExpr::SelfType) => true,
             (Self::Record(record), boltffi_ast::TypeExpr::Record(id)) => id == &record.id,
             (Self::Enum(enumeration), boltffi_ast::TypeExpr::Enum(id)) => id == &enumeration.id,
-            (Self::Class(class), boltffi_ast::TypeExpr::Class { id, .. }) => id == &class.id,
+            (
+                Self::Class(class),
+                boltffi_ast::TypeExpr::Class {
+                    id,
+                    presence: boltffi_ast::HandlePresence::Required,
+                },
+            ) => id == &class.id,
             (Self::Trait(source_trait), boltffi_ast::TypeExpr::Trait { id, .. }) => {
                 id == &source_trait.id
             }
@@ -95,27 +122,36 @@ impl<'src> CallableOwner<'src> {
     }
 }
 
-/// Lowers one [`MethodDef`] into a [`CallableDecl<S>`] usable by both
-/// regular methods and initializers.
+/// Lowers one [`MethodDef`] into a [`CallableDecl<S, K>`].
 ///
-/// The owner context resolves `Self`. The receiver follows the source.
-/// Async and callback-shaped parameters are rejected with a specific
-/// [`UnsupportedType`] so the gap is visible to the caller.
-pub(super) fn lower_method<S: SurfaceLower>(
+/// The caller picks the scope. Record, enum, class methods, and
+/// initializers pass `K = RustBody`; callback trait methods pass
+/// `K = ForeignBody`. `K` propagates into the parameter and return
+/// directions through `K::ParamDirection` and `K::ReturnDirection`.
+///
+/// The owner context resolves `Self` inside parameter and return type
+/// expressions. The receiver follows the source. Async callables are
+/// rejected with [`UnsupportedType::AsyncCallable`] so the gap is
+/// visible to the caller.
+pub(super) fn lower_method<S: SurfaceLower, K: CallableScope>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     owner: CallableOwner<'_>,
     method: &MethodDef,
-) -> Result<CallableDecl<S>, LowerError> {
+) -> Result<CallableDecl<S, K>, LowerError>
+where
+    K::ParamDirection: ClosureParamSlot<S>,
+{
     if matches!(method.execution, ExecutionKind::Async) {
         return Err(LowerError::unsupported_type(UnsupportedType::AsyncCallable));
     }
 
     let receiver = lower_receiver(method.receiver);
-    let parameters = params::lower::<S>(idx, ids, owner, &method.parameters)?;
-    let (returns, error) = returns::lower::<S>(idx, ids, owner, &method.returns)?;
+    let parameters = params::lower::<S, K::ParamDirection>(idx, ids, owner, &method.parameters)?;
+    let (returns, error) =
+        returns::lower::<S, K::ReturnDirection>(idx, ids, owner, &method.returns)?;
 
-    Ok(CallableDecl::new(
+    Ok(CallableDecl::<S, K>::new(
         receiver,
         parameters,
         returns,
@@ -124,24 +160,75 @@ pub(super) fn lower_method<S: SurfaceLower>(
     )?)
 }
 
-/// Lowers one [`FunctionDef`] into a [`CallableDecl<S>`] for a free
-/// function. There is no receiver and no `Self`; the owner context
-/// rejects any `Self` reference found while walking parameter and
-/// return types.
+/// Lowers an inline [`ClosureType`] into a [`ClosureParam<S>`].
+///
+/// Closure parameters have no source names, so the lowering pass
+/// synthesises `arg0`, `arg1`, ... and reuses the regular parameter
+/// machinery against them. The invoke contract is built as an
+/// [`ImportedCallable<S>`] because the closure body lives on the
+/// foreign side: args flow [`OutOfRust`](crate::OutOfRust) at
+/// invocation, and the return and error flow back as
+/// [`IntoRust`](crate::IntoRust). The registration uses
+/// [`Receive::ByValue`] and the surface's closure-registration shape.
+///
+/// `Self` references and async closures are rejected explicitly.
+pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    closure: &ClosureType,
+) -> Result<ClosureParam<S>, LowerError> {
+    let owner = CallableOwner::Function;
+    let parameters = closure
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(index, type_expr)| {
+            ParameterDef::value(SourceName::single(format!("arg{index}")), type_expr.clone())
+        })
+        .collect::<Vec<_>>();
+    let lowered_params = params::lower::<S, _>(idx, ids, owner, &parameters)?;
+    let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &closure.returns)?;
+
+    let invoke: ImportedCallable<S> = ImportedCallable::<S>::new(
+        None,
+        lowered_params,
+        returns,
+        error,
+        ExecutionDecl::synchronous(),
+    )?;
+
+    let registration = ClosureRegistration::<S, IntoRust>::new(
+        S::closure_registration(closure)?,
+        Receive::ByValue,
+    );
+
+    Ok(ClosureParam::new(
+        ClosureForm::from(closure.kind),
+        registration,
+        invoke,
+    ))
+}
+
+/// Lowers one [`FunctionDef`] into an [`ExportedCallable<S>`].
+///
+/// Free functions have no receiver and no `Self`; the owner context is
+/// [`CallableOwner::Function`], which rejects any `Self` reference
+/// found while walking parameter and return types. Async functions are
+/// rejected with [`UnsupportedType::AsyncCallable`].
 pub(super) fn lower_function<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     function: &FunctionDef,
-) -> Result<CallableDecl<S>, LowerError> {
+) -> Result<ExportedCallable<S>, LowerError> {
     if matches!(function.execution, ExecutionKind::Async) {
         return Err(LowerError::unsupported_type(UnsupportedType::AsyncCallable));
     }
 
     let owner = CallableOwner::Function;
-    let parameters = params::lower::<S>(idx, ids, owner, &function.parameters)?;
-    let (returns, error) = returns::lower::<S>(idx, ids, owner, &function.returns)?;
+    let parameters = params::lower::<S, IntoRust>(idx, ids, owner, &function.parameters)?;
+    let (returns, error) = returns::lower::<S, _>(idx, ids, owner, &function.returns)?;
 
-    Ok(CallableDecl::new(
+    Ok(ExportedCallable::<S>::new(
         None,
         parameters,
         returns,
@@ -175,7 +262,13 @@ pub(super) fn substitute_self_type(
     Ok(match type_expr {
         TypeExpr::SelfType => owner.self_type_expr()?,
         TypeExpr::Vec(inner) => TypeExpr::Vec(Box::new(substitute_self_type(owner, inner)?)),
-        TypeExpr::Option(inner) => TypeExpr::Option(Box::new(substitute_self_type(owner, inner)?)),
+        TypeExpr::Option(inner) => match (owner, inner.as_ref()) {
+            (CallableOwner::Class(class), TypeExpr::SelfType) => TypeExpr::Class {
+                id: class.id.clone(),
+                presence: boltffi_ast::HandlePresence::Nullable,
+            },
+            _ => TypeExpr::Option(Box::new(substitute_self_type(owner, inner)?)),
+        },
         TypeExpr::Tuple(elements) => TypeExpr::Tuple(
             elements
                 .iter()

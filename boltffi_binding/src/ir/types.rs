@@ -31,8 +31,6 @@ pub enum TypeRef {
     Class(ClassId),
     /// Callback reference.
     Callback(CallbackId),
-    /// Inline closure type.
-    Closure(Box<ClosureTypeRef>),
     /// Custom type reference.
     Custom(CustomTypeId),
     /// Optional value.
@@ -97,8 +95,6 @@ pub enum HandleTarget {
     Class(ClassId),
     /// Callback object implemented on the foreign side.
     Callback(CallbackId),
-    /// Inline closure crossing as a callable handle.
-    Closure(Box<ClosureTypeRef>),
     /// Stream of values produced by Rust.
     Stream(StreamId),
 }
@@ -117,41 +113,4 @@ pub enum HandlePresence {
     Required,
     /// Caller may omit the handle; a zero/null sentinel encodes absence.
     Nullable,
-}
-
-/// An inline closure crossing the boundary as a parameter value.
-///
-/// Records only the closure's signature: the parameter types and the
-/// result type. The carrier that moves the closure handle across the
-/// boundary lives on the surrounding crossing plan (a `LowerPlan` or
-/// `LiftPlan`) where the closure appears, not on the type itself.
-///
-/// # Example
-///
-/// A Rust parameter typed `impl Fn(i32) -> String` produces a
-/// `ClosureTypeRef` with one `i32` parameter and a string return.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct ClosureTypeRef {
-    parameters: Vec<TypeRef>,
-    returns: ReturnTypeRef,
-}
-
-impl ClosureTypeRef {
-    /// Builds a closure type reference.
-    pub fn new(parameters: Vec<TypeRef>, returns: ReturnTypeRef) -> Self {
-        Self {
-            parameters,
-            returns,
-        }
-    }
-
-    /// Returns the parameter types.
-    pub fn parameters(&self) -> &[TypeRef] {
-        &self.parameters
-    }
-
-    /// Returns the result type.
-    pub fn returns(&self) -> &ReturnTypeRef {
-        &self.returns
-    }
 }

@@ -2,7 +2,7 @@ use boltffi_ast::{RecordDef as SourceRecord, TypeExpr};
 
 use crate::{
     CanonicalName, DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl,
-    FieldKey, InitializerDecl, MethodDecl, NativeSymbol, RecordDecl, ValueRef,
+    ExportedMethodDecl, FieldKey, InitializerDecl, NativeSymbol, RecordDecl, ValueRef,
 };
 
 use super::{
@@ -63,7 +63,7 @@ fn lower_direct<S: SurfaceLower>(
     ids: &DeclarationIds,
     record: &SourceRecord,
     initializers: Vec<InitializerDecl<S>>,
-    record_methods: Vec<MethodDecl<S, NativeSymbol>>,
+    record_methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 ) -> Result<DirectRecordDecl<S>, LowerError> {
     let fields = record
         .fields
@@ -93,7 +93,7 @@ fn lower_encoded<S: SurfaceLower>(
     ids: &DeclarationIds,
     record: &SourceRecord,
     initializers: Vec<InitializerDecl<S>>,
-    record_methods: Vec<MethodDecl<S, NativeSymbol>>,
+    record_methods: Vec<ExportedMethodDecl<S, NativeSymbol>>,
 ) -> Result<EncodedRecordDecl<S>, LowerError> {
     let fields = record
         .fields
@@ -131,7 +131,7 @@ fn lower_encoded<S: SurfaceLower>(
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName as SourceName, ClosureType, DefaultValue as SourceDefaultValue,
+        CanonicalName as SourceName, ClosureKind, ClosureType, DefaultValue as SourceDefaultValue,
         DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, EnumDef,
         ExecutionKind, FieldDef, IntegerLiteral, MethodDef, MethodId as SourceMethodId,
         PackageInfo as SourcePackage, ParameterDef, ParameterPassing, Primitive, Receiver,
@@ -142,11 +142,11 @@ mod tests {
     use crate::lower::lower;
     use crate::{
         BindingErrorKind, Bindings, ByteSize, CanonicalName, CodecNode, Decl, DefaultValue,
-        DirectRecordDecl, EncodedRecordDecl, EnumId, ErrorDecl, ExecutionDecl, FieldKey,
-        HandlePresence, HandleTarget, InitializerDecl, IntegerValue, IntrinsicOp, LiftPlan,
-        LowerError, LowerErrorKind, LowerPlan, MethodDecl, Native, NativeSymbol, OpNode,
-        Primitive as BindingPrimitive, ReadPlan, Receive, RecordDecl, RecordId, ReturnTypeRef,
-        SurfaceLower, TypeRef, UnsupportedType, ValueRef, Wasm32, native, wasm32,
+        DirectRecordDecl, EncodedRecordDecl, EnumId, ErrorDecl, ExecutionDecl, ExportedMethodDecl,
+        FieldKey, InitializerDecl, IntegerValue, IntrinsicOp, LowerError, LowerErrorKind, Native,
+        NativeSymbol, OpNode, OutOfRust, ParamPlan, Primitive as BindingPrimitive, ReadPlan,
+        Receive, RecordDecl, RecordId, ReturnPlan, SurfaceLower, TypeRef, UnsupportedType,
+        ValueRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -203,15 +203,15 @@ mod tests {
         }
     }
 
-    fn assert_encoded_string_error(error: &ErrorDecl<Native>) {
+    fn assert_encoded_string_error(error: &ErrorDecl<Native, OutOfRust>) {
         match error {
-            ErrorDecl::EncodedReturn {
+            ErrorDecl::EncodedViaReturnSlot {
                 ty,
-                read,
+                codec,
                 shape: native::BufferShape::Buffer,
             } => {
                 assert_eq!(ty, &TypeRef::String);
-                assert_eq!(read.root(), &CodecNode::String);
+                assert_eq!(codec.root(), &CodecNode::String);
             }
             other => panic!("expected encoded string error, got {other:?}"),
         }
@@ -350,7 +350,9 @@ mod tests {
         ParameterDef::value(name(param_name), type_expr)
     }
 
-    fn record_decl_methods(bindings: &Bindings<Native>) -> &[MethodDecl<Native, NativeSymbol>] {
+    fn record_decl_methods(
+        bindings: &Bindings<Native>,
+    ) -> &[ExportedMethodDecl<Native, NativeSymbol>] {
         direct_record(bindings).methods()
     }
 
@@ -391,7 +393,7 @@ mod tests {
     fn record_methods_at<S: SurfaceLower>(
         bindings: &Bindings<S>,
         index: usize,
-    ) -> &[MethodDecl<S, NativeSymbol>] {
+    ) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         match bindings.decls().get(index) {
             Some(Decl::Record(record)) => match record.as_ref() {
                 RecordDecl::Direct(direct) => direct.methods(),
@@ -451,20 +453,20 @@ mod tests {
         assert_eq!(callable.receiver(), Some(Receive::ByRef));
         assert_eq!(callable.params().len(), 2);
         assert!(matches!(
-            callable.params()[0].lower(),
-            LowerPlan::Direct {
+            callable.params()[0].as_value().unwrap(),
+            ParamPlan::Direct {
                 ty: TypeRef::Primitive(BindingPrimitive::F64),
                 receive: Receive::ByValue,
             }
         ));
         assert!(matches!(
-            callable.params()[1].lower(),
-            LowerPlan::Direct {
+            callable.params()[1].as_value().unwrap(),
+            ParamPlan::Direct {
                 ty: TypeRef::Primitive(BindingPrimitive::F64),
                 receive: Receive::ByValue,
             }
         ));
-        assert!(matches!(callable.returns().lift(), LiftPlan::Void));
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
     }
 
     #[test]
@@ -529,8 +531,8 @@ mod tests {
             "boltffi_init_record_demo_point_try_new"
         );
         assert_eq!(
-            initializers[0].callable().returns().lift(),
-            &LiftPlan::DirectOut {
+            initializers[0].callable().returns().plan(),
+            &ReturnPlan::DirectViaOutPointer {
                 ty: TypeRef::Record(RecordId::from_raw(0)),
             }
         );
@@ -556,10 +558,10 @@ mod tests {
         assert_eq!(initializers.len(), 1);
         assert!(record.methods().is_empty());
         assert_eq!(
-            initializers[0].callable().returns().lift(),
-            &LiftPlan::EncodedOut {
+            initializers[0].callable().returns().plan(),
+            &ReturnPlan::EncodedViaOutPointer {
                 ty: TypeRef::Record(RecordId::from_raw(0)),
-                read: ReadPlan::new(CodecNode::EncodedRecord(RecordId::from_raw(0))),
+                codec: ReadPlan::new(CodecNode::EncodedRecord(RecordId::from_raw(0))),
                 shape: native::BufferShape::Buffer,
             }
         );
@@ -575,10 +577,10 @@ mod tests {
             ReturnDef::Value(TypeExpr::SelfType),
         ));
         let methods = record_decl_methods(&bindings);
-        let returns = methods[0].callable().returns().lift();
+        let returns = methods[0].callable().returns().plan();
 
         match returns {
-            LiftPlan::Direct { ty } => {
+            ReturnPlan::DirectViaReturnSlot { ty } => {
                 assert_eq!(ty, &TypeRef::Record(RecordId::from_raw(0)))
             }
             other => panic!("expected direct record return, got {other:?}"),
@@ -615,8 +617,8 @@ mod tests {
 
         assert_eq!(methods.len(), 1);
         assert_eq!(
-            methods[0].callable().returns().lift(),
-            &LiftPlan::DirectOut {
+            methods[0].callable().returns().plan(),
+            &ReturnPlan::DirectViaOutPointer {
                 ty: TypeRef::Primitive(BindingPrimitive::F64),
             }
         );
@@ -674,7 +676,28 @@ mod tests {
     }
 
     fn closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
-        TypeExpr::closure(ClosureType::new(parameters, returns))
+        closure_kind(ClosureKind::Fn, parameters, returns)
+    }
+
+    fn closure_kind(kind: ClosureKind, parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
+        TypeExpr::closure(ClosureType::new(kind, parameters, returns))
+    }
+
+    fn data_enum(id: &str, enum_name: &str) -> EnumDef {
+        let mut enumeration = EnumDef::new(id.into(), name(enum_name));
+        enumeration.variants = vec![
+            VariantDef::unit(name("none")),
+            VariantDef {
+                name: name("message"),
+                discriminant: None,
+                payload: VariantPayload::Tuple(vec![TypeExpr::String]),
+                doc: None,
+                user_attrs: Vec::new(),
+                source: Source::exported(),
+                source_span: None,
+            },
+        ];
+        enumeration
     }
 
     fn user_record() -> RecordDef {
@@ -690,7 +713,7 @@ mod tests {
 
     fn first_record_methods<S: SurfaceLower>(
         bindings: &Bindings<S>,
-    ) -> &[MethodDecl<S, NativeSymbol>] {
+    ) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         match first_record(bindings) {
             RecordDecl::Direct(direct) => direct.methods(),
             RecordDecl::Encoded(encoded) => encoded.methods(),
@@ -750,8 +773,8 @@ mod tests {
         let methods = first_record_methods(&bindings);
 
         assert!(matches!(
-            methods[0].callable().params()[0].lower(),
-            LowerPlan::Direct {
+            methods[0].callable().params()[0].as_value().unwrap(),
+            ParamPlan::Direct {
                 receive: Receive::ByRef,
                 ..
             }
@@ -769,8 +792,8 @@ mod tests {
         let methods = first_record_methods(&bindings);
 
         assert!(matches!(
-            methods[0].callable().params()[0].lower(),
-            LowerPlan::Direct {
+            methods[0].callable().params()[0].as_value().unwrap(),
+            ParamPlan::Direct {
                 receive: Receive::ByMutRef,
                 ..
             }
@@ -787,8 +810,8 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty: TypeRef::String,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
@@ -808,11 +831,13 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        let LowerPlan::Encoded { write, .. } = methods[0].callable().params()[0].lower() else {
+        let ParamPlan::Encoded { codec, .. } =
+            methods[0].callable().params()[0].as_value().unwrap()
+        else {
             panic!("expected encoded Vec<String> param");
         };
         assert_eq!(
-            write.value(),
+            codec.value(),
             &ValueRef::named(CanonicalName::single("items"))
         );
     }
@@ -830,16 +855,16 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty,
-                write,
+                codec,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
             } => {
                 assert_eq!(ty, &TypeRef::Optional(Box::new(TypeRef::String)));
                 assert_eq!(
-                    write.root(),
+                    codec.root(),
                     &CodecNode::Optional(Box::new(CodecNode::String))
                 );
             }
@@ -860,10 +885,10 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty,
-                write,
+                codec,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
             } => {
@@ -875,7 +900,7 @@ mod tests {
                     ])
                 );
                 assert_eq!(
-                    write.root(),
+                    codec.root(),
                     &CodecNode::Tuple(vec![
                         CodecNode::Primitive(BindingPrimitive::I32),
                         CodecNode::String
@@ -899,10 +924,10 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty,
-                write,
+                codec,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
             } => {
@@ -914,7 +939,7 @@ mod tests {
                     }
                 );
                 assert_eq!(
-                    write.root(),
+                    codec.root(),
                     &CodecNode::Map {
                         key: Box::new(CodecNode::String),
                         value: Box::new(CodecNode::Primitive(BindingPrimitive::I32)),
@@ -942,8 +967,8 @@ mod tests {
         let bindings = lower_records::<Native>(vec![point_record(), other]);
         let path_methods = record_methods_at(&bindings, 1);
 
-        match path_methods[0].callable().params()[0].lower() {
-            LowerPlan::Direct {
+        match path_methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
                 ty,
                 receive: Receive::ByValue,
             } => assert_eq!(ty, &TypeRef::Record(RecordId::from_raw(0))),
@@ -968,16 +993,19 @@ mod tests {
         let bindings = lower_records::<Native>(vec![user_record(), other]);
         let greeter_methods = record_methods_at(&bindings, 1);
 
-        match greeter_methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match greeter_methods[0].callable().params()[0]
+            .as_value()
+            .unwrap()
+        {
+            ParamPlan::Encoded {
                 ty,
-                write,
+                codec,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
             } => {
                 assert_eq!(ty, &TypeRef::Record(RecordId::from_raw(0)));
                 assert_eq!(
-                    write.root(),
+                    codec.root(),
                     &CodecNode::EncodedRecord(RecordId::from_raw(0))
                 );
             }
@@ -1007,8 +1035,8 @@ mod tests {
         );
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Direct {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
                 ty,
                 receive: Receive::ByValue,
             } => assert_eq!(ty, &TypeRef::Enum(EnumId::from_raw(0))),
@@ -1043,22 +1071,22 @@ mod tests {
         );
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty,
-                write,
+                codec,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
             } => {
                 assert_eq!(ty, &TypeRef::Enum(EnumId::from_raw(0)));
-                assert_eq!(write.root(), &CodecNode::DataEnum(EnumId::from_raw(0)));
+                assert_eq!(codec.root(), &CodecNode::DataEnum(EnumId::from_raw(0)));
             }
             other => panic!("expected encoded enum param, got {other:?}"),
         }
     }
 
     #[test]
-    fn closure_parameter_lowers_to_handle_with_closure_target() {
+    fn closure_parameter_lowers_to_lower_plan_closure_with_callable() {
         let bindings = lower_point_method::<Native>(method_with(
             "on_each",
             Receiver::Shared,
@@ -1070,26 +1098,71 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Handle {
-                target: HandleTarget::Closure(closure_ref),
-                carrier: native::HandleCarrier::CallbackHandle,
-                receive: Receive::ByValue,
-                presence: HandlePresence::Required,
-            } => {
-                assert_eq!(
-                    closure_ref.parameters(),
-                    &[TypeRef::Primitive(BindingPrimitive::F64)]
-                );
-                assert_eq!(closure_ref.returns(), &ReturnTypeRef::Void);
+        let closure = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected ParamPlan::Closure");
+        assert!(matches!(
+            closure.registration().shape(),
+            native::ClosureRegistration::InvokeContext
+        ));
+        let callable = closure.invoke();
+        let params = callable.params();
+        assert_eq!(params.len(), 1);
+        assert!(matches!(
+            params[0].as_value().unwrap(),
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+                ..
             }
-            other => panic!("expected closure handle with native callback carrier, got {other:?}"),
+        ));
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
+    }
+
+    #[test]
+    fn closure_invoke_contract_flips_encoded_param_and_return_direction() {
+        let bindings = lower_point_method::<Native>(method_with(
+            "map_name",
+            Receiver::Shared,
+            vec![value_param(
+                "callback",
+                closure(vec![TypeExpr::String], ReturnDef::Value(TypeExpr::String)),
+            )],
+            ReturnDef::Void,
+        ));
+        let methods = first_record_methods(&bindings);
+
+        let callable = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected closure param")
+            .invoke();
+        match callable.params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
+                ty: TypeRef::String,
+                codec,
+                shape: native::BufferShape::Slice,
+                receive: (),
+            } => {
+                assert_eq!(codec.root(), &CodecNode::String);
+            }
+            other => panic!("expected closure string arg to use read codec, got {other:?}"),
+        }
+        match callable.returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
+                ty: TypeRef::String,
+                codec,
+                shape: native::BufferShape::Buffer,
+            } => {
+                assert_eq!(codec.value(), &ValueRef::self_value());
+                assert_eq!(codec.root(), &CodecNode::String);
+            }
+            other => panic!("expected closure string return to use write codec, got {other:?}"),
         }
     }
 
     #[test]
-    fn closure_return_lowers_to_lift_plan_handle() {
-        let bindings = lower_point_method::<Native>(method_with(
+    fn closure_return_is_rejected() {
+        let mut record = point_record();
+        record.methods.push(method_with(
             "project",
             Receiver::Shared,
             Vec::new(),
@@ -1098,25 +1171,197 @@ mod tests {
                 ReturnDef::Value(TypeExpr::Primitive(Primitive::F64)),
             )),
         ));
+
+        let error = lower_record_result::<Native>(record)
+            .expect_err("closure return is not supported by the macro");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::ClosureReturn)
+        ));
+    }
+
+    #[test]
+    fn closure_with_result_return_lowers_with_encoded_error_channel() {
+        let bindings = lower_contract::<Native>(
+            vec![point_record_with_methods(vec![method_with(
+                "run",
+                Receiver::Shared,
+                vec![value_param(
+                    "callback",
+                    closure(
+                        vec![TypeExpr::Primitive(Primitive::I32)],
+                        ReturnDef::Value(TypeExpr::Result {
+                            ok: Box::new(TypeExpr::Primitive(Primitive::I32)),
+                            err: Box::new(TypeExpr::Enum("demo::ParseError".into())),
+                        }),
+                    ),
+                )],
+                ReturnDef::Void,
+            )])],
+            vec![data_enum("demo::ParseError", "ParseError")],
+        );
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::Handle {
-                target: HandleTarget::Closure(closure_ref),
-                carrier: native::HandleCarrier::CallbackHandle,
-                presence: HandlePresence::Required,
-            } => {
-                assert_eq!(
-                    closure_ref.parameters(),
-                    &[TypeRef::Primitive(BindingPrimitive::F64)]
-                );
-                assert_eq!(
-                    closure_ref.returns(),
-                    &ReturnTypeRef::Value(TypeRef::Primitive(BindingPrimitive::F64))
-                );
+        let callable = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected ParamPlan::Closure for Result-returning closure")
+            .invoke();
+        assert!(matches!(
+            callable.returns().plan(),
+            ReturnPlan::DirectViaOutPointer {
+                ty: TypeRef::Primitive(BindingPrimitive::I32),
             }
-            other => panic!("expected closure handle return, got {other:?}"),
+        ));
+        match callable.error() {
+            ErrorDecl::EncodedViaReturnSlot {
+                ty: TypeRef::Enum(_),
+                ..
+            } => {}
+            other => panic!("expected encoded enum error channel, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn closure_with_result_unit_return_lowers_with_void_success_and_encoded_error() {
+        let bindings = lower_contract::<Native>(
+            vec![point_record_with_methods(vec![method_with(
+                "run",
+                Receiver::Shared,
+                vec![value_param(
+                    "callback",
+                    closure(
+                        Vec::new(),
+                        ReturnDef::Value(TypeExpr::Result {
+                            ok: Box::new(TypeExpr::Unit),
+                            err: Box::new(TypeExpr::Enum("demo::ParseError".into())),
+                        }),
+                    ),
+                )],
+                ReturnDef::Void,
+            )])],
+            vec![data_enum("demo::ParseError", "ParseError")],
+        );
+        let methods = first_record_methods(&bindings);
+
+        let callable = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected ParamPlan::Closure for Result<(), E>-returning closure")
+            .invoke();
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
+        match callable.error() {
+            ErrorDecl::EncodedViaReturnSlot {
+                ty: TypeRef::Enum(_),
+                ..
+            } => {}
+            other => panic!("expected encoded enum error channel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn closure_with_fn_mut_kind_lowers_to_closure_plan() {
+        assert_closure_kind_lowers(ClosureKind::FnMut);
+    }
+
+    #[test]
+    fn closure_with_fn_once_kind_lowers_to_closure_plan() {
+        assert_closure_kind_lowers(ClosureKind::FnOnce);
+    }
+
+    #[test]
+    fn closure_with_function_pointer_kind_lowers_to_closure_plan() {
+        assert_closure_kind_lowers(ClosureKind::FunctionPointer);
+    }
+
+    fn assert_closure_kind_lowers(kind: ClosureKind) {
+        let bindings = lower_point_method::<Native>(method_with(
+            "on_each",
+            Receiver::Shared,
+            vec![value_param(
+                "callback",
+                closure_kind(
+                    kind,
+                    vec![TypeExpr::Primitive(Primitive::F64)],
+                    ReturnDef::Void,
+                ),
+            )],
+            ReturnDef::Void,
+        ));
+        let methods = first_record_methods(&bindings);
+
+        let callable = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected ParamPlan::Closure for {kind:?}")
+            .invoke();
+        assert_eq!(callable.params().len(), 1);
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
+    }
+
+    #[test]
+    fn closure_inside_vec_parameter_is_rejected() {
+        let mut record = point_record();
+        record.methods.push(method_with(
+            "register",
+            Receiver::Shared,
+            vec![value_param(
+                "callbacks",
+                TypeExpr::vec(closure(
+                    vec![TypeExpr::Primitive(Primitive::I32)],
+                    ReturnDef::Void,
+                )),
+            )],
+            ReturnDef::Void,
+        ));
+
+        let error =
+            lower_record_result::<Native>(record).expect_err("closure inside Vec is not supported");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::ClosureInValuePosition)
+        ));
+    }
+
+    #[test]
+    fn closure_inside_option_parameter_is_rejected() {
+        let mut record = point_record();
+        record.methods.push(method_with(
+            "maybe_register",
+            Receiver::Shared,
+            vec![value_param(
+                "callback",
+                TypeExpr::Option(Box::new(closure(
+                    vec![TypeExpr::Primitive(Primitive::I32)],
+                    ReturnDef::Void,
+                ))),
+            )],
+            ReturnDef::Void,
+        ));
+
+        let error = lower_record_result::<Native>(record)
+            .expect_err("closure inside Option is not supported");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::ClosureInValuePosition)
+        ));
+    }
+
+    #[test]
+    fn closure_inside_record_field_is_rejected() {
+        let mut record = point_record();
+        record.fields.push(field(
+            "on_change",
+            closure(vec![TypeExpr::Primitive(Primitive::F64)], ReturnDef::Void),
+        ));
+
+        let error = lower_record_result::<Native>(record)
+            .expect_err("closure inside record field is not supported");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::ClosureInValuePosition)
+        ));
     }
 
     #[test]
@@ -1129,8 +1374,8 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::Encoded {
+        match methods[0].callable().returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,
                 shape: native::BufferShape::Buffer,
                 ..
@@ -1149,8 +1394,8 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::DirectVec { element } => {
+        match methods[0].callable().returns().plan() {
+            ReturnPlan::DirectVecViaReturnSlot { element } => {
                 assert_eq!(element, &TypeRef::Primitive(BindingPrimitive::F64));
             }
             other => panic!("expected DirectVec lift, got {other:?}"),
@@ -1167,8 +1412,8 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::DirectVec { element } => {
+        match methods[0].callable().returns().plan() {
+            ReturnPlan::DirectVecViaReturnSlot { element } => {
                 assert_eq!(element, &TypeRef::Record(RecordId::from_raw(0)));
             }
             other => panic!("expected DirectVec lift, got {other:?}"),
@@ -1185,7 +1430,9 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        let LiftPlan::Encoded { ty, read, .. } = methods[0].callable().returns().lift() else {
+        let ReturnPlan::EncodedViaReturnSlot { ty, codec, .. } =
+            methods[0].callable().returns().plan()
+        else {
             panic!("expected encoded return");
         };
         assert_eq!(
@@ -1193,7 +1440,7 @@ mod tests {
             &TypeRef::Optional(Box::new(TypeRef::Record(RecordId::from_raw(0))))
         );
         assert_eq!(
-            read.root(),
+            codec.root(),
             &CodecNode::Optional(Box::new(CodecNode::DirectRecord(RecordId::from_raw(0))))
         );
     }
@@ -1211,7 +1458,9 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        let LiftPlan::Encoded { ty, read, .. } = methods[0].callable().returns().lift() else {
+        let ReturnPlan::EncodedViaReturnSlot { ty, codec, .. } =
+            methods[0].callable().returns().plan()
+        else {
             panic!("expected encoded return");
         };
         assert_eq!(
@@ -1222,7 +1471,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            read.root(),
+            codec.root(),
             &CodecNode::Tuple(vec![
                 CodecNode::DirectRecord(RecordId::from_raw(0)),
                 CodecNode::DirectRecord(RecordId::from_raw(0)),
@@ -1246,21 +1495,25 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        let LowerPlan::Handle {
-            target: HandleTarget::Closure(closure_ref),
-            ..
-        } = methods[0].callable().params()[0].lower()
-        else {
-            panic!("expected closure handle param");
-        };
-        assert_eq!(
-            closure_ref.parameters(),
-            &[TypeRef::Record(RecordId::from_raw(0))]
-        );
-        assert_eq!(
-            closure_ref.returns(),
-            &ReturnTypeRef::Value(TypeRef::Record(RecordId::from_raw(0)))
-        );
+        let callable = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected ParamPlan::Closure")
+            .invoke();
+        let params = callable.params();
+        assert_eq!(params.len(), 1);
+        assert!(matches!(
+            params[0].as_value().unwrap(),
+            ParamPlan::Direct {
+                ty: TypeRef::Record(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            callable.returns().plan(),
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Record(_),
+            }
+        ));
     }
 
     #[test]
@@ -1273,8 +1526,8 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Direct {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
                 ty,
                 receive: Receive::ByValue,
             } => assert_eq!(ty, &TypeRef::Record(RecordId::from_raw(0))),
@@ -1292,13 +1545,13 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Encoded {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty: TypeRef::String,
-                write,
+                codec,
                 shape: wasm32::BufferShape::Slice,
                 receive: Receive::ByValue,
-            } => assert_eq!(write.root(), &CodecNode::String),
+            } => assert_eq!(codec.root(), &CodecNode::String),
             other => panic!("expected wasm32 slice param shape, got {other:?}"),
         }
     }
@@ -1313,18 +1566,18 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::Encoded {
+        match methods[0].callable().returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,
-                read,
+                codec,
                 shape: wasm32::BufferShape::Packed,
-            } => assert_eq!(read.root(), &CodecNode::String),
+            } => assert_eq!(codec.root(), &CodecNode::String),
             other => panic!("expected wasm32 packed return shape, got {other:?}"),
         }
     }
 
     #[test]
-    fn wasm32_closure_handle_uses_u32_carrier() {
+    fn wasm32_closure_parameter_lowers_to_lower_plan_closure_with_callable() {
         let bindings = lower_point_method::<Wasm32>(method_with(
             "on_each",
             Receiver::Shared,
@@ -1336,21 +1589,28 @@ mod tests {
         ));
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Handle {
-                carrier: wasm32::HandleCarrier::U32,
-                target: HandleTarget::Closure(closure_ref),
-                receive: Receive::ByValue,
-                presence: HandlePresence::Required,
-            } => {
-                assert_eq!(
-                    closure_ref.parameters(),
-                    &[TypeRef::Primitive(BindingPrimitive::F64)]
-                );
-                assert_eq!(closure_ref.returns(), &ReturnTypeRef::Void);
+        let closure = methods[0].callable().params()[0]
+            .as_closure()
+            .expect("expected ParamPlan::Closure on wasm32");
+        assert_eq!(
+            closure.registration().shape().call().name().as_str(),
+            "__boltffi_callback____closure__f64_call"
+        );
+        assert_eq!(
+            closure.registration().shape().free().name().as_str(),
+            "__boltffi_callback____closure__f64_free"
+        );
+        let callable = closure.invoke();
+        let params = callable.params();
+        assert_eq!(params.len(), 1);
+        assert!(matches!(
+            params[0].as_value().unwrap(),
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+                ..
             }
-            other => panic!("expected wasm32 U32 closure carrier, got {other:?}"),
-        }
+        ));
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
     }
 
     #[test]
@@ -1468,8 +1728,8 @@ mod tests {
         let bindings = lower_records::<Native>(vec![point_record(), path]);
         let path_methods = record_methods_at(&bindings, 1);
 
-        match path_methods[0].callable().returns().lift() {
-            LiftPlan::Direct { ty } => {
+        match path_methods[0].callable().returns().plan() {
+            ReturnPlan::DirectViaReturnSlot { ty } => {
                 assert_eq!(ty, &TypeRef::Record(RecordId::from_raw(0)));
             }
             other => panic!("expected direct record return, got {other:?}"),
@@ -1495,8 +1755,8 @@ mod tests {
         );
         let methods = first_record_methods(&bindings);
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::Direct { ty } => {
+        match methods[0].callable().returns().plan() {
+            ReturnPlan::DirectViaReturnSlot { ty } => {
                 assert_eq!(ty, &TypeRef::Enum(EnumId::from_raw(0)));
             }
             other => panic!("expected direct enum return, got {other:?}"),

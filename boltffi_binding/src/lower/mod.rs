@@ -56,6 +56,7 @@ mod records;
 mod surface;
 mod symbol;
 mod types;
+mod wasm_closure;
 
 use boltffi_ast::SourceContract;
 

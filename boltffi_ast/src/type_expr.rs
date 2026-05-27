@@ -2,19 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ClassId, CustomTypeId, EnumId, Primitive, RecordId, ReturnDef, TraitId};
 
-/// Form in which a Rust trait appears as a boundary value.
+/// Form in which a Rust trait appears as a source value.
 ///
 /// Names the supported Rust spellings for trait-typed values: a
 /// monomorphized `impl Trait`, an owned `Box<dyn Trait>`, or a shared
 /// `Arc<dyn Trait>`.
-///
-/// All three forms share the same FFI wire shape for a callback handle
-/// carrier. They differ in how Rust reconstructs the value at the call
-/// boundary:
-///
-/// - [`TraitUseForm::ImplTrait`] reconstructs the generated foreign wrapper.
-/// - [`TraitUseForm::BoxedDyn`] reconstructs `Box<dyn Trait>`.
-/// - [`TraitUseForm::ArcDyn`] reconstructs `Arc<dyn Trait>`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum TraitUseForm {
     /// `impl Trait`.
@@ -25,15 +17,11 @@ pub enum TraitUseForm {
     ArcDyn,
 }
 
-/// Whether a handle-typed value is always present at the boundary or may be
-/// absent.
+/// Whether a handle-typed source value is required or optional.
 ///
-/// Nullability is a property of the handle slot itself, not a wrapping
-/// type. A nullable callback param crosses the boundary as the same carrier
-/// as a required callback param; the absence is encoded with a zero handle
-/// sentinel. Modelling presence on the type, rather than wrapping the type
-/// in [`TypeExpr::Option`], preserves the wire-level truth that no extra
-/// slot or presence flag exists.
+/// The scanner folds source shapes such as `Option<Engine>` and
+/// `Option<Box<dyn Listener>>` into the handle-bearing type expression
+/// instead of keeping an outer [`TypeExpr::Option`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum HandlePresence {
     /// Caller must supply a live handle.
@@ -55,22 +43,12 @@ pub enum HandlePresence {
 pub enum TypeExpr {
     /// A primitive Rust scalar.
     Primitive(Primitive),
-    /// The Rust unit type `()` used as the success channel of a
-    /// `Result<(), E>` return.
+    /// The Rust unit type `()`.
     ///
-    /// This is the only position the lowering pass accepts `Unit` in.
-    /// The return lowering short-circuits `Result<Unit, E>` to a void
-    /// lift plus an encoded error channel without routing the empty
-    /// success value through the codec lane. Any other position (field,
-    /// parameter, `Vec<()>`, `Option<()>`, `Tuple` element, map key or
-    /// value) is rejected with `UnsupportedType::UnitInValuePosition`,
-    /// since the wire shape "a value that is always zero bytes" carries
-    /// no information worth crossing the boundary.
-    ///
-    /// Outer-position units (a callable that returns nothing) are
-    /// recorded by [`ReturnDef::Void`](crate::ReturnDef::Void) instead,
-    /// so "returns nothing" stays structurally distinct from "returns a
-    /// value that happens to be `()`".
+    /// A callable that returns nothing uses
+    /// [`ReturnDef::Void`](crate::ReturnDef::Void). This variant records
+    /// unit when it appears as a written value type, such as
+    /// `Result<(), E>`.
     Unit,
     /// A record declaration by ID.
     Record(RecordId),
@@ -78,39 +56,25 @@ pub enum TypeExpr {
     Enum(EnumId),
     /// A class-style object reference.
     ///
-    /// Class instances cross the boundary as opaque handles. The
-    /// `presence` field records whether the boundary slot is always
-    /// populated or may carry the null-handle sentinel: source
-    /// `Option<Engine>` collapses to `Class { id, presence: Nullable }`
-    /// rather than wrapping in [`TypeExpr::Option`] because the wire
-    /// shape is a single nullable handle slot, not a presence-flagged
-    /// optional. Mirrors the [`TypeExpr::Trait`] presence model.
+    /// Source `Option<Engine>` is represented as `Class { id, presence:
+    /// Nullable }`; required class values use `presence: Required`.
     Class {
         /// The class declaration this reference resolves to.
         id: ClassId,
-        /// Whether the boundary handle slot is nullable.
+        /// Whether the source value is nullable.
         presence: HandlePresence,
     },
     /// A reference to a Rust trait the user wrote.
     ///
-    /// The source entity is a trait, such as `trait Listener { ... }`, and this
-    /// variant references it. "Callback" describes what the trait does at
-    /// the FFI boundary (foreign code provides the impl, Rust calls into
-    /// it); it does not describe what the source entity is, so it does
-    /// not belong in the variant name.
-    ///
-    /// Carries the trait use form ([`TraitUseForm`]) and the boundary
-    /// presence model ([`HandlePresence`]). Source `Option<Box<dyn T>>`
-    /// collapses to a single
-    /// `Trait { form: BoxedDyn, presence: Nullable }` rather than
-    /// wrapping in [`TypeExpr::Option`] because the wire shape is a single
-    /// nullable handle slot, not a presence-flagged optional.
+    /// The source entity is a trait, such as `trait Listener { ... }`,
+    /// and this variant references it. Source `Option<Box<dyn T>>`
+    /// collapses to `Trait { form: BoxedDyn, presence: Nullable }`.
     Trait {
         /// The trait declaration this reference resolves to.
         id: TraitId,
-        /// Rust form used at this trait-typed boundary value.
+        /// Rust form used at this trait-typed source value.
         form: TraitUseForm,
-        /// Whether the boundary slot is nullable.
+        /// Whether the source value is nullable.
         presence: HandlePresence,
     },
     /// An inline closure signature such as `impl Fn(u32) -> String`.
@@ -130,9 +94,8 @@ pub enum TypeExpr {
     Option(Box<TypeExpr>),
     /// A `Result<T, E>` source type.
     ///
-    /// In return position, lowering treats this as a success type plus an error
-    /// channel. In field and parameter position, it remains an ordinary value
-    /// type.
+    /// Preserves both source type arguments in order. The same expression
+    /// can appear in returns, fields, parameters, or nested containers.
     Result {
         /// Success type written as the first `Result` argument.
         ok: Box<TypeExpr>,
@@ -207,8 +170,8 @@ impl TypeExpr {
     /// Builds a trait-reference type expression.
     ///
     /// The `id` parameter is the trait declaration. The `form` parameter is
-    /// the Rust form used at the boundary. The `presence` parameter is the
-    /// boundary slot's nullability.
+    /// the Rust form used in source. The `presence` parameter is the
+    /// source nullability.
     pub fn r#trait(id: TraitId, form: TraitUseForm, presence: HandlePresence) -> Self {
         Self::Trait { id, form, presence }
     }
@@ -216,7 +179,7 @@ impl TypeExpr {
     /// Builds a class-reference type expression.
     ///
     /// The `id` parameter is the class declaration. The `presence`
-    /// parameter is the boundary handle slot's nullability.
+    /// parameter is the source nullability.
     pub fn class(id: ClassId, presence: HandlePresence) -> Self {
         Self::Class { id, presence }
     }
@@ -248,13 +211,34 @@ impl TypeExpr {
     }
 }
 
+/// Kind of inline closure-shaped parameter the source wrote.
+///
+/// Mirrors what the Rust parser saw. The `FunctionPointer` variant is
+/// the bare `fn(...)` type (no captured environment); `Fn` / `FnMut` /
+/// `FnOnce` are the standard Rust closure trait flavors used as
+/// `impl Fn*(...)` parameter bounds.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum ClosureKind {
+    /// Bare `fn(...)` function-pointer parameter.
+    FunctionPointer,
+    /// `impl Fn(...)` parameter.
+    Fn,
+    /// `impl FnMut(...)` parameter.
+    FnMut,
+    /// `impl FnOnce(...)` parameter.
+    FnOnce,
+}
+
 /// An inline closure signature used as a type expression.
 ///
 /// Closure parameters are not named declarations in Rust source. The scanner
-/// stores their parameter and return types here so the callback shape remains
-/// local to the parameter that introduced it.
+/// stores the source `kind` (function pointer vs `Fn` family), the parameter
+/// list, and the return type here so the closure shape remains local to the
+/// parameter that introduced it.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct ClosureType {
+    /// Source-form kind the parser saw.
+    pub kind: ClosureKind,
     /// Types accepted by the closure in source order.
     pub parameters: Vec<TypeExpr>,
     /// Return type written by the closure signature.
@@ -264,12 +248,14 @@ pub struct ClosureType {
 impl ClosureType {
     /// Builds an inline closure signature.
     ///
+    /// The `kind` parameter records the source spelling the parser saw.
     /// The `parameters` parameter preserves closure parameter types in source order.
     /// The `returns` parameter is the closure return type.
     ///
     /// Returns a closure signature suitable for [`TypeExpr::Closure`].
-    pub fn new(parameters: Vec<TypeExpr>, returns: ReturnDef) -> Self {
+    pub fn new(kind: ClosureKind, parameters: Vec<TypeExpr>, returns: ReturnDef) -> Self {
         Self {
+            kind,
             parameters,
             returns,
         }

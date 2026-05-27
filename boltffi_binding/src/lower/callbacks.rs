@@ -184,8 +184,9 @@ mod tests {
     use crate::lower::lower;
     use crate::lower::{LowerErrorKind, UnsupportedType};
     use crate::{
-        Bindings, CallbackDecl, Decl, ErrorDecl, ExecutionDecl, HandlePresence, HandleTarget,
-        LiftPlan, LowerPlan, Native, Receive, SurfaceLower, TypeRef, Wasm32, native, wasm32,
+        Bindings, CallbackDecl, CodecNode, Decl, ErrorDecl, ExecutionDecl, HandlePresence,
+        HandleTarget, Native, ParamPlan, Receive, ReturnPlan, SurfaceLower, TypeRef, ValueRef,
+        Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -278,7 +279,7 @@ mod tests {
 
     fn record_first_method_lower_plan<S: SurfaceLower>(
         bindings: &Bindings<S>,
-    ) -> &crate::LowerPlan<S> {
+    ) -> &crate::ParamPlan<S, crate::IntoRust> {
         let methods = bindings
             .decls()
             .iter()
@@ -290,12 +291,12 @@ mod tests {
                 _ => None,
             })
             .expect("expected record");
-        methods[0].callable().params()[0].lower()
+        methods[0].callable().params()[0].as_value().unwrap()
     }
 
     fn class_first_method_lift_plan<S: SurfaceLower>(
         bindings: &Bindings<S>,
-    ) -> &crate::LiftPlan<S> {
+    ) -> &crate::ReturnPlan<S, crate::OutOfRust> {
         let methods = bindings
             .decls()
             .iter()
@@ -304,7 +305,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected class");
-        methods[0].callable().returns().lift()
+        methods[0].callable().returns().plan()
     }
 
     #[test]
@@ -406,16 +407,43 @@ mod tests {
 
         assert_eq!(params.len(), 1);
         assert!(matches!(
-            params[0].lower(),
-            LowerPlan::Direct {
+            params[0].as_value().unwrap(),
+            ParamPlan::Direct {
                 ty: TypeRef::Primitive(crate::Primitive::I32),
-                receive: Receive::ByValue,
+                // direction is OutOfRust (Rust pushes args to foreign
+                // implementation), so the slot has no Rust-side receive mode
+                receive: (),
             }
         ));
     }
 
     #[test]
-    fn callback_method_returning_string_lowers_to_encoded_lift() {
+    fn callback_method_with_string_param_uses_read_codec() {
+        let mut callback = listener_callback();
+        let mut handle = method("handle", Receiver::Shared);
+        handle.parameters = vec![value_param("message", TypeExpr::String)];
+        callback.methods.push(handle);
+
+        let bindings = lower_callback::<Native>(callback);
+        let methods = first_callback(&bindings).protocol().vtable().methods();
+        let params = methods[0].callable().params();
+
+        assert_eq!(params.len(), 1);
+        match params[0].as_value().unwrap() {
+            ParamPlan::Encoded {
+                ty: TypeRef::String,
+                codec,
+                shape: native::BufferShape::Slice,
+                receive: (),
+            } => {
+                assert_eq!(codec.root(), &CodecNode::String);
+            }
+            other => panic!("expected encoded string callback param, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn callback_method_returning_string_uses_write_codec() {
         let mut callback = listener_callback();
         let mut describe = method("describe", Receiver::Shared);
         describe.returns = ReturnDef::Value(TypeExpr::String);
@@ -424,12 +452,15 @@ mod tests {
         let bindings = lower_callback::<Native>(callback);
         let methods = first_callback(&bindings).protocol().vtable().methods();
 
-        match methods[0].callable().returns().lift() {
-            LiftPlan::Encoded {
+        match methods[0].callable().returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,
+                codec,
                 shape: native::BufferShape::Buffer,
-                ..
-            } => {}
+            } => {
+                assert_eq!(codec.value(), &ValueRef::self_value());
+                assert_eq!(codec.root(), &CodecNode::String);
+            }
             other => panic!("expected encoded string return, got {other:?}"),
         }
     }
@@ -443,7 +474,7 @@ mod tests {
         .expect("contract should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -462,7 +493,7 @@ mod tests {
         .expect("impl Trait callback should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -481,7 +512,7 @@ mod tests {
         .expect("Arc<dyn> callback should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -500,7 +531,7 @@ mod tests {
         .expect("Option<Box<dyn Listener>> param must lower as a nullable callback handle");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -519,7 +550,7 @@ mod tests {
         .expect("Option<Arc<dyn Listener>> should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -538,7 +569,7 @@ mod tests {
         .expect("Option<impl Listener> should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -590,11 +621,11 @@ mod tests {
         .expect("nullable should lower");
 
         let required_carrier = match record_first_method_lower_plan(&required) {
-            LowerPlan::Handle { carrier, .. } => *carrier,
+            ParamPlan::Handle { carrier, .. } => *carrier,
             other => panic!("expected handle plan, got {other:?}"),
         };
         let nullable_carrier = match record_first_method_lower_plan(&nullable) {
-            LowerPlan::Handle { carrier, .. } => *carrier,
+            ParamPlan::Handle { carrier, .. } => *carrier,
             other => panic!("expected handle plan, got {other:?}"),
         };
         assert_eq!(
@@ -613,7 +644,7 @@ mod tests {
         .expect("wasm32 Option<Box<dyn Listener>> should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: wasm32::HandleCarrier::U32,
                 receive: Receive::ByValue,
@@ -632,7 +663,7 @@ mod tests {
         .expect("contract should lower");
 
         match class_first_method_lift_plan(&bindings) {
-            LiftPlan::Handle {
+            ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 presence: HandlePresence::Required,
@@ -650,7 +681,7 @@ mod tests {
         .expect("Arc<dyn Listener> return should lower");
 
         match class_first_method_lift_plan(&bindings) {
-            LiftPlan::Handle {
+            ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 presence: HandlePresence::Required,
@@ -668,7 +699,7 @@ mod tests {
         .expect("Option<Arc<dyn Listener>> return should lower");
 
         match class_first_method_lift_plan(&bindings) {
-            LiftPlan::Handle {
+            ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 presence: HandlePresence::Nullable,
@@ -686,7 +717,7 @@ mod tests {
         .expect("Option<Box<dyn Listener>> return should lower");
 
         match class_first_method_lift_plan(&bindings) {
-            LiftPlan::Handle {
+            ReturnPlan::HandleViaReturnSlot {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 presence: HandlePresence::Nullable,
@@ -704,7 +735,7 @@ mod tests {
         .expect("contract should lower");
 
         match record_first_method_lower_plan(&bindings) {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: wasm32::HandleCarrier::U32,
                 receive: Receive::ByValue,
@@ -880,10 +911,10 @@ mod tests {
 
         let plan = record_first_method_lower_plan(&bindings);
         match plan {
-            LowerPlan::Handle {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(id),
                 ..
-            } => assert_eq!(*id, observer_id),
+            } => assert_eq!(id, &observer_id),
             other => panic!("expected callback handle, got {other:?}"),
         }
     }
@@ -998,8 +1029,8 @@ mod tests {
             })
             .expect("expected class");
 
-        match methods[0].callable().params()[0].lower() {
-            LowerPlan::Handle {
+        match methods[0].callable().params()[0].as_value().unwrap() {
+            ParamPlan::Handle {
                 target: HandleTarget::Callback(_),
                 carrier: native::HandleCarrier::CallbackHandle,
                 receive: Receive::ByValue,
@@ -1021,12 +1052,12 @@ mod tests {
         let callable = methods[0].callable();
 
         assert!(
-            matches!(callable.returns().lift(), LiftPlan::Void),
+            matches!(callable.returns().plan(), ReturnPlan::Void),
             "Result<(), E> must emit Void on the success channel, got {:?}",
-            callable.returns().lift()
+            callable.returns().plan()
         );
         match callable.error() {
-            ErrorDecl::EncodedReturn {
+            ErrorDecl::EncodedViaReturnSlot {
                 ty: TypeRef::String,
                 ..
             } => {}

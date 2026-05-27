@@ -1,58 +1,57 @@
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, CanonicalName,
-    ElementMeta, HandlePresence, HandleTarget, IntegerRepr, NativeSymbol, Primitive, ReadPlan,
-    Surface, TypeRef, WritePlan,
+    AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, CallableScope,
+    CanonicalName, Direction, ElementMeta, ForeignBody, HandlePresence, HandleTarget, IntegerRepr,
+    IntoRust, NativeSymbol, OutOfRust, Primitive, RustBody, Surface, TypeRef,
 };
 
 /// One call shape ready to be turned into target code.
 ///
-/// Carries every decision about how the call crosses the boundary: the
-/// receiver mode when the callable is a method, how each argument
-/// enters Rust, how the result leaves, how errors are reported, and
-/// whether the call is synchronous or asynchronous. The call site
+/// Carries the receiver mode, the parameter crossings, the return
+/// crossing, the error channel, and the execution kind. The call site
 /// (linker symbol or vtable slot) lives on the owning declaration, not
 /// on the callable.
 ///
-/// The receiver's crossing form belongs to the owning declaration. A
-/// method on a class crosses its receiver as a handle; a method on a
-/// direct record crosses by direct memory; a method on a data enum
-/// crosses encoded. The callable only records whether `self` is owned,
-/// shared, or mutably borrowed. Renderers must render every method
-/// alongside its owner so the crossing form is available.
-///
-/// Generic over `S: Surface` so target-divergent shapes (buffer
-/// layouts, handle carriers, async protocol) are picked once at
-/// classification and never re-derived by consumers.
+/// `S` is the target surface. `K` is the body scope; its
+/// `ParamDirection` flows into every parameter and its `ReturnDirection`
+/// flows into the return and the error channel.
 ///
 /// # Example
 ///
-/// `fn add(a: i32, b: i32) -> i32` produces a `CallableDecl<S>` with no
-/// receiver, two direct-scalar parameters, a direct-scalar return, no
-/// error transport, and synchronous execution. Its native symbol lives
-/// on the surrounding [`crate::FunctionDecl`].
+/// `fn add(a: i32, b: i32) -> i32` lowers to a
+/// `CallableDecl<S, RustBody>` with no receiver, two
+/// `ParamPlan::Direct` parameters, a `ReturnPlan::DirectViaReturnSlot`
+/// return, `ErrorDecl::None`, and synchronous execution.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, S::ClosureRegistration: Serialize, K::ParamDirection: ParamDirection<S>, K::ReturnDirection: Direction, <K::ParamDirection as ParamDirection<S>>::Payload: Serialize, <K::ReturnDirection as Direction>::Codec: Serialize, <K::ReturnDirection as Direction>::Receive: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, K::ParamDirection: ParamDirection<S>, K::ReturnDirection: Direction, <K::ParamDirection as ParamDirection<S>>::Payload: serde::de::DeserializeOwned, <K::ReturnDirection as Direction>::Codec: serde::de::DeserializeOwned, <K::ReturnDirection as Direction>::Receive: serde::de::DeserializeOwned"
 ))]
-pub struct CallableDecl<S: Surface> {
+pub struct CallableDecl<S: Surface, K: CallableScope>
+where
+    K::ParamDirection: ParamDirection<S>,
+{
     receiver: Option<Receive>,
-    params: Vec<ParamDecl<S>>,
-    returns: ReturnDecl<S>,
-    error: ErrorDecl<S>,
+    params: Vec<ParamDecl<S, K::ParamDirection>>,
+    returns: ReturnDecl<S, K::ReturnDirection>,
+    error: ErrorDecl<S, K::ReturnDirection>,
     execution: ExecutionDecl<S>,
 }
 
-impl<S: Surface> CallableDecl<S> {
+impl<S: Surface, K: CallableScope> CallableDecl<S, K>
+where
+    K::ParamDirection: ParamDirection<S>,
+{
     pub(crate) fn new(
         receiver: Option<Receive>,
-        params: Vec<ParamDecl<S>>,
-        returns: ReturnDecl<S>,
-        error: ErrorDecl<S>,
+        params: Vec<ParamDecl<S, K::ParamDirection>>,
+        returns: ReturnDecl<S, K::ReturnDirection>,
+        error: ErrorDecl<S, K::ReturnDirection>,
         execution: ExecutionDecl<S>,
     ) -> Result<Self, BindingError> {
         let callable = Self {
@@ -66,33 +65,29 @@ impl<S: Surface> CallableDecl<S> {
         Ok(callable)
     }
 
-    /// Returns `Ok` when the callable's return shape, error channel, and
-    /// per-param buffer shapes form a coherent native signature.
+    /// Checks the slot-conflict and buffer-shape invariants.
     ///
-    /// Rejects:
+    /// Fails when:
+    /// - both the return and the error channel use the native return
+    ///   slot;
+    /// - an encoded param has a buffer shape forbidden on params for
+    ///   this surface (e.g. `wasm32::BufferShape::Packed`);
+    /// - an encoded return or error has a buffer shape forbidden on
+    ///   return slots (e.g. any `Slice`).
     ///
-    /// - Return and error both claiming the native return slot.
-    /// - A buffer shape on a parameter encoded crossing that the
-    ///   surface forbids (e.g. `wasm32::BufferShape::Packed`).
-    /// - A buffer shape on a return or error encoded crossing that the
-    ///   surface forbids (e.g. any `Slice`, since a borrowed view
-    ///   cannot leave Rust with no owner to free it).
-    ///
-    /// Re-runs at the contract boundary so values reconstructed through
-    /// `Deserialize` cannot bypass the invariants enforced by
-    /// [`Self::new`].
+    /// `Bindings::validate` calls this on every callable.
     pub fn validate(&self) -> Result<(), BindingError> {
-        if self.returns.lift().uses_return_slot() && self.error.uses_return_slot() {
+        if self.returns.plan().uses_return_slot() && self.error.uses_return_slot() {
             return Err(BindingError::new(BindingErrorKind::ReturnSlotConflict));
         }
         for param in &self.params {
-            if let Some(shape) = param.lower().buffer_shape()
+            if let Some(shape) = param.buffer_shape()
                 && !shape.is_valid_in_param()
             {
                 return Err(BindingError::new(BindingErrorKind::PackedInParamPosition));
             }
         }
-        if let Some(shape) = self.returns.lift().buffer_shape()
+        if let Some(shape) = self.returns.plan().buffer_shape()
             && !shape.is_valid_in_return()
         {
             return Err(BindingError::new(BindingErrorKind::SliceInReturnPosition));
@@ -105,27 +100,24 @@ impl<S: Surface> CallableDecl<S> {
         Ok(())
     }
 
-    /// Returns the receiver mode.
-    ///
-    /// `None` for free functions and static methods. `Some` for instance
-    /// methods, where the [`Receive`] variant names whether `self` is
-    /// taken by value, by shared reference, or by mutable reference.
+    /// Returns the receiver mode, or `None` for free functions and
+    /// static methods.
     pub const fn receiver(&self) -> Option<Receive> {
         self.receiver
     }
 
     /// Returns the parameters in call order.
-    pub fn params(&self) -> &[ParamDecl<S>] {
+    pub fn params(&self) -> &[ParamDecl<S, K::ParamDirection>] {
         &self.params
     }
 
     /// Returns the return shape.
-    pub fn returns(&self) -> &ReturnDecl<S> {
+    pub fn returns(&self) -> &ReturnDecl<S, K::ReturnDirection> {
         &self.returns
     }
 
     /// Returns the error transport.
-    pub fn error(&self) -> &ErrorDecl<S> {
+    pub fn error(&self) -> &ErrorDecl<S, K::ReturnDirection> {
         &self.error
     }
 
@@ -134,10 +126,10 @@ impl<S: Surface> CallableDecl<S> {
         &self.execution
     }
 
-    /// Iterates over every native symbol this callable references.
+    /// Iterates the native symbols this callable references.
     ///
-    /// A synchronous callable yields nothing; an asynchronous callable
-    /// yields the async protocol's lifecycle symbols.
+    /// Empty for synchronous callables. For async callables, yields the
+    /// async protocol's lifecycle symbols.
     pub fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
         match &self.execution {
             ExecutionDecl::Synchronous(_) => Box::new(std::iter::empty()),
@@ -146,29 +138,118 @@ impl<S: Surface> CallableDecl<S> {
     }
 }
 
-/// One parameter accepted by a callable.
-///
-/// Carries the canonical name the source wrote, per-element metadata
-/// for documentation and defaults, and the [`LowerPlan`] that names
-/// every decision about how the value crosses. The crossing decision
-/// lives entirely on the lower plan; nothing on this struct lets a
-/// consumer second-guess it.
+/// A callable whose body is implemented in Rust. Foreign code calls
+/// in. Used for free functions, record/enum/class methods, and
+/// initializers.
+pub type ExportedCallable<S> = CallableDecl<S, RustBody>;
+
+/// A callable whose body is implemented in foreign code. Rust calls
+/// out. Used for callback trait methods and inline closure
+/// invocations.
+pub type ImportedCallable<S> = CallableDecl<S, ForeignBody>;
+
+/// Direction-specific payload carried by a parameter declaration.
+pub trait ParamDirection<S: Surface>: Direction {
+    /// Concrete payload shape admitted by this direction.
+    type Payload: Clone + Debug + Eq + Hash + PartialEq + Serialize + for<'de> Deserialize<'de>;
+
+    /// Wraps a value crossing as this direction's parameter payload.
+    fn value_payload(plan: ParamPlan<S, Self>) -> Self::Payload;
+
+    /// Returns the encoded buffer shape when the payload carries one.
+    fn buffer_shape(payload: &Self::Payload) -> Option<S::BufferShape>;
+}
+
+/// One incoming parameter crossing.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::ClosureRegistration: Serialize, S::AsyncProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+))]
+pub enum IncomingParam<S: Surface> {
+    /// One value crossing into Rust.
+    Value(ParamPlan<S, IntoRust>),
+    /// Inline closure callback crossing into Rust.
+    Closure(ClosureParam<S>),
+}
+
+impl<S: Surface> IncomingParam<S> {
+    pub(crate) fn as_value(&self) -> Option<&ParamPlan<S, IntoRust>> {
+        match self {
+            Self::Value(plan) => Some(plan),
+            Self::Closure(_) => None,
+        }
+    }
+
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S>> {
+        match self {
+            Self::Closure(closure) => Some(closure),
+            Self::Value(_) => None,
+        }
+    }
+}
+
+/// One outgoing parameter crossing.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize",
     deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned"
 ))]
-pub struct ParamDecl<S: Surface> {
-    name: CanonicalName,
-    meta: ElementMeta,
-    lower: LowerPlan<S>,
+pub struct OutgoingParam<S: Surface> {
+    plan: ParamPlan<S, OutOfRust>,
 }
 
-impl<S: Surface> ParamDecl<S> {
-    pub(crate) fn new(name: CanonicalName, meta: ElementMeta, lower: LowerPlan<S>) -> Self {
-        Self { name, meta, lower }
+impl<S: Surface> OutgoingParam<S> {
+    pub(crate) fn new(plan: ParamPlan<S, OutOfRust>) -> Self {
+        Self { plan }
     }
 
+    /// Returns the value crossing plan.
+    pub fn plan(&self) -> &ParamPlan<S, OutOfRust> {
+        &self.plan
+    }
+}
+
+impl<S: Surface> ParamDirection<S> for IntoRust {
+    type Payload = IncomingParam<S>;
+
+    fn value_payload(plan: ParamPlan<S, Self>) -> Self::Payload {
+        IncomingParam::Value(plan)
+    }
+
+    fn buffer_shape(payload: &Self::Payload) -> Option<S::BufferShape> {
+        match payload {
+            IncomingParam::Value(plan) => plan.buffer_shape(),
+            IncomingParam::Closure(_) => None,
+        }
+    }
+}
+
+impl<S: Surface> ParamDirection<S> for OutOfRust {
+    type Payload = OutgoingParam<S>;
+
+    fn value_payload(plan: ParamPlan<S, Self>) -> Self::Payload {
+        OutgoingParam::new(plan)
+    }
+
+    fn buffer_shape(payload: &Self::Payload) -> Option<S::BufferShape> {
+        payload.plan().buffer_shape()
+    }
+}
+
+/// One named parameter crossing.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "D: ParamDirection<S>, D::Payload: Serialize",
+    deserialize = "D: ParamDirection<S>, D::Payload: serde::de::DeserializeOwned"
+))]
+pub struct ParamDecl<S: Surface, D: ParamDirection<S>> {
+    name: CanonicalName,
+    meta: ElementMeta,
+    payload: D::Payload,
+}
+
+impl<S: Surface, D: ParamDirection<S>> ParamDecl<S, D> {
     /// Returns the parameter name.
     pub fn name(&self) -> &CanonicalName {
         &self.name
@@ -179,81 +260,220 @@ impl<S: Surface> ParamDecl<S> {
         &self.meta
     }
 
-    /// Returns the lower plan.
-    pub fn lower(&self) -> &LowerPlan<S> {
-        &self.lower
+    /// Returns the direction-specific payload.
+    pub fn payload(&self) -> &D::Payload {
+        &self.payload
+    }
+
+    pub(crate) fn value(name: CanonicalName, meta: ElementMeta, plan: ParamPlan<S, D>) -> Self {
+        Self {
+            name,
+            meta,
+            payload: D::value_payload(plan),
+        }
+    }
+
+    pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
+        D::buffer_shape(&self.payload)
     }
 }
 
-/// How a foreign-language argument enters Rust at call time.
+impl<S: Surface> ParamDecl<S, IntoRust> {
+    pub(crate) fn as_value(&self) -> Option<&ParamPlan<S, IntoRust>> {
+        self.payload.as_value()
+    }
+
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S>> {
+        self.payload.as_closure()
+    }
+
+    pub(crate) fn closure(
+        name: CanonicalName,
+        meta: ElementMeta,
+        closure: ClosureParam<S>,
+    ) -> Self {
+        Self {
+            name,
+            meta,
+            payload: IncomingParam::Closure(closure),
+        }
+    }
+}
+
+impl<S: Surface> ParamDecl<S, OutOfRust> {
+    pub(crate) fn as_value(&self) -> Option<&ParamPlan<S, OutOfRust>> {
+        Some(self.payload.plan())
+    }
+}
+
+/// An inline closure parameter and the contract for invoking it.
 ///
-/// The variant tag is the crossing decision: `Direct` passes the value
-/// through a native call slot as itself, `Encoded` moves it through a
-/// wire buffer, `Handle` carries an opaque token into a Rust-owned
-/// resource. Each variant additionally records the Rust-side [`Receive`]
-/// mode the inner function uses.
+/// `form` records the source spelling (`fn(...)`, `impl Fn`,
+/// `impl FnMut`, `impl FnOnce`). `registration` describes the handle
+/// that crosses when the closure is passed across the boundary.
+/// `invoke` is the call shape Rust uses on each invocation, with the
+/// closure body sitting on the foreign side.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::ClosureRegistration: Serialize, S::AsyncProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::ClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+))]
+pub struct ClosureParam<S: Surface> {
+    form: ClosureForm,
+    registration: ClosureRegistration<S, IntoRust>,
+    invoke: Box<ImportedCallable<S>>,
+}
+
+impl<S: Surface> ClosureParam<S> {
+    pub(crate) fn new(
+        form: ClosureForm,
+        registration: ClosureRegistration<S, IntoRust>,
+        invoke: ImportedCallable<S>,
+    ) -> Self {
+        Self {
+            form,
+            registration,
+            invoke: Box::new(invoke),
+        }
+    }
+
+    /// Returns the source spelling.
+    pub fn form(&self) -> ClosureForm {
+        self.form
+    }
+
+    /// Returns the handle registration.
+    pub fn registration(&self) -> &ClosureRegistration<S, IntoRust> {
+        &self.registration
+    }
+
+    /// Returns the invocation contract.
+    pub fn invoke(&self) -> &ImportedCallable<S> {
+        &self.invoke
+    }
+}
+
+/// The source spelling of a closure parameter.
+///
+/// Every form crosses the wire the same way; renderers consult this
+/// when emitting the Rust-side binding so the user-facing trait bound
+/// (`Fn`, `FnMut`, `FnOnce`, or a bare function pointer) matches what
+/// the user wrote.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ClosureForm {
+    /// Bare `fn(...)` function-pointer parameter.
+    FunctionPointer,
+    /// `impl Fn(...)` parameter.
+    Fn,
+    /// `impl FnMut(...)` parameter.
+    FnMut,
+    /// `impl FnOnce(...)` parameter.
+    FnOnce,
+}
+
+impl From<boltffi_ast::ClosureKind> for ClosureForm {
+    fn from(kind: boltffi_ast::ClosureKind) -> Self {
+        match kind {
+            boltffi_ast::ClosureKind::FunctionPointer => Self::FunctionPointer,
+            boltffi_ast::ClosureKind::Fn => Self::Fn,
+            boltffi_ast::ClosureKind::FnMut => Self::FnMut,
+            boltffi_ast::ClosureKind::FnOnce => Self::FnOnce,
+        }
+    }
+}
+
+/// The handle crossing for a closure parameter.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::ClosureRegistration: Serialize, D: Direction, D::Receive: Serialize",
+    deserialize = "S::ClosureRegistration: serde::de::DeserializeOwned, D: Direction, D::Receive: serde::de::DeserializeOwned"
+))]
+pub struct ClosureRegistration<S: Surface, D: Direction> {
+    shape: S::ClosureRegistration,
+    receive: D::Receive,
+}
+
+impl<S: Surface, D: Direction> ClosureRegistration<S, D> {
+    pub(crate) fn new(shape: S::ClosureRegistration, receive: D::Receive) -> Self {
+        Self { shape, receive }
+    }
+
+    /// Returns the surface registration shape.
+    pub fn shape(&self) -> &S::ClosureRegistration {
+        &self.shape
+    }
+
+    /// Returns the receive mode of the registration slot.
+    pub fn receive(&self) -> D::Receive {
+        self.receive
+    }
+}
+
+/// How one value crosses the boundary as a parameter slot in
+/// direction `D`.
+///
+/// Each variant describes a distinct wire shape and is reachable
+/// independently. `D::Codec` picks the foreign-side codec orientation
+/// for encoded crossings, and `D::Receive` picks the Rust-side receive
+/// mode for slots that have one.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize, D::Receive: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned"
 ))]
 #[non_exhaustive]
-pub enum LowerPlan<S: Surface> {
-    /// Value crosses through a native call slot as itself.
+pub enum ParamPlan<S: Surface, D: Direction> {
+    /// Value occupies a native call slot directly.
     Direct {
-        /// Spelling type for the foreign side.
+        /// Foreign-side spelling.
         ty: TypeRef,
         /// Rust-side receive mode.
-        receive: Receive,
+        receive: D::Receive,
     },
-    /// Value crosses as encoded bytes through a wire buffer.
+    /// Value crosses as encoded bytes.
     Encoded {
-        /// Spelling type for the foreign side.
+        /// Foreign-side spelling.
         ty: TypeRef,
-        /// Plan used to write the value into wire bytes.
-        write: WritePlan,
-        /// Slot layout the encoded bytes use to cross.
+        /// Foreign-side codec.
+        codec: D::Codec,
+        /// Slot layout of the encoded bytes.
         shape: S::BufferShape,
         /// Rust-side receive mode.
-        receive: Receive,
+        receive: D::Receive,
     },
-    /// Value crosses as an opaque handle.
+    /// Value crosses as an opaque handle to a class or callback.
     Handle {
-        /// Declaration the handle stands in for.
+        /// Declaration the handle points to.
         target: HandleTarget,
-        /// Carrier used to move the handle across the boundary.
+        /// Wire carrier for the handle.
         carrier: S::HandleCarrier,
-        /// Rust-side receive mode.
-        receive: Receive,
-        /// Whether the slot is required or may be null.
+        /// Whether the slot may be null.
         presence: HandlePresence,
+        /// Rust-side receive mode.
+        receive: D::Receive,
     },
-    /// `Option<P>` for a primitive `P`, received through the surface's
-    /// scalar-option path.
+    /// `Option<P>` for primitive `P` through the surface's scalar-option
+    /// path.
     ///
-    /// Mirror of [`LiftPlan::ScalarOption`] on the receive side. Native
-    /// decodes the value through the wire buffer; wasm32 reads a single
-    /// `f64` parameter slot where `f64::NAN` decodes as `None`. The IR
-    /// records only the inner primitive; the renderer dispatches per
-    /// surface.
+    /// Native packs through a wire buffer. Wasm32 uses one `f64` slot
+    /// with `f64::NAN` as the `None` sentinel.
     ScalarOption {
-        /// Primitive carried inside the `Option`.
+        /// Inner primitive.
         primitive: Primitive,
     },
-    /// `Vec<T>` received through the surface's direct-vector path.
+    /// `Vec<T>` for primitive or direct-record `T` through the
+    /// surface's direct-vector path.
     ///
-    /// Mirror of [`LiftPlan::DirectVec`] on the receive side. Native
-    /// reconstructs the vector through `VecTransport::unpack_vec` (zero
-    /// copy from a buffer descriptor); wasm32 reconstructs from a
-    /// `(ptr, len, cap, align)` quadruple supplied by the host. The IR
-    /// records the element type; the renderer dispatches per surface.
+    /// Native uses `VecTransport::pack_vec` / `unpack_vec`. Wasm32 uses
+    /// a `(ptr, len, cap, align)` quadruple.
     DirectVec {
-        /// Element type stored in the vector.
+        /// Element type.
         element: TypeRef,
     },
 }
 
-impl<S: Surface> LowerPlan<S> {
+impl<S: Surface, D: Direction> ParamPlan<S, D> {
     pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
         match self {
             Self::Encoded { shape, .. } => Some(*shape),
@@ -262,25 +482,25 @@ impl<S: Surface> LowerPlan<S> {
     }
 }
 
-/// The result a callable produces.
+/// A callable's return slot.
 ///
-/// Carries per-element metadata and the [`LiftPlan`] that says how the
-/// value reaches foreign code, including its position in the native
-/// signature. A void return is represented as [`LiftPlan::Void`] rather
-/// than the absence of a `ReturnDecl`.
+/// `meta` carries doc and default metadata that the source method
+/// declared. `plan` is the wire shape of the value. A callable that
+/// returns nothing carries `ReturnPlan::Void`; there is no separate
+/// absence-of-return state.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned"
 ))]
-pub struct ReturnDecl<S: Surface> {
+pub struct ReturnDecl<S: Surface, D: Direction> {
     meta: ElementMeta,
-    lift: LiftPlan<S>,
+    plan: ReturnPlan<S, D>,
 }
 
-impl<S: Surface> ReturnDecl<S> {
-    pub(crate) fn new(meta: ElementMeta, lift: LiftPlan<S>) -> Self {
-        Self { meta, lift }
+impl<S: Surface, D: Direction> ReturnDecl<S, D> {
+    pub(crate) fn new(meta: ElementMeta, plan: ReturnPlan<S, D>) -> Self {
+        Self { meta, plan }
     }
 
     /// Returns the element metadata.
@@ -288,122 +508,121 @@ impl<S: Surface> ReturnDecl<S> {
         &self.meta
     }
 
-    /// Returns the lift plan.
-    pub fn lift(&self) -> &LiftPlan<S> {
-        &self.lift
+    /// Returns the return plan.
+    pub fn plan(&self) -> &ReturnPlan<S, D> {
+        &self.plan
     }
 }
 
-/// How a Rust return value reaches foreign code.
+/// How a return value crosses the boundary in direction `D`.
 ///
-/// Mirror of [`LowerPlan`] for the return direction. The variant tag
-/// carries both the crossing form and the position in the native
-/// signature: the bare variants use the native return slot; the
-/// variants suffixed `Out` write through a synthetic trailing
-/// out-pointer parameter while the return slot is reserved for the
-/// error channel.
-///
-/// # Example
-///
-/// `fn translate(...) -> Point` (where `Point` is a direct record)
-/// lifts as `LiftPlan::Direct { ty: TypeRef::Record(point_id) }` when
-/// the call is infallible. Paired with a [`ErrorDecl::StatusReturn`] it
-/// lifts as `LiftPlan::DirectOut { ... }` so the status integer can
-/// occupy the native return slot.
+/// The `*ViaReturnSlot` variants occupy the native return slot. The
+/// `*ViaOutPointer` variants write the value through a caller-supplied
+/// out-pointer parameter while the return slot carries an error status
+/// instead. `Void` names the no-value case explicitly.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned"
 ))]
 #[non_exhaustive]
-pub enum LiftPlan<S: Surface> {
-    /// The callable returns no value.
+pub enum ReturnPlan<S: Surface, D: Direction> {
+    /// No return value.
     Void,
-    /// Direct value occupies the native return slot.
-    Direct {
-        /// Spelling type for the foreign side.
+    /// Direct value in the return slot.
+    DirectViaReturnSlot {
+        /// Foreign-side spelling.
         ty: TypeRef,
     },
-    /// Direct value written through a trailing out-pointer parameter.
-    DirectOut {
-        /// Spelling type for the foreign side.
+    /// Encoded value in the return slot.
+    EncodedViaReturnSlot {
+        /// Foreign-side spelling.
         ty: TypeRef,
-    },
-    /// Encoded payload occupies the native return slot.
-    Encoded {
-        /// Spelling type for the foreign side.
-        ty: TypeRef,
-        /// Plan used to read the value back from wire bytes.
-        read: ReadPlan,
-        /// Slot layout the encoded bytes use to cross.
+        /// Foreign-side codec.
+        codec: D::Codec,
+        /// Slot layout of the encoded bytes.
         shape: S::BufferShape,
     },
-    /// Encoded payload written through a trailing out-pointer parameter.
-    EncodedOut {
-        /// Spelling type for the foreign side.
-        ty: TypeRef,
-        /// Plan used to read the value back from wire bytes.
-        read: ReadPlan,
-        /// Slot layout the encoded bytes use to cross.
-        shape: S::BufferShape,
-    },
-    /// Opaque handle in the native return slot.
-    Handle {
-        /// Declaration the handle stands in for.
+    /// Handle in the return slot.
+    HandleViaReturnSlot {
+        /// Declaration the handle points to.
         target: HandleTarget,
-        /// Carrier used to move the handle across the boundary.
+        /// Wire carrier for the handle.
         carrier: S::HandleCarrier,
-        /// Whether the returned slot may be null.
+        /// Whether the slot may be null.
         presence: HandlePresence,
     },
-    /// Opaque handle written through a trailing out-pointer parameter.
-    HandleOut {
-        /// Declaration the handle stands in for.
-        target: HandleTarget,
-        /// Carrier used to move the handle across the boundary.
-        carrier: S::HandleCarrier,
-        /// Whether the returned slot may be null.
-        presence: HandlePresence,
-    },
-    /// `Option<P>` for a primitive `P`, returned through the surface's
-    /// scalar-option path.
-    ///
-    /// Native and wasm32 emit different wire shapes for this variant
-    /// (native packs the value through `FfiBuf::wire_encode`, wasm32
-    /// returns a single `f64` with `f64::NAN` as the `None` sentinel),
-    /// but the IR records only the inner primitive. The renderer
-    /// dispatches on the surface it is targeting. Specialization fires
-    /// only for plain (infallible) returns; the `Result<T, E>` success
-    /// channel falls back to [`LiftPlan::Encoded`] so the error channel
-    /// is free to use the return slot.
-    ScalarOption {
-        /// Primitive carried inside the `Option`.
+    /// Scalar-option primitive in the return slot.
+    ScalarOptionViaReturnSlot {
+        /// Inner primitive.
         primitive: Primitive,
     },
-    /// `Vec<T>` returned through the surface's direct-vector path.
-    ///
-    /// `T` is either a primitive or a direct (blittable) record. Native
-    /// emits `VecTransport::pack_vec` into the return slot; wasm32 emits
-    /// a void return and writes the buffer descriptor through the
-    /// runtime's thread-local return slot. The IR records the element
-    /// type; the renderer dispatches per surface. Specialization fires
-    /// only for plain (infallible) returns.
-    DirectVec {
-        /// Element type stored in the vector.
+    /// Direct-vector in the return slot.
+    DirectVecViaReturnSlot {
+        /// Element type.
         element: TypeRef,
+    },
+    /// Direct value through an out-pointer (return slot carries the
+    /// error status).
+    DirectViaOutPointer {
+        /// Foreign-side spelling.
+        ty: TypeRef,
+    },
+    /// Encoded value through an out-pointer.
+    EncodedViaOutPointer {
+        /// Foreign-side spelling.
+        ty: TypeRef,
+        /// Foreign-side codec.
+        codec: D::Codec,
+        /// Slot layout of the encoded bytes.
+        shape: S::BufferShape,
+    },
+    /// Handle through an out-pointer.
+    HandleViaOutPointer {
+        /// Declaration the handle points to.
+        target: HandleTarget,
+        /// Wire carrier for the handle.
+        carrier: S::HandleCarrier,
+        /// Whether the slot may be null.
+        presence: HandlePresence,
     },
 }
 
-impl<S: Surface> LiftPlan<S> {
+impl<S: Surface, D: Direction> ReturnPlan<S, D> {
+    pub(crate) const fn uses_return_slot(&self) -> bool {
+        matches!(
+            self,
+            Self::DirectViaReturnSlot { .. }
+                | Self::EncodedViaReturnSlot { .. }
+                | Self::HandleViaReturnSlot { .. }
+                | Self::ScalarOptionViaReturnSlot { .. }
+                | Self::DirectVecViaReturnSlot { .. }
+        )
+    }
+
+    pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
+        match self {
+            Self::EncodedViaReturnSlot { shape, .. } | Self::EncodedViaOutPointer { shape, .. } => {
+                Some(*shape)
+            }
+            _ => None,
+        }
+    }
+
+    /// Switches a `*ViaReturnSlot` variant to its `*ViaOutPointer`
+    /// counterpart. Called when the matching error channel takes the
+    /// return slot.
     pub(crate) fn into_out(self) -> Self {
         match self {
-            Self::Direct { ty } => Self::DirectOut { ty },
-            Self::Encoded { ty, read, shape } => Self::EncodedOut { ty, read, shape },
-            Self::Handle {
+            Self::DirectViaReturnSlot { ty } => Self::DirectViaOutPointer { ty },
+            Self::EncodedViaReturnSlot { ty, codec, shape } => {
+                Self::EncodedViaOutPointer { ty, codec, shape }
+            }
+            Self::HandleViaReturnSlot {
                 target,
                 carrier,
                 presence,
-            } => Self::HandleOut {
+            } => Self::HandleViaOutPointer {
                 target,
                 carrier,
                 presence,
@@ -411,93 +630,73 @@ impl<S: Surface> LiftPlan<S> {
             other => other,
         }
     }
-
-    pub(crate) const fn uses_return_slot(&self) -> bool {
-        matches!(
-            self,
-            Self::Direct { .. }
-                | Self::Encoded { .. }
-                | Self::Handle { .. }
-                | Self::ScalarOption { .. }
-                | Self::DirectVec { .. }
-        )
-    }
-
-    pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
-        match self {
-            Self::Encoded { shape, .. } | Self::EncodedOut { shape, .. } => Some(*shape),
-            _ => None,
-        }
-    }
 }
 
-/// How a fallible callable reports its error to foreign code.
+/// How a fallible callable reports its error in direction `D`.
 ///
-/// `None` means the callable cannot fail across the boundary. `Status`
-/// variants carry an integer where one designated value is success and
-/// the others map to specific failures. `Encoded` variants carry the
-/// failure as a typed payload. The variant tag selects whether the
-/// error occupies the native return slot or a trailing out-pointer
-/// parameter, the same axis [`LiftPlan`] uses for the success value.
-///
-/// # Example
-///
-/// `fn parse(...) -> Result<Number, ParseError>` produces
-/// `ErrorDecl::StatusReturn { repr: IntegerRepr::I32 }` paired with
-/// `LiftPlan::DirectOut`: the status code lives in the native return
-/// slot, the parsed number is written through the out-pointer.
+/// `None` means the callable cannot fail across the boundary.
+/// `Status*` carries an integer where one value is success and the
+/// others map to specific failures. `Encoded*` carries the failure as
+/// a typed payload. The variant suffix names the delivery slot:
+/// `ViaReturnSlot` claims the native return slot, `ViaOutPointer`
+/// writes through a trailing out-pointer parameter.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, D: Direction, D::Codec: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned"
 ))]
 #[non_exhaustive]
-pub enum ErrorDecl<S: Surface> {
-    /// Cannot fail across the boundary.
-    None(#[serde(skip)] PhantomData<S>),
-    /// Status integer in the native return slot.
-    StatusReturn {
-        /// Integer representation used for the status.
+pub enum ErrorDecl<S: Surface, D: Direction> {
+    /// No error channel.
+    None(#[serde(skip)] PhantomData<(S, D)>),
+    /// Status integer in the return slot.
+    StatusViaReturnSlot {
+        /// Status integer representation.
         repr: IntegerRepr,
     },
-    /// Status integer through a trailing out-pointer parameter.
-    StatusOut {
-        /// Integer representation used for the status.
+    /// Status integer in an out-pointer.
+    StatusViaOutPointer {
+        /// Status integer representation.
         repr: IntegerRepr,
     },
-    /// Encoded error in the native return slot.
-    EncodedReturn {
-        /// Logical error type.
+    /// Encoded error in the return slot.
+    EncodedViaReturnSlot {
+        /// Error type.
         ty: TypeRef,
-        /// Plan used to read the error value.
-        read: ReadPlan,
-        /// Slot layout the encoded bytes use to cross.
+        /// Foreign-side codec.
+        codec: D::Codec,
+        /// Slot layout of the encoded bytes.
         shape: S::BufferShape,
     },
-    /// Encoded error through a trailing out-pointer parameter.
-    EncodedOut {
-        /// Logical error type.
+    /// Encoded error in an out-pointer.
+    EncodedViaOutPointer {
+        /// Error type.
         ty: TypeRef,
-        /// Plan used to read the error value.
-        read: ReadPlan,
-        /// Slot layout the encoded bytes use to cross.
+        /// Foreign-side codec.
+        codec: D::Codec,
+        /// Slot layout of the encoded bytes.
         shape: S::BufferShape,
     },
 }
 
-impl<S: Surface> ErrorDecl<S> {
-    /// Returns an `ErrorDecl::None` value.
+impl<S: Surface, D: Direction> ErrorDecl<S, D> {
+    /// Builds the `None` variant.
     pub fn none() -> Self {
         Self::None(PhantomData)
     }
 
     pub(crate) const fn uses_return_slot(&self) -> bool {
-        matches!(self, Self::StatusReturn { .. } | Self::EncodedReturn { .. })
+        matches!(
+            self,
+            Self::StatusViaReturnSlot { .. } | Self::EncodedViaReturnSlot { .. }
+        )
     }
 
     pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
         match self {
-            Self::EncodedReturn { shape, .. } | Self::EncodedOut { shape, .. } => Some(*shape),
+            Self::EncodedViaReturnSlot { shape, .. } | Self::EncodedViaOutPointer { shape, .. } => {
+                Some(*shape)
+            }
             _ => None,
         }
     }

@@ -76,6 +76,7 @@ mod callable;
 mod codec;
 mod contract;
 mod decl;
+mod direction;
 mod error;
 mod ids;
 mod layout;
@@ -88,16 +89,20 @@ mod symbol;
 mod types;
 
 pub use callable::{
-    CallableDecl, ErrorDecl, ExecutionDecl, LiftPlan, LowerPlan, ParamDecl, Receive, ReturnDecl,
+    CallableDecl, ClosureForm, ClosureParam, ClosureRegistration, ErrorDecl, ExecutionDecl,
+    ExportedCallable, ImportedCallable, IncomingParam, OutgoingParam, ParamDecl, ParamDirection,
+    ParamPlan, Receive, ReturnDecl, ReturnPlan,
 };
 pub use codec::{CodecNode, CodecPlan, ReadPlan, WritePlan};
 pub use contract::{Bindings, ContractVersion, PackageInfo, SerializedBindings};
 pub use decl::{
     CStyleEnumDecl, CStyleVariantDecl, CallbackDecl, ClassDecl, ConstantDecl, ConstantValueDecl,
     CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl, DirectFieldDecl,
-    DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl, FieldKey, FunctionDecl,
-    InitializerDecl, MethodDecl, RecordDecl, StreamDecl, StreamProtocol, VariantTag,
+    DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl, ExportedMethodDecl, FieldKey,
+    FunctionDecl, ImportedMethodDecl, InitializerDecl, MethodDecl, RecordDecl, StreamDecl,
+    StreamProtocol, VariantTag,
 };
+pub use direction::{CallableScope, Direction, ForeignBody, IntoRust, OutOfRust, RustBody};
 pub use error::{BindingError, BindingErrorKind};
 pub use ids::{
     CallbackId, ClassId, ConstantId, CustomTypeId, DeclarationId, EnumId, FunctionId,
@@ -120,4 +125,4 @@ pub use surface::{
 pub use symbol::{
     ImportModule, ImportSymbol, NativeSymbol, NativeSymbolTable, SymbolName, VTableSlot,
 };
-pub use types::{ClosureTypeRef, HandlePresence, HandleTarget, ReturnTypeRef, TypeRef};
+pub use types::{HandlePresence, HandleTarget, ReturnTypeRef, TypeRef};

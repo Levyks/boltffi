@@ -38,7 +38,7 @@ impl SymbolName {
 
 /// A name in the compiled Rust artifact's symbol table.
 ///
-/// The classifier picks one `NativeSymbol` for every callable surface the
+/// The lowerer picks one `NativeSymbol` for every callable surface the
 /// contract exposes (free functions, methods, initializers, accessors, the
 /// helper symbols around an async call). Foreign code invokes the name
 /// through the target language's FFI mechanism.

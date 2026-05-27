@@ -67,9 +67,9 @@ mod tests {
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
     use crate::{
-        Bindings, CodecNode, Decl, ErrorDecl, ExecutionDecl, FunctionDecl, LiftPlan, LowerPlan,
-        Native, Primitive as BindingPrimitive, Receive, RecordDecl, RecordId, SurfaceLower,
-        TypeRef, ValueRef, Wasm32, native, wasm32,
+        Bindings, CodecNode, Decl, ErrorDecl, ExecutionDecl, FunctionDecl, IntoRust, Native,
+        OutOfRust, ParamPlan, Primitive as BindingPrimitive, Receive, RecordDecl, RecordId,
+        ReturnPlan, SurfaceLower, TypeRef, ValueRef, Wasm32, native, wasm32,
     };
 
     struct TestContract {
@@ -181,15 +181,17 @@ mod tests {
         decl
     }
 
-    fn first_param_lower<S: SurfaceLower>(bindings: &Bindings<S>) -> &LowerPlan<S> {
-        first_function(bindings).callable().params()[0].lower()
+    fn first_param_lower<S: SurfaceLower>(bindings: &Bindings<S>) -> &ParamPlan<S, IntoRust> {
+        first_function(bindings).callable().params()[0]
+            .as_value()
+            .unwrap()
     }
 
-    fn assert_native_string_error(error: &ErrorDecl<Native>) {
+    fn assert_native_string_error(error: &ErrorDecl<Native, OutOfRust>) {
         match error {
-            ErrorDecl::EncodedReturn { ty, read, shape } => {
+            ErrorDecl::EncodedViaReturnSlot { ty, codec, shape } => {
                 assert_eq!(ty, &TypeRef::String);
-                assert_eq!(read.root(), &CodecNode::String);
+                assert_eq!(codec.root(), &CodecNode::String);
                 assert_eq!(shape, &native::BufferShape::Buffer);
             }
             other => panic!("expected encoded string error channel, got {other:?}"),
@@ -205,8 +207,8 @@ mod tests {
 
         assert_eq!(function.name(), &crate::CanonicalName::single("ping"));
         assert!(matches!(
-            function.callable().returns().lift(),
-            LiftPlan::Void
+            function.callable().returns().plan(),
+            ReturnPlan::Void
         ));
         assert!(matches!(function.callable().error(), ErrorDecl::None(_)));
         assert_eq!(function.callable().receiver(), None);
@@ -226,15 +228,15 @@ mod tests {
 
         assert_eq!(callable.params().len(), 2);
         assert_eq!(
-            callable.params()[0].lower(),
-            &LowerPlan::Direct {
+            callable.params()[0].as_value().unwrap(),
+            &ParamPlan::Direct {
                 ty: TypeRef::Primitive(BindingPrimitive::I32),
                 receive: Receive::ByValue,
             }
         );
         assert_eq!(
-            callable.returns().lift(),
-            &LiftPlan::Direct {
+            callable.returns().plan(),
+            &ReturnPlan::DirectViaReturnSlot {
                 ty: TypeRef::Primitive(BindingPrimitive::I32),
             }
         );
@@ -251,28 +253,28 @@ mod tests {
             .lower_ok::<Native>();
         let callable = first_function(&bindings).callable();
 
-        match callable.params()[0].lower() {
-            LowerPlan::Encoded {
+        match callable.params()[0].as_value().unwrap() {
+            ParamPlan::Encoded {
                 ty: TypeRef::String,
-                write,
+                codec,
                 shape: native::BufferShape::Slice,
                 receive: Receive::ByValue,
             } => {
                 assert_eq!(
-                    write.value(),
+                    codec.value(),
                     &ValueRef::named(crate::CanonicalName::single("name"))
                 );
-                assert_eq!(write.root(), &CodecNode::String);
+                assert_eq!(codec.root(), &CodecNode::String);
             }
             other => panic!("expected encoded String param with slice shape, got {other:?}"),
         }
-        match callable.returns().lift() {
-            LiftPlan::Encoded {
+        match callable.returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,
-                read,
+                codec,
                 shape: native::BufferShape::Buffer,
             } => {
-                assert_eq!(read.root(), &CodecNode::String);
+                assert_eq!(codec.root(), &CodecNode::String);
             }
             other => panic!("expected encoded String return with buffer shape, got {other:?}"),
         }
@@ -288,13 +290,13 @@ mod tests {
             .lower_ok::<Wasm32>();
         let callable = first_function(&bindings).callable();
 
-        match callable.returns().lift() {
-            LiftPlan::Encoded {
+        match callable.returns().plan() {
+            ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,
-                read,
+                codec,
                 shape: wasm32::BufferShape::Packed,
             } => {
-                assert_eq!(read.root(), &CodecNode::String);
+                assert_eq!(codec.root(), &CodecNode::String);
             }
             other => panic!("expected wasm32 packed string return, got {other:?}"),
         }
@@ -314,8 +316,8 @@ mod tests {
         let callable = first_function(&bindings).callable();
 
         assert_eq!(
-            callable.returns().lift(),
-            &LiftPlan::DirectOut {
+            callable.returns().plan(),
+            &ReturnPlan::DirectViaOutPointer {
                 ty: TypeRef::Primitive(BindingPrimitive::I32),
             }
         );
@@ -332,7 +334,7 @@ mod tests {
             .lower_ok::<Native>();
         let callable = first_function(&bindings).callable();
 
-        assert!(matches!(callable.returns().lift(), LiftPlan::Void));
+        assert!(matches!(callable.returns().plan(), ReturnPlan::Void));
         assert_native_string_error(callable.error());
     }
 
@@ -461,8 +463,8 @@ mod tests {
         assert!(matches!(records[0], RecordDecl::Direct(_)));
         assert_eq!(function.callable().params().len(), 1);
         assert_eq!(
-            function.callable().params()[0].lower(),
-            &LowerPlan::Direct {
+            function.callable().params()[0].as_value().unwrap(),
+            &ParamPlan::Direct {
                 ty: TypeRef::Record(RecordId::from_raw(0)),
                 receive: Receive::ByValue,
             }
@@ -512,8 +514,8 @@ mod tests {
             .lower_ok::<Native>();
 
         assert_eq!(
-            first_function(&bindings).callable().returns().lift(),
-            &LiftPlan::ScalarOption {
+            first_function(&bindings).callable().returns().plan(),
+            &ReturnPlan::ScalarOptionViaReturnSlot {
                 primitive: BindingPrimitive::I32,
             }
         );
@@ -530,8 +532,8 @@ mod tests {
             .lower_ok::<Wasm32>();
 
         assert_eq!(
-            first_function(&bindings).callable().returns().lift(),
-            &LiftPlan::ScalarOption {
+            first_function(&bindings).callable().returns().plan(),
+            &ReturnPlan::ScalarOptionViaReturnSlot {
                 primitive: BindingPrimitive::I32,
             }
         );
@@ -548,8 +550,8 @@ mod tests {
             .lower_ok::<Native>();
 
         assert!(matches!(
-            first_function(&bindings).callable().returns().lift(),
-            LiftPlan::Encoded { .. }
+            first_function(&bindings).callable().returns().plan(),
+            ReturnPlan::EncodedViaReturnSlot { .. }
         ));
     }
 
@@ -564,8 +566,8 @@ mod tests {
             .lower_ok::<Native>();
 
         assert!(matches!(
-            first_function(&bindings).callable().returns().lift(),
-            LiftPlan::Encoded { .. }
+            first_function(&bindings).callable().returns().plan(),
+            ReturnPlan::EncodedViaReturnSlot { .. }
         ));
     }
 
@@ -580,8 +582,8 @@ mod tests {
             .lower_ok::<Native>();
 
         assert_eq!(
-            first_function(&bindings).callable().returns().lift(),
-            &LiftPlan::DirectVec {
+            first_function(&bindings).callable().returns().plan(),
+            &ReturnPlan::DirectVecViaReturnSlot {
                 element: TypeRef::Primitive(BindingPrimitive::U32),
             }
         );
@@ -598,8 +600,8 @@ mod tests {
             .lower_ok::<Wasm32>();
 
         assert_eq!(
-            first_function(&bindings).callable().returns().lift(),
-            &LiftPlan::DirectVec {
+            first_function(&bindings).callable().returns().plan(),
+            &ReturnPlan::DirectVecViaReturnSlot {
                 element: TypeRef::Primitive(BindingPrimitive::U32),
             }
         );
@@ -616,8 +618,8 @@ mod tests {
             ))
             .lower_ok::<Native>();
 
-        match first_function(&bindings).callable().returns().lift() {
-            LiftPlan::DirectVec {
+        match first_function(&bindings).callable().returns().plan() {
+            ReturnPlan::DirectVecViaReturnSlot {
                 element: TypeRef::Record(_),
             } => {}
             other => panic!("expected DirectVec of direct record, got {other:?}"),
@@ -635,8 +637,8 @@ mod tests {
             .lower_ok::<Native>();
 
         assert!(matches!(
-            first_function(&bindings).callable().returns().lift(),
-            LiftPlan::Encoded { .. }
+            first_function(&bindings).callable().returns().plan(),
+            ReturnPlan::EncodedViaReturnSlot { .. }
         ));
     }
 
@@ -651,8 +653,8 @@ mod tests {
             .lower_ok::<Native>();
 
         assert!(matches!(
-            first_function(&bindings).callable().returns().lift(),
-            LiftPlan::Encoded { .. }
+            first_function(&bindings).callable().returns().plan(),
+            ReturnPlan::EncodedViaReturnSlot { .. }
         ));
     }
 
@@ -671,8 +673,8 @@ mod tests {
         let callable = first_function(&bindings).callable();
 
         assert!(matches!(
-            callable.returns().lift(),
-            LiftPlan::EncodedOut { .. }
+            callable.returns().plan(),
+            ReturnPlan::EncodedViaOutPointer { .. }
         ));
         assert_native_string_error(callable.error());
     }
@@ -692,8 +694,8 @@ mod tests {
         let callable = first_function(&bindings).callable();
 
         assert!(matches!(
-            callable.returns().lift(),
-            LiftPlan::EncodedOut { .. }
+            callable.returns().plan(),
+            ReturnPlan::EncodedViaOutPointer { .. }
         ));
         assert_native_string_error(callable.error());
     }
@@ -711,7 +713,7 @@ mod tests {
 
         assert_eq!(
             first_param_lower(&bindings),
-            &LowerPlan::ScalarOption {
+            &ParamPlan::ScalarOption {
                 primitive: BindingPrimitive::I32,
             }
         );
@@ -730,7 +732,7 @@ mod tests {
 
         assert_eq!(
             first_param_lower(&bindings),
-            &LowerPlan::ScalarOption {
+            &ParamPlan::ScalarOption {
                 primitive: BindingPrimitive::I32,
             }
         );
@@ -749,7 +751,7 @@ mod tests {
 
         assert!(matches!(
             first_param_lower(&bindings),
-            LowerPlan::Encoded { .. }
+            ParamPlan::Encoded { .. }
         ));
     }
 
@@ -766,7 +768,7 @@ mod tests {
 
         assert_eq!(
             first_param_lower(&bindings),
-            &LowerPlan::DirectVec {
+            &ParamPlan::DirectVec {
                 element: TypeRef::Primitive(BindingPrimitive::U32),
             }
         );
@@ -785,7 +787,7 @@ mod tests {
 
         assert_eq!(
             first_param_lower(&bindings),
-            &LowerPlan::DirectVec {
+            &ParamPlan::DirectVec {
                 element: TypeRef::Primitive(BindingPrimitive::U32),
             }
         );
@@ -804,7 +806,7 @@ mod tests {
             .lower_ok::<Native>();
 
         match first_param_lower(&bindings) {
-            LowerPlan::DirectVec {
+            ParamPlan::DirectVec {
                 element: TypeRef::Record(_),
             } => {}
             other => panic!("expected DirectVec of direct record, got {other:?}"),
@@ -824,7 +826,7 @@ mod tests {
 
         assert!(matches!(
             first_param_lower(&bindings),
-            LowerPlan::Encoded { .. }
+            ParamPlan::Encoded { .. }
         ));
     }
 
@@ -841,7 +843,7 @@ mod tests {
 
         assert!(matches!(
             first_param_lower(&bindings),
-            LowerPlan::Encoded { .. }
+            ParamPlan::Encoded { .. }
         ));
     }
 
@@ -861,7 +863,7 @@ mod tests {
 
         assert!(matches!(
             first_param_lower(&bindings),
-            LowerPlan::Encoded { .. }
+            ParamPlan::Encoded { .. }
         ));
     }
 }
