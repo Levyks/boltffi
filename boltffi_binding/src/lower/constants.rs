@@ -1,27 +1,33 @@
 //! Constant declaration lowering.
 //!
 //! Walks every [`ConstantDef`] the source contract exposes and produces
-//! a [`ConstantDecl<S>`] that names the constant, records the binding
-//! [`TypeRef`] foreign code observes, and carries the literal value as
-//! [`ConstantValueDecl::Inline`].
+//! a [`ConstantDecl<S>`] that names the constant, records its
+//! declaration metadata, and carries the value as a
+//! [`ConstantValueDecl`].
 //!
-//! Only inline literals are produced today. Bool, integer (range-
-//! checked against the declared primitive width), float, string, and
-//! enum-variant (via `ConstExpr::Path(...)` on an enum-typed constant)
-//! all lower to the matching [`DefaultValue`] variant. Byte-string,
-//! array, tuple, and raw constant expressions remain rejected with
-//! [`UnsupportedType::DefaultValue`]: their values are not expressible
-//! as a single literal in every target language, and supporting them
-//! requires the [`ConstantValueDecl::Accessor`] path (a Rust-side
-//! reader symbol the source AST does not carry yet).
+//! Delivery splits on whether the value has a portable inline spelling:
+//!
+//! - Bool, integer (range-checked against the declared primitive
+//!   width), float, string, and enum-variant (via `ConstExpr::Path(...)`
+//!   on an enum-typed constant) lower to [`ConstantValueDecl::Inline`]:
+//!   the literal is emitted directly in generated source.
+//! - Byte-string, array, tuple, and raw (unevaluated) expressions, and
+//!   any constant whose declared type is not an inline scalar type,
+//!   lower to [`ConstantValueDecl::Accessor`]: a synchronous Rust-side
+//!   getter foreign code calls once to read the value. To a foreign
+//!   consumer the result is still a named immutable value; inline versus
+//!   accessor is only how the bytes are delivered.
+//!
+//! A value that cannot inhabit its declared type (a bool literal on a
+//! string constant, a path to an unknown enum variant) is rejected with
+//! [`LowerErrorKind::InvalidConstantValue`].
 //!
 //! [`ConstantDef`]: boltffi_ast::ConstantDef
 //! [`ConstantDecl<S>`]: crate::ConstantDecl
+//! [`ConstantValueDecl`]: crate::ConstantValueDecl
 //! [`ConstantValueDecl::Inline`]: crate::ConstantValueDecl::Inline
 //! [`ConstantValueDecl::Accessor`]: crate::ConstantValueDecl::Accessor
-//! [`DefaultValue`]: crate::DefaultValue
-//! [`TypeRef`]: crate::TypeRef
-//! [`UnsupportedType::DefaultValue`]: super::error::UnsupportedType::DefaultValue
+//! [`LowerErrorKind::InvalidConstantValue`]: super::error::LowerErrorKind::InvalidConstantValue
 
 use boltffi_ast::{
     CanonicalName as SourceName, ConstExpr, ConstantDef as SourceConstant, EnumDef as SourceEnum,
@@ -31,39 +37,78 @@ use boltffi_ast::{
 use crate::{CanonicalName, ConstantDecl, ConstantValueDecl, DefaultValue, IntegerValue};
 
 use super::{
-    LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, metadata,
-    surface::SurfaceLower, types,
+    LowerError, callable,
+    ids::DeclarationIds,
+    index::Index,
+    metadata,
+    surface::SurfaceLower,
+    symbol::{SymbolAllocator, constant_accessor_symbol_name},
+    types,
 };
 
 pub(super) fn lower<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
 ) -> Result<Vec<ConstantDecl<S>>, LowerError> {
     idx.constants()
         .iter()
-        .map(|constant| lower_one::<S>(idx, ids, constant))
+        .map(|constant| lower_one::<S>(idx, ids, allocator, constant))
         .collect()
 }
 
 fn lower_one<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     constant: &SourceConstant,
 ) -> Result<ConstantDecl<S>, LowerError> {
     let constant_id = ids.constant(&constant.id)?;
-    let ty = types::lower(ids, &constant.type_expr)?;
-    let value = inline_value(idx, constant)?;
+    let value = lower_value_decl::<S>(idx, ids, allocator, constant)?;
     Ok(ConstantDecl::new(
         constant_id,
         CanonicalName::from(&constant.name),
         metadata::decl_meta(constant.doc.as_ref(), constant.deprecated.as_ref()),
-        ConstantValueDecl::inline(ty, value),
+        value,
     ))
 }
 
-fn inline_value(idx: &Index<'_>, constant: &SourceConstant) -> Result<DefaultValue, LowerError> {
+fn lower_value_decl<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    constant: &SourceConstant,
+) -> Result<ConstantValueDecl<S>, LowerError> {
+    // Chooses inline versus accessor delivery for one constant.
+    //
+    // A constant inlines when its value is a literal that inhabits the
+    // declared type and has a portable spelling. Everything else is
+    // delivered through a Rust-side getter the foreign side calls once:
+    // byte-string, array, tuple, and raw (unevaluated) expressions, plus
+    // any constant whose declared type is not an inline scalar type.
+    match inline_default(idx, constant)? {
+        Some(value) => {
+            let ty = types::lower(ids, &constant.type_expr)?;
+            Ok(ConstantValueDecl::inline(ty, value))
+        }
+        None => {
+            let symbol = allocator.mint(constant_accessor_symbol_name(constant.id.as_str()))?;
+            let callable =
+                callable::lower_constant_accessor::<S>(idx, ids, allocator, &constant.type_expr)?;
+            Ok(ConstantValueDecl::accessor(symbol, Box::new(callable)))
+        }
+    }
+}
+
+fn inline_default(
+    idx: &Index<'_>,
+    constant: &SourceConstant,
+) -> Result<Option<DefaultValue>, LowerError> {
+    // Returns the inline literal for a constant, `None` when the value
+    // must be delivered through an accessor, or an error when the value
+    // cannot inhabit its declared type.
     let Some(expected) = InlineConstantType::from_type_expr(idx, &constant.type_expr) else {
-        return Err(LowerError::unsupported_type(UnsupportedType::DefaultValue));
+        return Ok(None);
     };
     expected.lower_value(constant)
 }
@@ -91,42 +136,42 @@ impl<'src> InlineConstantType<'src> {
         }
     }
 
-    fn lower_value(self, constant: &SourceConstant) -> Result<DefaultValue, LowerError> {
+    fn lower_value(self, constant: &SourceConstant) -> Result<Option<DefaultValue>, LowerError> {
         match (self, &constant.value) {
             (Self::Bool, ConstExpr::Literal(Literal::Bool(value))) => {
-                Ok(DefaultValue::Bool(*value))
+                Ok(Some(DefaultValue::Bool(*value)))
             }
             (Self::Integer(bounds), ConstExpr::Literal(Literal::Integer(value)))
                 if bounds.contains(value.value) =>
             {
-                Ok(DefaultValue::Integer(IntegerValue::new(value.value)))
+                Ok(Some(DefaultValue::Integer(IntegerValue::new(value.value))))
             }
             (Self::Float, ConstExpr::Literal(Literal::Float(literal))) => {
                 metadata::parse_float_literal(literal)
                     .map(DefaultValue::Float)
+                    .map(Some)
                     .ok_or_else(|| LowerError::invalid_constant_value(&constant.id))
             }
             (Self::String, ConstExpr::Literal(Literal::String(value))) => {
-                Ok(DefaultValue::String(value.clone()))
+                Ok(Some(DefaultValue::String(value.clone())))
             }
             (Self::Enum(enumeration), ConstExpr::Path(path)) => {
                 enum_variant_from_path(enumeration, path)
+                    .map(Some)
                     .ok_or_else(|| LowerError::invalid_constant_value(&constant.id))
             }
             (_, ConstExpr::Literal(Literal::Bytes(_)))
             | (_, ConstExpr::Array(_))
             | (_, ConstExpr::Tuple(_))
-            | (_, ConstExpr::Raw(_)) => {
-                Err(LowerError::unsupported_type(UnsupportedType::DefaultValue))
-            }
+            | (_, ConstExpr::Raw(_)) => Ok(None),
             _ => Err(LowerError::invalid_constant_value(&constant.id)),
         }
     }
 }
 
 fn enum_variant_from_path(enumeration: &SourceEnum, path: &SourcePath) -> Option<DefaultValue> {
-    let (enum_segment, variant_segment) = enum_variant_path_segments(path)?;
-    if !canonical_name_matches_segment(&enumeration.name, enum_segment.name.as_str()) {
+    let (variant_segment, qualifier) = path.segments.split_last()?;
+    if !enum_qualifier_matches(enumeration, qualifier) {
         return None;
     }
     let variant = enumeration.variants.iter().find(|variant| {
@@ -139,12 +184,39 @@ fn enum_variant_from_path(enumeration: &SourceEnum, path: &SourcePath) -> Option
     })
 }
 
-fn enum_variant_path_segments(
-    path: &SourcePath,
-) -> Option<(&boltffi_ast::PathSegment, &boltffi_ast::PathSegment)> {
-    let variant = path.segments.last()?;
-    let enum_name = path.segments.get(path.segments.len().checked_sub(2)?)?;
-    Some((enum_name, variant))
+fn enum_qualifier_matches(
+    enumeration: &SourceEnum,
+    qualifier: &[boltffi_ast::PathSegment],
+) -> bool {
+    // Checks that the path's qualifier (every segment before the
+    // variant) names the enum the constant is typed as.
+    //
+    // The qualifier is matched against the enum's canonical id (the raw
+    // `::`-path the scanner derived the identity from), allowing the
+    // leading module path to be omitted: an enum `demo::Mode` accepts
+    // `Mode::Fast` and `demo::Mode::Fast`, but rejects
+    // `other::Mode::Fast`, which names a different enum that happens to
+    // share the leaf name. Matching the id rather than the normalized
+    // name also keeps a multi-word enum identifier (which splits into
+    // several canonical-name parts) comparable to its single raw path
+    // segment.
+    if qualifier.is_empty() {
+        return false;
+    }
+    let id_segments: Vec<&str> = enumeration
+        .id
+        .as_str()
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if qualifier.len() > id_segments.len() {
+        return false;
+    }
+    let id_suffix = &id_segments[id_segments.len() - qualifier.len()..];
+    qualifier
+        .iter()
+        .zip(id_suffix)
+        .all(|(segment, id_segment)| segment.name.as_str() == *id_segment)
 }
 
 fn canonical_name_matches_segment(name: &SourceName, segment: &str) -> bool {
@@ -193,7 +265,7 @@ mod tests {
         SourceContract, TypeExpr,
     };
 
-    use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
+    use crate::lower::{LowerError, LowerErrorKind, lower};
     use crate::{
         Bindings, CanonicalName, ConstantDecl, ConstantId, ConstantValueDecl, Decl, DefaultValue,
         IntegerValue, Native, Primitive as BindingPrimitive, SurfaceLower, TypeRef, Wasm32,
@@ -419,19 +491,23 @@ mod tests {
     }
 
     #[test]
-    fn bytes_constant_is_rejected_until_inline_bytes_land() {
-        let error = lower_constants::<Native>(vec![constant(
+    fn bytes_constant_lowers_via_accessor() {
+        let bindings = lower_constants_ok::<Native>(vec![constant(
             "demo::MAGIC",
             "MAGIC",
             TypeExpr::Bytes,
             ConstExpr::Literal(Literal::Bytes(vec![0xCA, 0xFE])),
-        )])
-        .expect_err("bytes constant must reject");
+        )]);
+        let decl = only_constant(&bindings);
 
-        assert!(matches!(
-            error.kind(),
-            LowerErrorKind::UnsupportedType(UnsupportedType::DefaultValue)
-        ));
+        match decl.value() {
+            ConstantValueDecl::Accessor { symbol, callable } => {
+                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_magic");
+                assert!(callable.receiver().is_none());
+                assert!(callable.params().is_empty());
+            }
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
     }
 
     #[test]
@@ -529,6 +605,42 @@ mod tests {
             }
             other => panic!("expected enum-variant default, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn enum_constant_rejects_qualified_path_for_same_named_enum_in_other_module() {
+        use boltffi_ast::{EnumDef, EnumId as SourceEnumId, PathRoot, PathSegment, VariantDef};
+
+        // The constant is typed `demo::Mode`, but the value path is
+        // `other::Mode::Fast`. The leaf enum segment (`Mode`) and variant
+        // (`Fast`) match, yet the qualifier names a different enum. The
+        // full qualifier must be validated against the enum id, not just
+        // the segment adjacent to the variant.
+        let mut contract = package();
+        let mut mode = EnumDef::new(SourceEnumId::new("demo::Mode"), name("Mode"));
+        mode.variants.push(VariantDef::unit(name("Fast")));
+        contract.enums.push(mode);
+        contract.constants.push(constant(
+            "demo::DEFAULT_MODE",
+            "DEFAULT_MODE",
+            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            ConstExpr::Path(SourcePath::new(
+                PathRoot::Relative,
+                vec![
+                    PathSegment::new("other"),
+                    PathSegment::new("Mode"),
+                    PathSegment::new("Fast"),
+                ],
+            )),
+        ));
+
+        let error = lower::<Native>(&contract)
+            .expect_err("qualified path naming a different module's enum must reject");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::InvalidConstantValue(constant) if constant == "demo::DEFAULT_MODE"
+        ));
     }
 
     #[test]
@@ -657,19 +769,63 @@ mod tests {
     }
 
     #[test]
-    fn raw_constant_is_rejected_until_accessor_lands() {
-        let error = lower_constants::<Native>(vec![constant(
+    fn raw_constant_lowers_via_accessor() {
+        let bindings = lower_constants_ok::<Native>(vec![constant(
             "demo::COMPUTED",
             "COMPUTED",
             TypeExpr::Primitive(Primitive::U32),
             ConstExpr::Raw("1 + 2".to_owned()),
-        )])
-        .expect_err("raw constant expression must reject");
+        )]);
+
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Accessor { symbol, callable } => {
+                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_computed");
+                assert!(callable.params().is_empty());
+            }
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tuple_constant_lowers_via_accessor() {
+        let bindings = lower_constants_ok::<Native>(vec![constant(
+            "demo::PAIR",
+            "PAIR",
+            TypeExpr::Tuple(vec![
+                TypeExpr::Primitive(Primitive::U32),
+                TypeExpr::Primitive(Primitive::U32),
+            ]),
+            ConstExpr::Tuple(vec![
+                ConstExpr::Literal(Literal::Integer(IntegerLiteral::new(1, "1"))),
+                ConstExpr::Literal(Literal::Integer(IntegerLiteral::new(2, "2"))),
+            ]),
+        )]);
 
         assert!(matches!(
-            error.kind(),
-            LowerErrorKind::UnsupportedType(UnsupportedType::DefaultValue)
+            only_constant(&bindings).value(),
+            ConstantValueDecl::Accessor { .. }
         ));
+    }
+
+    #[test]
+    fn accessor_constant_registers_native_symbol() {
+        let bindings = lower_constants_ok::<Native>(vec![constant(
+            "demo::MAGIC",
+            "MAGIC",
+            TypeExpr::Bytes,
+            ConstExpr::Literal(Literal::Bytes(vec![0xCA, 0xFE])),
+        )]);
+        let names: Vec<&str> = bindings
+            .symbols()
+            .symbols()
+            .iter()
+            .map(|symbol| symbol.name().as_str())
+            .collect();
+
+        assert!(
+            names.contains(&"boltffi_const_demo_magic"),
+            "accessor symbol missing from {names:?}"
+        );
     }
 
     #[test]

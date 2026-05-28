@@ -1333,6 +1333,17 @@ impl<S: Surface> ConstantValueDecl<S> {
             _surface: PhantomData,
         }
     }
+
+    /// Builds an accessor constant value.
+    ///
+    /// `symbol` is the native symbol foreign code links against to read
+    /// the value at runtime. `callable` is the zero-argument exported
+    /// getter that returns the constant's declared type. Used for values
+    /// that have no portable inline literal (byte strings, arrays,
+    /// tuples, and unevaluated expressions).
+    pub fn accessor(symbol: NativeSymbol, callable: Box<ExportedCallable<S>>) -> Self {
+        Self::Accessor { symbol, callable }
+    }
 }
 
 /// A user-defined type that maps to an existing binding shape.

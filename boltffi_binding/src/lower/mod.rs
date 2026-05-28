@@ -84,7 +84,7 @@ pub fn lower<S: SurfaceLower>(source: &SourceContract) -> Result<Bindings<S>, Lo
     let callbacks = callbacks::lower::<S>(&index, &ids, &mut allocator)?;
     let functions = functions::lower::<S>(&index, &ids, &mut allocator)?;
     let streams = streams::lower::<S>(&index, &ids, &mut allocator)?;
-    let constants = constants::lower::<S>(&index, &ids)?;
+    let constants = constants::lower::<S>(&index, &ids, &mut allocator)?;
     let customs = customs::lower(&index, &ids)?;
 
     let decls = records

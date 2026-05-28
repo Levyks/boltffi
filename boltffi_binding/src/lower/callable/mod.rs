@@ -401,6 +401,34 @@ pub(super) fn lower_function<S: SurfaceLower>(
     )?)
 }
 
+/// Lowers a zero-argument getter for a constant whose value cannot be
+/// delivered as an inline literal.
+///
+/// The accessor is a synchronous [`ExportedCallable<S>`] (Rust
+/// implements, foreign calls in) with no receiver, no parameters, and no
+/// error channel, returning the constant's declared type. Foreign code
+/// reads the value by calling it once. The owner context is
+/// [`CallableOwner::Function`], so any `Self` in the constant type is
+/// rejected; top-level constants do not carry `Self`.
+pub(super) fn lower_constant_accessor<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    type_expr: &boltffi_ast::TypeExpr,
+) -> Result<ExportedCallable<S>, LowerError> {
+    let owner = CallableOwner::Function;
+    let return_def = boltffi_ast::ReturnDef::Value(type_expr.clone());
+    let (returns, error) = returns::lower::<S, _>(idx, ids, allocator, owner, &return_def)?;
+
+    Ok(ExportedCallable::<S>::new(
+        None,
+        Vec::new(),
+        returns,
+        error,
+        ExecutionDecl::synchronous(),
+    )?)
+}
+
 fn lower_execution<S: SurfaceLower>(
     allocator: &mut SymbolAllocator,
     execution: ExecutionKind,

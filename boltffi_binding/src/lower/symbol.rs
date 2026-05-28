@@ -127,6 +127,16 @@ pub(super) fn function_symbol_name(function_id: &str) -> String {
     format!("{}_function_{}", FFI_PREFIX, symbol_path(function_id))
 }
 
+/// Builds the symbol foreign code links to read a constant whose value
+/// is delivered through an accessor rather than an inline literal.
+///
+/// Constants have no owning type, so the symbol carries only the `const`
+/// lane and the source id snake-cased, matching the convention the
+/// free-function lane uses.
+pub(super) fn constant_accessor_symbol_name(constant_id: &str) -> String {
+    format!("{}_const_{}", FFI_PREFIX, symbol_path(constant_id))
+}
+
 /// Builds the Rust-side symbol that installs a foreign-provided vtable.
 pub(super) fn callback_register_symbol_name(callback_id: &str) -> String {
     format!(
@@ -422,6 +432,14 @@ mod tests {
         assert_eq!(
             initializer_symbol_name(SymbolOwner::record("demo::Point"), "new"),
             "boltffi_init_record_demo_point_new"
+        );
+    }
+
+    #[test]
+    fn constant_accessor_symbol_name_uses_const_lane() {
+        assert_eq!(
+            constant_accessor_symbol_name("demo::MAGIC"),
+            "boltffi_const_demo_magic"
         );
     }
 
