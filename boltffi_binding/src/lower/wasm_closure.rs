@@ -107,12 +107,12 @@ impl fmt::Display for ClosureTypeSignature<'_> {
         match self.0 {
             TypeExpr::Primitive(primitive) => formatter.write_str(&primitive_signature(*primitive)),
             TypeExpr::Unit => formatter.write_str("Void"),
-            TypeExpr::Record(id) => formatter.write_str(&source_type_name(id.as_str())),
-            TypeExpr::Enum(id) => formatter.write_str(&source_type_name(id.as_str())),
-            TypeExpr::Class { id, .. } => formatter.write_str(&source_type_name(id.as_str())),
-            TypeExpr::Trait { id, .. } => formatter.write_str(&source_type_name(id.as_str())),
+            TypeExpr::Record(id) => formatter.write_str(&source_type_signature(id.as_str())),
+            TypeExpr::Enum(id) => formatter.write_str(&source_type_signature(id.as_str())),
+            TypeExpr::Class { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
+            TypeExpr::Trait { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::Closure(_) => formatter.write_str("Closure"),
-            TypeExpr::Custom(id) => formatter.write_str(&source_type_name(id.as_str())),
+            TypeExpr::Custom(id) => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::SelfType => formatter.write_str("Self"),
             TypeExpr::Vec(inner) => write!(formatter, "Vec{}", ClosureTypeSignature(inner)),
             TypeExpr::Option(inner) => write!(formatter, "Opt{}", ClosureTypeSignature(inner)),
@@ -149,11 +149,12 @@ fn write_signature_types(formatter: &mut fmt::Formatter<'_>, types: &[TypeExpr])
     Ok(())
 }
 
-fn source_type_name(source_id: &str) -> String {
+fn source_type_signature(source_id: &str) -> String {
     source_id
-        .rsplit("::")
-        .find(|segment| !segment.is_empty())
-        .map_or_else(|| source_id.to_owned(), ToOwned::to_owned)
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(capitalize)
+        .collect()
 }
 
 fn primitive_signature(primitive: AstPrimitive) -> String {
@@ -256,7 +257,30 @@ mod tests {
 
         assert_eq!(
             ClosureSignature::from_closure(&closure).symbol_part(),
-            "___closure__opt_point_to_result_i32_err_math_error"
+            "___closure__opt_demo_point_to_result_i32_err_demo_math_error"
+        );
+    }
+
+    #[test]
+    fn signature_includes_named_type_namespace() {
+        let first = ClosureType::new(
+            ClosureKind::Fn,
+            vec![TypeExpr::Record(RecordId::new("a::Point"))],
+            ReturnDef::Void,
+        );
+        let second = ClosureType::new(
+            ClosureKind::Fn,
+            vec![TypeExpr::Record(RecordId::new("b::Point"))],
+            ReturnDef::Void,
+        );
+
+        assert_eq!(
+            ClosureSignature::from_closure(&first).symbol_part(),
+            "___closure__a_point"
+        );
+        assert_eq!(
+            ClosureSignature::from_closure(&second).symbol_part(),
+            "___closure__b_point"
         );
     }
 

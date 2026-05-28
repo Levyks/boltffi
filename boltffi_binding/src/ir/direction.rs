@@ -195,10 +195,10 @@ pub trait CallableScope:
 {
     /// The direction parameters flow in when this scope's callable
     /// runs.
-    type ParamDirection: Direction;
+    type ParamDirection: Direction<Opposite = Self::ReturnDirection>;
     /// The direction the return value and the error channel flow in
     /// when this scope's callable runs.
-    type ReturnDirection: Direction;
+    type ReturnDirection: Direction<Opposite = Self::ParamDirection>;
     /// The opposite scope.
     ///
     /// Its `ParamDirection` is this scope's `ReturnDirection` and vice

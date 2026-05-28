@@ -1328,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    fn closure_return_is_rejected() {
+    fn closure_return_lowers_to_closure_via_return_slot_on_native() {
         let mut record = point_record();
         record.methods.push(method_with(
             "project",
@@ -1340,12 +1340,134 @@ mod tests {
             )),
         ));
 
-        let error = lower_record_result::<Native>(record)
-            .expect_err("closure return is not supported by the macro");
+        let bindings =
+            lower_record_result::<Native>(record).expect("native closure return should lower");
+        let methods = direct_record(&bindings).methods();
+        let plan = methods[0].callable().returns().plan();
+
+        let closure_crossing = match plan {
+            ReturnPlan::ClosureViaReturnSlot(crossing) => crossing,
+            other => panic!("expected ClosureViaReturnSlot, got {other:?}"),
+        };
+        assert_eq!(closure_crossing.form(), crate::ClosureForm::Fn);
+        // The wire layout for native closure returns is a returned
+        // struct `{ invoke, context }`; the IR records the logical
+        // pair as `InvokeContext`. The position-specific layout is
+        // the responsibility of the renderer, signalled by the
+        // wrapping `ReturnPlan::ClosureViaReturnSlot(_)` variant.
+        assert_eq!(
+            closure_crossing.registration().shape(),
+            &native::ClosureRegistration::InvokeContext
+        );
+        let invoke = closure_crossing.invoke();
+        assert_eq!(invoke.params().len(), 1);
+        match invoke.params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+                receive: Receive::ByValue,
+            } => {}
+            other => panic!("expected f64 direct invoke param, got {other:?}"),
+        }
+        match invoke.returns().plan() {
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+            } => {}
+            other => panic!("expected f64 direct invoke return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn closure_return_lowers_to_closure_via_return_slot_on_wasm32() {
+        let mut record = point_record();
+        record.methods.push(method_with(
+            "project",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::Value(closure(
+                vec![TypeExpr::Primitive(Primitive::F64)],
+                ReturnDef::Value(TypeExpr::Primitive(Primitive::F64)),
+            )),
+        ));
+
+        let bindings =
+            lower_record_result::<Wasm32>(record).expect("wasm closure return should lower");
+        let record_decl = bindings
+            .decls()
+            .iter()
+            .find_map(|decl| match decl {
+                crate::Decl::Record(record) => Some(record.as_ref()),
+                _ => None,
+            })
+            .expect("expected record");
+        let methods = match record_decl {
+            crate::RecordDecl::Direct(direct) => direct.methods(),
+            crate::RecordDecl::Encoded(encoded) => encoded.methods(),
+        };
+        let plan = methods[0].callable().returns().plan();
+
+        let closure_param = match plan {
+            ReturnPlan::ClosureViaReturnSlot(closure_param) => closure_param,
+            other => panic!("expected ClosureViaReturnSlot, got {other:?}"),
+        };
+
+        assert_eq!(closure_param.form(), crate::ClosureForm::Fn);
+        let invoke = closure_param.invoke();
+        assert_eq!(invoke.params().len(), 1);
+        match invoke.params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+                receive: Receive::ByValue,
+            } => {}
+            other => panic!("expected f64 direct invoke param, got {other:?}"),
+        }
+        match invoke.returns().plan() {
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Primitive(BindingPrimitive::F64),
+            } => {}
+            other => panic!("expected f64 direct invoke return, got {other:?}"),
+        }
+
+        let call_symbol = closure_param.registration().shape().call().name().as_str();
+        let free_symbol = closure_param.registration().shape().free().name().as_str();
+        let symbol_names: Vec<&str> = bindings
+            .symbols()
+            .symbols()
+            .iter()
+            .map(|symbol| symbol.name().as_str())
+            .collect();
+        assert!(
+            symbol_names.contains(&call_symbol),
+            "wasm closure return's call export must register in the symbol table: {symbol_names:?}"
+        );
+        assert!(
+            symbol_names.contains(&free_symbol),
+            "wasm closure return's free export must register in the symbol table: {symbol_names:?}"
+        );
+    }
+
+    #[test]
+    fn result_closure_return_is_rejected_with_precise_diagnostic() {
+        let mut record = point_record();
+        record.methods.push(method_with(
+            "try_project",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::Value(TypeExpr::Result {
+                ok: Box::new(closure(
+                    vec![TypeExpr::Primitive(Primitive::F64)],
+                    ReturnDef::Value(TypeExpr::Primitive(Primitive::F64)),
+                )),
+                err: Box::new(TypeExpr::String),
+            }),
+        ));
+
+        let error = lower_record_result::<Wasm32>(record).expect_err(
+            "Result<closure, E> must reject because both channels claim the return slot",
+        );
 
         assert!(matches!(
             error.kind(),
-            LowerErrorKind::UnsupportedType(UnsupportedType::ClosureReturn)
+            LowerErrorKind::UnsupportedType(UnsupportedType::FallibleClosureReturn)
         ));
     }
 

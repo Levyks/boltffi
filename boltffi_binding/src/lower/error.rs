@@ -293,16 +293,19 @@ pub enum UnsupportedType {
     /// An owned class receiver has no handle-transfer protocol yet.
     OwnedClassReceiver,
     /// An inline closure appeared inside a value-shaped position
-    /// (record field, vec element, tuple element, ...). Closures cross
-    /// only as direct callable parameters.
+    /// (record field, vec element, tuple element, map key or value,
+    /// `Option` inner, ...). Closures cross at callable parameter
+    /// slots and at the return slot of a callable that returns one,
+    /// not as elements embedded in encoded values.
     ClosureInValuePosition,
-    /// An exported callable returned a closure (`-> impl Fn`,
-    /// `-> Box<dyn Fn>`, etc.). The macro does not generate code for
-    /// returning closures; the lower pass refuses to plan one until
-    /// that capability lands.
-    ClosureReturn,
     /// A stream item type was not wire-encodable.
     StreamItem,
+    /// A `Result<closure, E>` return: the success channel and the
+    /// error channel would both claim the return slot. The IR has no
+    /// closure-out-pointer return shape yet, so the fallible case is
+    /// rejected with a precise diagnostic instead of falling through
+    /// to the generic return-slot conflict.
+    FallibleClosureReturn,
 }
 
 impl fmt::Display for UnsupportedType {
@@ -320,8 +323,8 @@ impl fmt::Display for UnsupportedType {
             Self::BorrowedCallbackParameter => "borrowed callback parameter",
             Self::OwnedClassReceiver => "owned class receiver",
             Self::ClosureInValuePosition => "closure in a value-shaped position",
-            Self::ClosureReturn => "closure return from an exported callable",
             Self::StreamItem => "stream item type",
+            Self::FallibleClosureReturn => "fallible closure return (Result<closure, E>)",
         })
     }
 }

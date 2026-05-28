@@ -590,6 +590,109 @@ mod tests {
     }
 
     #[test]
+    fn wasm32_callback_method_returning_closure_lowers_to_closure_via_return_slot() {
+        use boltffi_ast::{ClosureKind, ClosureType, ReturnDef};
+
+        let mut callback = listener_callback();
+        let mut handler_factory = method("handler", Receiver::Shared);
+        handler_factory.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+            ClosureKind::Fn,
+            vec![TypeExpr::Primitive(Primitive::U32)],
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+        )));
+        callback.methods.push(handler_factory);
+
+        let bindings = lower_callback::<Wasm32>(callback);
+        let methods = first_callback(&bindings).protocol().methods();
+        let plan = methods[0].callable().returns().plan();
+
+        // Callback method's return direction is `IntoRust` (foreign-implemented
+        // body returns to Rust). The closure was created by foreign code, so
+        // the invoke contract is an `ImportedCallable` and the registration
+        // uses wasm32's `IncomingClosureRegistration` (import-side metadata).
+        let closure_crossing = match plan {
+            ReturnPlan::ClosureViaReturnSlot(crossing) => crossing,
+            other => panic!("expected ClosureViaReturnSlot, got {other:?}"),
+        };
+        assert_eq!(closure_crossing.form(), crate::ClosureForm::Fn);
+        let invoke = closure_crossing.invoke();
+        assert_eq!(invoke.params().len(), 1);
+        match invoke.params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(crate::Primitive::U32),
+                receive: (),
+            } => {}
+            other => panic!("expected u32 invoke param with OutOfRust direction, got {other:?}"),
+        }
+        match invoke.returns().plan() {
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Primitive(crate::Primitive::U32),
+            } => {}
+            other => panic!("expected u32 direct invoke return, got {other:?}"),
+        }
+
+        // Imports (call + free) live on the wasm import table, not the
+        // native symbol table, so the contract's symbol-table check covers
+        // them at link time rather than here.
+        let import_module = closure_crossing
+            .registration()
+            .shape()
+            .call()
+            .module()
+            .as_str();
+        assert_eq!(import_module, "env");
+    }
+
+    #[test]
+    fn native_callback_method_returning_closure_lowers_to_closure_via_return_slot() {
+        use boltffi_ast::{ClosureKind, ClosureType, ReturnDef};
+
+        let mut callback = listener_callback();
+        let mut handler_factory = method("handler", Receiver::Shared);
+        handler_factory.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+            ClosureKind::Fn,
+            vec![TypeExpr::Primitive(Primitive::U32)],
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+        )));
+        callback.methods.push(handler_factory);
+
+        let bindings = lower_callback::<Native>(callback);
+        let methods = first_callback(&bindings).protocol().vtable().methods();
+        let plan = methods[0].callable().returns().plan();
+
+        let closure_crossing = match plan {
+            ReturnPlan::ClosureViaReturnSlot(crossing) => crossing,
+            other => panic!("expected ClosureViaReturnSlot, got {other:?}"),
+        };
+        // Callback method's return direction is `IntoRust` (foreign
+        // returns to Rust); the closure body lives on the foreign
+        // side. Native's incoming registration is the same logical
+        // pair (invoke + context); at return position it crosses as a
+        // returned struct, per the position-dependent wire shape
+        // documented on `native::ClosureRegistration::InvokeContext`.
+        assert_eq!(closure_crossing.form(), crate::ClosureForm::Fn);
+        assert_eq!(
+            closure_crossing.registration().shape(),
+            &native::ClosureRegistration::InvokeContext
+        );
+        let invoke = closure_crossing.invoke();
+        assert_eq!(invoke.params().len(), 1);
+        match invoke.params()[0].as_value().unwrap() {
+            ParamPlan::Direct {
+                ty: TypeRef::Primitive(crate::Primitive::U32),
+                receive: (),
+            } => {}
+            other => panic!("expected u32 invoke param with OutOfRust direction, got {other:?}"),
+        }
+        match invoke.returns().plan() {
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Primitive(crate::Primitive::U32),
+            } => {}
+            other => panic!("expected u32 direct invoke return, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn callback_method_returning_string_uses_write_codec() {
         let mut callback = listener_callback();
         let mut describe = method("describe", Receiver::Shared);

@@ -1,16 +1,16 @@
 use boltffi_ast::{ReturnDef, TypeExpr};
 
 use crate::{
-    Direction, ElementMeta, ErrorDecl, HandlePresence, HandleTarget, Primitive, ReturnDecl,
-    ReturnPlan, TypeRef, ValueRef,
+    Direction, ElementMeta, ErrorDecl, HandlePresence, HandleTarget, ParamDirection, Primitive,
+    ReturnDecl, ReturnPlan, TypeRef, ValueRef,
 };
 
 use super::super::{
     LowerError, codecs, enums, error::UnsupportedType, ids::DeclarationIds, index::Index, records,
-    surface::SurfaceLower, types,
+    surface::SurfaceLower, symbol::SymbolAllocator, types,
 };
 
-use super::{CallableOwner, substitute_self_type};
+use super::{CallableOwner, params::LowerClosure, substitute_self_type};
 
 /// The return and error pair produced by [`lower`] for one source
 /// [`ReturnDef`].
@@ -26,12 +26,22 @@ pub(super) type Lowered<S, D> = (ReturnDecl<S, D>, ErrorDecl<S, D>);
 /// [`ReturnPlan::into_out`] and routes the error status through the
 /// return slot. A `Result<(), E>` return produces a void success
 /// channel paired with an encoded error channel.
-pub(super) fn lower<S: SurfaceLower, D: Direction>(
+///
+/// Closure returns dispatch through [`LowerClosure`] (the trait
+/// also covers the return position because the closure crossing shape
+/// is the same in either slot), so the direction `D` decides
+/// structurally whether the invoke contract is foreign- or
+/// Rust-implemented.
+pub(super) fn lower<S: SurfaceLower, D: Direction + LowerClosure<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     owner: CallableOwner<'_>,
     return_def: &ReturnDef,
-) -> Result<Lowered<S, D>, LowerError> {
+) -> Result<Lowered<S, D>, LowerError>
+where
+    D::Opposite: ParamDirection<S>,
+{
     match return_def {
         ReturnDef::Void => Ok((
             ReturnDecl::new(ElementMeta::new(None, None, None), ReturnPlan::Void),
@@ -41,7 +51,13 @@ pub(super) fn lower<S: SurfaceLower, D: Direction>(
             if let TypeExpr::Result { ok, err } = type_expr {
                 let ok_type_expr = substitute_self_type(owner, ok)?;
                 let err_type_expr = substitute_self_type(owner, err)?;
-                let success = lower_return_plan::<S, D>(idx, ids, &ok_type_expr)?.into_out();
+                if matches!(ok_type_expr, TypeExpr::Closure(_)) {
+                    return Err(LowerError::unsupported_type(
+                        UnsupportedType::FallibleClosureReturn,
+                    ));
+                }
+                let success =
+                    lower_return_plan::<S, D>(idx, ids, allocator, &ok_type_expr)?.into_out();
                 let error = lower_error::<S, D>(idx, ids, &err_type_expr)?;
                 return Ok((
                     ReturnDecl::new(ElementMeta::new(None, None, None), success),
@@ -54,7 +70,7 @@ pub(super) fn lower<S: SurfaceLower, D: Direction>(
                 ));
             }
             let type_expr = substitute_self_type(owner, type_expr)?;
-            let plan = lower_plain_return::<S, D>(idx, ids, &type_expr)?;
+            let plan = lower_plain_return::<S, D>(idx, ids, allocator, &type_expr)?;
             Ok((
                 ReturnDecl::new(ElementMeta::new(None, None, None), plan),
                 ErrorDecl::none(),
@@ -63,14 +79,18 @@ pub(super) fn lower<S: SurfaceLower, D: Direction>(
     }
 }
 
-fn lower_plain_return<S: SurfaceLower, D: Direction>(
+fn lower_plain_return<S: SurfaceLower, D: Direction + LowerClosure<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     type_expr: &TypeExpr,
-) -> Result<ReturnPlan<S, D>, LowerError> {
+) -> Result<ReturnPlan<S, D>, LowerError>
+where
+    D::Opposite: ParamDirection<S>,
+{
     match specialize_return::<S, D>(idx, ids, type_expr)? {
         Some(plan) => Ok(plan),
-        None => lower_return_plan::<S, D>(idx, ids, type_expr),
+        None => lower_return_plan::<S, D>(idx, ids, allocator, type_expr),
     }
 }
 
@@ -78,7 +98,10 @@ fn specialize_return<S: SurfaceLower, D: Direction>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
-) -> Result<Option<ReturnPlan<S, D>>, LowerError> {
+) -> Result<Option<ReturnPlan<S, D>>, LowerError>
+where
+    D::Opposite: ParamDirection<S>,
+{
     Ok(match type_expr {
         TypeExpr::Option(inner) => {
             primitive(inner).map(|primitive| ReturnPlan::ScalarOptionViaReturnSlot { primitive })
@@ -115,7 +138,10 @@ fn lower_error<S: SurfaceLower, D: Direction>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
-) -> Result<ErrorDecl<S, D>, LowerError> {
+) -> Result<ErrorDecl<S, D>, LowerError>
+where
+    D::Opposite: ParamDirection<S>,
+{
     let ty = types::lower(ids, type_expr)?;
     let codec_node = codecs::node(idx, ids, type_expr, ValueRef::self_value())?;
     Ok(ErrorDecl::EncodedViaReturnSlot {
@@ -134,11 +160,15 @@ fn lower_error<S: SurfaceLower, D: Direction>(
 /// [`TypeExpr::Unit`] lowers to [`ReturnPlan::Void`] so that
 /// `Result<(), E>` produces a void success channel paired with the
 /// error channel without routing an empty value through the codec lane.
-fn lower_return_plan<S: SurfaceLower, D: Direction>(
+fn lower_return_plan<S: SurfaceLower, D: Direction + LowerClosure<S>>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
     type_expr: &TypeExpr,
-) -> Result<ReturnPlan<S, D>, LowerError> {
+) -> Result<ReturnPlan<S, D>, LowerError>
+where
+    D::Opposite: ParamDirection<S>,
+{
     match type_expr {
         TypeExpr::Unit => Ok(ReturnPlan::Void),
         TypeExpr::Primitive(_) => Ok(ReturnPlan::DirectViaReturnSlot {
@@ -172,7 +202,10 @@ fn lower_return_plan<S: SurfaceLower, D: Direction>(
                 shape: S::encoded_return_shape(),
             })
         }
-        TypeExpr::Closure(_) => Err(LowerError::unsupported_type(UnsupportedType::ClosureReturn)),
+        TypeExpr::Closure(closure) => {
+            let closure_return = D::lower_closure_return(idx, ids, allocator, closure)?;
+            Ok(ReturnPlan::ClosureViaReturnSlot(closure_return))
+        }
         TypeExpr::Class { id, presence } => Ok(ReturnPlan::HandleViaReturnSlot {
             target: HandleTarget::Class(ids.class(id)?),
             carrier: S::class_handle_carrier(),

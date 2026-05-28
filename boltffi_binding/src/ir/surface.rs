@@ -232,7 +232,27 @@ pub mod native {
     /// boundary.
     ///
     /// Closures cross as an invoke function pointer paired with a
-    /// context pointer.
+    /// context pointer. The IR records the logical pair here; the
+    /// position-specific layout is fixed by the wrapper variant that
+    /// holds the closure payload:
+    ///
+    /// - At a parameter slot
+    ///   ([`crate::IncomingParam::Closure`],
+    ///   [`crate::OutgoingParam::Closure`]): two adjacent native
+    ///   parameter slots — one function-pointer slot followed by one
+    ///   pointer slot.
+    /// - At the return slot
+    ///   ([`crate::ReturnPlan::ClosureViaReturnSlot`]): a returned
+    ///   struct `{ invoke: fn pointer, context: *mut () }` by value.
+    ///   System V x86_64, Win64, and AArch64 each return a 16-byte
+    ///   two-field struct through registers, so this is portable on
+    ///   every native target.
+    ///
+    /// Both layouts describe the same logical pair, so one
+    /// [`InvokeContext`](Self::InvokeContext) marker covers them.
+    /// Distinct *wire* shapes are still distinct *variants* at the
+    /// wrapper level (param vs return) — the same convention strings
+    /// use (`Slice` at param, `Buffer` at return).
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
     #[non_exhaustive]
     pub enum ClosureRegistration {

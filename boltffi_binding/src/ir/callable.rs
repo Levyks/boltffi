@@ -128,14 +128,21 @@ where
     }
 
     /// Iterates the native symbols this callable references.
+    ///
+    /// Covers symbols carried on the receiver, parameter, return, and
+    /// execution lanes so a closure handed out through a return slot
+    /// pulls its registration symbols (`OutgoingClosureRegistration`'s
+    /// `call` and `free` exports on wasm32, for example) into the
+    /// declaration's symbol set.
     pub fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
         let param_symbols = self.params.iter().flat_map(ParamDecl::native_symbols);
+        let return_symbols = self.returns.native_symbols();
         let execution_symbols: Box<dyn Iterator<Item = &NativeSymbol> + '_> = match &self.execution
         {
             ExecutionDecl::Synchronous(_) => Box::new(std::iter::empty()),
             ExecutionDecl::Asynchronous(protocol) => protocol.native_symbols(),
         };
-        Box::new(param_symbols.chain(execution_symbols))
+        Box::new(param_symbols.chain(return_symbols).chain(execution_symbols))
     }
 }
 
@@ -174,7 +181,7 @@ pub enum IncomingParam<S: Surface> {
     /// One value crossing into Rust.
     Value(ParamPlan<S, IntoRust>),
     /// Inline closure callback crossing into Rust.
-    Closure(ClosureParam<S, IntoRust>),
+    Closure(ClosureParameter<S, IntoRust>),
 }
 
 impl<S: Surface> IncomingParam<S> {
@@ -185,7 +192,7 @@ impl<S: Surface> IncomingParam<S> {
         }
     }
 
-    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S, IntoRust>> {
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParameter<S, IntoRust>> {
         match self {
             Self::Closure(closure) => Some(closure),
             Self::Value(_) => None,
@@ -208,7 +215,7 @@ pub enum OutgoingParam<S: Surface> {
     /// One value crossing out of Rust.
     Value(ParamPlan<S, OutOfRust>),
     /// Inline closure callback crossing out of Rust.
-    Closure(ClosureParam<S, OutOfRust>),
+    Closure(ClosureParameter<S, OutOfRust>),
 }
 
 impl<S: Surface> OutgoingParam<S> {
@@ -225,7 +232,7 @@ impl<S: Surface> OutgoingParam<S> {
     }
 
     /// Returns the outgoing closure if this payload carries one.
-    pub fn as_closure(&self) -> Option<&ClosureParam<S, OutOfRust>> {
+    pub fn as_closure(&self) -> Option<&ClosureParameter<S, OutOfRust>> {
         match self {
             Self::Closure(closure) => Some(closure),
             Self::Value(_) => None,
@@ -327,14 +334,14 @@ impl<S: Surface> ParamDecl<S, IntoRust> {
         self.payload.as_value()
     }
 
-    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S, IntoRust>> {
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParameter<S, IntoRust>> {
         self.payload.as_closure()
     }
 
     pub(crate) fn closure(
         name: CanonicalName,
         meta: ElementMeta,
-        closure: ClosureParam<S, IntoRust>,
+        closure: ClosureParameter<S, IntoRust>,
     ) -> Self {
         Self {
             name,
@@ -349,14 +356,14 @@ impl<S: Surface> ParamDecl<S, OutOfRust> {
         self.payload.as_value()
     }
 
-    pub(crate) fn as_closure(&self) -> Option<&ClosureParam<S, OutOfRust>> {
+    pub(crate) fn as_closure(&self) -> Option<&ClosureParameter<S, OutOfRust>> {
         self.payload.as_closure()
     }
 
     pub(crate) fn closure(
         name: CanonicalName,
         meta: ElementMeta,
-        closure: ClosureParam<S, OutOfRust>,
+        closure: ClosureParameter<S, OutOfRust>,
     ) -> Self {
         Self {
             name,
@@ -366,35 +373,106 @@ impl<S: Surface> ParamDecl<S, OutOfRust> {
     }
 }
 
-/// An inline closure parameter and the contract for invoking it.
-///
-/// `form` records the source spelling (`fn(...)`, `impl Fn`,
-/// `impl FnMut`, `impl FnOnce`). `registration` describes the handle
-/// that crosses; its direction `D` is the crossing direction of the
-/// closure parameter itself. `invoke` is the call shape used on each
-/// invocation; its scope is determined by `D` through
-/// [`Direction::InvokeScope`]:
-///
-/// - `D = IntoRust` (closure travels foreign → Rust, e.g. as a
-///   parameter of a Rust-implemented callable): the body lives on the
-///   foreign side and `invoke` is an [`ImportedCallable<S>`]
-///   (`InvokeScope = ForeignBody`).
-/// - `D = OutOfRust` (closure travels Rust → foreign, e.g. as a
-///   parameter of a foreign-implemented callback): the body lives on
-///   the Rust side and `invoke` is an [`ExportedCallable<S>`]
-///   (`InvokeScope = RustBody`).
-///
-/// The `D::Opposite: ParamDirection<S>` bound spells the implication
-/// that the invoke callable's params, whose direction is `D::Opposite`,
-/// satisfy the [`ParamDirection`] contract. The two `Direction` impls
-/// satisfy this without further work; restating it here keeps every
-/// derive in scope.
+/// Closure payload at a parameter slot.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, D::Receive: Serialize, D::Codec: Serialize, <D as Direction>::ClosureRegistrationShape<S>: Serialize, <D::Opposite as Direction>::Codec: Serialize, <D::Opposite as Direction>::Receive: Serialize, <D::Opposite as ParamDirection<S>>::Payload: Serialize",
     deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned, D::Codec: serde::de::DeserializeOwned, <D as Direction>::ClosureRegistrationShape<S>: serde::de::DeserializeOwned, <D::Opposite as Direction>::Codec: serde::de::DeserializeOwned, <D::Opposite as Direction>::Receive: serde::de::DeserializeOwned, <D::Opposite as ParamDirection<S>>::Payload: serde::de::DeserializeOwned"
 ))]
-pub struct ClosureParam<S: Surface, D: Direction>
+pub struct ClosureParameter<S: Surface, D: Direction>
+where
+    D::Opposite: ParamDirection<S>,
+{
+    crossing: ClosureCrossing<S, D>,
+}
+
+impl<S: Surface, D: Direction> ClosureParameter<S, D>
+where
+    D::Opposite: ParamDirection<S>,
+{
+    pub(crate) fn new(
+        form: ClosureForm,
+        registration: ClosureRegistration<S, D>,
+        invoke: CallableDecl<S, D::InvokeScope>,
+    ) -> Self {
+        Self {
+            crossing: ClosureCrossing::new(form, registration, invoke),
+        }
+    }
+
+    /// Returns the source spelling.
+    pub fn form(&self) -> ClosureForm {
+        self.crossing.form()
+    }
+
+    /// Returns the handle registration.
+    pub fn registration(&self) -> &ClosureRegistration<S, D> {
+        self.crossing.registration()
+    }
+
+    /// Returns the invocation contract.
+    pub fn invoke(&self) -> &CallableDecl<S, D::InvokeScope> {
+        self.crossing.invoke()
+    }
+
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        self.crossing.native_symbols()
+    }
+}
+
+/// Closure payload at a return slot.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, D::Receive: Serialize, D::Codec: Serialize, <D as Direction>::ClosureRegistrationShape<S>: Serialize, <D::Opposite as Direction>::Codec: Serialize, <D::Opposite as Direction>::Receive: Serialize, <D::Opposite as ParamDirection<S>>::Payload: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned, D::Codec: serde::de::DeserializeOwned, <D as Direction>::ClosureRegistrationShape<S>: serde::de::DeserializeOwned, <D::Opposite as Direction>::Codec: serde::de::DeserializeOwned, <D::Opposite as Direction>::Receive: serde::de::DeserializeOwned, <D::Opposite as ParamDirection<S>>::Payload: serde::de::DeserializeOwned"
+))]
+pub struct ClosureReturn<S: Surface, D: Direction>
+where
+    D::Opposite: ParamDirection<S>,
+{
+    crossing: ClosureCrossing<S, D>,
+}
+
+impl<S: Surface, D: Direction> ClosureReturn<S, D>
+where
+    D::Opposite: ParamDirection<S>,
+{
+    pub(crate) fn new(
+        form: ClosureForm,
+        registration: ClosureRegistration<S, D>,
+        invoke: CallableDecl<S, D::InvokeScope>,
+    ) -> Self {
+        Self {
+            crossing: ClosureCrossing::new(form, registration, invoke),
+        }
+    }
+
+    /// Returns the source spelling.
+    pub fn form(&self) -> ClosureForm {
+        self.crossing.form()
+    }
+
+    /// Returns the handle registration.
+    pub fn registration(&self) -> &ClosureRegistration<S, D> {
+        self.crossing.registration()
+    }
+
+    /// Returns the invocation contract.
+    pub fn invoke(&self) -> &CallableDecl<S, D::InvokeScope> {
+        self.crossing.invoke()
+    }
+
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        self.crossing.native_symbols()
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, D::Receive: Serialize, D::Codec: Serialize, <D as Direction>::ClosureRegistrationShape<S>: Serialize, <D::Opposite as Direction>::Codec: Serialize, <D::Opposite as Direction>::Receive: Serialize, <D::Opposite as ParamDirection<S>>::Payload: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned, D::Codec: serde::de::DeserializeOwned, <D as Direction>::ClosureRegistrationShape<S>: serde::de::DeserializeOwned, <D::Opposite as Direction>::Codec: serde::de::DeserializeOwned, <D::Opposite as Direction>::Receive: serde::de::DeserializeOwned, <D::Opposite as ParamDirection<S>>::Payload: serde::de::DeserializeOwned"
+))]
+struct ClosureCrossing<S: Surface, D: Direction>
 where
     D::Opposite: ParamDirection<S>,
 {
@@ -403,11 +481,11 @@ where
     invoke: Box<CallableDecl<S, D::InvokeScope>>,
 }
 
-impl<S: Surface, D: Direction> ClosureParam<S, D>
+impl<S: Surface, D: Direction> ClosureCrossing<S, D>
 where
     D::Opposite: ParamDirection<S>,
 {
-    pub(crate) fn new(
+    fn new(
         form: ClosureForm,
         registration: ClosureRegistration<S, D>,
         invoke: CallableDecl<S, D::InvokeScope>,
@@ -584,15 +662,21 @@ impl<S: Surface, D: Direction> ParamPlan<S, D> {
 /// absence-of-return state.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize, S::IncomingClosureRegistration: Serialize, S::OutgoingClosureRegistration: Serialize, S::AsyncProtocol: Serialize, D::Receive: Serialize, <D::Opposite as Direction>::Codec: Serialize, <D::Opposite as Direction>::Receive: Serialize, <D::Opposite as ParamDirection<S>>::Payload: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned, S::IncomingClosureRegistration: serde::de::DeserializeOwned, S::OutgoingClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned, <D::Opposite as Direction>::Codec: serde::de::DeserializeOwned, <D::Opposite as Direction>::Receive: serde::de::DeserializeOwned, <D::Opposite as ParamDirection<S>>::Payload: serde::de::DeserializeOwned"
 ))]
-pub struct ReturnDecl<S: Surface, D: Direction> {
+pub struct ReturnDecl<S: Surface, D: Direction>
+where
+    D::Opposite: ParamDirection<S>,
+{
     meta: ElementMeta,
     plan: ReturnPlan<S, D>,
 }
 
-impl<S: Surface, D: Direction> ReturnDecl<S, D> {
+impl<S: Surface, D: Direction> ReturnDecl<S, D>
+where
+    D::Opposite: ParamDirection<S>,
+{
     pub(crate) fn new(meta: ElementMeta, plan: ReturnPlan<S, D>) -> Self {
         Self { meta, plan }
     }
@@ -606,6 +690,10 @@ impl<S: Surface, D: Direction> ReturnDecl<S, D> {
     pub fn plan(&self) -> &ReturnPlan<S, D> {
         &self.plan
     }
+
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        self.plan.native_symbols()
+    }
 }
 
 /// How a return value crosses the boundary in direction `D`.
@@ -616,11 +704,14 @@ impl<S: Surface, D: Direction> ReturnDecl<S, D> {
 /// instead. `Void` names the no-value case explicitly.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize",
-    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, D: Direction, D::Codec: Serialize, S::IncomingClosureRegistration: Serialize, S::OutgoingClosureRegistration: Serialize, S::AsyncProtocol: Serialize, D::Receive: Serialize, <D::Opposite as Direction>::Codec: Serialize, <D::Opposite as Direction>::Receive: Serialize, <D::Opposite as ParamDirection<S>>::Payload: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, D: Direction, D::Codec: serde::de::DeserializeOwned, S::IncomingClosureRegistration: serde::de::DeserializeOwned, S::OutgoingClosureRegistration: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, D::Receive: serde::de::DeserializeOwned, <D::Opposite as Direction>::Codec: serde::de::DeserializeOwned, <D::Opposite as Direction>::Receive: serde::de::DeserializeOwned, <D::Opposite as ParamDirection<S>>::Payload: serde::de::DeserializeOwned"
 ))]
 #[non_exhaustive]
-pub enum ReturnPlan<S: Surface, D: Direction> {
+pub enum ReturnPlan<S: Surface, D: Direction>
+where
+    D::Opposite: ParamDirection<S>,
+{
     /// No return value.
     Void,
     /// Direct value in the return slot.
@@ -656,6 +747,8 @@ pub enum ReturnPlan<S: Surface, D: Direction> {
         /// Element type.
         element: TypeRef,
     },
+    /// Closure handle in the return slot.
+    ClosureViaReturnSlot(ClosureReturn<S, D>),
     /// Direct value through an out-pointer (return slot carries the
     /// error status).
     DirectViaOutPointer {
@@ -682,7 +775,25 @@ pub enum ReturnPlan<S: Surface, D: Direction> {
     },
 }
 
-impl<S: Surface, D: Direction> ReturnPlan<S, D> {
+impl<S: Surface, D: Direction> ReturnPlan<S, D>
+where
+    D::Opposite: ParamDirection<S>,
+{
+    pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
+        match self {
+            Self::ClosureViaReturnSlot(closure) => closure.native_symbols(),
+            Self::Void
+            | Self::DirectViaReturnSlot { .. }
+            | Self::EncodedViaReturnSlot { .. }
+            | Self::HandleViaReturnSlot { .. }
+            | Self::ScalarOptionViaReturnSlot { .. }
+            | Self::DirectVecViaReturnSlot { .. }
+            | Self::DirectViaOutPointer { .. }
+            | Self::EncodedViaOutPointer { .. }
+            | Self::HandleViaOutPointer { .. } => Box::new(std::iter::empty()),
+        }
+    }
+
     pub(crate) const fn uses_return_slot(&self) -> bool {
         matches!(
             self,
@@ -691,6 +802,7 @@ impl<S: Surface, D: Direction> ReturnPlan<S, D> {
                 | Self::HandleViaReturnSlot { .. }
                 | Self::ScalarOptionViaReturnSlot { .. }
                 | Self::DirectVecViaReturnSlot { .. }
+                | Self::ClosureViaReturnSlot(_)
         )
     }
 
@@ -706,6 +818,11 @@ impl<S: Surface, D: Direction> ReturnPlan<S, D> {
     /// Switches a `*ViaReturnSlot` variant to its `*ViaOutPointer`
     /// counterpart. Called when the matching error channel takes the
     /// return slot.
+    ///
+    /// A closure return has no out-pointer counterpart (the wire shape
+    /// is always a handle in the return slot), so a closure-bearing
+    /// return paired with a fallible error channel is rejected at the
+    /// lowering step before reaching here.
     pub(crate) fn into_out(self) -> Self {
         match self {
             Self::DirectViaReturnSlot { ty } => Self::DirectViaOutPointer { ty },
