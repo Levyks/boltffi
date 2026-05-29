@@ -35,7 +35,7 @@ final class _$$Native$Person {
 
 final class Person implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
-    $$ffi.Pointer.fromFunction(_$$Native$Person.boltffi_person_free)
+    $$ffi.Native.addressOf(_$$Native$Person.boltffi_person_free)
   );
 
   final $$ffi.Pointer<$$ffi.Void> _handle;

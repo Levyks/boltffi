@@ -21,7 +21,7 @@ final class _$$Native${{ class.name }} {
 
 final class {{ class.name }} implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
-    $$ffi.Pointer.fromFunction(_$$Native${{ class.name }}.{{ class.free_symbol }})
+    $$ffi.Native.addressOf(_$$Native${{ class.name }}.{{ class.free_symbol }})
   );
 
   final $$ffi.Pointer<$$ffi.Void> _handle;
