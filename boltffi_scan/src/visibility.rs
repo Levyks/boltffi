@@ -1,6 +1,6 @@
 use boltffi_ast::{Source, Visibility};
 
-pub(crate) fn scan(visibility: &syn::Visibility) -> Source {
+pub(super) fn scan(visibility: &syn::Visibility) -> Source {
     Source::new(scan_visibility(visibility), None)
 }
 

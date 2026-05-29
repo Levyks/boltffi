@@ -1,27 +1,22 @@
 use boltffi_ast::{ClosureKind, ClosureType, Primitive, ReturnDef, TypeExpr};
 
-use crate::ScanError;
-use crate::registry::{DeclaredType, TypeRegistry};
+use crate::declared_types::{DeclaredType, DeclaredTypes};
+use crate::{ModulePath, ScanError};
 
-/// Scans source types against a [`TypeRegistry`].
-///
-/// Holds the registry so resolution threads through the type recursion
-/// without passing it to every helper. Handles primitives, `String`, the
-/// standard containers (`Vec`, `Option`, `Result`, `HashMap`/`BTreeMap`),
-/// tuples, inline `impl Fn`-family closures, and references to declared
-/// types. References, bare function pointers, and smart pointers arrive
-/// in later slices; an unrecognized type is rejected with its verbatim
-/// spelling rather than dropped.
-pub(crate) struct TypeScanner<'a> {
-    registry: &'a TypeRegistry,
+pub(super) struct Scanner<'a> {
+    declared_types: &'a DeclaredTypes,
+    module: &'a ModulePath,
 }
 
-impl<'a> TypeScanner<'a> {
-    pub(crate) fn new(registry: &'a TypeRegistry) -> Self {
-        Self { registry }
+impl<'a> Scanner<'a> {
+    pub(super) fn new(declared_types: &'a DeclaredTypes, module: &'a ModulePath) -> Self {
+        Self {
+            declared_types,
+            module,
+        }
     }
 
-    pub(crate) fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
+    pub(super) fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
         match ty {
             syn::Type::ImplTrait(impl_trait) => self.closure(impl_trait, ty),
             syn::Type::Tuple(tuple) => self.tuple(tuple),
@@ -30,12 +25,7 @@ impl<'a> TypeScanner<'a> {
         }
     }
 
-    /// Scans a callable return position into a [`ReturnDef`].
-    ///
-    /// Free functions and inline closure signatures share this, so the
-    /// void-versus-value decision lives in one place. An explicit `-> ()`
-    /// records as [`ReturnDef::Void`], the same as a missing return.
-    pub(crate) fn scan_return(&self, output: &syn::ReturnType) -> Result<ReturnDef, ScanError> {
+    pub(super) fn scan_return(&self, output: &syn::ReturnType) -> Result<ReturnDef, ScanError> {
         match output {
             syn::ReturnType::Default => Ok(ReturnDef::Void),
             syn::ReturnType::Type(_, ty) if is_unit(ty) => Ok(ReturnDef::Void),
@@ -65,16 +55,26 @@ impl<'a> TypeScanner<'a> {
                 let (key, value) = self.two_arguments(segment, source)?;
                 Ok(TypeExpr::map(key, value))
             }
-            name => self.named(name, source),
+            _ => self.named(type_path, source),
         }
     }
 
-    fn named(&self, name: &str, source: &syn::Type) -> Result<TypeExpr, ScanError> {
-        if let Some(primitive) = Primitive::from_rust_name(name) {
+    fn named(&self, type_path: &syn::TypePath, source: &syn::Type) -> Result<TypeExpr, ScanError> {
+        let segment = type_path
+            .path
+            .segments
+            .last()
+            .ok_or_else(|| ScanError::unsupported_type(source))?;
+        let name = segment.ident.to_string();
+        if let Some(primitive) = Primitive::from_rust_name(&name) {
             return Ok(TypeExpr::Primitive(primitive));
         }
-        match self.registry.resolve(name) {
+        let Some(resolved_path) = self.module.resolve(&type_path.path) else {
+            return Err(ScanError::unsupported_type(source));
+        };
+        match self.declared_types.resolve(&resolved_path) {
             Some(DeclaredType::Record(id)) => Ok(TypeExpr::Record(id.clone())),
+            Some(DeclaredType::Enum(id)) => Ok(TypeExpr::Enum(id.clone())),
             None => Err(ScanError::unsupported_type(source)),
         }
     }
@@ -179,14 +179,14 @@ fn closure_kind(name: &str) -> Option<ClosureKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boltffi_ast::RecordId;
+    use boltffi_ast::{EnumId, RecordId};
 
     fn ty(source: &str) -> syn::Type {
         syn::parse_str(source).expect("valid type")
     }
 
     fn scan(source: &str) -> Result<TypeExpr, ScanError> {
-        TypeScanner::new(&TypeRegistry::new()).scan(&ty(source))
+        Scanner::new(&DeclaredTypes::new(), &ModulePath::root("demo")).scan(&ty(source))
     }
 
     #[test]
@@ -276,20 +276,44 @@ mod tests {
 
     #[test]
     fn resolves_registered_record_reference_including_nested() {
-        let mut registry = TypeRegistry::new();
-        registry.register_record("Point", RecordId::new("demo::Point"));
-        let scanner = TypeScanner::new(&registry);
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::geometry::Point"));
+        let module = ModulePath::root("demo").child("geometry");
+        let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
             scanner.scan(&ty("Point")),
-            Ok(TypeExpr::Record(RecordId::new("demo::Point")))
+            Ok(TypeExpr::Record(RecordId::new("demo::geometry::Point")))
         );
         assert_eq!(
             scanner.scan(&ty("Vec<Point>")),
             Ok(TypeExpr::vec(TypeExpr::Record(RecordId::new(
-                "demo::Point"
+                "demo::geometry::Point"
             ))))
         );
+    }
+
+    #[test]
+    fn resolves_qualified_records_without_leaf_name_guessing() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::geometry::Point"));
+        declared_types.register_record(RecordId::new("demo::Point"));
+        declared_types.register_enum(EnumId::new("demo::geometry::Mode"));
+        let module = ModulePath::root("demo").child("shape");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("crate::geometry::Point")),
+            Ok(TypeExpr::Record(RecordId::new("demo::geometry::Point")))
+        );
+        assert_eq!(
+            scanner.scan(&ty("crate::geometry::Mode")),
+            Ok(TypeExpr::Enum(EnumId::new("demo::geometry::Mode")))
+        );
+        assert!(matches!(
+            scanner.scan(&ty("Point")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Point"
+        ));
     }
 
     #[test]

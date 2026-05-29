@@ -1,6 +1,6 @@
 use boltffi_ast::{CanonicalName, NamePart};
 
-pub(crate) fn canonical(ident: &syn::Ident) -> CanonicalName {
+pub(super) fn canonical(ident: &syn::Ident) -> CanonicalName {
     CanonicalName::new(
         snake_case(&ident_source(ident))
             .split('_')

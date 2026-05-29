@@ -1,20 +1,30 @@
 use boltffi_ast::{FunctionDef, FunctionId, ParameterDef};
 
-use crate::registry::TypeRegistry;
-use crate::ty::TypeScanner;
-use crate::{ModulePath, ScanError, name, signature, visibility};
+use crate::declared_types::DeclaredTypes;
+use crate::marked::Marked;
+use crate::type_expr::Scanner;
+use crate::{ModulePath, ScanError, name, visibility};
 
-pub(crate) fn scan_function(
+use super::signature;
+
+pub fn scan(
+    marked: &Marked<'_, syn::ItemFn>,
+    declared_types: &DeclaredTypes,
+) -> Result<FunctionDef, ScanError> {
+    build(marked.item(), marked.module(), declared_types)
+}
+
+fn build(
     item: &syn::ItemFn,
     module: &ModulePath,
-    registry: &TypeRegistry,
+    declared_types: &DeclaredTypes,
 ) -> Result<FunctionDef, ScanError> {
     let ident = &item.sig.ident;
     let mut function = FunctionDef::new(
         FunctionId::new(module.qualified(&ident.to_string())),
         name::canonical(ident),
     );
-    let scanner = TypeScanner::new(registry);
+    let scanner = Scanner::new(declared_types, module);
     function.source = visibility::scan(&item.vis);
     function.execution = signature::execution(&item.sig);
     function.parameters = parameters(&item.sig, &scanner)?;
@@ -22,10 +32,7 @@ pub(crate) fn scan_function(
     Ok(function)
 }
 
-fn parameters(
-    sig: &syn::Signature,
-    scanner: &TypeScanner<'_>,
-) -> Result<Vec<ParameterDef>, ScanError> {
+fn parameters(sig: &syn::Signature, scanner: &Scanner<'_>) -> Result<Vec<ParameterDef>, ScanError> {
     sig.inputs
         .iter()
         .map(|argument| match argument {
@@ -48,10 +55,10 @@ mod tests {
     }
 
     fn scan(source: &str) -> Result<FunctionDef, ScanError> {
-        scan_function(
+        super::build(
             &parse(source),
             &ModulePath::root("demo"),
-            &TypeRegistry::new(),
+            &DeclaredTypes::new(),
         )
     }
 
@@ -150,12 +157,12 @@ mod tests {
 
     #[test]
     fn resolves_record_typed_parameter_and_return_against_registry() {
-        let mut registry = TypeRegistry::new();
-        registry.register_record("Point", RecordId::new("demo::Point"));
-        let function = scan_function(
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::Point"));
+        let function = super::build(
             &parse("pub fn translate(point: Point, dx: f64) -> Point { point }"),
             &ModulePath::root("demo"),
-            &registry,
+            &declared_types,
         )
         .expect("scan");
 

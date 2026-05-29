@@ -1,16 +1,17 @@
-mod contract;
+mod declared_types;
 mod error;
-mod function;
-mod methods;
+mod items;
+mod marked;
+mod marker;
 mod name;
 mod path;
-mod record;
-mod registry;
 mod repr;
-mod signature;
-mod ty;
+mod scan;
+mod source_tree;
+mod type_expr;
 mod visibility;
 
-pub use contract::scan_contract;
 pub use error::ScanError;
-pub use path::ModulePath;
+pub use scan::scan_source;
+
+use path::ModulePath;
