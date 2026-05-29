@@ -1,6 +1,6 @@
 use boltffi_ast::PackageInfo;
 use boltffi_binding::{Decl, Native, RecordDecl, lower};
-use boltffi_scan::scan_source;
+use boltffi_scan::scan_file;
 
 const SOURCE: &str = "
     #[data]
@@ -39,10 +39,8 @@ fn record_method_counts(record: &RecordDecl<Native>) -> (usize, usize) {
 
 #[test]
 fn scans_and_lowers_point_contract_to_bindings() {
-    let path = std::env::temp_dir().join("boltffi_scan_to_bindings_point.rs");
-    std::fs::write(&path, SOURCE).expect("write source fixture");
-    let contract = scan_source(&path, PackageInfo::new("demo", None)).expect("scan");
-    std::fs::remove_file(&path).ok();
+    let file = syn::parse_str(SOURCE).expect("parse source fixture");
+    let contract = scan_file(file, PackageInfo::new("demo", None)).expect("scan");
     let bindings = lower::<Native>(&contract).expect("lower");
 
     let records = bindings

@@ -24,6 +24,11 @@ fn attach_impl(
     records: &mut [RecordDef],
     enums: &mut [EnumDef],
 ) -> Result<(), ScanError> {
+    if !item.item().generics.params.is_empty() || item.item().generics.where_clause.is_some() {
+        return Err(ScanError::UnsupportedGenerics {
+            item: format!("impl {}", target_spelling(item.item())),
+        });
+    }
     let target = resolve_impl_target(item.item(), item.module(), declared_types)?;
     let scanned = scan_methods(item.item(), target.id(), item.module(), declared_types)?;
     match target {
@@ -76,6 +81,7 @@ fn scan_method(
     scanner: &Scanner<'_>,
 ) -> Result<MethodDef, ScanError> {
     let ident = &method.sig.ident;
+    signature::validate(&method.sig, format!("method {parent}::{ident}"))?;
     let mut declaration = MethodDef::new(
         MethodId::new(format!("{parent}::{ident}")),
         name::canonical(ident),
@@ -285,5 +291,85 @@ mod tests {
         .expect("target");
 
         assert!(matches!(target, ImplTarget::Enum(id) if id == EnumId::new("demo::Mode")));
+    }
+
+    #[test]
+    fn rejects_generic_methods_before_erasing_type_parameters() {
+        let error = scan(
+            "impl Point { pub fn value<T>(&self) -> i32 { 0 } }",
+            "demo::Point",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("generic rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedGenerics {
+                item: "method demo::Point::value".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_methods_before_erasing_unsafety() {
+        let error = scan(
+            "impl Point { pub unsafe fn free(&self) {} }",
+            "demo::Point",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("unsafe rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedUnsafe {
+                item: "method demo::Point::free".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_extern_methods_before_erasing_abi() {
+        let error = scan(
+            "impl Point { pub extern \"C\" fn add(&self, value: i32) -> i32 { value } }",
+            "demo::Point",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("extern rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedExternAbi {
+                item: "method demo::Point::add".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_generic_impl_before_erasing_type_parameters() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::Point"));
+        let source_tree = crate::source_tree::SourceTree::in_memory(
+            "demo",
+            syn::parse_str::<syn::File>("#[data(impl)] impl<T> Point { pub fn get(&self) {} }")
+                .expect("valid source")
+                .items,
+        )
+        .expect("source tree");
+        let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
+        let mut records = vec![RecordDef::new(
+            RecordId::new("demo::Point"),
+            name(&["point"]),
+        )];
+        let mut enums = Vec::new();
+
+        let error = attach_methods(marked.impls(), &declared_types, &mut records, &mut enums)
+            .expect_err("generic rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedGenerics {
+                item: "impl Point".to_owned()
+            }
+        );
     }
 }

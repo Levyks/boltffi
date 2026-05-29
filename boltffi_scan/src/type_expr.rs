@@ -17,7 +17,8 @@ impl<'a> Scanner<'a> {
     }
 
     pub(super) fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
-        match ty {
+        let unwrapped = unwrapped(ty);
+        match unwrapped {
             syn::Type::ImplTrait(impl_trait) => self.closure(impl_trait, ty),
             syn::Type::Tuple(tuple) => self.tuple(tuple),
             syn::Type::Path(type_path) => self.path(type_path, ty),
@@ -139,7 +140,15 @@ impl<'a> Scanner<'a> {
 }
 
 fn is_unit(ty: &syn::Type) -> bool {
-    matches!(ty, syn::Type::Tuple(tuple) if tuple.elems.is_empty())
+    matches!(unwrapped(ty), syn::Type::Tuple(tuple) if tuple.elems.is_empty())
+}
+
+fn unwrapped(ty: &syn::Type) -> &syn::Type {
+    match ty {
+        syn::Type::Paren(paren) => unwrapped(&paren.elem),
+        syn::Type::Group(group) => unwrapped(&group.elem),
+        _ => ty,
+    }
 }
 
 fn type_arguments(segment: &syn::PathSegment) -> Vec<&syn::Type> {
@@ -263,6 +272,16 @@ mod tests {
                 Primitive::I32
             ))))
         );
+    }
+
+    #[test]
+    fn unwraps_parenthesized_types_before_scanning() {
+        assert_eq!(scan("(i32)"), Ok(TypeExpr::Primitive(Primitive::I32)));
+        assert_eq!(
+            scan("Vec<(i32)>"),
+            Ok(TypeExpr::vec(TypeExpr::Primitive(Primitive::I32)))
+        );
+        assert_eq!(scan("(())"), Ok(TypeExpr::Unit));
     }
 
     #[test]

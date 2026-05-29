@@ -15,6 +15,11 @@ pub fn scan_source(
     scan_tree(source_tree, package)
 }
 
+pub fn scan_file(file: syn::File, package: PackageInfo) -> Result<SourceContract, ScanError> {
+    let source_tree = SourceTree::inline(&package.name, file)?;
+    scan_tree(source_tree, package)
+}
+
 fn scan_tree(source_tree: SourceTree, package: PackageInfo) -> Result<SourceContract, ScanError> {
     let marked = MarkedItems::collect(&source_tree)?;
     let declared_types = DeclaredTypes::index(&marked);
@@ -73,8 +78,7 @@ mod tests {
     }
 
     fn try_scan(source: &str) -> Result<SourceContract, ScanError> {
-        let source_tree = SourceTree::in_memory("demo", parse(source).items)?;
-        scan_tree(source_tree, PackageInfo::new("demo", None))
+        scan_file(parse(source), PackageInfo::new("demo", None))
     }
 
     fn scan(source: &str) -> SourceContract {

@@ -31,6 +31,15 @@ pub enum ScanError {
     UnsupportedMarkedImpl {
         target: String,
     },
+    UnsupportedGenerics {
+        item: String,
+    },
+    UnsupportedUnsafe {
+        item: String,
+    },
+    UnsupportedExternAbi {
+        item: String,
+    },
     UnnamedParameter,
     ReceiverOnFreeFunction,
     TupleOrUnitStruct,
@@ -61,6 +70,8 @@ impl ScanError {
 
 fn type_spelling(ty: &syn::Type) -> String {
     match ty {
+        syn::Type::Paren(paren) => type_spelling(&paren.elem),
+        syn::Type::Group(group) => type_spelling(&group.elem),
         syn::Type::Path(type_path) => type_path
             .path
             .segments
@@ -112,6 +123,15 @@ impl fmt::Display for ScanError {
                     formatter,
                     "marked impl target `{target}` is not a supported value type"
                 )
+            }
+            Self::UnsupportedGenerics { item } => {
+                write!(formatter, "`{item}` cannot use generics")
+            }
+            Self::UnsupportedUnsafe { item } => {
+                write!(formatter, "`{item}` cannot be unsafe")
+            }
+            Self::UnsupportedExternAbi { item } => {
+                write!(formatter, "`{item}` cannot declare an extern ABI")
             }
             Self::UnnamedParameter => formatter.write_str("parameter pattern is not a plain name"),
             Self::ReceiverOnFreeFunction => {
@@ -207,6 +227,27 @@ mod tests {
             }
             .to_string(),
             "marked impl target `Missing` is not a supported value type"
+        );
+        assert_eq!(
+            ScanError::UnsupportedGenerics {
+                item: "function make".to_owned()
+            }
+            .to_string(),
+            "`function make` cannot use generics"
+        );
+        assert_eq!(
+            ScanError::UnsupportedUnsafe {
+                item: "function free".to_owned()
+            }
+            .to_string(),
+            "`function free` cannot be unsafe"
+        );
+        assert_eq!(
+            ScanError::UnsupportedExternAbi {
+                item: "function add".to_owned()
+            }
+            .to_string(),
+            "`function add` cannot declare an extern ABI"
         );
     }
 }

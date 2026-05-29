@@ -19,6 +19,11 @@ fn build(
     module: &ModulePath,
     declared_types: &DeclaredTypes,
 ) -> Result<RecordDef, ScanError> {
+    if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
+        return Err(ScanError::UnsupportedGenerics {
+            item: format!("record {}", item.ident),
+        });
+    }
     let id = RecordId::new(module.qualified(&item.ident.to_string()));
     let mut record = RecordDef::new(id, name::canonical(&item.ident));
     record.repr = repr::scan(&item.attrs);
@@ -156,6 +161,19 @@ mod tests {
         assert_eq!(
             record.fields[0].type_expr,
             TypeExpr::Record(RecordId::new("demo::Point"))
+        );
+    }
+
+    #[test]
+    fn rejects_generic_record_before_erasing_type_parameters() {
+        let error = scan("pub struct Array<const N: usize> { pub len: usize }")
+            .expect_err("generic rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedGenerics {
+                item: "record Array".to_owned()
+            }
         );
     }
 }

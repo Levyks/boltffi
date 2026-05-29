@@ -12,13 +12,30 @@ impl SourceTree {
             ModulePath::root(crate_name),
             &module_dir(root),
             parse(root)?.items,
+            SourceMode::Files,
+        )
+        .map(|modules| Self { modules })
+    }
+
+    pub(super) fn inline(crate_name: &str, file: syn::File) -> Result<Self, ScanError> {
+        walk(
+            ModulePath::root(crate_name),
+            Path::new("."),
+            file.items,
+            SourceMode::Inline,
         )
         .map(|modules| Self { modules })
     }
 
     #[cfg(test)]
     pub(super) fn in_memory(crate_name: &str, items: Vec<syn::Item>) -> Result<Self, ScanError> {
-        walk(ModulePath::root(crate_name), Path::new("."), items).map(|modules| Self { modules })
+        walk(
+            ModulePath::root(crate_name),
+            Path::new("."),
+            items,
+            SourceMode::Inline,
+        )
+        .map(|modules| Self { modules })
     }
 
     pub(super) fn modules(&self) -> &[SourceModule] {
@@ -49,13 +66,14 @@ fn walk(
     module: ModulePath,
     dir: &Path,
     items: Vec<syn::Item>,
+    source_mode: SourceMode,
 ) -> Result<Vec<SourceModule>, ScanError> {
     let (own_items, mut child_modules) = items.into_iter().try_fold(
         (Vec::new(), Vec::new()),
         |(mut own_items, mut child_modules), item| {
             match item {
                 syn::Item::Mod(item_mod) => {
-                    child_modules.extend(descend(&module, dir, item_mod.clone())?);
+                    child_modules.extend(descend(&module, dir, item_mod.clone(), source_mode)?);
                     own_items.push(syn::Item::Mod(item_mod));
                 }
                 item => own_items.push(item),
@@ -71,6 +89,7 @@ fn descend(
     parent: &ModulePath,
     dir: &Path,
     item_mod: syn::ItemMod,
+    source_mode: SourceMode,
 ) -> Result<Vec<SourceModule>, ScanError> {
     if has_cfg(&item_mod.attrs) {
         return Ok(Vec::new());
@@ -78,13 +97,23 @@ fn descend(
     let name = item_mod.ident.to_string();
     let child = parent.child(&name);
     match item_mod.content {
-        Some((_, items)) => walk(child, &dir.join(&name), items),
-        None => {
+        Some((_, items)) => walk(child, &dir.join(&name), items, source_mode),
+        None if source_mode == SourceMode::Files => {
             let path = resolve(parent, dir, &name, &item_mod.attrs)?;
             let items = parse(&path)?.items;
-            walk(child, &module_dir(&path), items)
+            walk(child, &module_dir(&path), items, source_mode)
         }
+        None => Err(ScanError::ModuleNotFound {
+            module: parent.qualified(&name),
+            searched: Vec::new(),
+        }),
     }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SourceMode {
+    Files,
+    Inline,
 }
 
 fn module_dir(file: &Path) -> PathBuf {

@@ -13,6 +13,7 @@ boltffi_core.workspace = true
 boltffi_ast.workspace = true
 boltffi_binding.workspace = true
 boltffi_scan.workspace = true
+syn.workspace = true
 
 [lints]
 workspace = true

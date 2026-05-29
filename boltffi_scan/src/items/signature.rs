@@ -3,6 +3,19 @@ use boltffi_ast::{CanonicalName, ExecutionKind, ParameterDef, ParameterPassing};
 use crate::type_expr::Scanner;
 use crate::{ScanError, name};
 
+pub(super) fn validate(signature: &syn::Signature, item: String) -> Result<(), ScanError> {
+    if !signature.generics.params.is_empty() || signature.generics.where_clause.is_some() {
+        return Err(ScanError::UnsupportedGenerics { item });
+    }
+    if signature.unsafety.is_some() {
+        return Err(ScanError::UnsupportedUnsafe { item });
+    }
+    if signature.abi.is_some() {
+        return Err(ScanError::UnsupportedExternAbi { item });
+    }
+    Ok(())
+}
+
 pub(super) fn execution(signature: &syn::Signature) -> ExecutionKind {
     match signature.asyncness {
         Some(_) => ExecutionKind::Async,
@@ -78,5 +91,33 @@ mod tests {
 
         assert_eq!(parameter.type_expr, TypeExpr::Primitive(Primitive::I32));
         assert_eq!(parameter.passing, ParameterPassing::RefMut);
+    }
+
+    #[test]
+    fn rejects_signature_shapes_not_preserved_by_ast() {
+        let generic = syn::parse_str::<syn::Signature>("fn make<T>()").expect("generic signature");
+        let unsafe_signature =
+            syn::parse_str::<syn::Signature>("unsafe fn free()").expect("unsafe signature");
+        let extern_signature =
+            syn::parse_str::<syn::Signature>("extern \"C\" fn add()").expect("extern signature");
+
+        assert_eq!(
+            validate(&generic, "function make".to_owned()),
+            Err(ScanError::UnsupportedGenerics {
+                item: "function make".to_owned()
+            })
+        );
+        assert_eq!(
+            validate(&unsafe_signature, "function free".to_owned()),
+            Err(ScanError::UnsupportedUnsafe {
+                item: "function free".to_owned()
+            })
+        );
+        assert_eq!(
+            validate(&extern_signature, "function add".to_owned()),
+            Err(ScanError::UnsupportedExternAbi {
+                item: "function add".to_owned()
+            })
+        );
     }
 }

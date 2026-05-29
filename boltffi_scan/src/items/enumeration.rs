@@ -21,6 +21,11 @@ fn build(
     module: &ModulePath,
     declared_types: &DeclaredTypes,
 ) -> Result<EnumDef, ScanError> {
+    if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
+        return Err(ScanError::UnsupportedGenerics {
+            item: format!("enum {}", item.ident),
+        });
+    }
     let id = EnumId::new(module.qualified(&item.ident.to_string()));
     let mut enumeration = EnumDef::new(id, name::canonical(&item.ident));
     enumeration.repr = repr::scan(&item.attrs);
@@ -169,5 +174,17 @@ mod tests {
         let error = scan("pub enum Mask { A = 1 << 2 }").expect_err("non-literal must reject");
 
         assert_eq!(error, ScanError::UnsupportedDiscriminant);
+    }
+
+    #[test]
+    fn rejects_generic_enum_before_erasing_type_parameters() {
+        let error = scan("pub enum Boxed<T> { Value(T) }").expect_err("generic rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedGenerics {
+                item: "enum Boxed".to_owned()
+            }
+        );
     }
 }

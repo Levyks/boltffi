@@ -20,6 +20,7 @@ fn build(
     declared_types: &DeclaredTypes,
 ) -> Result<FunctionDef, ScanError> {
     let ident = &item.sig.ident;
+    signature::validate(&item.sig, format!("function {ident}"))?;
     let mut function = FunctionDef::new(
         FunctionId::new(module.qualified(&ident.to_string())),
         name::canonical(ident),
@@ -89,6 +90,20 @@ mod tests {
 
         assert_eq!(explicit.returns, ReturnDef::Void);
         assert_eq!(implicit.returns, ReturnDef::Void);
+    }
+
+    #[test]
+    fn scans_parenthesized_parameter_and_return_types() {
+        let function = scan("pub fn id(value: (i32)) -> (i32) { value }").expect("scan");
+
+        assert_eq!(
+            function.parameters[0].type_expr,
+            TypeExpr::Primitive(Primitive::I32)
+        );
+        assert_eq!(
+            function.returns,
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::I32))
+        );
     }
 
     #[test]
@@ -210,5 +225,42 @@ mod tests {
             scan("pub fn sum((x, y): (i32, i32)) -> i32 { x + y }").expect_err("pattern rejected");
 
         assert_eq!(error, ScanError::UnnamedParameter);
+    }
+
+    #[test]
+    fn rejects_generic_function_before_erasing_type_parameters() {
+        let error = scan("pub fn make<T>() -> i32 { 0 }").expect_err("generic rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedGenerics {
+                item: "function make".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_function_before_erasing_unsafety() {
+        let error = scan("pub unsafe fn free_handle(handle: i32) {}").expect_err("unsafe rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedUnsafe {
+                item: "function free_handle".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_extern_function_before_erasing_abi() {
+        let error = scan("pub extern \"C\" fn add(value: i32) -> i32 { value }")
+            .expect_err("extern rejected");
+
+        assert_eq!(
+            error,
+            ScanError::UnsupportedExternAbi {
+                item: "function add".to_owned()
+            }
+        );
     }
 }

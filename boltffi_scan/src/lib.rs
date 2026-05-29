@@ -12,6 +12,6 @@ mod type_expr;
 mod visibility;
 
 pub use error::ScanError;
-pub use scan::scan_source;
+pub use scan::{scan_file, scan_source};
 
 use path::ModulePath;
