@@ -8,6 +8,7 @@ mod path;
 mod repr;
 mod scan;
 mod source_tree;
+mod spelling;
 mod type_expr;
 mod visibility;
 

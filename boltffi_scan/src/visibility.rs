@@ -8,18 +8,10 @@ fn scan_visibility(visibility: &syn::Visibility) -> Visibility {
     match visibility {
         syn::Visibility::Public(_) => Visibility::Public,
         syn::Visibility::Restricted(restricted) => {
-            Visibility::Restricted(path_spelling(&restricted.path))
+            Visibility::Restricted(crate::spelling::path(&restricted.path))
         }
         syn::Visibility::Inherited => Visibility::Private,
     }
-}
-
-fn path_spelling(path: &syn::Path) -> String {
-    path.segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::")
 }
 
 #[cfg(test)]

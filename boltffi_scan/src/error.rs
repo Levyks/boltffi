@@ -40,6 +40,15 @@ pub enum ScanError {
     UnsupportedExternAbi {
         item: String,
     },
+    UnsupportedSupertraits {
+        item: String,
+    },
+    UnsupportedTraitItem {
+        item: String,
+    },
+    UnsupportedTraitMethodBody {
+        item: String,
+    },
     UnnamedParameter,
     ReceiverOnFreeFunction,
     TupleOrUnitStruct,
@@ -63,24 +72,8 @@ impl ScanError {
 
     pub(super) fn unsupported_type(ty: &syn::Type) -> Self {
         Self::UnsupportedType {
-            spelling: type_spelling(ty),
+            spelling: crate::spelling::ty(ty),
         }
-    }
-}
-
-fn type_spelling(ty: &syn::Type) -> String {
-    match ty {
-        syn::Type::Paren(paren) => type_spelling(&paren.elem),
-        syn::Type::Group(group) => type_spelling(&group.elem),
-        syn::Type::Path(type_path) => type_path
-            .path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.to_string())
-            .collect::<Vec<_>>()
-            .join("::"),
-        syn::Type::Reference(reference) => format!("&{}", type_spelling(&reference.elem)),
-        _ => "unrecognized type".to_owned(),
     }
 }
 
@@ -132,6 +125,15 @@ impl fmt::Display for ScanError {
             }
             Self::UnsupportedExternAbi { item } => {
                 write!(formatter, "`{item}` cannot declare an extern ABI")
+            }
+            Self::UnsupportedSupertraits { item } => {
+                write!(formatter, "`{item}` cannot use supertraits")
+            }
+            Self::UnsupportedTraitItem { item } => {
+                write!(formatter, "`{item}` is not supported in exported traits")
+            }
+            Self::UnsupportedTraitMethodBody { item } => {
+                write!(formatter, "`{item}` cannot define a default body")
             }
             Self::UnnamedParameter => formatter.write_str("parameter pattern is not a plain name"),
             Self::ReceiverOnFreeFunction => {
@@ -248,6 +250,27 @@ mod tests {
             }
             .to_string(),
             "`function add` cannot declare an extern ABI"
+        );
+        assert_eq!(
+            ScanError::UnsupportedSupertraits {
+                item: "trait Listener".to_owned()
+            }
+            .to_string(),
+            "`trait Listener` cannot use supertraits"
+        );
+        assert_eq!(
+            ScanError::UnsupportedTraitItem {
+                item: "trait Listener::Item".to_owned()
+            }
+            .to_string(),
+            "`trait Listener::Item` is not supported in exported traits"
+        );
+        assert_eq!(
+            ScanError::UnsupportedTraitMethodBody {
+                item: "trait Listener::call".to_owned()
+            }
+            .to_string(),
+            "`trait Listener::call` cannot define a default body"
         );
     }
 }

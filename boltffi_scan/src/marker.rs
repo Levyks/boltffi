@@ -9,6 +9,7 @@ pub(super) enum Marker {
     DataImpl,
     Error,
     Export,
+    Skip,
 }
 
 impl Marker {
@@ -32,6 +33,7 @@ impl Marker {
             Self::DataImpl => "data(impl)",
             Self::Error => "error",
             Self::Export => "export",
+            Self::Skip => "skip",
         }
     }
 
@@ -46,6 +48,7 @@ impl Marker {
             Some("data") => Self::from_data(attr).map(Some),
             Some("error") => Self::empty(attr, Self::Error).map(Some),
             Some("export") => Self::empty(attr, Self::Export).map(Some),
+            Some("skip") => Self::empty(attr, Self::Skip).map(Some),
             _ => Ok(None),
         }
     }
@@ -78,9 +81,9 @@ fn marker_name(attr: &syn::Attribute) -> Option<String> {
     let segments = attr.path().segments.iter().collect::<Vec<_>>();
     match segments.as_slice() {
         [segment] => Some(segment.ident.to_string())
-            .filter(|name| matches!(name.as_str(), "data" | "error" | "export")),
+            .filter(|name| matches!(name.as_str(), "data" | "error" | "export" | "skip")),
         [namespace, marker] if namespace.ident == "boltffi" => Some(marker.ident.to_string())
-            .filter(|name| matches!(name.as_str(), "data" | "error" | "export")),
+            .filter(|name| matches!(name.as_str(), "data" | "error" | "export" | "skip")),
         _ => None,
     }
 }
@@ -92,13 +95,7 @@ fn invalid(attr: &syn::Attribute) -> ScanError {
 }
 
 fn spelling(attr: &syn::Attribute) -> String {
-    let path = attr
-        .path()
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::");
+    let path = crate::spelling::path(attr.path());
     match &attr.meta {
         syn::Meta::Path(_) => path,
         syn::Meta::List(list) => format!("{}({})", path, list.tokens),
@@ -225,5 +222,23 @@ mod tests {
             Ok(Some(Marker::Export))
         );
         assert_eq!(Marker::detect(&fn_attrs("fn f() {}")), Ok(None));
+    }
+
+    #[test]
+    fn detects_skip_through_the_marker_set() {
+        assert_eq!(
+            Marker::detect(&fn_attrs("#[skip] fn f() {}")),
+            Ok(Some(Marker::Skip))
+        );
+        assert_eq!(
+            Marker::detect(&fn_attrs("#[boltffi::skip] fn f() {}")),
+            Ok(Some(Marker::Skip))
+        );
+        assert_eq!(
+            Marker::detect(&fn_attrs("#[skip(reason)] fn f() {}")),
+            Err(ScanError::InvalidMarker {
+                attribute: "skip(reason)".to_owned()
+            })
+        );
     }
 }

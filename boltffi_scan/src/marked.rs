@@ -6,6 +6,7 @@ pub(super) struct MarkedItems<'source> {
     records: Vec<Marked<'source, syn::ItemStruct>>,
     enums: Vec<Marked<'source, syn::ItemEnum>>,
     functions: Vec<Marked<'source, syn::ItemFn>>,
+    traits: Vec<Marked<'source, syn::ItemTrait>>,
     impls: Vec<Marked<'source, syn::ItemImpl>>,
 }
 
@@ -25,6 +26,7 @@ impl<'source> MarkedItems<'source> {
             records: Vec::new(),
             enums: Vec::new(),
             functions: Vec::new(),
+            traits: Vec::new(),
             impls: Vec::new(),
         }
     }
@@ -39,6 +41,10 @@ impl<'source> MarkedItems<'source> {
 
     pub(super) fn functions(&self) -> &[Marked<'source, syn::ItemFn>] {
         &self.functions
+    }
+
+    pub(super) fn traits(&self) -> &[Marked<'source, syn::ItemTrait>] {
+        &self.traits
     }
 
     pub(super) fn impls(&self) -> &[Marked<'source, syn::ItemImpl>] {
@@ -68,6 +74,10 @@ impl<'source> MarkedItems<'source> {
             }
             (Marker::Export, syn::Item::Fn(item)) => {
                 self.functions.push(Marked::new(module, marker, item));
+                Ok(())
+            }
+            (Marker::Export, syn::Item::Trait(item)) => {
+                self.traits.push(Marked::new(module, marker, item));
                 Ok(())
             }
             _ => Err(ScanError::InvalidMarkerPlacement {
@@ -164,6 +174,7 @@ mod tests {
             "#[data] struct Point { x: i32 } \
              #[error] enum ParseError { Eof } \
              #[export] fn origin() {} \
+             #[export] trait Listener { fn call(&self); } \
              #[data(impl)] impl Point {}",
         );
 
@@ -174,6 +185,7 @@ mod tests {
         assert_eq!(marked.enums().len(), 1);
         assert_eq!(marked.enums()[0].marker(), Marker::Error);
         assert_eq!(marked.functions().len(), 1);
+        assert_eq!(marked.traits().len(), 1);
         assert_eq!(marked.impls().len(), 1);
     }
 

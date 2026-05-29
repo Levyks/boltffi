@@ -1,4 +1,6 @@
-use boltffi_ast::{CanonicalName, ExecutionKind, ParameterDef, ParameterPassing};
+use boltffi_ast::{
+    CanonicalName, ExecutionKind, MethodDef, MethodId, ParameterDef, ParameterPassing, Receiver,
+};
 
 use crate::type_expr::Scanner;
 use crate::{ScanError, name};
@@ -23,6 +25,24 @@ pub(super) fn execution(signature: &syn::Signature) -> ExecutionKind {
     }
 }
 
+pub(super) fn method(
+    signature: &syn::Signature,
+    parent: &str,
+    scanner: &Scanner<'_>,
+) -> Result<MethodDef, ScanError> {
+    let ident = &signature.ident;
+    validate(signature, format!("method {parent}::{ident}"))?;
+    let mut method = MethodDef::new(
+        MethodId::new(format!("{parent}::{ident}")),
+        name::canonical(ident),
+        receiver(signature),
+    );
+    method.execution = execution(signature);
+    method.parameters = parameters(signature, scanner)?;
+    method.returns = scanner.scan_return(&signature.output)?;
+    Ok(method)
+}
+
 pub(super) fn parameter(
     typed: &syn::PatType,
     scanner: &Scanner<'_>,
@@ -32,6 +52,33 @@ pub(super) fn parameter(
     let mut parameter = ParameterDef::value(binding_name, scanner.scan(source_type)?);
     parameter.passing = passing;
     Ok(parameter)
+}
+
+fn receiver(signature: &syn::Signature) -> Receiver {
+    match signature.inputs.first() {
+        Some(syn::FnArg::Receiver(receiver)) => {
+            match (receiver.reference.is_some(), receiver.mutability.is_some()) {
+                (true, true) => Receiver::Mutable,
+                (true, false) => Receiver::Shared,
+                (false, _) => Receiver::Owned,
+            }
+        }
+        _ => Receiver::None,
+    }
+}
+
+fn parameters(
+    signature: &syn::Signature,
+    scanner: &Scanner<'_>,
+) -> Result<Vec<ParameterDef>, ScanError> {
+    signature
+        .inputs
+        .iter()
+        .filter_map(|argument| match argument {
+            syn::FnArg::Typed(typed) => Some(parameter(typed, scanner)),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
 }
 
 fn parameter_type(ty: &syn::Type) -> (&syn::Type, ParameterPassing) {

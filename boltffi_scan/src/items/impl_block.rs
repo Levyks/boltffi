@@ -1,9 +1,10 @@
-use boltffi_ast::{EnumDef, MethodDef, MethodId, ParameterDef, Receiver, RecordDef};
+use boltffi_ast::{EnumDef, MethodDef, RecordDef};
 
 use crate::declared_types::{DeclaredType, DeclaredTypes};
 use crate::marked::Marked;
+use crate::marker::Marker;
 use crate::type_expr::Scanner;
-use crate::{ModulePath, ScanError, name};
+use crate::{ModulePath, ScanError, spelling};
 
 use super::signature;
 
@@ -26,7 +27,7 @@ fn attach_impl(
 ) -> Result<(), ScanError> {
     if !item.item().generics.params.is_empty() || item.item().generics.where_clause.is_some() {
         return Err(ScanError::UnsupportedGenerics {
-            item: format!("impl {}", target_spelling(item.item())),
+            item: format!("impl {}", spelling::ty(&item.item().self_ty)),
         });
     }
     let target = resolve_impl_target(item.item(), item.module(), declared_types)?;
@@ -56,68 +57,31 @@ fn scan_methods(
     item.items
         .iter()
         .filter_map(|impl_item| match impl_item {
-            syn::ImplItem::Fn(method) if is_exported_method(method) => {
-                Some(scan_method(method, parent, &scanner))
-            }
+            syn::ImplItem::Fn(method) => match is_exported_method(method) {
+                Ok(true) => Some(signature::method(&method.sig, parent, &scanner)),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            },
             _ => None,
         })
         .collect()
 }
 
-fn is_exported_method(method: &syn::ImplItemFn) -> bool {
-    matches!(method.vis, syn::Visibility::Public(_))
-        && !method.attrs.iter().any(|attribute| {
-            attribute
-                .path()
-                .segments
-                .last()
-                .is_some_and(|segment| segment.ident == "skip")
-        })
-}
-
-fn scan_method(
-    method: &syn::ImplItemFn,
-    parent: &str,
-    scanner: &Scanner<'_>,
-) -> Result<MethodDef, ScanError> {
-    let ident = &method.sig.ident;
-    signature::validate(&method.sig, format!("method {parent}::{ident}"))?;
-    let mut declaration = MethodDef::new(
-        MethodId::new(format!("{parent}::{ident}")),
-        name::canonical(ident),
-        receiver(&method.sig),
-    );
-    declaration.execution = signature::execution(&method.sig);
-    declaration.parameters = parameters(&method.sig, scanner)?;
-    declaration.returns = scanner.scan_return(&method.sig.output)?;
-    Ok(declaration)
-}
-
-fn receiver(signature: &syn::Signature) -> Receiver {
-    match signature.inputs.first() {
-        Some(syn::FnArg::Receiver(receiver)) => {
-            match (receiver.reference.is_some(), receiver.mutability.is_some()) {
-                (true, true) => Receiver::Mutable,
-                (true, false) => Receiver::Shared,
-                (false, _) => Receiver::Owned,
-            }
-        }
-        _ => Receiver::None,
+fn is_exported_method(method: &syn::ImplItemFn) -> Result<bool, ScanError> {
+    let marker = Marker::detect(&method.attrs)?;
+    if let Some(marker) = marker {
+        return match marker {
+            Marker::Skip => Ok(false),
+            _ => Err(ScanError::InvalidMarkerPlacement {
+                marker: marker.as_str().to_owned(),
+                item: "method".to_owned(),
+            }),
+        };
     }
-}
-
-fn parameters(
-    signature: &syn::Signature,
-    scanner: &Scanner<'_>,
-) -> Result<Vec<ParameterDef>, ScanError> {
-    signature
-        .inputs
-        .iter()
-        .filter_map(|argument| match argument {
-            syn::FnArg::Typed(typed) => Some(signature::parameter(typed, scanner)),
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect()
+    if !matches!(method.vis, syn::Visibility::Public(_)) {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 fn self_type_path(item: &syn::ItemImpl) -> Option<&syn::Path> {
@@ -125,19 +89,6 @@ fn self_type_path(item: &syn::ItemImpl) -> Option<&syn::Path> {
         return None;
     };
     Some(&type_path.path)
-}
-
-fn target_spelling(item: &syn::ItemImpl) -> String {
-    match item.self_ty.as_ref() {
-        syn::Type::Path(type_path) => type_path
-            .path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.to_string())
-            .collect::<Vec<_>>()
-            .join("::"),
-        _ => "unrecognized impl target".to_owned(),
-    }
 }
 
 enum ImplTarget {
@@ -159,16 +110,17 @@ fn resolve_impl_target(
     module: &ModulePath,
     declared_types: &DeclaredTypes,
 ) -> Result<ImplTarget, ScanError> {
+    let target_spelling = spelling::ty(&item.self_ty);
     let Some(target) = self_type_path(item).and_then(|path| module.resolve(path)) else {
         return Err(ScanError::UnsupportedMarkedImpl {
-            target: target_spelling(item),
+            target: target_spelling,
         });
     };
     match declared_types.resolve(&target) {
         Some(DeclaredType::Record(id)) => Ok(ImplTarget::Record(id.clone())),
         Some(DeclaredType::Enum(id)) => Ok(ImplTarget::Enum(id.clone())),
-        None => Err(ScanError::UnsupportedMarkedImpl {
-            target: target_spelling(item),
+        Some(DeclaredType::Trait(_)) | None => Err(ScanError::UnsupportedMarkedImpl {
+            target: target_spelling,
         }),
     }
 }
@@ -177,7 +129,10 @@ fn resolve_impl_target(
 mod tests {
     use super::*;
     use crate::declared_types::DeclaredTypes;
-    use boltffi_ast::{CanonicalName, EnumId, NamePart, Primitive, RecordId, ReturnDef, TypeExpr};
+    use boltffi_ast::{
+        CanonicalName, EnumId, MethodId, NamePart, Primitive, Receiver, RecordId, ReturnDef,
+        TypeExpr,
+    };
 
     fn parse(source: &str) -> syn::ItemImpl {
         syn::parse_str(source).expect("valid impl block")
@@ -268,6 +223,7 @@ mod tests {
                 pub fn exported(&self) {} \
                 fn helper(&self) {} \
                 #[skip] pub fn skipped(&self) {} \
+                #[boltffi::skip] pub fn also_skipped(&self) {} \
             }",
             "demo::Point",
             &DeclaredTypes::new(),
@@ -276,6 +232,41 @@ mod tests {
 
         assert_eq!(methods.len(), 1);
         assert_eq!(methods[0].name, name(&["exported"]));
+    }
+
+    #[test]
+    fn rejects_malformed_skip_marker_on_method() {
+        let error = scan(
+            "impl Point { #[skip(reason)] pub fn hidden(&self) {} }",
+            "demo::Point",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("malformed skip marker must reject");
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarker {
+                attribute: "skip(reason)".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_non_skip_boltffi_markers_on_methods() {
+        let error = scan(
+            "impl Point { #[export] pub fn hidden(&self) {} }",
+            "demo::Point",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("misplaced marker must reject");
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "export".to_owned(),
+                item: "method".to_owned()
+            }
+        );
     }
 
     #[test]

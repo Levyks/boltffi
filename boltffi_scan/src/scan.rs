@@ -1,6 +1,6 @@
 use std::path::Path as FsPath;
 
-use boltffi_ast::{EnumDef, FunctionDef, PackageInfo, RecordDef, SourceContract};
+use boltffi_ast::{EnumDef, FunctionDef, PackageInfo, RecordDef, SourceContract, TraitDef};
 
 use crate::declared_types::DeclaredTypes;
 use crate::marked::MarkedItems;
@@ -25,12 +25,14 @@ fn scan_tree(source_tree: SourceTree, package: PackageInfo) -> Result<SourceCont
     let declared_types = DeclaredTypes::index(&marked);
     let mut records = scan_records(&marked, &declared_types)?;
     let mut enums = scan_enums(&marked, &declared_types)?;
+    let traits = scan_traits(&marked, &declared_types)?;
     items::impl_block::attach_methods(marked.impls(), &declared_types, &mut records, &mut enums)?;
     let functions = scan_functions(&marked, &declared_types)?;
 
     let mut contract = SourceContract::new(package);
     contract.records = records;
     contract.enums = enums;
+    contract.traits = traits;
     contract.functions = functions;
     Ok(contract)
 }
@@ -68,10 +70,24 @@ fn scan_functions(
         .collect()
 }
 
+fn scan_traits(
+    marked: &MarkedItems<'_>,
+    declared_types: &DeclaredTypes,
+) -> Result<Vec<TraitDef>, ScanError> {
+    marked
+        .traits()
+        .iter()
+        .map(|callback| items::callback::scan(callback, declared_types))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boltffi_ast::{EnumId, Primitive, Receiver, RecordId, ReturnDef, TypeExpr};
+    use boltffi_ast::{
+        EnumId, HandlePresence, Primitive, Receiver, RecordId, ReturnDef, TraitId, TraitUseForm,
+        TypeExpr,
+    };
 
     fn parse(source: &str) -> syn::File {
         syn::parse_str(source).expect("valid source file")
@@ -212,6 +228,40 @@ mod tests {
         assert_eq!(
             contract.functions[0].returns,
             ReturnDef::Value(TypeExpr::Record(RecordId::new("demo::Point")))
+        );
+    }
+
+    #[test]
+    fn scans_exported_traits_and_resolves_callback_references() {
+        let contract = scan(
+            "#[export] pub trait Listener { fn on_value(&self, value: i32) -> i64; } \
+             #[export] pub fn register(callback: impl Listener) {} \
+             #[export] pub fn maybe_register(callback: Option<Box<dyn Listener>>) {}",
+        );
+
+        assert_eq!(contract.traits.len(), 1);
+        assert_eq!(contract.traits[0].id, TraitId::new("demo::Listener"));
+        assert_eq!(contract.traits[0].methods.len(), 1);
+        assert_eq!(contract.traits[0].methods[0].receiver, Receiver::Shared);
+        assert_eq!(
+            contract.traits[0].methods[0].returns,
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::I64))
+        );
+        assert_eq!(
+            contract.functions[0].parameters[0].type_expr,
+            TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::ImplTrait,
+                HandlePresence::Required,
+            )
+        );
+        assert_eq!(
+            contract.functions[1].parameters[0].type_expr,
+            TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::BoxedDyn,
+                HandlePresence::Nullable,
+            )
         );
     }
 

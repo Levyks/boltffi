@@ -24,6 +24,16 @@ const SOURCE: &str = "
     }
 
     #[export]
+    pub trait ValueCallback {
+        fn on_value(&self, value: u32) -> u32;
+    }
+
+    #[export]
+    pub fn invoke_callback(callback: impl ValueCallback, value: u32) -> u32 {
+        callback.on_value(value)
+    }
+
+    #[export]
     pub fn make_handler() -> impl Fn(u32) -> u32 {
         |value| value
     }
@@ -53,8 +63,14 @@ fn scans_and_lowers_point_contract_to_bindings() {
         .iter()
         .filter(|decl| matches!(decl, Decl::Function(_)))
         .count();
+    let callbacks = bindings
+        .decls()
+        .iter()
+        .filter(|decl| matches!(decl, Decl::Callback(_)))
+        .count();
     assert_eq!(records, 1, "Point lowers to one record");
-    assert_eq!(functions, 1, "make_handler lowers to one function");
+    assert_eq!(functions, 2, "functions lower from scanned exports");
+    assert_eq!(callbacks, 1, "ValueCallback lowers to one callback");
 
     let record = bindings
         .decls()

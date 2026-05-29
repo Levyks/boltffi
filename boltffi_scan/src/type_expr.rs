@@ -1,4 +1,6 @@
-use boltffi_ast::{ClosureKind, ClosureType, Primitive, ReturnDef, TypeExpr};
+use boltffi_ast::{
+    ClosureKind, ClosureType, HandlePresence, Primitive, ReturnDef, TraitUseForm, TypeExpr,
+};
 
 use crate::declared_types::{DeclaredType, DeclaredTypes};
 use crate::{ModulePath, ScanError};
@@ -19,7 +21,7 @@ impl<'a> Scanner<'a> {
     pub(super) fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
         let unwrapped = unwrapped(ty);
         match unwrapped {
-            syn::Type::ImplTrait(impl_trait) => self.closure(impl_trait, ty),
+            syn::Type::ImplTrait(impl_trait) => self.impl_trait(impl_trait, ty),
             syn::Type::Tuple(tuple) => self.tuple(tuple),
             syn::Type::Path(type_path) => self.path(type_path, ty),
             _ => Err(ScanError::unsupported_type(ty)),
@@ -47,7 +49,7 @@ impl<'a> Scanner<'a> {
             "Self" => Ok(TypeExpr::SelfType),
             "String" => Ok(TypeExpr::String),
             "Vec" => Ok(TypeExpr::vec(self.single_argument(segment, source)?)),
-            "Option" => Ok(TypeExpr::option(self.single_argument(segment, source)?)),
+            "Option" => self.option(segment, source),
             "Result" => {
                 let (ok, err) = self.two_arguments(segment, source)?;
                 Ok(TypeExpr::result(ok, err))
@@ -56,6 +58,18 @@ impl<'a> Scanner<'a> {
                 let (key, value) = self.two_arguments(segment, source)?;
                 Ok(TypeExpr::map(key, value))
             }
+            "Box" => self.trait_object_argument(
+                segment,
+                source,
+                TraitUseForm::BoxedDyn,
+                HandlePresence::Required,
+            ),
+            "Arc" => self.trait_object_argument(
+                segment,
+                source,
+                TraitUseForm::ArcDyn,
+                HandlePresence::Required,
+            ),
             _ => self.named(type_path, source),
         }
     }
@@ -76,6 +90,7 @@ impl<'a> Scanner<'a> {
         match self.declared_types.resolve(&resolved_path) {
             Some(DeclaredType::Record(id)) => Ok(TypeExpr::Record(id.clone())),
             Some(DeclaredType::Enum(id)) => Ok(TypeExpr::Enum(id.clone())),
+            Some(DeclaredType::Trait(_)) => Err(ScanError::unsupported_type(source)),
             None => Err(ScanError::unsupported_type(source)),
         }
     }
@@ -97,8 +112,17 @@ impl<'a> Scanner<'a> {
         segment: &syn::PathSegment,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
+        self.single_type_argument(segment, source)
+            .and_then(|argument| self.scan(argument))
+    }
+
+    fn single_type_argument<'segment>(
+        &self,
+        segment: &'segment syn::PathSegment,
+        source: &syn::Type,
+    ) -> Result<&'segment syn::Type, ScanError> {
         match type_arguments(segment).as_slice() {
-            [argument] => self.scan(argument),
+            [argument] => Ok(argument),
             _ => Err(ScanError::unsupported_type(source)),
         }
     }
@@ -114,19 +138,66 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn closure(
+    fn option(
+        &self,
+        segment: &syn::PathSegment,
+        source: &syn::Type,
+    ) -> Result<TypeExpr, ScanError> {
+        let inner = self.single_type_argument(segment, source)?;
+        self.nullable_trait(inner)
+            .unwrap_or_else(|| self.scan(inner).map(TypeExpr::option))
+    }
+
+    fn nullable_trait(&self, ty: &syn::Type) -> Option<Result<TypeExpr, ScanError>> {
+        let syn::Type::Path(type_path) = unwrapped(ty) else {
+            return None;
+        };
+        let segment = type_path.path.segments.last()?;
+        match segment.ident.to_string().as_str() {
+            "Box" => Some(self.trait_object_argument(
+                segment,
+                ty,
+                TraitUseForm::BoxedDyn,
+                HandlePresence::Nullable,
+            )),
+            "Arc" => Some(self.trait_object_argument(
+                segment,
+                ty,
+                TraitUseForm::ArcDyn,
+                HandlePresence::Nullable,
+            )),
+            _ => None,
+        }
+    }
+
+    fn impl_trait(
         &self,
         impl_trait: &syn::TypeImplTrait,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
-        let (kind, arguments) = impl_trait
-            .bounds
-            .iter()
-            .find_map(|bound| match bound {
-                syn::TypeParamBound::Trait(trait_bound) => closure_bound(trait_bound),
-                _ => None,
-            })
-            .ok_or_else(|| ScanError::unsupported_type(source))?;
+        if let Some((kind, arguments)) = impl_trait.bounds.iter().find_map(|bound| match bound {
+            syn::TypeParamBound::Trait(trait_bound) => closure_bound(trait_bound),
+            _ => None,
+        }) {
+            return self.closure(kind, arguments);
+        }
+
+        match impl_trait.bounds.iter().collect::<Vec<_>>().as_slice() {
+            [syn::TypeParamBound::Trait(bound)] => self.trait_bound(
+                bound,
+                source,
+                TraitUseForm::ImplTrait,
+                HandlePresence::Required,
+            ),
+            _ => Err(ScanError::unsupported_type(source)),
+        }
+    }
+
+    fn closure(
+        &self,
+        kind: ClosureKind,
+        arguments: &syn::ParenthesizedGenericArguments,
+    ) -> Result<TypeExpr, ScanError> {
         let parameters = arguments
             .inputs
             .iter()
@@ -136,6 +207,50 @@ impl<'a> Scanner<'a> {
         Ok(TypeExpr::closure(ClosureType::new(
             kind, parameters, returns,
         )))
+    }
+
+    fn trait_object_argument(
+        &self,
+        segment: &syn::PathSegment,
+        source: &syn::Type,
+        form: TraitUseForm,
+        presence: HandlePresence,
+    ) -> Result<TypeExpr, ScanError> {
+        let argument = self.single_type_argument(segment, source)?;
+        let syn::Type::TraitObject(trait_object) = unwrapped(argument) else {
+            return Err(ScanError::unsupported_type(source));
+        };
+        match trait_object.bounds.iter().collect::<Vec<_>>().as_slice() {
+            [syn::TypeParamBound::Trait(bound)] => self.trait_bound(bound, source, form, presence),
+            _ => Err(ScanError::unsupported_type(source)),
+        }
+    }
+
+    fn trait_bound(
+        &self,
+        bound: &syn::TraitBound,
+        source: &syn::Type,
+        form: TraitUseForm,
+        presence: HandlePresence,
+    ) -> Result<TypeExpr, ScanError> {
+        if !matches!(bound.modifier, syn::TraitBoundModifier::None) || bound.lifetimes.is_some() {
+            return Err(ScanError::unsupported_type(source));
+        }
+        if bound
+            .path
+            .segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+        {
+            return Err(ScanError::unsupported_type(source));
+        }
+        let Some(resolved_path) = self.module.resolve(&bound.path) else {
+            return Err(ScanError::unsupported_type(source));
+        };
+        match self.declared_types.resolve(&resolved_path) {
+            Some(DeclaredType::Trait(id)) => Ok(TypeExpr::r#trait(id.clone(), form, presence)),
+            _ => Err(ScanError::unsupported_type(source)),
+        }
     }
 }
 
@@ -188,7 +303,7 @@ fn closure_kind(name: &str) -> Option<ClosureKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boltffi_ast::{EnumId, RecordId};
+    use boltffi_ast::{EnumId, RecordId, TraitId};
 
     fn ty(source: &str) -> syn::Type {
         syn::parse_str(source).expect("valid type")
@@ -346,6 +461,93 @@ mod tests {
     #[test]
     fn self_type_is_captured_verbatim() {
         assert_eq!(scan("Self"), Ok(TypeExpr::SelfType));
+    }
+
+    #[test]
+    fn resolves_callback_trait_use_forms() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_trait(TraitId::new("demo::Listener"));
+        let module = ModulePath::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("impl Listener")),
+            Ok(TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::ImplTrait,
+                HandlePresence::Required,
+            ))
+        );
+        assert_eq!(
+            scanner.scan(&ty("Box<dyn Listener>")),
+            Ok(TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::BoxedDyn,
+                HandlePresence::Required,
+            ))
+        );
+        assert_eq!(
+            scanner.scan(&ty("std::sync::Arc<dyn Listener>")),
+            Ok(TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::ArcDyn,
+                HandlePresence::Required,
+            ))
+        );
+    }
+
+    #[test]
+    fn folds_optional_callback_trait_handles_into_presence() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_trait(TraitId::new("demo::Listener"));
+        let module = ModulePath::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Option<Box<dyn Listener>>")),
+            Ok(TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::BoxedDyn,
+                HandlePresence::Nullable,
+            ))
+        );
+        assert_eq!(
+            scanner.scan(&ty("Option<std::sync::Arc<dyn Listener>>")),
+            Ok(TypeExpr::r#trait(
+                TraitId::new("demo::Listener"),
+                TraitUseForm::ArcDyn,
+                HandlePresence::Nullable,
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_trait_references_that_would_erase_bounds_or_form() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_trait(TraitId::new("demo::Listener"));
+        let module = ModulePath::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert!(matches!(
+            scanner.scan(&ty("Listener")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Listener"
+        ));
+        assert!(matches!(
+            scanner.scan(&ty("impl Send + Listener")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "unrecognized type"
+        ));
+        assert!(matches!(
+            scanner.scan(&ty("Box<dyn Listener + Send>")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Box"
+        ));
+        assert!(matches!(
+            scanner.scan(&ty("impl Listener<i32>")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "unrecognized type"
+        ));
+        assert!(matches!(
+            scanner.scan(&ty("Box<dyn Listener<Item = i32>>")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Box"
+        ));
     }
 
     #[test]

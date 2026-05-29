@@ -1,3 +1,4 @@
+pub(super) mod callback;
 pub(super) mod enumeration;
 pub(super) mod function;
 pub(super) mod impl_block;
