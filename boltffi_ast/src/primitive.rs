@@ -55,4 +55,51 @@ impl Primitive {
             Self::F64 => "f64",
         }
     }
+
+    /// Returns the primitive matching a Rust primitive type name.
+    ///
+    /// The inverse of [`Primitive::rust_name`]. Returns `None` for any
+    /// name outside BoltFFI's accepted primitive scalars.
+    pub fn from_rust_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|primitive| primitive.rust_name() == name)
+    }
+
+    const ALL: [Self; 13] = [
+        Self::Bool,
+        Self::I8,
+        Self::U8,
+        Self::I16,
+        Self::U16,
+        Self::I32,
+        Self::U32,
+        Self::I64,
+        Self::U64,
+        Self::ISize,
+        Self::USize,
+        Self::F32,
+        Self::F64,
+    ];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_rust_name_inverts_rust_name() {
+        for primitive in Primitive::ALL {
+            assert_eq!(
+                Primitive::from_rust_name(primitive.rust_name()),
+                Some(primitive)
+            );
+        }
+    }
+
+    #[test]
+    fn from_rust_name_rejects_non_primitive() {
+        assert_eq!(Primitive::from_rust_name("String"), None);
+        assert_eq!(Primitive::from_rust_name("Point"), None);
+    }
 }
