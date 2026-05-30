@@ -55,15 +55,21 @@ pub struct CallbackTemplate<'a> {
     pub cb: &'a super::DartCallback,
 }
 
+#[derive(Template)]
+#[template(path = "render_dart/class.txt", escape = "none")]
+pub struct ClassTemplate<'a> {
+    pub class: &'a super::DartClass,
+}
+
 #[cfg(test)]
 mod tests {
     use boltffi_ffi_rules::callable::ExecutionKind;
 
     use crate::{
         ir::{
-            self, CallbackId, CallbackKind, CallbackMethodDef, CallbackTraitDef, FfiContract,
-            MethodId, PackageInfo, ParamDef, ParamName, ParamPassing, PrimitiveType, ReturnDef,
-            TypeExpr,
+            self, CallbackId, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ClassId,
+            ConstructorDef, FfiContract, MethodDef, MethodId, PackageInfo, ParamDef, ParamName,
+            ParamPassing, PrimitiveType, Receiver, ReturnDef, TypeExpr,
         },
         render::dart::{DartLibrary, DartLowerer},
     };
@@ -168,6 +174,69 @@ mod tests {
 
         let template = CallbackTemplate {
             cb: &library.callbacks[0],
+        };
+
+        insta::assert_snapshot!(template.render().unwrap());
+    }
+
+    #[test]
+    pub fn snapshot_class() {
+        let mut ffi = empty_contract();
+        ffi.catalog.insert_class(ClassDef {
+            id: ClassId::new("Person"),
+            constructors: vec![
+                ConstructorDef::Default {
+                    params: vec![
+                        ParamDef {
+                            name: ParamName::new("name"),
+                            type_expr: TypeExpr::String,
+                            passing: ParamPassing::Value,
+                            doc: None,
+                        },
+                        ParamDef {
+                            name: ParamName::new("age"),
+                            type_expr: TypeExpr::Primitive(PrimitiveType::U32),
+                            passing: ParamPassing::Value,
+                            doc: None,
+                        },
+                    ],
+                    is_fallible: false,
+                    is_optional: false,
+                    doc: None,
+                    deprecated: None,
+                },
+                ConstructorDef::NamedInit {
+                    name: MethodId::new("new_with_default_age"),
+                    is_fallible: false,
+                    is_optional: false,
+                    doc: None,
+                    deprecated: None,
+                    first_param: ParamDef {
+                        name: ParamName::new("name"),
+                        type_expr: TypeExpr::String,
+                        passing: ParamPassing::Value,
+                        doc: None,
+                    },
+                    rest_params: vec![],
+                },
+            ],
+            methods: vec![MethodDef {
+                id: MethodId::new("get_name"),
+                receiver: Receiver::RefSelf,
+                params: vec![],
+                returns: ReturnDef::Value(TypeExpr::String),
+                execution_kind: ExecutionKind::Sync,
+                doc: None,
+                deprecated: None,
+            }],
+            streams: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        let library = lower(&ffi);
+
+        let template = ClassTemplate {
+            class: &library.classes[0],
         };
 
         insta::assert_snapshot!(template.render().unwrap());

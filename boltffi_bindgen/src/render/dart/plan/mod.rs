@@ -1,4 +1,5 @@
 mod callback;
+mod class;
 mod custom_type;
 mod enumeration;
 mod function;
@@ -6,6 +7,7 @@ mod record;
 mod r#type;
 
 pub use callback::*;
+pub use class::*;
 pub use custom_type::*;
 pub use enumeration::*;
 pub use function::*;
@@ -20,7 +22,7 @@ pub enum DartConstructorKind {
 
 #[derive(Debug, Clone)]
 pub struct DartConstructor {
-    pub ffi_name: String,
+    pub native: DartNativeFunction,
     pub kind: DartConstructorKind,
     pub params: Vec<DartFunctionParam>,
     pub is_fallible: bool,
@@ -33,4 +35,5 @@ pub struct DartLibrary {
     pub records: Vec<DartRecord>,
     pub enums: Vec<DartEnum>,
     pub callbacks: Vec<DartCallback>,
+    pub classes: Vec<DartClass>,
 }

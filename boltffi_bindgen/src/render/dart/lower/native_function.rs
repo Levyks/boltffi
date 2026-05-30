@@ -12,7 +12,10 @@ impl<'a> super::DartLowerer<'a> {
     ) -> DartNativeFunctionParam {
         let name = match &abi_param.role {
             ParamRole::Input { contract, .. } => match contract.value_strategy() {
-                ParamValueStrategy::DirectBuffer(..) | ParamValueStrategy::WireEncoded(..) => {
+                ParamValueStrategy::DirectBuffer(..)
+                | ParamValueStrategy::WireEncoded(..)
+                | ParamValueStrategy::Utf8String
+                | ParamValueStrategy::CompositeValue => {
                     format!(
                         "{}Ptr",
                         NamingConvention::param_name(abi_param.name.as_str())
@@ -31,7 +34,7 @@ impl<'a> super::DartLowerer<'a> {
         }
     }
 
-    fn lower_one_native_function(&self, abi_call: &AbiCall) -> DartNativeFunction {
+    pub(super) fn lower_one_native_function(&self, abi_call: &AbiCall) -> DartNativeFunction {
         let symbol = abi_call.symbol.to_string();
 
         let params = abi_call

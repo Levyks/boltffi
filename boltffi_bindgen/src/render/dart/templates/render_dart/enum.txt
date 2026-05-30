@@ -45,7 +45,7 @@ enum {{ dart_enum.name }}{% if dart_enum.is_error %} implements Exception{% endi
 {% endmatch -%}
 {% endfor -%}
 {%- for meth in dart_enum.methods %}
-  {{ meth.ret_ty.dart_type() }} {{ meth.name }}(
+  {% if meth.is_static() %}static {% endif %}{{ meth.ret_ty.dart_type() }} {{ meth.name }}(
 {%- for param in meth.params %}
     {{ param.ty.dart_type() }} {{ param.name }},
 {%- endfor %}

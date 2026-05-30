@@ -97,10 +97,10 @@ final class {{ record.name }}{% if record.is_error %} implements Exception{% end
 {% endmatch -%}
 {% endfor -%}
 {%- for meth in record.methods %}
-  {{ meth.ret_ty.dart_type() }} {{ meth.name }}(
+  {% if meth.is_static() %}static {% endif %}{{ meth.ret_ty.dart_type() }} {{ meth.name }}(
 {%- for param in meth.params %}
     {{ param.ty.dart_type() }} {{ param.name }},
 {%- endfor %}
   ) {}
-{%- endfor %}
+{% endfor -%}
 }

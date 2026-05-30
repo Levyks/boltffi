@@ -1,0 +1,55 @@
+final class _$$Native${{ class.name }} {
+  @$$ffi.Native<
+    $$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)
+  >(isLeaf: true)
+  external static void {{ class.free_symbol }}($$ffi.Pointer<$$ffi.Void> handle);
+{% for ctor in class.constructors %}
+  @$$ffi.Native<
+    {{ ctor.native.return_type.native_type() }} Function(
+{%- for param in ctor.native.params %}
+      {{ param.native_type.native_type() }},
+{%- endfor %}
+    )
+  >({%if ctor.native.is_leaf %}isLeaf: true{% endif %})
+  external static {{ ctor.native.return_type.dart_sub_type() }} {{ ctor.native.symbol }}(
+  {%- for param in ctor.native.params %}
+    {{ param.native_type.dart_sub_type() }} {{ param.name }},
+  {%- endfor %}
+  );
+{% endfor -%}
+}
+
+final class {{ class.name }} implements $$ffi.Finalizable {
+  static final _finalizer = $$ffi.NativeFinalizer(
+    $$ffi.Native.addressOf(_$$Native${{ class.name }}.{{ class.free_symbol }})
+  );
+
+  final $$ffi.Pointer<$$ffi.Void> _handle;
+
+  {{ class.name }}._(this._handle) {
+    _finalizer.attach(this, _handle, detach: this);
+  }
+{% for ctor in class.constructors %}
+{%- match ctor.kind %}
+{% when super::DartConstructorKind::Default %}
+  factory {{ class.name }}(
+{%- for param in ctor.params %}
+    {{ param.ty.dart_type() }} {{ param.name }},
+{%- endfor %}
+  ) {}
+{% when super::DartConstructorKind::Named with { name: ctor_name } %}
+  factory {{ class.name }}.{{ ctor_name }}(
+{%- for param in ctor.params %}
+    {{ param.ty.dart_type() }} {{ param.name }},
+{%- endfor %}
+  ) {}
+{% endmatch -%}
+{% endfor -%}
+{%- for meth in class.methods %}
+  {% if meth.is_static() %}static {% endif %}{{ meth.ret_ty.dart_type() }} {{ meth.name }}(
+{%- for param in meth.params %}
+    {{ param.ty.dart_type() }} {{ param.name }},
+{%- endfor %}
+  ) {}
+{% endfor -%}
+}

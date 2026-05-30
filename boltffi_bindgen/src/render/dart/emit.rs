@@ -8,9 +8,9 @@ use crate::{
     render::dart::{
         DartLibrary, NamingConvention,
         templates::{
-            BuildHookTemplate, CallbackTemplate, CustomTypesTemplate, EnhancedEnumTemplate,
-            NativeFunctionsTemplate, PreludeTemplate, PubspecTemplate, RecordTemplate,
-            SealedClassEnumTemplate,
+            BuildHookTemplate, CallbackTemplate, ClassTemplate, CustomTypesTemplate,
+            EnhancedEnumTemplate, NativeFunctionsTemplate, PreludeTemplate, PubspecTemplate,
+            RecordTemplate, SealedClassEnumTemplate,
         },
     },
 };
@@ -60,6 +60,11 @@ impl DartEmitter {
         for cb in &library.callbacks {
             output.push_str("\n\n");
             output.push_str(CallbackTemplate { cb }.render().unwrap().as_str());
+        }
+
+        for class in &library.classes {
+            output.push_str("\n\n");
+            output.push_str(ClassTemplate { class }.render().unwrap().as_str());
         }
 
         output.push_str("\n\n");

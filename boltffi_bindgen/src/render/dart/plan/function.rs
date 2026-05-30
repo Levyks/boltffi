@@ -1,3 +1,5 @@
+use crate::ir::Receiver;
+
 #[derive(Debug, Clone)]
 pub struct DartNativeFunctionParam {
     pub name: String,
@@ -29,4 +31,11 @@ pub struct DartFunction {
     pub ffi_name: String,
     pub params: Vec<DartFunctionParam>,
     pub ret_ty: super::DartType,
+    pub receiver: Receiver,
+}
+
+impl DartFunction {
+    pub fn is_static(&self) -> bool {
+        matches!(self.receiver, Receiver::Static)
+    }
 }
