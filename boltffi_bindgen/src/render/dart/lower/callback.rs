@@ -108,7 +108,6 @@ impl<'a> super::DartLowerer<'a> {
         let abi_cb = self.abi_callback_for(&cb_def.id).unwrap();
 
         let class_name = NamingConvention::class_name(cb_def.id.as_str());
-        let native_decls_class_name = format!("_$$Native${}", class_name);
         let impl_class_name = format!("_I${}", class_name);
         let vtable_struct_name = format!(
             "_I${}",
@@ -116,8 +115,6 @@ impl<'a> super::DartLowerer<'a> {
         );
         let handle_map_class_name = format!("{}HandleMap", impl_class_name);
         let handle_map_instance_name = format!("_k${}HandleMap", class_name);
-        let create_handle_fn_name = abi_cb.create_fn.to_string();
-        let vtable_register_fn_name = abi_cb.register_fn.to_string();
 
         let methods = cb_def
             .methods
@@ -138,10 +135,7 @@ impl<'a> super::DartLowerer<'a> {
             handle_map_instance_name,
             methods,
             native: DartNativeCallback {
-                native_decls_class_name,
-                create_handle_fn_name,
                 vtable_struct_name,
-                vtable_register_fn_name,
                 methods: native_methods,
             },
         }
