@@ -16,10 +16,7 @@ impl DartNativeCallbackMethod {
 
 #[derive(Debug, Clone)]
 pub struct DartNativeCallback {
-    pub native_decls_class_name: String,
-    pub create_handle_fn_name: String,
     pub vtable_struct_name: String,
-    pub vtable_register_fn_name: String,
     pub methods: Vec<DartNativeCallbackMethod>,
 }
 

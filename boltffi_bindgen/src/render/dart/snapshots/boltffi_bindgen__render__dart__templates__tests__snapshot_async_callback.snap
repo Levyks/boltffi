@@ -63,18 +63,6 @@ final class _I$ICallbackVTable extends $$ffi.Struct {
   > processBytes;
 }
 
-final class _$$Native$ICallback {
-  @$$ffi.Native<
-    $$ffi.Void Function($$ffi.Pointer<_I$ICallbackVTable>)
-  >()
-  external static void boltffi_register_i_callback_vtable($$ffi.Pointer<_I$ICallbackVTable> vtable);
-
-  @$$ffi.Native<
-    _$$BoltFFICallbackHandle Function($$ffi.Uint64)
-  >()
-  external static _$$BoltFFICallbackHandle boltffi_create_i_callback_handle(int handle);
-}
-
 abstract interface class ICallback {
   Future<int> mapU32(
     int n,
@@ -213,8 +201,6 @@ final class _I$ICallbackHandleMap implements $$ffi.Finalizable {
       _vtable.cast(),
       detach: this,
     );
-
-    _$$Native$ICallback.boltffi_register_i_callback_vtable(_vtable);
   }
 
   void dispose() {
@@ -227,6 +213,12 @@ final class _I$ICallbackHandleMap implements $$ffi.Finalizable {
     _counter = handle;
     _map[handle] = value;
     return handle;
+  }
+
+  _$$BoltFFICallbackHandle createHandle(ICallback value) {
+    return $$ffi.Struct.create()
+      ..handle = insert(value)
+      ..vtable = _vtable.cast();
   }
 
   ICallback? get(int handle) => _map[handle];

@@ -23,18 +23,6 @@ final class {{ cb.native.vtable_struct_name }} extends $$ffi.Struct {
 {% endfor -%}
 }
 
-final class {{ cb.native.native_decls_class_name }} {
-  @$$ffi.Native<
-    $$ffi.Void Function($$ffi.Pointer<{{ cb.native.vtable_struct_name }}>)
-  >()
-  external static void {{ cb.native.vtable_register_fn_name }}($$ffi.Pointer<{{ cb.native.vtable_struct_name }}> vtable);
-
-  @$$ffi.Native<
-    _$$BoltFFICallbackHandle Function($$ffi.Uint64)
-  >()
-  external static _$$BoltFFICallbackHandle {{ cb.native.create_handle_fn_name }}(int handle);
-}
-
 abstract interface class {{ cb.class_name }} {
 {%- for method in cb.methods %}
   {% if method.is_async() %}Future<{{ method.ret_ty.dart_type() }}>{% else %}{{ method.ret_ty.dart_type() }}{% endif %} {{ method.name }}(
@@ -99,8 +87,6 @@ final class {{ cb.handle_map_class_name }} implements $$ffi.Finalizable {
       _vtable.cast(),
       detach: this,
     );
-
-    {{ cb.native.native_decls_class_name }}.{{ cb.native.vtable_register_fn_name }}(_vtable);
   }
 
   void dispose() {
@@ -113,6 +99,12 @@ final class {{ cb.handle_map_class_name }} implements $$ffi.Finalizable {
     _counter = handle;
     _map[handle] = value;
     return handle;
+  }
+
+  _$$BoltFFICallbackHandle createHandle({{ cb.class_name }} value) {
+    return $$ffi.Struct.create()
+      ..handle = insert(value)
+      ..vtable = _vtable.cast();
   }
 
   {{ cb.class_name }}? get(int handle) => _map[handle];
