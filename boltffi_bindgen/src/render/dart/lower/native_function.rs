@@ -1,8 +1,11 @@
 use boltffi_ffi_rules::transport::ParamValueStrategy;
 
 use crate::{
-    ir::{AbiCall, AbiParam, AbiType, ParamRole},
-    render::dart::{DartNativeFunction, DartNativeFunctionParam, DartNativeType, NamingConvention},
+    ir::{AbiCall, AbiParam, AbiType, CallMode, ParamRole},
+    render::dart::{
+        DartNativeFunction, DartNativeFunctionCallMode, DartNativeFunctionParam, DartNativeType,
+        NamingConvention,
+    },
 };
 
 impl<'a> super::DartLowerer<'a> {
@@ -50,14 +53,36 @@ impl<'a> super::DartLowerer<'a> {
             )
         });
 
+        let call_mode = match &abi_call.mode {
+            CallMode::Sync => DartNativeFunctionCallMode::Sync,
+            CallMode::Async(call) => DartNativeFunctionCallMode::Async {
+                poll_symbol: call.poll.to_string(),
+                complete_symbol: call.complete.to_string(),
+                complete_ty: DartNativeType::from_return_shape_and_error_transport(
+                    &call.result,
+                    &call.error,
+                ),
+                cancel_symbol: call.cancel.to_string(),
+                free_symbol: call.free.to_string(),
+            },
+        };
+
         DartNativeFunction {
             symbol,
             params,
-            return_type: DartNativeType::from_return_shape_and_error_transport(
-                &abi_call.returns,
-                &abi_call.error,
-            ),
+            return_type: match &call_mode {
+                DartNativeFunctionCallMode::Sync => {
+                    DartNativeType::from_return_shape_and_error_transport(
+                        &abi_call.returns,
+                        &abi_call.error,
+                    )
+                }
+                DartNativeFunctionCallMode::Async { .. } => {
+                    DartNativeType::Pointer(Box::new(DartNativeType::Void))
+                }
+            },
             is_leaf: !is_not_leaf,
+            call_mode,
         }
     }
 
@@ -208,5 +233,55 @@ mod tests {
                 .contains("$$ffi.Pointer<$$ffi.NativeFunction<")
         );
         assert!(!library.native.functions[0].is_leaf);
+    }
+
+    #[test]
+    pub fn native_function_async() {
+        let mut ffi = test::empty_contract();
+        ffi.functions.push(FunctionDef {
+            id: FunctionId::new("async_add"),
+            params: vec![
+                ParamDef {
+                    name: ParamName::new("a"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I32),
+                    passing: ParamPassing::Value,
+                    doc: None,
+                },
+                ParamDef {
+                    name: ParamName::new("b"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I32),
+                    passing: ParamPassing::Value,
+                    doc: None,
+                },
+            ],
+            returns: ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I32)),
+            execution_kind: ExecutionKind::Async,
+            deprecated: None,
+            doc: None,
+        });
+
+        let library = test::lower(&ffi);
+
+        let func = &library.native.functions[0];
+        match &func.call_mode {
+            DartNativeFunctionCallMode::Sync => panic!("CallMode should be async"),
+            DartNativeFunctionCallMode::Async {
+                poll_symbol,
+                complete_symbol,
+                complete_ty,
+                cancel_symbol,
+                free_symbol,
+            } => {
+                assert_eq!(poll_symbol, "boltffi_async_add_poll");
+                assert_eq!(complete_symbol, "boltffi_async_add_complete");
+                assert!(matches!(
+                    complete_ty,
+                    DartNativeType::Primitive(PrimitiveType::I32)
+                ));
+                assert_eq!(complete_symbol, "boltffi_async_add_complete");
+                assert_eq!(cancel_symbol, "boltffi_async_add_cancel");
+                assert_eq!(free_symbol, "boltffi_async_add_free");
+            }
+        };
     }
 }

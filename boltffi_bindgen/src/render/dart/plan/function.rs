@@ -7,11 +7,24 @@ pub struct DartNativeFunctionParam {
 }
 
 #[derive(Debug, Clone)]
+pub enum DartNativeFunctionCallMode {
+    Sync,
+    Async {
+        poll_symbol: String,
+        complete_symbol: String,
+        complete_ty: super::DartNativeType,
+        cancel_symbol: String,
+        free_symbol: String,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct DartNativeFunction {
     pub symbol: String,
     pub params: Vec<DartNativeFunctionParam>,
     pub return_type: super::DartNativeType,
     pub is_leaf: bool,
+    pub call_mode: DartNativeFunctionCallMode,
 }
 
 #[derive(Debug, Clone)]

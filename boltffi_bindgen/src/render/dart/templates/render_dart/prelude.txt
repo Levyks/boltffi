@@ -1,5 +1,6 @@
 // ignore_for_file: camel_case_types, non_constant_identifier_names, unused_element, unused_local_variable, library_prefixes, library_private_types_in_public_api, no_leading_underscores_for_local_identifiers
 
+import 'dart:async' as $$async;
 import 'dart:convert' as $$convert;
 import 'dart:typed_data' as $$typed_data;
 import 'dart:ffi' as $$ffi;
@@ -519,5 +520,60 @@ class _$$WireReader {
       1 => BoltFFIResult.err(onErr(this)),
       _ => throw _$$FFIException(-1, "Invalid Result tag: $tag"),
     };
+  }
+}
+
+final class _$$BoltFFIAsync {
+  static const int _k$RustFuturePoll$Ready = 0;
+  static const int _k$RustFuturePoll$MaybeReady = 1;
+
+  static Future<R> create<R>({
+    required $$ffi.Pointer<$$ffi.Void> Function() createFuture,
+    required void Function(
+      $$ffi.Pointer<$$ffi.Void> handle,
+      int callback_data,
+      $$ffi.Pointer<
+        $$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>
+      >
+      callback,
+    )
+    pollFuture,
+    required R Function($$ffi.Pointer<$$ffi.Void> handle) completeFuture,
+    required void Function($$ffi.Pointer<$$ffi.Void> handle) freeFuture,
+    required void Function($$ffi.Pointer<$$ffi.Void> handle) cancelFuture,
+  }) async {
+    final handle = createFuture();
+    final completer = $$async.Completer<R>();
+    late final $$ffi.NativeCallable<
+      $$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)
+    >
+    completerCallbackCallable;
+
+    void completerCallback(int data, int res) {
+      switch (res) {
+        case _k$RustFuturePoll$Ready:
+          completerCallbackCallable.close();
+
+          try {
+            completer.complete(completeFuture(handle));
+          } catch (err) {
+            completer.completeError(err);
+          } finally {
+            freeFuture(handle);
+          }
+        case _k$RustFuturePoll$MaybeReady:
+          pollFuture(handle, data, completerCallbackCallable.nativeFunction);
+        case _:
+          throw _$$FFIException(-1, "Unexpected poll result: $res");
+      }
+    }
+
+    completerCallbackCallable = $$ffi.NativeCallable.listener(
+      completerCallback,
+    );
+
+    pollFuture(handle, 0, completerCallbackCallable.nativeFunction);
+
+    return completer.future;
   }
 }
