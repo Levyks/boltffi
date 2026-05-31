@@ -6,7 +6,7 @@
     "bench": "node bench.mjs"
   },
   "dependencies": {
-    "@boltffi/runtime": "file:../../runtime/typescript",
+    "@boltffi/runtime": "file:../../../runtime/typescript",
     "benchmark": "^2.1.4"
   }
 }

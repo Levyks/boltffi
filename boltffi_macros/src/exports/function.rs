@@ -545,7 +545,6 @@ fn generate_async_export(
     let fn_inputs = &input.sig.inputs;
     let fn_output = &input.sig.output;
     let fn_vis = &input.vis;
-    let fn_block = &input.block;
 
     let base_name = format!("{}_{}", naming::ffi_prefix(), fn_name);
     let export_names = AsyncExportNames::new(&base_name, fn_name.span());
@@ -606,7 +605,7 @@ fn generate_async_export(
     .render(wasm_complete);
 
     let expanded = quote! {
-        #fn_vis async fn #fn_name(#fn_inputs) #fn_output #fn_block
+        #input
 
         #entry_fn
 
