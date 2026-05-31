@@ -8,6 +8,13 @@ PROFILE="release"
 PUBLISH=false
 BENCH_ARGS=()
 DEFAULT_COLUMNS="name,avg,median,min,max,std_abs,p50,p90,p95,p99,iterations,warmup"
+APPLE_RUST_TARGETS=(
+    "aarch64-apple-ios"
+    "aarch64-apple-ios-sim"
+    "x86_64-apple-ios"
+    "x86_64-apple-darwin"
+    "aarch64-apple-darwin"
+)
 
 cd "$SCRIPT_DIR"
 
@@ -31,6 +38,30 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+install_apple_rust_targets() {
+    rustup target add "${APPLE_RUST_TARGETS[@]}"
+}
+
+prepare_boltffi_package() {
+    local build_args=("--platform" "apple" "--skip-bench")
+
+    if [[ "$PROFILE" == "release" ]]; then
+        build_args+=("--release")
+    else
+        build_args+=("--debug")
+    fi
+
+    "$ROOT_DIR/benchmarks/generated/boltffi/build.sh" "${build_args[@]}"
+}
+
+prepare_uniffi_package() {
+    "$ROOT_DIR/benchmarks/adapters/uniffi/build-xcframework.sh"
+}
+
+install_apple_rust_targets
+prepare_boltffi_package
+prepare_uniffi_package
 
 mkdir -p "$RESULTS_DIR"
 

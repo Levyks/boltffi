@@ -196,20 +196,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
         run: |
-          cargo publish -p boltffi_ffi_rules --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi_ffi_rules || true
           sleep 30
-          cargo publish -p boltffi_macros --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi_macros || true
           sleep 30
-          cargo publish -p boltffi_core --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi_core || true
           sleep 30
-          cargo publish -p boltffi --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi || true
           sleep 30
-          cargo publish -p boltffi_bindgen --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi_bindgen || true
           sleep 30
-          cargo publish -p boltffi_verify --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi_verify || true
           sleep 30
-          cargo publish -p boltffi_cli --token ${{ secrets.CARGO_TOKEN }} || true
+          cargo publish -p boltffi_cli || true
 
   publish-npm:
     name: Publish to npm

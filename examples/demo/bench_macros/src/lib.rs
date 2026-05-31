@@ -1,9 +1,15 @@
+use std::mem;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_macro_input, parse_quote, Attribute, Error, Ident, ImplItem, Item, LitStr, Result, Token};
+use syn::{
+    Attribute, Error, Fields, Ident, ImplItem, Item, ItemEnum, LitStr, Result, Token,
+    parse_macro_input, parse_quote,
+};
 
+#[derive(Clone, Copy)]
 enum CandidateKind {
     Function,
     Record,
@@ -77,35 +83,32 @@ pub fn demo_case(_args: TokenStream, item: TokenStream) -> TokenStream {
 fn expand_candidate(args: CandidateArgs, item: Item) -> Result<proc_macro2::TokenStream> {
     match (args.kind, item) {
         (CandidateKind::Function, Item::Fn(mut item_function)) => {
-            prepend_attributes(
+            append_attributes(
                 &mut item_function.attrs,
                 candidate_attributes(&args.targets, CandidateKind::Function),
             );
             Ok(quote!(#item_function))
         }
         (CandidateKind::Record, Item::Struct(mut item_struct)) => {
-            prepend_attributes(
+            append_attributes(
                 &mut item_struct.attrs,
                 candidate_attributes(&args.targets, CandidateKind::Record),
             );
             Ok(quote!(#item_struct))
         }
         (CandidateKind::Enum, Item::Enum(mut item_enum)) => {
-            prepend_attributes(
-                &mut item_enum.attrs,
-                candidate_attributes(&args.targets, CandidateKind::Enum),
-            );
+            append_enum_attributes(&mut item_enum, &args.targets);
             Ok(quote!(#item_enum))
         }
         (CandidateKind::Object, Item::Struct(mut item_struct)) => {
-            prepend_attributes(
+            append_attributes(
                 &mut item_struct.attrs,
                 candidate_attributes(&args.targets, CandidateKind::Object),
             );
             Ok(quote!(#item_struct))
         }
         (CandidateKind::Impl, Item::Impl(mut item_impl)) => {
-            prepend_attributes(
+            append_attributes(
                 &mut item_impl.attrs,
                 candidate_attributes(&args.targets, CandidateKind::Impl),
             );
@@ -116,16 +119,20 @@ fn expand_candidate(args: CandidateArgs, item: Item) -> Result<proc_macro2::Toke
                     .items
                     .iter_mut()
                     .filter_map(|impl_item| match impl_item {
-                        ImplItem::Fn(method) if method.sig.ident == constructor_name => Some(method),
+                        ImplItem::Fn(method) if method.sig.ident == constructor_name => {
+                            Some(method)
+                        }
                         _ => None,
                     })
-                    .for_each(|method| prepend_attributes(&mut method.attrs, constructor_attributes.clone()));
+                    .for_each(|method| {
+                        append_attributes(&mut method.attrs, constructor_attributes.clone())
+                    });
             }
 
             Ok(quote!(#item_impl))
         }
         (CandidateKind::CallbackInterface, Item::Trait(mut item_trait)) => {
-            prepend_attributes(
+            append_attributes(
                 &mut item_trait.attrs,
                 candidate_attributes(&args.targets, CandidateKind::CallbackInterface),
             );
@@ -133,18 +140,57 @@ fn expand_candidate(args: CandidateArgs, item: Item) -> Result<proc_macro2::Toke
         }
         (kind, item) => Err(Error::new_spanned(
             item,
-            format!("benchmark_candidate kind {} does not match item", kind_name(&kind)),
+            format!(
+                "benchmark_candidate kind {} does not match item",
+                kind_name(&kind)
+            ),
         )),
     }
 }
 
+fn append_attributes(attributes: &mut Vec<Attribute>, new_attributes: Vec<Attribute>) {
+    attributes.extend(new_attributes);
+}
+
 fn prepend_attributes(attributes: &mut Vec<Attribute>, new_attributes: Vec<Attribute>) {
-    attributes.splice(0..0, new_attributes);
+    *attributes = new_attributes
+        .into_iter()
+        .chain(mem::take(attributes))
+        .collect();
+}
+
+fn append_enum_attributes(item_enum: &mut ItemEnum, targets: &[TargetKind]) {
+    let has_payload_variants = item_enum
+        .variants
+        .iter()
+        .any(|variant| !matches!(variant.fields, Fields::Unit));
+
+    let leading_attributes = targets
+        .iter()
+        .filter(|target| has_payload_variants && matches!(target, TargetKind::Uniffi))
+        .flat_map(|target| target_attributes(target, CandidateKind::Enum))
+        .collect();
+    let trailing_attributes = targets
+        .iter()
+        .filter(|target| !(has_payload_variants && matches!(target, TargetKind::Uniffi)))
+        .flat_map(|target| target_attributes(target, CandidateKind::Enum))
+        .collect();
+
+    prepend_attributes(&mut item_enum.attrs, leading_attributes);
+    append_attributes(&mut item_enum.attrs, trailing_attributes);
 }
 
 fn candidate_attributes(targets: &[TargetKind], kind: CandidateKind) -> Vec<Attribute> {
-    targets.iter().flat_map(|target| match (target, &kind) {
-        (TargetKind::Uniffi, CandidateKind::Function) | (TargetKind::Uniffi, CandidateKind::Impl) => {
+    targets
+        .iter()
+        .flat_map(|target| target_attributes(target, kind))
+        .collect()
+}
+
+fn target_attributes(target: &TargetKind, kind: CandidateKind) -> Vec<Attribute> {
+    match (target, kind) {
+        (TargetKind::Uniffi, CandidateKind::Function)
+        | (TargetKind::Uniffi, CandidateKind::Impl) => {
             vec![parse_quote!(#[cfg_attr(feature = "uniffi", uniffi::export)])]
         }
         (TargetKind::Uniffi, CandidateKind::Record) => {
@@ -164,10 +210,12 @@ fn candidate_attributes(targets: &[TargetKind], kind: CandidateKind) -> Vec<Attr
         | (TargetKind::WasmBindgen, CandidateKind::Enum)
         | (TargetKind::WasmBindgen, CandidateKind::Object)
         | (TargetKind::WasmBindgen, CandidateKind::Impl) => {
-            vec![parse_quote!(#[cfg_attr(feature = "wasm-bench", wasm_bindgen::prelude::wasm_bindgen)])]
+            vec![
+                parse_quote!(#[cfg_attr(feature = "wasm-bench", wasm_bindgen::prelude::wasm_bindgen)]),
+            ]
         }
         (TargetKind::WasmBindgen, CandidateKind::CallbackInterface) => Vec::new(),
-    }).collect()
+    }
 }
 
 fn constructor_attributes(targets: &[TargetKind]) -> Vec<Attribute> {
