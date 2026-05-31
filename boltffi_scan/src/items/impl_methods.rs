@@ -1,34 +1,85 @@
 use boltffi_ast::MethodDef;
 
 use crate::declared_types::DeclaredTypes;
-use crate::marker::Marker;
+use crate::marker::{self, Disposition};
 use crate::type_expr::Scanner;
-use crate::{ModulePath, ScanError};
+use crate::{ModuleScope, ScanError};
 
-use super::signature;
+use super::{signature, stream};
 
-pub(super) fn scan(
+pub(super) fn class_methods(
     item: &syn::ItemImpl,
     parent: &str,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<Vec<MethodDef>, ScanError> {
-    let scanner = Scanner::new(declared_types, module);
+    scan(item, parent, scope, declared_types, StreamMethods::Separate)
+}
+
+pub(super) fn value_methods(
+    item: &syn::ItemImpl,
+    parent: &str,
+    scope: &ModuleScope,
+    declared_types: &DeclaredTypes,
+) -> Result<Vec<MethodDef>, ScanError> {
+    scan(item, parent, scope, declared_types, StreamMethods::Reject)
+}
+
+fn scan(
+    item: &syn::ItemImpl,
+    parent: &str,
+    scope: &ModuleScope,
+    declared_types: &DeclaredTypes,
+    stream_methods: StreamMethods,
+) -> Result<Vec<MethodDef>, ScanError> {
+    let scanner = Scanner::new(declared_types, scope);
     item.items
         .iter()
-        .filter_map(|impl_item| scan_item(impl_item, parent, &scanner))
+        .filter_map(|impl_item| scan_item(impl_item, parent, &scanner, stream_methods))
         .collect()
+}
+
+#[derive(Clone, Copy)]
+enum StreamMethods {
+    Separate,
+    Reject,
+}
+
+impl StreamMethods {
+    fn classify(self, method: &syn::ImplItemFn) -> Result<MethodKind, ScanError> {
+        match (self, stream::Attribute::scan(&method.attrs)?) {
+            (Self::Reject, Some(_)) => Err(stream::Attribute::invalid_placement("method")),
+            (Self::Separate, Some(_)) => {
+                if exported_method(&method.attrs, &method.vis, "stream method")? {
+                    Ok(MethodKind::Stream)
+                } else {
+                    Err(stream::Attribute::invalid_placement("stream method"))
+                }
+            }
+            (_, None) => Ok(MethodKind::Normal),
+        }
+    }
+}
+
+enum MethodKind {
+    Normal,
+    Stream,
 }
 
 fn scan_item(
     item: &syn::ImplItem,
     parent: &str,
     scanner: &Scanner<'_>,
+    stream_methods: StreamMethods,
 ) -> Option<Result<MethodDef, ScanError>> {
     match item {
-        syn::ImplItem::Fn(method) => match exported(&method.attrs, &method.vis, "method") {
-            Ok(true) => Some(signature::method(&method.sig, parent, scanner)),
-            Ok(false) => None,
+        syn::ImplItem::Fn(method) => match stream_methods.classify(method) {
+            Ok(MethodKind::Normal) => match exported_method(&method.attrs, &method.vis, "method") {
+                Ok(true) => Some(signature::method(&method.sig, parent, scanner)),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            },
+            Ok(MethodKind::Stream) => None,
             Err(error) => Some(Err(error)),
         },
         syn::ImplItem::Const(item) => non_method(
@@ -62,18 +113,15 @@ fn scan_item(
     }
 }
 
-fn exported(
+pub(super) fn exported_method(
     attrs: &[syn::Attribute],
     visibility: &syn::Visibility,
     item: &str,
 ) -> Result<bool, ScanError> {
-    match Marker::detect(attrs)? {
-        Some(Marker::Skip) => Ok(false),
-        Some(marker) => Err(ScanError::InvalidMarkerPlacement {
-            marker: marker.as_str().to_owned(),
-            item: item.to_owned(),
-        }),
-        None => Ok(matches!(visibility, syn::Visibility::Public(_))),
+    match marker::disposition(attrs)? {
+        Disposition::Skip => Ok(false),
+        Disposition::Reject(marker) => Err(marker.invalid_placement(item)),
+        Disposition::Unmarked => Ok(matches!(visibility, syn::Visibility::Public(_))),
     }
 }
 
@@ -84,19 +132,21 @@ fn non_method(
     name: String,
     item: &str,
 ) -> Option<Result<MethodDef, ScanError>> {
-    match Marker::detect(attrs) {
-        Ok(Some(Marker::Skip)) => None,
-        Ok(Some(marker)) => Some(Err(ScanError::InvalidMarkerPlacement {
-            marker: marker.as_str().to_owned(),
-            item: item.to_owned(),
-        })),
-        Ok(None)
+    match stream::Attribute::scan(attrs) {
+        Ok(Some(_)) => return Some(Err(stream::Attribute::invalid_placement(item))),
+        Ok(None) => {}
+        Err(error) => return Some(Err(error)),
+    }
+    match marker::disposition(attrs) {
+        Ok(Disposition::Skip) => None,
+        Ok(Disposition::Reject(marker)) => Some(Err(marker.invalid_placement(item))),
+        Ok(Disposition::Unmarked)
             if visibility
                 .is_some_and(|visibility| !matches!(visibility, syn::Visibility::Public(_))) =>
         {
             None
         }
-        Ok(None) => Some(Err(ScanError::UnsupportedImplItem {
+        Ok(Disposition::Unmarked) => Some(Err(ScanError::UnsupportedImplItem {
             item: format!("{parent}::{name}"),
         })),
         Err(error) => Some(Err(error)),
@@ -106,7 +156,7 @@ fn non_method(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModulePath;
+    use crate::ModuleScope;
     use crate::declared_types::DeclaredTypes;
     use boltffi_ast::{
         CanonicalName, MethodDef, MethodId, NamePart, Primitive, Receiver, ReturnDef, TypeExpr,
@@ -125,10 +175,23 @@ mod tests {
         parent: &str,
         declared_types: &DeclaredTypes,
     ) -> Result<Vec<MethodDef>, ScanError> {
-        super::scan(
+        super::value_methods(
             &parse(source),
             parent,
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
+            declared_types,
+        )
+    }
+
+    fn scan_class(
+        source: &str,
+        parent: &str,
+        declared_types: &DeclaredTypes,
+    ) -> Result<Vec<MethodDef>, ScanError> {
+        super::class_methods(
+            &parse(source),
+            parent,
+            &ModuleScope::root("demo"),
             declared_types,
         )
     }
@@ -205,6 +268,83 @@ mod tests {
 
         assert_eq!(methods.len(), 1);
         assert_eq!(methods[0].name, name(&["exported"]));
+    }
+
+    #[test]
+    fn class_method_scan_skips_stream_methods() {
+        let methods = scan_class(
+            "impl Engine { \
+                #[ffi_stream(item = i32)] \
+                pub fn values(&self) -> Arc<EventSubscription<i32>> { todo!() } \
+                pub fn version(&self) -> u32 { 1 } \
+            }",
+            "demo::Engine",
+            &DeclaredTypes::new(),
+        )
+        .expect("scan");
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].id, MethodId::new("demo::Engine::version"));
+    }
+
+    #[test]
+    fn class_method_scan_rejects_private_stream_methods() {
+        let error = scan_class(
+            "impl Engine { \
+                #[ffi_stream(item = i32)] \
+                fn values(&self) -> Arc<EventSubscription<i32>> { todo!() } \
+            }",
+            "demo::Engine",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("private stream methods are invalid");
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "ffi_stream".to_owned(),
+                item: "stream method".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn value_method_scan_rejects_stream_methods() {
+        let error = scan(
+            "impl Point { \
+                #[ffi_stream(item = i32)] \
+                pub fn values(&self) -> Arc<EventSubscription<i32>> { todo!() } \
+            }",
+            "demo::Point",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("value methods cannot be streams");
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "ffi_stream".to_owned(),
+                item: "method".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_stream_marker_on_non_method_items() {
+        let error = scan_class(
+            "impl Engine { #[ffi_stream(item = i32)] pub const VALUES: u32 = 0; }",
+            "demo::Engine",
+            &DeclaredTypes::new(),
+        )
+        .expect_err("stream marker belongs to methods");
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "ffi_stream".to_owned(),
+                item: "associated const".to_owned()
+            }
+        );
     }
 
     #[test]

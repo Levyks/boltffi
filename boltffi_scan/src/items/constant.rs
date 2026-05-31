@@ -4,28 +4,28 @@ use crate::const_expr;
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr;
-use crate::{ModulePath, ScanError, name, visibility};
+use crate::{ModuleScope, ScanError, name, visibility};
 
 pub fn scan(
     marked: &Marked<'_, syn::ItemConst>,
     declared_types: &DeclaredTypes,
 ) -> Result<ConstantDef, ScanError> {
-    build(marked.item(), marked.module(), declared_types)
+    build(marked.item(), marked.scope(), declared_types)
 }
 
 fn build(
     item: &syn::ItemConst,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<ConstantDef, ScanError> {
     let ident = &item.ident;
     if ident == "_" {
         return Err(ScanError::AnonymousConstant);
     }
-    let types = type_expr::Scanner::new(declared_types, module);
+    let types = type_expr::Scanner::new(declared_types, scope);
     let value = const_expr::Scanner::new(&types).scan(&item.expr);
     let mut constant = ConstantDef::new(
-        ConstantId::new(module.qualified(&ident.to_string())),
+        ConstantId::new(scope.path().qualified(&ident.to_string())),
         name::canonical(ident),
         types.scan(&item.ty)?,
         value,
@@ -49,7 +49,7 @@ mod tests {
     fn scan(source: &str) -> Result<ConstantDef, ScanError> {
         super::build(
             &parse(source),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &DeclaredTypes::new(),
         )
     }
@@ -120,7 +120,7 @@ mod tests {
         declared_types.register_enum(EnumId::new("demo::Mode"));
         let constant = super::build(
             &parse("pub const DEFAULT_MODE: Mode = Mode::Fast;"),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &declared_types,
         )
         .expect("scan");

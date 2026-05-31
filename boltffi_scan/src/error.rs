@@ -20,6 +20,12 @@ pub enum ScanError {
     InvalidMarker {
         attribute: String,
     },
+    InvalidAttribute {
+        attribute: String,
+    },
+    InvalidDefault {
+        attribute: String,
+    },
     InvalidMarkerPlacement {
         marker: String,
         item: String,
@@ -32,6 +38,15 @@ pub enum ScanError {
         path: String,
         first: String,
         second: String,
+    },
+    AmbiguousPath {
+        path: String,
+    },
+    InvalidCustomType {
+        message: String,
+    },
+    InvalidStream {
+        message: String,
     },
     UnsupportedMarkedImpl {
         target: String,
@@ -114,6 +129,12 @@ impl fmt::Display for ScanError {
             Self::InvalidMarker { attribute } => {
                 write!(formatter, "invalid BoltFFI marker `{attribute}`")
             }
+            Self::InvalidAttribute { attribute } => {
+                write!(formatter, "invalid source attribute `{attribute}`")
+            }
+            Self::InvalidDefault { attribute } => {
+                write!(formatter, "invalid default attribute `{attribute}`")
+            }
             Self::InvalidMarkerPlacement { marker, item } => {
                 write!(
                     formatter,
@@ -135,6 +156,15 @@ impl fmt::Display for ScanError {
                     formatter,
                     "conflicting BoltFFI declarations `{first}` and `{second}` for `{path}`"
                 )
+            }
+            Self::AmbiguousPath { path } => {
+                write!(formatter, "ambiguous source path `{path}`")
+            }
+            Self::InvalidCustomType { message } => {
+                write!(formatter, "invalid custom type declaration: {message}")
+            }
+            Self::InvalidStream { message } => {
+                write!(formatter, "invalid stream declaration: {message}")
             }
             Self::UnsupportedMarkedImpl { target } => {
                 write!(
@@ -282,6 +312,13 @@ mod tests {
             }
             .to_string(),
             "marked impl target `Missing` is not a supported value type"
+        );
+        assert_eq!(
+            ScanError::InvalidStream {
+                message: "ffi_stream requires item = <type>".to_owned()
+            }
+            .to_string(),
+            "invalid stream declaration: ffi_stream requires item = <type>"
         );
         assert_eq!(
             ScanError::UnsupportedClassImpl {

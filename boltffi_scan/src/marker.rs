@@ -4,7 +4,7 @@ use syn::parse::Parser;
 use crate::ScanError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Marker {
+pub enum Marker {
     Data,
     DataImpl,
     Error,
@@ -12,8 +12,23 @@ pub(super) enum Marker {
     Skip,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Disposition {
+    Skip,
+    Reject(Marker),
+    Unmarked,
+}
+
+pub fn disposition(attrs: &[syn::Attribute]) -> Result<Disposition, ScanError> {
+    Ok(match Marker::detect(attrs)? {
+        Some(Marker::Skip) => Disposition::Skip,
+        Some(marker) => Disposition::Reject(marker),
+        None => Disposition::Unmarked,
+    })
+}
+
 impl Marker {
-    pub(super) fn detect(attrs: &[syn::Attribute]) -> Result<Option<Self>, ScanError> {
+    pub fn detect(attrs: &[syn::Attribute]) -> Result<Option<Self>, ScanError> {
         attrs.iter().try_fold(None, |detected: Option<Self>, attr| {
             let marker = Self::from_attribute(attr)?;
             match (detected, marker) {
@@ -27,7 +42,7 @@ impl Marker {
         })
     }
 
-    pub(super) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Data => "data",
             Self::DataImpl => "data(impl)",
@@ -37,7 +52,14 @@ impl Marker {
         }
     }
 
-    pub(super) fn append_value_attrs(self, attrs: &mut Vec<UserAttr>) {
+    pub fn invalid_placement(self, item: impl Into<String>) -> ScanError {
+        ScanError::InvalidMarkerPlacement {
+            marker: self.as_str().to_owned(),
+            item: item.into(),
+        }
+    }
+
+    pub fn append_value_attrs(self, attrs: &mut Vec<UserAttr>) {
         if self == Self::Error {
             attrs.push(UserAttr::new(Path::single("error"), AttributeInput::Empty));
         }
@@ -90,16 +112,7 @@ fn marker_name(attr: &syn::Attribute) -> Option<String> {
 
 fn invalid(attr: &syn::Attribute) -> ScanError {
     ScanError::InvalidMarker {
-        attribute: spelling(attr),
-    }
-}
-
-fn spelling(attr: &syn::Attribute) -> String {
-    let path = crate::spelling::path(attr.path());
-    match &attr.meta {
-        syn::Meta::Path(_) => path,
-        syn::Meta::List(list) => format!("{}({})", path, list.tokens),
-        syn::Meta::NameValue(_) => path,
+        attribute: crate::spelling::attr(attr),
     }
 }
 

@@ -3,7 +3,7 @@ use boltffi_ast::{ClassDef, ClassId};
 use crate::declared_types::DeclaredTypes;
 use crate::impl_target;
 use crate::marked::Marked;
-use crate::{ModulePath, ScanError, name};
+use crate::{ModuleScope, ScanError, name};
 
 use super::impl_methods;
 
@@ -14,7 +14,7 @@ pub fn scan(
     marked
         .iter()
         .try_fold(Vec::<ClassDef>::new(), |mut classes, marked| {
-            let class = build(marked.item(), marked.module(), declared_types)?;
+            let class = build(marked.item(), marked.scope(), declared_types)?;
             match classes
                 .iter_mut()
                 .find(|candidate| candidate.id == class.id)
@@ -28,26 +28,29 @@ pub fn scan(
 
 fn build(
     item: &syn::ItemImpl,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<ClassDef, ScanError> {
+    let id = resolve_id(item, scope, declared_types)?;
+    let path = id.as_str();
+    let name = name::canonical_segment(path.rsplit("::").next().unwrap_or(path));
+    let mut class = ClassDef::new(id, name);
+    class.methods = impl_methods::class_methods(item, class.id.as_str(), scope, declared_types)?;
+    Ok(class)
+}
+
+pub(super) fn resolve_id(
+    item: &syn::ItemImpl,
+    scope: &ModuleScope,
+    declared_types: &DeclaredTypes,
+) -> Result<ClassId, ScanError> {
     let target = impl_target::Target::class(item)?;
-    let id =
-        ClassId::new(
-            target
-                .resolve(module)
-                .ok_or_else(|| ScanError::UnsupportedClassImpl {
-                    target: target.spelling().to_owned(),
-                })?,
-        );
-    let ident = target
-        .ident()
+    let path = declared_types
+        .resolve_impl_target(scope, &target)?
         .ok_or_else(|| ScanError::UnsupportedClassImpl {
             target: target.spelling().to_owned(),
         })?;
-    let mut class = ClassDef::new(id, name::canonical(ident));
-    class.methods = impl_methods::scan(item, class.id.as_str(), module, declared_types)?;
-    Ok(class)
+    Ok(ClassId::new(path))
 }
 
 #[cfg(test)]
@@ -67,11 +70,9 @@ mod tests {
     }
 
     fn scan(source: &str) -> Result<ClassDef, ScanError> {
-        build(
-            &parse(source),
-            &ModulePath::root("demo"),
-            &DeclaredTypes::new(),
-        )
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_class(ClassId::new("demo::Engine"));
+        build(&parse(source), &ModuleScope::root("demo"), &declared_types)
     }
 
     #[test]
@@ -108,10 +109,12 @@ mod tests {
 
     #[test]
     fn scans_qualified_class_impl_target() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_class(ClassId::new("demo::runtime::Engine"));
         let class = build(
             &parse("impl crate::runtime::Engine { pub fn start(&self) {} }"),
-            &ModulePath::root("demo"),
-            &DeclaredTypes::new(),
+            &ModuleScope::root("demo"),
+            &declared_types,
         )
         .expect("scan");
 
@@ -152,7 +155,8 @@ mod tests {
         let source_tree = crate::source_tree::SourceTree::in_memory(
             "demo",
             syn::parse_str::<syn::File>(
-                "#[export] impl Engine { pub fn new() -> Self { todo!() } } \
+                "pub struct Engine; \
+                 #[export] impl Engine { pub fn new() -> Self { todo!() } } \
                  #[export] impl Engine { pub fn start(&self) {} }",
             )
             .expect("valid source")
@@ -160,7 +164,9 @@ mod tests {
         )
         .expect("source tree");
         let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
-        let classes = super::scan(marked.classes(), &DeclaredTypes::new()).expect("scan");
+        let declared_types =
+            DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
+        let classes = super::scan(marked.classes(), &declared_types).expect("scan");
 
         assert_eq!(classes.len(), 1);
         assert_eq!(classes[0].id, ClassId::new("demo::Engine"));

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::{ModulePath, ScanError};
+use crate::path::SpanMap;
+use crate::{ModulePath, ModuleScope, ScanError};
 
 pub(super) struct SourceTree {
     modules: Vec<SourceModule>,
@@ -11,7 +12,7 @@ impl SourceTree {
         walk(
             ModulePath::root(crate_name),
             &module_dir(root),
-            parse(root)?.items,
+            parse(root)?,
             SourceMode::Files,
         )
         .map(|modules| Self { modules })
@@ -21,7 +22,7 @@ impl SourceTree {
         walk(
             ModulePath::root(crate_name),
             Path::new("."),
-            file.items,
+            ParsedFile::inline(file.items),
             SourceMode::Inline,
         )
         .map(|modules| Self { modules })
@@ -32,7 +33,7 @@ impl SourceTree {
         walk(
             ModulePath::root(crate_name),
             Path::new("."),
-            items,
+            ParsedFile::inline(items),
             SourceMode::Inline,
         )
         .map(|modules| Self { modules })
@@ -44,17 +45,20 @@ impl SourceTree {
 }
 
 pub(super) struct SourceModule {
-    path: ModulePath,
+    scope: ModuleScope,
     items: Vec<syn::Item>,
 }
 
 impl SourceModule {
-    fn new(path: ModulePath, items: Vec<syn::Item>) -> Self {
-        Self { path, items }
+    fn new(path: ModulePath, items: Vec<syn::Item>, spans: Option<SpanMap>) -> Self {
+        Self {
+            scope: ModuleScope::with_spans(path, &items, spans),
+            items,
+        }
     }
 
-    pub(super) fn path(&self) -> &ModulePath {
-        &self.path
+    pub(super) fn scope(&self) -> &ModuleScope {
+        &self.scope
     }
 
     pub(super) fn items(&self) -> &[syn::Item] {
@@ -65,15 +69,22 @@ impl SourceModule {
 fn walk(
     module: ModulePath,
     dir: &Path,
-    items: Vec<syn::Item>,
+    file: ParsedFile,
     source_mode: SourceMode,
 ) -> Result<Vec<SourceModule>, ScanError> {
+    let spans = file.spans;
     let (own_items, mut child_modules) = items.into_iter().try_fold(
         (Vec::new(), Vec::new()),
         |(mut own_items, mut child_modules), item| {
             match item {
                 syn::Item::Mod(item_mod) => {
-                    child_modules.extend(descend(&module, dir, item_mod.clone(), source_mode)?);
+                    child_modules.extend(descend(
+                        &module,
+                        dir,
+                        item_mod.clone(),
+                        spans.clone(),
+                        source_mode,
+                    )?);
                     own_items.push(syn::Item::Mod(item_mod));
                 }
                 item => own_items.push(item),
@@ -81,7 +92,7 @@ fn walk(
             Ok::<_, ScanError>((own_items, child_modules))
         },
     )?;
-    child_modules.push(SourceModule::new(module, own_items));
+    child_modules.push(SourceModule::new(module, own_items, spans));
     Ok(child_modules)
 }
 
@@ -89,6 +100,7 @@ fn descend(
     parent: &ModulePath,
     dir: &Path,
     item_mod: syn::ItemMod,
+    parent_spans: Option<SpanMap>,
     source_mode: SourceMode,
 ) -> Result<Vec<SourceModule>, ScanError> {
     if has_cfg(&item_mod.attrs) {
@@ -97,11 +109,19 @@ fn descend(
     let name = item_mod.ident.to_string();
     let child = parent.child(&name);
     match item_mod.content {
-        Some((_, items)) => walk(child, &dir.join(&name), items, source_mode),
+        Some((_, items)) => walk(
+            child,
+            &dir.join(&name),
+            ParsedFile {
+                items,
+                spans: parent_spans,
+            },
+            source_mode,
+        ),
         None if source_mode == SourceMode::Files => {
             let path = resolve(parent, dir, &name, &item_mod.attrs)?;
-            let items = parse(&path)?.items;
-            walk(child, &module_dir(&path), items, source_mode)
+            let file = parse(&path)?;
+            walk(child, &module_dir(&path), file, source_mode)
         }
         None => Err(ScanError::ModuleNotFound {
             module: parent.qualified(&name),
@@ -184,9 +204,25 @@ fn path_attr(attrs: &[syn::Attribute]) -> Option<String> {
     })
 }
 
-fn parse(path: &Path) -> Result<syn::File, ScanError> {
+struct ParsedFile {
+    items: Vec<syn::Item>,
+    spans: Option<SpanMap>,
+}
+
+impl ParsedFile {
+    fn inline(items: Vec<syn::Item>) -> Self {
+        Self { items, spans: None }
+    }
+}
+
+fn parse(path: &Path) -> Result<ParsedFile, ScanError> {
     let source = std::fs::read_to_string(path).map_err(|error| ScanError::read(path, &error))?;
-    syn::parse_file(&source).map_err(|error| ScanError::parse(path, &error))
+    syn::parse_file(&source)
+        .map(|file| ParsedFile {
+            items: file.items,
+            spans: Some(SpanMap::new(path.display().to_string(), &source)),
+        })
+        .map_err(|error| ScanError::parse(path, &error))
 }
 
 #[cfg(test)]
@@ -202,7 +238,7 @@ mod tests {
     fn module_paths(tree: &SourceTree) -> Vec<String> {
         tree.modules()
             .iter()
-            .map(|module| module.path().qualified(""))
+            .map(|module| module.scope().path().qualified(""))
             .collect()
     }
 
@@ -237,7 +273,7 @@ mod tests {
         let root = tree
             .modules()
             .iter()
-            .find(|module| module.path() == &ModulePath::root("demo"))
+            .find(|module| module.scope().path() == &ModulePath::root("demo"))
             .expect("root module");
 
         assert_eq!(root.items().len(), 2);

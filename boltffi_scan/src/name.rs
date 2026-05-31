@@ -1,8 +1,12 @@
 use boltffi_ast::{CanonicalName, NamePart};
 
 pub(super) fn canonical(ident: &syn::Ident) -> CanonicalName {
+    canonical_segment(&ident_source(ident))
+}
+
+pub(super) fn canonical_segment(segment: &str) -> CanonicalName {
     CanonicalName::new(
-        snake_case(&ident_source(ident))
+        snake_case(segment)
             .split('_')
             .filter(|part| !part.is_empty())
             .map(NamePart::new)

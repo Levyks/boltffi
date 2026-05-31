@@ -1,7 +1,7 @@
 use boltffi_ast::PackageInfo;
 use boltffi_binding::{
-    Bindings, ClassDecl, ConstantDecl, ConstantValueDecl, Decl, DefaultValue, IntegerValue, Native,
-    Primitive, Receive, RecordDecl, TypeRef, lower,
+    Bindings, ClassDecl, ConstantDecl, ConstantValueDecl, Decl, DefaultValue, IncomingParam,
+    IntegerValue, Native, ParamPlan, Primitive, Receive, RecordDecl, ReturnPlan, TypeRef, lower,
 };
 use boltffi_scan::scan_file;
 
@@ -25,6 +25,14 @@ const SOURCE: &str = "
     #[export]
     pub const DEFAULT_MODE: Mode = Mode::VeryFast;
 
+    custom_type!(
+        pub UtcDateTime,
+        remote = DateTime<Utc>,
+        repr = i64,
+        into_ffi = to_millis,
+        try_from_ffi = from_millis,
+    );
+
     #[data(impl)]
     impl Point {
         pub fn origin() -> Self {
@@ -37,6 +45,8 @@ const SOURCE: &str = "
             (dx * dx + dy * dy).sqrt()
         }
     }
+
+    pub struct Engine;
 
     #[export]
     impl Engine {
@@ -60,6 +70,11 @@ const SOURCE: &str = "
     #[export]
     pub fn make_handler() -> impl Fn(u32) -> u32 {
         |value| value
+    }
+
+    #[export]
+    pub fn round_trip_time(value: DateTime<Utc>) -> DateTime<Utc> {
+        value
     }
 ";
 
@@ -119,11 +134,17 @@ fn scans_and_lowers_point_contract_to_bindings() {
         .iter()
         .filter(|decl| matches!(decl, Decl::Constant(_)))
         .count();
+    let customs = bindings
+        .decls()
+        .iter()
+        .filter(|decl| matches!(decl, Decl::CustomType(_)))
+        .count();
     assert_eq!(records, 1, "Point lowers to one record");
-    assert_eq!(functions, 2, "functions lower from scanned exports");
+    assert_eq!(functions, 3, "functions lower from scanned exports");
     assert_eq!(callbacks, 1, "ValueCallback lowers to one callback");
     assert_eq!(classes, 1, "Engine lowers to one class");
     assert_eq!(constants, 2, "exported constants lower to constants");
+    assert_eq!(customs, 1, "custom types lower from scanned macros");
 
     let record = bindings
         .decls()
@@ -174,5 +195,39 @@ fn scans_and_lowers_point_contract_to_bindings() {
             assert_eq!(variant_name.as_path_string(), "very::fast");
         }
         other => panic!("expected inline enum constant, got {other:?}"),
+    }
+
+    let custom = bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::CustomType(custom) => Some(custom.as_ref()),
+            _ => None,
+        })
+        .expect("custom type declaration");
+    let custom_id = custom.id();
+    assert_eq!(custom.representation(), &TypeRef::Primitive(Primitive::I64));
+
+    let round_trip = bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::Function(function) if function.name().as_path_string() == "round::trip::time" => {
+                Some(function.as_ref())
+            }
+            _ => None,
+        })
+        .expect("round_trip_time function");
+    match round_trip.callable().params()[0].payload() {
+        IncomingParam::Value(ParamPlan::Encoded { ty, .. }) => {
+            assert_eq!(ty, &TypeRef::Custom(custom_id));
+        }
+        other => panic!("expected encoded custom param, got {other:?}"),
+    }
+    match round_trip.callable().returns().plan() {
+        ReturnPlan::EncodedViaReturnSlot { ty, .. } => {
+            assert_eq!(ty, &TypeRef::Custom(custom_id));
+        }
+        other => panic!("expected encoded custom return, got {other:?}"),
     }
 }

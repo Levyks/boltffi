@@ -37,6 +37,15 @@ pub(super) fn ty(ty: &syn::Type) -> String {
     }
 }
 
+pub(super) fn attr(attr: &syn::Attribute) -> String {
+    let path = self::path(attr.path());
+    match &attr.meta {
+        syn::Meta::Path(_) => path,
+        syn::Meta::List(list) => format!("{}({})", path, list.tokens),
+        syn::Meta::NameValue(_) => path,
+    }
+}
+
 fn segment(segment: &syn::PathSegment) -> String {
     let ident = segment.ident.to_string();
     match &segment.arguments {

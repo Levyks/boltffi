@@ -3,32 +3,28 @@ use boltffi_ast::{FieldDef, RecordDef, RecordId};
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr::Scanner;
-use crate::{ModulePath, ScanError, name, repr, visibility};
+use crate::{ModuleScope, ScanError, name, repr, unsupported, visibility};
 
 pub fn scan(
     marked: &Marked<'_, syn::ItemStruct>,
     declared_types: &DeclaredTypes,
 ) -> Result<RecordDef, ScanError> {
-    let mut record = build(marked.item(), marked.module(), declared_types)?;
+    let mut record = build(marked.item(), marked.scope(), declared_types)?;
     marked.marker().append_value_attrs(&mut record.user_attrs);
     Ok(record)
 }
 
 fn build(
     item: &syn::ItemStruct,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<RecordDef, ScanError> {
-    if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
-        return Err(ScanError::UnsupportedGenerics {
-            item: format!("record {}", item.ident),
-        });
-    }
-    let id = RecordId::new(module.qualified(&item.ident.to_string()));
+    unsupported::generics(&item.generics, &format!("record {}", item.ident))?;
+    let id = RecordId::new(scope.path().qualified(&item.ident.to_string()));
     let mut record = RecordDef::new(id, name::canonical(&item.ident));
     record.repr = repr::scan(&item.attrs);
     record.source = visibility::scan(&item.vis);
-    record.fields = record_fields(&item.fields, &Scanner::new(declared_types, module))?;
+    record.fields = record_fields(&item.fields, &Scanner::new(declared_types, scope))?;
     Ok(record)
 }
 
@@ -64,7 +60,7 @@ mod tests {
     fn scan(source: &str) -> Result<RecordDef, ScanError> {
         super::build(
             &parse(source),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &DeclaredTypes::new(),
         )
     }
@@ -153,7 +149,7 @@ mod tests {
         declared_types.register_record(RecordId::new("demo::Point"));
         let record = super::build(
             &parse("pub struct Shape { pub center: Point }"),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &declared_types,
         )
         .expect("scan");

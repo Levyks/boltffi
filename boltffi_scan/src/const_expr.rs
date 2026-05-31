@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use boltffi_ast::{
     ConstExpr, FloatLiteral, GenericArgument, IntegerLiteral, Literal, NamePart, Path, PathRoot,
     PathSegment,
@@ -108,7 +110,19 @@ impl<'scanner, 'types> Scanner<'scanner, 'types> {
             match segments.as_slice() {
                 [first, rest @ ..] if first.ident == "crate" => (PathRoot::Crate, rest),
                 [first, rest @ ..] if first.ident == "self" => (PathRoot::Self_, rest),
-                [first, rest @ ..] if first.ident == "super" => (PathRoot::Super, rest),
+                [first, ..] if first.ident == "super" => {
+                    let levels = segments
+                        .iter()
+                        .take_while(|segment| segment.ident == "super")
+                        .count();
+                    (
+                        PathRoot::Super(
+                            NonZeroUsize::new(levels)
+                                .expect("super path has at least one parent segment"),
+                        ),
+                        &segments[levels..],
+                    )
+                }
                 _ => (PathRoot::Relative, segments.as_slice()),
             }
         };
@@ -155,14 +169,14 @@ impl<'scanner, 'types> Scanner<'scanner, 'types> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModulePath;
+    use crate::ModuleScope;
     use crate::declared_types::DeclaredTypes;
     use boltffi_ast::{Primitive, TypeExpr};
 
     fn scan(source: &str) -> ConstExpr {
         let expr = syn::parse_str(source).expect("valid expression");
         let declared_types = DeclaredTypes::new();
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let types = type_expr::Scanner::new(&declared_types, &module);
         Scanner::new(&types).scan(&expr)
     }

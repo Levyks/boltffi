@@ -2,42 +2,36 @@ use boltffi_ast::{MethodDef, TraitDef, TraitId};
 
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
-use crate::marker::Marker;
+use crate::marker::{self, Disposition};
 use crate::type_expr::Scanner;
-use crate::{ModulePath, ScanError, name, visibility};
+use crate::{ModuleScope, ScanError, name, unsupported, visibility};
 
-use super::signature;
+use super::{signature, stream};
 
 pub fn scan(
     marked: &Marked<'_, syn::ItemTrait>,
     declared_types: &DeclaredTypes,
 ) -> Result<TraitDef, ScanError> {
-    build(marked.item(), marked.module(), declared_types)
+    build(marked.item(), marked.scope(), declared_types)
 }
 
 fn build(
     item: &syn::ItemTrait,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<TraitDef, ScanError> {
     let item_name = format!("trait {}", item.ident);
-    if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
-        return Err(ScanError::UnsupportedGenerics { item: item_name });
-    }
-    if item.unsafety.is_some() {
-        return Err(ScanError::UnsupportedUnsafe { item: item_name });
-    }
-    if !item.supertraits.is_empty() {
-        return Err(ScanError::UnsupportedSupertraits { item: item_name });
-    }
+    unsupported::generics(&item.generics, &item_name)?;
+    unsupported::unsafety(item.unsafety.as_ref(), &item_name)?;
+    unsupported::supertraits(&item.supertraits, &item_name)?;
 
-    let id = TraitId::new(module.qualified(&item.ident.to_string()));
+    let id = TraitId::new(scope.path().qualified(&item.ident.to_string()));
     let mut callback = TraitDef::new(id, name::canonical(&item.ident));
     callback.source = visibility::scan(&item.vis);
     callback.methods = methods(
         item,
         callback.id.as_str(),
-        &Scanner::new(declared_types, module),
+        &Scanner::new(declared_types, scope),
     )?;
     Ok(callback)
 }
@@ -62,13 +56,13 @@ fn methods(
 }
 
 fn is_exported_method(method: &syn::TraitItemFn) -> Result<bool, ScanError> {
-    match Marker::detect(&method.attrs)? {
-        Some(Marker::Skip) => Ok(false),
-        Some(marker) => Err(ScanError::InvalidMarkerPlacement {
-            marker: marker.as_str().to_owned(),
-            item: "trait method".to_owned(),
-        }),
-        None => Ok(true),
+    if stream::Attribute::scan(&method.attrs)?.is_some() {
+        return Err(stream::Attribute::invalid_placement("trait method"));
+    }
+    match marker::disposition(&method.attrs)? {
+        Disposition::Skip => Ok(false),
+        Disposition::Reject(marker) => Err(marker.invalid_placement("trait method")),
+        Disposition::Unmarked => Ok(true),
     }
 }
 
@@ -121,7 +115,7 @@ mod tests {
     fn scan(source: &str) -> Result<TraitDef, ScanError> {
         build(
             &parse(source),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &DeclaredTypes::new(),
         )
     }
@@ -171,6 +165,22 @@ mod tests {
 
         assert_eq!(callback.methods.len(), 1);
         assert_eq!(callback.methods[0].name, name(&["remote"]));
+    }
+
+    #[test]
+    fn rejects_stream_marker_on_callback_methods() {
+        let error = scan(
+            "trait Listener { #[ffi_stream(item = i32)] fn values(&self) -> Arc<EventSubscription<i32>>; }",
+        )
+        .expect_err("stream marker belongs to class methods");
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "ffi_stream".to_owned(),
+                item: "trait method".to_owned()
+            }
+        );
     }
 
     #[test]

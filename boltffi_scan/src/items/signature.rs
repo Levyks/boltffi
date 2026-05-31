@@ -3,18 +3,12 @@ use boltffi_ast::{
 };
 
 use crate::type_expr::Scanner;
-use crate::{ScanError, name};
+use crate::{ScanError, name, unsupported};
 
 pub(super) fn validate(signature: &syn::Signature, item: String) -> Result<(), ScanError> {
-    if !signature.generics.params.is_empty() || signature.generics.where_clause.is_some() {
-        return Err(ScanError::UnsupportedGenerics { item });
-    }
-    if signature.unsafety.is_some() {
-        return Err(ScanError::UnsupportedUnsafe { item });
-    }
-    if signature.abi.is_some() {
-        return Err(ScanError::UnsupportedExternAbi { item });
-    }
+    unsupported::generics(&signature.generics, &item)?;
+    unsupported::unsafety(signature.unsafety.as_ref(), &item)?;
+    unsupported::extern_abi(signature.abi.as_ref(), &item)?;
     Ok(())
 }
 
@@ -104,14 +98,14 @@ fn parameter_name(pat: &syn::Pat) -> Result<CanonicalName, ScanError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModulePath;
+    use crate::ModuleScope;
     use crate::declared_types::DeclaredTypes;
     use boltffi_ast::{Primitive, TypeExpr};
 
     fn parameter(source: &str) -> ParameterDef {
         let typed = syn::parse_str::<syn::PatType>(source).expect("parameter");
         let declared_types = DeclaredTypes::new();
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
         super::parameter(&typed, &scanner).expect("scan")
     }

@@ -3,13 +3,13 @@ use boltffi_ast::{EnumDef, EnumId, FieldDef, VariantDef, VariantPayload};
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr::Scanner;
-use crate::{ModulePath, ScanError, name, repr, visibility};
+use crate::{ModuleScope, ScanError, name, repr, unsupported, visibility};
 
 pub fn scan(
     marked: &Marked<'_, syn::ItemEnum>,
     declared_types: &DeclaredTypes,
 ) -> Result<EnumDef, ScanError> {
-    let mut enumeration = build(marked.item(), marked.module(), declared_types)?;
+    let mut enumeration = build(marked.item(), marked.scope(), declared_types)?;
     marked
         .marker()
         .append_value_attrs(&mut enumeration.user_attrs);
@@ -18,19 +18,15 @@ pub fn scan(
 
 fn build(
     item: &syn::ItemEnum,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<EnumDef, ScanError> {
-    if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
-        return Err(ScanError::UnsupportedGenerics {
-            item: format!("enum {}", item.ident),
-        });
-    }
-    let id = EnumId::new(module.qualified(&item.ident.to_string()));
+    unsupported::generics(&item.generics, &format!("enum {}", item.ident))?;
+    let id = EnumId::new(scope.path().qualified(&item.ident.to_string()));
     let mut enumeration = EnumDef::new(id, name::canonical(&item.ident));
     enumeration.repr = repr::scan(&item.attrs);
     enumeration.source = visibility::scan(&item.vis);
-    let scanner = Scanner::new(declared_types, module);
+    let scanner = Scanner::new(declared_types, scope);
     enumeration.variants = item
         .variants
         .iter()
@@ -111,7 +107,7 @@ mod tests {
     fn scan(source: &str) -> Result<EnumDef, ScanError> {
         super::build(
             &parse(source),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &DeclaredTypes::new(),
         )
     }
@@ -143,7 +139,7 @@ mod tests {
         declared_types.register_record(RecordId::new("demo::Point"));
         let enumeration = super::build(
             &parse("pub enum Shape { Dot(Point), Rect { width: f64, height: f64 } }"),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &declared_types,
         )
         .expect("scan");

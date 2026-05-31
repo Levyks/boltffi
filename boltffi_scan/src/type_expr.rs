@@ -1,30 +1,71 @@
 use boltffi_ast::{
-    ClosureKind, ClosureType, HandlePresence, Primitive, ReturnDef, TraitUseForm, TypeExpr,
+    ClosureKind, ClosureType, HandlePresence, Primitive, ReturnDef, TraitId, TraitUseForm, TypeExpr,
 };
 
 use crate::declared_types::{DeclaredType, DeclaredTypes};
-use crate::{ModulePath, ScanError};
+use crate::{ModuleScope, ScanError};
 
 pub(super) struct Scanner<'a> {
     declared_types: &'a DeclaredTypes,
-    module: &'a ModulePath,
+    scope: &'a ModuleScope,
 }
 
 impl<'a> Scanner<'a> {
-    pub(super) fn new(declared_types: &'a DeclaredTypes, module: &'a ModulePath) -> Self {
+    pub(super) fn new(declared_types: &'a DeclaredTypes, scope: &'a ModuleScope) -> Self {
         Self {
             declared_types,
-            module,
+            scope,
         }
     }
 
     pub(super) fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
         let unwrapped = unwrapped(ty);
+        if let syn::Type::Path(type_path) = unwrapped
+            && let Some(named) = self.exact_named(type_path)?
+        {
+            return Ok(named);
+        }
+        if let Some(custom) = self
+            .declared_types
+            .resolve_custom_remote(self.scope, unwrapped)?
+        {
+            return Ok(TypeExpr::Custom(custom.clone()));
+        }
         match unwrapped {
             syn::Type::ImplTrait(impl_trait) => self.impl_trait(impl_trait, ty),
             syn::Type::Tuple(tuple) => self.tuple(tuple),
             syn::Type::Path(type_path) => self.path(type_path, ty),
             _ => Err(ScanError::unsupported_type(ty)),
+        }
+    }
+
+    fn exact_named(&self, type_path: &syn::TypePath) -> Result<Option<TypeExpr>, ScanError> {
+        if type_path.qself.is_some()
+            || type_path
+                .path
+                .segments
+                .iter()
+                .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+        {
+            return Ok(None);
+        }
+        let Some(segment) = type_path.path.segments.last() else {
+            return Ok(None);
+        };
+        let name = segment.ident.to_string();
+        if let Some(primitive) = Primitive::from_rust_name(&name) {
+            return Ok(Some(TypeExpr::Primitive(primitive)));
+        }
+        match self
+            .declared_types
+            .resolve_in_scope(self.scope, &type_path.path)?
+        {
+            Some(DeclaredType::Record(id)) => Ok(Some(TypeExpr::Record(id.clone()))),
+            Some(DeclaredType::Enum(id)) => Ok(Some(TypeExpr::Enum(id.clone()))),
+            Some(DeclaredType::Class(id)) => {
+                Ok(Some(TypeExpr::class(id.clone(), HandlePresence::Required)))
+            }
+            Some(DeclaredType::Custom(_) | DeclaredType::Trait(_)) | None => Ok(None),
         }
     }
 
@@ -92,15 +133,16 @@ impl<'a> Scanner<'a> {
         if let Some(primitive) = Primitive::from_rust_name(&name) {
             return Ok(TypeExpr::Primitive(primitive));
         }
-        let Some(resolved_path) = self.module.resolve(&type_path.path) else {
-            return Err(ScanError::unsupported_type(source));
-        };
-        match self.declared_types.resolve(&resolved_path) {
+        match self
+            .declared_types
+            .resolve_in_scope(self.scope, &type_path.path)?
+        {
             Some(DeclaredType::Record(id)) => Ok(TypeExpr::Record(id.clone())),
             Some(DeclaredType::Enum(id)) => Ok(TypeExpr::Enum(id.clone())),
             Some(DeclaredType::Class(id)) => {
                 Ok(TypeExpr::class(id.clone(), HandlePresence::Required))
             }
+            Some(DeclaredType::Custom(_)) => Err(ScanError::unsupported_type(source)),
             Some(DeclaredType::Trait(_)) => Err(ScanError::unsupported_type(source)),
             None => Err(ScanError::unsupported_type(source)),
         }
@@ -190,12 +232,22 @@ impl<'a> Scanner<'a> {
         {
             return None;
         }
-        let resolved_path = self.module.resolve(&type_path.path)?;
-        match self.declared_types.resolve(&resolved_path) {
-            Some(DeclaredType::Class(id)) => {
+        match self
+            .declared_types
+            .resolve_in_scope(self.scope, &type_path.path)
+        {
+            Ok(Some(DeclaredType::Class(id))) => {
                 Some(Ok(TypeExpr::class(id.clone(), HandlePresence::Nullable)))
             }
-            _ => None,
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    fn declared_trait(&self, path: &syn::Path, source: &syn::Type) -> Result<TraitId, ScanError> {
+        match self.declared_types.resolve_in_scope(self.scope, path)? {
+            Some(DeclaredType::Trait(id)) => Ok(id.clone()),
+            _ => Err(ScanError::unsupported_type(source)),
         }
     }
 
@@ -273,13 +325,8 @@ impl<'a> Scanner<'a> {
         {
             return Err(ScanError::unsupported_type(source));
         }
-        let Some(resolved_path) = self.module.resolve(&bound.path) else {
-            return Err(ScanError::unsupported_type(source));
-        };
-        match self.declared_types.resolve(&resolved_path) {
-            Some(DeclaredType::Trait(id)) => Ok(TypeExpr::r#trait(id.clone(), form, presence)),
-            _ => Err(ScanError::unsupported_type(source)),
-        }
+        self.declared_trait(&bound.path, source)
+            .map(|id| TypeExpr::r#trait(id, form, presence))
     }
 }
 
@@ -332,14 +379,15 @@ fn closure_kind(name: &str) -> Option<ClosureKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boltffi_ast::{ClassId, EnumId, RecordId, TraitId};
+    use crate::ModulePath;
+    use boltffi_ast::{ClassId, CustomTypeId, EnumId, RecordId, TraitId};
 
     fn ty(source: &str) -> syn::Type {
         syn::parse_str(source).expect("valid type")
     }
 
     fn scan(source: &str) -> Result<TypeExpr, ScanError> {
-        Scanner::new(&DeclaredTypes::new(), &ModulePath::root("demo")).scan(&ty(source))
+        Scanner::new(&DeclaredTypes::new(), &ModuleScope::root("demo")).scan(&ty(source))
     }
 
     #[test]
@@ -441,7 +489,7 @@ mod tests {
     fn resolves_registered_record_reference_including_nested() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_record(RecordId::new("demo::geometry::Point"));
-        let module = ModulePath::root("demo").child("geometry");
+        let module = ModuleScope::new(ModulePath::root("demo").child("geometry"), &[]);
         let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
@@ -460,7 +508,7 @@ mod tests {
     fn resolves_registered_class_references_and_nullable_handles() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_class(ClassId::new("demo::Engine"));
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
@@ -480,12 +528,256 @@ mod tests {
     }
 
     #[test]
+    fn resolves_registered_custom_remote_type() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(
+            CustomTypeId::new("demo::UtcDateTime"),
+            &ty("chrono::DateTime<chrono::Utc>"),
+        );
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("chrono::DateTime<chrono::Utc>")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::UtcDateTime")))
+        );
+        assert_eq!(
+            scanner.scan(&ty("DateTime<Utc>")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::UtcDateTime")))
+        );
+    }
+
+    #[test]
+    fn qualified_custom_remote_use_does_not_resolve_by_shape() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(
+            CustomTypeId::new("demo::UtcDateTime"),
+            &ty("chrono::DateTime<chrono::Utc>"),
+        );
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert!(matches!(
+            scanner.scan(&ty("other::DateTime<other::Utc>")),
+            Err(ScanError::UnsupportedType { spelling })
+                if spelling == "other::DateTime<other::Utc>"
+        ));
+    }
+
+    #[test]
+    fn resolves_imported_single_segment_custom_remote() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(CustomTypeId::new("demo::Uuid"), &ty("uuid::Uuid"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Uuid")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::Uuid")))
+        );
+    }
+
+    #[test]
+    fn custom_remote_shape_preserves_const_generic_arguments() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(CustomTypeId::new("demo::Array4"), &ty("fixed::Array<4>"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Array<4>")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::Array4")))
+        );
+        assert_eq!(
+            scanner.scan(&ty("Array<8>")),
+            Err(ScanError::UnsupportedType {
+                spelling: "Array<const>".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn custom_remote_shape_preserves_associated_type_arguments() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(
+            CustomTypeId::new("demo::DateIter"),
+            &ty("iter::Iter<Item = chrono::DateTime<chrono::Utc>>"),
+        );
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Iter<Item = DateTime<Utc>>")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::DateIter")))
+        );
+        assert!(matches!(
+            scanner.scan(&ty("Iter<Item = String>")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Iter<Item = String>"
+        ));
+    }
+
+    #[test]
+    fn ambiguous_custom_remote_shape_does_not_resolve_by_leaf_name() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(CustomTypeId::new("demo::FooId"), &ty("foo::Id"));
+        declared_types.register_custom(CustomTypeId::new("demo::BarId"), &ty("bar::Id"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("foo::Id")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::FooId")))
+        );
+        assert_eq!(
+            scanner.scan(&ty("bar::Id")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::BarId")))
+        );
+        assert!(matches!(
+            scanner.scan(&ty("Id")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Id"
+        ));
+    }
+
+    #[test]
+    fn repeated_super_segments_resolve_custom_remotes() {
+        let mut declared_types = DeclaredTypes::new();
+        let custom_module = ModulePath::root("demo").child("api").child("v1");
+        let call_module = ModulePath::root("demo").child("domain");
+        let call_scope = ModuleScope::new(call_module, &[]);
+        declared_types.register_custom_in(
+            &custom_module,
+            CustomTypeId::new("demo::api::v1::MoneyWire"),
+            &ty("super::super::domain::Money"),
+        );
+        let scanner = Scanner::new(&declared_types, &call_scope);
+
+        assert_eq!(
+            scanner.scan(&ty("Money")),
+            Ok(TypeExpr::Custom(CustomTypeId::new(
+                "demo::api::v1::MoneyWire"
+            )))
+        );
+    }
+
+    #[test]
+    fn resolves_custom_type_inside_containers_by_exact_remote() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types
+            .register_custom(CustomTypeId::new("demo::UtcDateTime"), &ty("DateTime<Utc>"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Vec<DateTime<Utc>>")),
+            Ok(TypeExpr::vec(TypeExpr::Custom(CustomTypeId::new(
+                "demo::UtcDateTime"
+            ))))
+        );
+        assert!(matches!(
+            scanner.scan(&ty("DateTime")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "DateTime"
+        ));
+    }
+
+    #[test]
+    fn resolves_custom_remote_through_harmless_parentheses() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_custom(
+            CustomTypeId::new("demo::UtcDateTime"),
+            &ty("(DateTime<Utc>)"),
+        );
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("DateTime<Utc>")),
+            Ok(TypeExpr::Custom(CustomTypeId::new("demo::UtcDateTime")))
+        );
+    }
+
+    #[test]
+    fn declared_value_type_wins_over_matching_custom_remote() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::Timestamp"));
+        declared_types.register_custom(CustomTypeId::new("demo::TimestampWire"), &ty("Timestamp"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Timestamp")),
+            Ok(TypeExpr::Record(RecordId::new("demo::Timestamp")))
+        );
+    }
+
+    #[test]
+    fn relative_custom_remote_resolution_uses_module_context() {
+        let mut declared_types = DeclaredTypes::new();
+        let custom_module = ModulePath::root("demo").child("custom");
+        let data_module = ModulePath::root("demo").child("data");
+        declared_types.register_custom_in(
+            &custom_module,
+            CustomTypeId::new("demo::custom::TimestampWire"),
+            &ty("Timestamp"),
+        );
+        let custom_scope = ModuleScope::new(custom_module, &[]);
+        let data_scope = ModuleScope::new(data_module, &[]);
+        let custom_scanner = Scanner::new(&declared_types, &custom_scope);
+        let data_scanner = Scanner::new(&declared_types, &data_scope);
+
+        assert_eq!(
+            custom_scanner.scan(&ty("Timestamp")),
+            Ok(TypeExpr::Custom(CustomTypeId::new(
+                "demo::custom::TimestampWire"
+            )))
+        );
+        assert!(matches!(
+            data_scanner.scan(&ty("Timestamp")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "Timestamp"
+        ));
+    }
+
+    #[test]
+    fn qualified_custom_remote_resolution_crosses_module_context() {
+        let mut declared_types = DeclaredTypes::new();
+        let custom_module = ModulePath::root("demo").child("custom");
+        let api_module = ModulePath::root("demo").child("api");
+        declared_types.register_custom_in(
+            &custom_module,
+            CustomTypeId::new("demo::custom::UtcDateTime"),
+            &ty("chrono::DateTime<chrono::Utc>"),
+        );
+        let api_scope = ModuleScope::new(api_module, &[]);
+        let scanner = Scanner::new(&declared_types, &api_scope);
+
+        assert_eq!(
+            scanner.scan(&ty("chrono::DateTime<chrono::Utc>")),
+            Ok(TypeExpr::Custom(CustomTypeId::new(
+                "demo::custom::UtcDateTime"
+            )))
+        );
+    }
+
+    #[test]
+    fn does_not_resolve_custom_binding_name_as_source_type() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types
+            .register_custom(CustomTypeId::new("demo::UtcDateTime"), &ty("DateTime<Utc>"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert!(matches!(
+            scanner.scan(&ty("UtcDateTime")),
+            Err(ScanError::UnsupportedType { spelling }) if spelling == "UtcDateTime"
+        ));
+    }
+
+    #[test]
     fn resolves_qualified_records_without_leaf_name_guessing() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_record(RecordId::new("demo::geometry::Point"));
         declared_types.register_record(RecordId::new("demo::Point"));
         declared_types.register_enum(EnumId::new("demo::geometry::Mode"));
-        let module = ModulePath::root("demo").child("shape");
+        let module = ModuleScope::new(ModulePath::root("demo").child("shape"), &[]);
         let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
@@ -515,7 +807,7 @@ mod tests {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_record(RecordId::new("demo::Point"));
         declared_types.register_class(ClassId::new("demo::Engine"));
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
         assert!(matches!(
@@ -541,7 +833,7 @@ mod tests {
     fn resolves_callback_trait_use_forms() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_trait(TraitId::new("demo::Listener"));
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
@@ -574,7 +866,7 @@ mod tests {
     fn folds_optional_callback_trait_handles_into_presence() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_trait(TraitId::new("demo::Listener"));
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
@@ -599,7 +891,7 @@ mod tests {
     fn rejects_trait_references_that_would_erase_bounds_or_form() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_trait(TraitId::new("demo::Listener"));
-        let module = ModulePath::root("demo");
+        let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
         assert!(matches!(

@@ -3,7 +3,7 @@ use boltffi_ast::{FunctionDef, FunctionId, ParameterDef};
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr::Scanner;
-use crate::{ModulePath, ScanError, name, visibility};
+use crate::{ModuleScope, ScanError, name, visibility};
 
 use super::signature;
 
@@ -11,21 +11,21 @@ pub fn scan(
     marked: &Marked<'_, syn::ItemFn>,
     declared_types: &DeclaredTypes,
 ) -> Result<FunctionDef, ScanError> {
-    build(marked.item(), marked.module(), declared_types)
+    build(marked.item(), marked.scope(), declared_types)
 }
 
 fn build(
     item: &syn::ItemFn,
-    module: &ModulePath,
+    scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<FunctionDef, ScanError> {
     let ident = &item.sig.ident;
     signature::validate(&item.sig, format!("function {ident}"))?;
     let mut function = FunctionDef::new(
-        FunctionId::new(module.qualified(&ident.to_string())),
+        FunctionId::new(scope.path().qualified(&ident.to_string())),
         name::canonical(ident),
     );
-    let scanner = Scanner::new(declared_types, module);
+    let scanner = Scanner::new(declared_types, scope);
     function.source = visibility::scan(&item.vis);
     function.execution = signature::execution(&item.sig);
     function.parameters = parameters(&item.sig, &scanner)?;
@@ -58,7 +58,7 @@ mod tests {
     fn scan(source: &str) -> Result<FunctionDef, ScanError> {
         super::build(
             &parse(source),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &DeclaredTypes::new(),
         )
     }
@@ -176,7 +176,7 @@ mod tests {
         declared_types.register_record(RecordId::new("demo::Point"));
         let function = super::build(
             &parse("pub fn translate(point: Point, dx: f64) -> Point { point }"),
-            &ModulePath::root("demo"),
+            &ModuleScope::root("demo"),
             &declared_types,
         )
         .expect("scan");

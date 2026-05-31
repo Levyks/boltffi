@@ -50,10 +50,11 @@ fn lower_one(ids: &DeclarationIds, custom: &SourceCustom) -> Result<CustomTypeDe
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName as SourceName, CustomTypeConverters, CustomTypeDef,
-        CustomTypeId as SourceCustomTypeId, DeprecationInfo as SourceDeprecationInfo,
-        DocComment as SourceDocComment, FieldDef, PackageInfo as SourcePackage, ParameterDef,
-        Path as SourcePath, Primitive, RecordDef, ReturnDef, SourceContract, TypeExpr,
+        CanonicalName as SourceName, CustomRemoteType, CustomTypeConverter, CustomTypeConverters,
+        CustomTypeDef, CustomTypeId as SourceCustomTypeId,
+        DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, FieldDef,
+        PackageInfo as SourcePackage, ParameterDef, Path as SourcePath, Primitive, RecordDef,
+        ReturnDef, SourceContract, TypeExpr,
     };
 
     use crate::lower::{LowerError, LowerErrorKind, lower};
@@ -73,8 +74,8 @@ mod tests {
 
     fn converters() -> CustomTypeConverters {
         CustomTypeConverters::new(
-            SourcePath::single("into_ffi"),
-            SourcePath::single("try_from_ffi"),
+            CustomTypeConverter::path(SourcePath::single("into_ffi")),
+            CustomTypeConverter::path(SourcePath::single("try_from_ffi")),
         )
     }
 
@@ -82,8 +83,9 @@ mod tests {
         CustomTypeDef::new(
             SourceCustomTypeId::new(id),
             name(type_name),
-            TypeExpr::Primitive(Primitive::I32),
+            CustomRemoteType::single_path("Remote"),
             repr,
+            None,
             converters(),
         )
     }

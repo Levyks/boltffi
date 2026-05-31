@@ -38,7 +38,10 @@ pub use callable::{
 pub use class::ClassDef;
 pub use constant::ConstantDef;
 pub use contract::{PackageInfo, SourceContract};
-pub use custom::{CustomTypeConverters, CustomTypeDef};
+pub use custom::{
+    CustomConverterExpr, CustomRemoteGenericArgument, CustomRemotePath, CustomRemotePathSegment,
+    CustomRemoteType, CustomTypeConverter, CustomTypeConverters, CustomTypeDef,
+};
 pub use documentation::{DeprecationInfo, DocComment};
 pub use enumeration::{EnumDef, VariantDef, VariantPayload};
 pub use ids::{

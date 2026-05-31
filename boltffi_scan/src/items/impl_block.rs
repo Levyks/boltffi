@@ -1,9 +1,9 @@
 use boltffi_ast::{EnumDef, RecordDef};
 
-use crate::ScanError;
 use crate::declared_types::{DeclaredType, DeclaredTypes};
 use crate::impl_target;
 use crate::marked::Marked;
+use crate::{ScanError, unsupported};
 
 use super::impl_methods;
 
@@ -26,13 +26,9 @@ fn attach_impl(
 ) -> Result<(), ScanError> {
     let target = impl_target::Target::scan(marked.item());
     validate(marked.item(), target.spelling())?;
-    let resolved = resolve(&target, marked.module(), declared_types)?;
-    let methods = impl_methods::scan(
-        marked.item(),
-        resolved.id(),
-        marked.module(),
-        declared_types,
-    )?;
+    let resolved = resolve(&target, marked.scope(), declared_types)?;
+    let methods =
+        impl_methods::value_methods(marked.item(), resolved.id(), marked.scope(), declared_types)?;
     match resolved {
         ImplTarget::Record(id) => {
             if let Some(record) = records.iter_mut().find(|record| record.id == id) {
@@ -49,11 +45,7 @@ fn attach_impl(
 }
 
 fn validate(item: &syn::ItemImpl, target: &str) -> Result<(), ScanError> {
-    if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
-        return Err(ScanError::UnsupportedGenerics {
-            item: format!("impl {target}"),
-        });
-    }
+    unsupported::generics(&item.generics, &format!("impl {target}"))?;
     if item.trait_.is_some() {
         return Err(ScanError::UnsupportedMarkedImpl {
             target: target.to_owned(),
@@ -78,10 +70,10 @@ impl ImplTarget {
 
 fn resolve(
     target: &impl_target::Target<'_>,
-    module: &crate::ModulePath,
+    scope: &crate::ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<ImplTarget, ScanError> {
-    let Some(path) = target.resolve(module) else {
+    let Some(path) = declared_types.resolve_impl_target(scope, target)? else {
         return Err(ScanError::UnsupportedMarkedImpl {
             target: target.spelling().to_owned(),
         });
