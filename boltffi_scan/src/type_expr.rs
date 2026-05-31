@@ -3,6 +3,7 @@ use boltffi_ast::{
 };
 
 use crate::declared_types::{DeclaredType, DeclaredTypes, SourceType};
+use crate::unsupported::UnsupportedFeature;
 use crate::{ModuleScope, ScanError};
 
 pub(super) struct Scanner<'a> {
@@ -37,7 +38,9 @@ impl<'a> Scanner<'a> {
             return Ok(TypeExpr::Custom(custom.clone()));
         }
         match unwrapped {
+            syn::Type::BareFn(bare_fn) => self.bare_fn(bare_fn, HandlePresence::Required),
             syn::Type::ImplTrait(impl_trait) => self.impl_trait(impl_trait, ty),
+            syn::Type::Slice(slice) => self.slice(slice, ty),
             syn::Type::Tuple(tuple) => self.tuple(tuple),
             syn::Type::Path(type_path) => self.path(type_path, ty),
             _ => Err(ScanError::unsupported_type(ty)),
@@ -126,7 +129,7 @@ impl<'a> Scanner<'a> {
         match self.standard_type(type_path, source)? {
             Some(StandardType::String) => return Ok(TypeExpr::String),
             Some(StandardType::Vec) => {
-                return Ok(TypeExpr::vec(self.single_argument(segment, source)?));
+                return self.vec(segment, source);
             }
             Some(StandardType::Option) => return self.option(segment, source),
             Some(StandardType::Result) => {
@@ -269,14 +272,41 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn vec(&self, segment: &syn::PathSegment, source: &syn::Type) -> Result<TypeExpr, ScanError> {
+        match self.single_argument(segment, source)? {
+            TypeExpr::Primitive(Primitive::U8) => Ok(TypeExpr::Bytes),
+            element => Ok(TypeExpr::vec(element)),
+        }
+    }
+
     fn option(
         &self,
         segment: &syn::PathSegment,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
         let inner = self.single_type_argument(segment, source)?;
+        if let Some(closure) = self.nullable_closure(inner) {
+            return closure;
+        }
         self.nullable_handle(inner)
             .unwrap_or_else(|| self.scan(inner).map(TypeExpr::option))
+    }
+
+    fn nullable_closure(&self, ty: &syn::Type) -> Option<Result<TypeExpr, ScanError>> {
+        match unwrapped(ty) {
+            syn::Type::BareFn(bare_fn) => Some(self.bare_fn(bare_fn, HandlePresence::Nullable)),
+            syn::Type::Path(type_path) => {
+                let segment = type_path.path.segments.last()?;
+                match self.standard_type(type_path, ty) {
+                    Ok(Some(StandardType::Box)) => {
+                        self.closure_trait_object_argument(segment, ty, HandlePresence::Nullable)
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            }
+            _ => None,
+        }
     }
 
     fn nullable_handle(&self, ty: &syn::Type) -> Option<Result<TypeExpr, ScanError>> {
@@ -356,6 +386,50 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn bare_fn(
+        &self,
+        bare_fn: &syn::TypeBareFn,
+        presence: HandlePresence,
+    ) -> Result<TypeExpr, ScanError> {
+        if bare_fn.lifetimes.is_some() {
+            return Err(crate::unsupported::feature(
+                UnsupportedFeature::HigherRankedFunctionPointer,
+            ));
+        }
+        if bare_fn.unsafety.is_some() {
+            return Err(crate::unsupported::feature(
+                UnsupportedFeature::UnsafeFunctionPointer,
+            ));
+        }
+        if bare_fn.abi.is_some() {
+            return Err(crate::unsupported::feature(
+                UnsupportedFeature::ExternFunctionPointer,
+            ));
+        }
+        if bare_fn.variadic.is_some() {
+            return Err(crate::unsupported::feature(
+                UnsupportedFeature::VariadicFunctionPointer,
+            ));
+        }
+        let parameters = bare_fn
+            .inputs
+            .iter()
+            .map(|argument| self.scan(&argument.ty))
+            .collect::<Result<Vec<_>, _>>()?;
+        let returns = self.scan_return(&bare_fn.output)?;
+        Ok(TypeExpr::closure_with_presence(
+            ClosureType::new(ClosureKind::FunctionPointer, parameters, returns),
+            presence,
+        ))
+    }
+
+    fn slice(&self, slice: &syn::TypeSlice, source: &syn::Type) -> Result<TypeExpr, ScanError> {
+        match self.scan(&slice.elem)? {
+            TypeExpr::Primitive(Primitive::U8) => Ok(TypeExpr::Bytes),
+            _ => Err(ScanError::unsupported_type(source)),
+        }
+    }
+
     fn closure(
         &self,
         kind: ClosureKind,
@@ -372,6 +446,24 @@ impl<'a> Scanner<'a> {
         )))
     }
 
+    fn closure_with_presence(
+        &self,
+        kind: ClosureKind,
+        arguments: &syn::ParenthesizedGenericArguments,
+        presence: HandlePresence,
+    ) -> Result<TypeExpr, ScanError> {
+        let parameters = arguments
+            .inputs
+            .iter()
+            .map(|input| self.scan(input))
+            .collect::<Result<Vec<_>, _>>()?;
+        let returns = self.scan_return(&arguments.output)?;
+        Ok(TypeExpr::closure_with_presence(
+            ClosureType::new(kind, parameters, returns),
+            presence,
+        ))
+    }
+
     fn trait_object_argument(
         &self,
         segment: &syn::PathSegment,
@@ -384,8 +476,50 @@ impl<'a> Scanner<'a> {
             return Err(ScanError::unsupported_type(source));
         };
         match trait_object.bounds.iter().collect::<Vec<_>>().as_slice() {
+            [syn::TypeParamBound::Trait(bound)]
+                if closure_bound(bound).is_some() && form == TraitUseForm::BoxedDyn =>
+            {
+                self.closure_trait_bound(bound, source, presence)
+            }
             [syn::TypeParamBound::Trait(bound)] => self.trait_bound(bound, source, form, presence),
             _ => Err(ScanError::unsupported_type(source)),
+        }
+    }
+
+    fn closure_trait_object_argument(
+        &self,
+        segment: &syn::PathSegment,
+        source: &syn::Type,
+        presence: HandlePresence,
+    ) -> Option<Result<TypeExpr, ScanError>> {
+        let argument = match self.single_type_argument(segment, source) {
+            Ok(argument) => argument,
+            Err(error) => return Some(Err(error)),
+        };
+        let syn::Type::TraitObject(trait_object) = unwrapped(argument) else {
+            return Some(Err(ScanError::unsupported_type(source)));
+        };
+        match trait_object.bounds.iter().collect::<Vec<_>>().as_slice() {
+            [syn::TypeParamBound::Trait(bound)] if closure_bound(bound).is_some() => {
+                Some(self.closure_trait_bound(bound, source, presence))
+            }
+            [syn::TypeParamBound::Trait(_)] => None,
+            _ => Some(Err(ScanError::unsupported_type(source))),
+        }
+    }
+
+    fn closure_trait_bound(
+        &self,
+        bound: &syn::TraitBound,
+        source: &syn::Type,
+        presence: HandlePresence,
+    ) -> Result<TypeExpr, ScanError> {
+        if !matches!(bound.modifier, syn::TraitBoundModifier::None) || bound.lifetimes.is_some() {
+            return Err(ScanError::unsupported_type(source));
+        }
+        match closure_bound(bound) {
+            Some((kind, arguments)) => self.closure_with_presence(kind, arguments, presence),
+            None => Err(ScanError::unsupported_type(source)),
         }
     }
 
@@ -571,10 +705,13 @@ mod tests {
     #[test]
     fn scans_string_and_sequence_containers() {
         assert_eq!(scan("String"), Ok(TypeExpr::String));
+        assert_eq!(scan("[u8]"), Ok(TypeExpr::Bytes));
         assert_eq!(
             scan("Vec<i32>"),
             Ok(TypeExpr::vec(TypeExpr::Primitive(Primitive::I32)))
         );
+        assert_eq!(scan("Vec<u8>"), Ok(TypeExpr::Bytes));
+        assert_eq!(scan("std::vec::Vec<u8>"), Ok(TypeExpr::Bytes));
         assert_eq!(
             scan("Option<String>"),
             Ok(TypeExpr::option(TypeExpr::String))
@@ -634,10 +771,7 @@ mod tests {
     #[test]
     fn resolves_qualified_std_paths_by_last_segment() {
         assert_eq!(scan("std::string::String"), Ok(TypeExpr::String));
-        assert_eq!(
-            scan("std::vec::Vec<u8>"),
-            Ok(TypeExpr::vec(TypeExpr::Primitive(Primitive::U8)))
-        );
+        assert_eq!(scan("std::vec::Vec<u8>"), Ok(TypeExpr::Bytes));
     }
 
     #[test]
@@ -1035,6 +1169,108 @@ mod tests {
                 TraitUseForm::ArcDyn,
                 HandlePresence::Required,
             ))
+        );
+    }
+
+    #[test]
+    fn scans_function_pointer_closure_type() {
+        let TypeExpr::Closure {
+            signature,
+            presence,
+        } = scan("fn(u32, bool) -> i64").expect("scan")
+        else {
+            panic!("expected closure");
+        };
+
+        assert_eq!(presence, HandlePresence::Required);
+        assert_eq!(signature.kind, ClosureKind::FunctionPointer);
+        assert_eq!(
+            signature.parameters,
+            vec![
+                TypeExpr::Primitive(Primitive::U32),
+                TypeExpr::Primitive(Primitive::Bool)
+            ]
+        );
+        assert_eq!(
+            signature.returns,
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::I64))
+        );
+    }
+
+    #[test]
+    fn rejects_function_pointer_shapes_erased_by_closure_type() {
+        assert_eq!(
+            scan("unsafe fn(u32)"),
+            Err(crate::unsupported::feature(
+                UnsupportedFeature::UnsafeFunctionPointer
+            ))
+        );
+        assert_eq!(
+            scan("extern \"C\" fn(u32)"),
+            Err(crate::unsupported::feature(
+                UnsupportedFeature::ExternFunctionPointer
+            ))
+        );
+        assert_eq!(
+            scan("fn(u32, ...)"),
+            Err(crate::unsupported::feature(
+                UnsupportedFeature::VariadicFunctionPointer
+            ))
+        );
+        assert_eq!(
+            scan("for<'a> fn(&'a str)"),
+            Err(crate::unsupported::feature(
+                UnsupportedFeature::HigherRankedFunctionPointer
+            ))
+        );
+    }
+
+    #[test]
+    fn scans_boxed_closure_trait_objects() {
+        let TypeExpr::Closure {
+            signature,
+            presence,
+        } = scan("Box<dyn FnMut(u32) -> bool>").expect("scan")
+        else {
+            panic!("expected closure");
+        };
+
+        assert_eq!(presence, HandlePresence::Required);
+        assert_eq!(signature.kind, ClosureKind::FnMut);
+        assert_eq!(
+            signature.parameters,
+            vec![TypeExpr::Primitive(Primitive::U32)]
+        );
+        assert_eq!(
+            signature.returns,
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::Bool))
+        );
+    }
+
+    #[test]
+    fn folds_optional_inline_closures_into_presence() {
+        let TypeExpr::Closure {
+            signature,
+            presence,
+        } = scan("Option<fn(u32)>").expect("scan")
+        else {
+            panic!("expected closure");
+        };
+        assert_eq!(presence, HandlePresence::Nullable);
+        assert_eq!(signature.kind, ClosureKind::FunctionPointer);
+
+        let TypeExpr::Closure {
+            signature,
+            presence,
+        } = scan("Option<Box<dyn FnOnce(u32) -> i64>>").expect("scan")
+        else {
+            panic!("expected closure");
+        };
+        assert_eq!(presence, HandlePresence::Nullable);
+        assert_eq!(signature.kind, ClosureKind::FnOnce);
+        assert_eq!(
+            signature.returns,
+            ReturnDef::Value(TypeExpr::Primitive(Primitive::I64))
         );
     }
 

@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::UnsupportedFeature;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ScanError {
     Read {
@@ -81,8 +83,9 @@ pub enum ScanError {
     AnonymousConstant,
     UnnamedParameter,
     ReceiverOnFreeFunction,
-    TupleOrUnitStruct,
-    UnsupportedDiscriminant,
+    UnsupportedFeature {
+        feature: UnsupportedFeature,
+    },
 }
 
 impl ScanError {
@@ -213,12 +216,7 @@ impl fmt::Display for ScanError {
             Self::ReceiverOnFreeFunction => {
                 formatter.write_str("free function cannot have a receiver")
             }
-            Self::TupleOrUnitStruct => {
-                formatter.write_str("tuple and unit structs are not supported as records yet")
-            }
-            Self::UnsupportedDiscriminant => {
-                formatter.write_str("enum discriminant is not an integer literal")
-            }
+            Self::UnsupportedFeature { feature } => formatter.write_str(feature.info().message),
         }
     }
 }
@@ -271,8 +269,11 @@ mod tests {
             "free function cannot have a receiver"
         );
         assert_eq!(
-            ScanError::TupleOrUnitStruct.to_string(),
-            "tuple and unit structs are not supported as records yet"
+            ScanError::UnsupportedFeature {
+                feature: UnsupportedFeature::TupleStruct,
+            }
+            .to_string(),
+            "tuple structs are not represented by the record AST"
         );
         assert_eq!(
             ScanError::InvalidMarker {

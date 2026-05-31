@@ -18,5 +18,6 @@ mod visibility;
 
 pub use error::ScanError;
 pub use scan::{scan_file, scan_source};
+pub use unsupported::{UnsupportedFeature, UnsupportedInfo};
 
 use path::{ModulePath, ModuleScope};

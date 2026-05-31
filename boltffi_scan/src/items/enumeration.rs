@@ -5,6 +5,7 @@ use crate::attributes::Attributes;
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr::Scanner;
+use crate::unsupported::UnsupportedFeature;
 use crate::{ModuleScope, ScanError, attributes, name, repr, unsupported};
 
 pub fn scan(
@@ -101,13 +102,15 @@ fn discriminant_value(expr: &syn::Expr) -> Result<i128, ScanError> {
             ..
         }) => literal
             .base10_parse::<i128>()
-            .map_err(|_| ScanError::UnsupportedDiscriminant),
+            .map_err(|_| unsupported::feature(UnsupportedFeature::NonLiteralEnumDiscriminant)),
         syn::Expr::Unary(syn::ExprUnary {
             op: syn::UnOp::Neg(_),
             expr,
             ..
         }) => Ok(-discriminant_value(expr)?),
-        _ => Err(ScanError::UnsupportedDiscriminant),
+        _ => Err(unsupported::feature(
+            UnsupportedFeature::NonLiteralEnumDiscriminant,
+        )),
     }
 }
 
@@ -185,7 +188,10 @@ mod tests {
     fn non_literal_discriminant_is_rejected() {
         let error = scan("pub enum Mask { A = 1 << 2 }").expect_err("non-literal must reject");
 
-        assert_eq!(error, ScanError::UnsupportedDiscriminant);
+        assert_eq!(
+            error,
+            unsupported::feature(UnsupportedFeature::NonLiteralEnumDiscriminant)
+        );
     }
 
     #[test]

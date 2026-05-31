@@ -5,6 +5,7 @@ use crate::attributes::Attributes;
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr::Scanner;
+use crate::unsupported::UnsupportedFeature;
 use crate::{ModuleScope, ScanError, attributes, name, repr, unsupported};
 
 pub fn scan(
@@ -43,12 +44,16 @@ fn record_fields(fields: &syn::Fields, scanner: &Scanner<'_>) -> Result<Vec<Fiel
             .iter()
             .map(|field| record_field(field, scanner))
             .collect(),
-        syn::Fields::Unnamed(_) | syn::Fields::Unit => Err(ScanError::TupleOrUnitStruct),
+        syn::Fields::Unnamed(_) => Err(unsupported::feature(UnsupportedFeature::TupleStruct)),
+        syn::Fields::Unit => Err(unsupported::feature(UnsupportedFeature::UnitStruct)),
     }
 }
 
 fn record_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, ScanError> {
-    let ident = field.ident.as_ref().ok_or(ScanError::TupleOrUnitStruct)?;
+    let ident = field
+        .ident
+        .as_ref()
+        .ok_or_else(|| unsupported::feature(UnsupportedFeature::TupleStruct))?;
     let mut scanned = FieldDef::new(name::canonical(ident), scanner.scan(&field.ty)?);
     let attrs = Attributes::new(&field.attrs, scanner);
     scanned.source = attributes::source(&field.vis, scanner.scope(), field.span());
@@ -100,8 +105,8 @@ mod tests {
         let tuple = scan("pub struct Pair(i32, i32);").expect_err("tuple struct must reject");
         let unit = scan("pub struct Marker;").expect_err("unit struct must reject");
 
-        assert_eq!(tuple, ScanError::TupleOrUnitStruct);
-        assert_eq!(unit, ScanError::TupleOrUnitStruct);
+        assert_eq!(tuple, unsupported::feature(UnsupportedFeature::TupleStruct));
+        assert_eq!(unit, unsupported::feature(UnsupportedFeature::UnitStruct));
     }
 
     #[test]

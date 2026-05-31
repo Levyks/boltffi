@@ -27,7 +27,7 @@ fn scan_tree(source_tree: SourceTree, package: PackageInfo) -> Result<SourceCont
     let mut records = scan_each(marked.records(), &declared_types, items::record::scan)?;
     let mut enums = scan_each(marked.enums(), &declared_types, items::enumeration::scan)?;
     let traits = scan_each(marked.traits(), &declared_types, items::callback::scan)?;
-    let customs = scan_each(marked.customs(), &declared_types, items::custom::scan)?;
+    let customs = scan_each(marked.customs(), &declared_types, items::custom_type::scan)?;
     let streams = items::stream::scan(marked.classes(), &declared_types)?;
     items::impl_block::attach_methods(marked.impls(), &declared_types, &mut records, &mut enums)?;
     let functions = scan_each(marked.functions(), &declared_types, items::function::scan)?;

@@ -76,7 +76,7 @@ impl DeclaredTypes {
             declared_types.register(DeclaredType::Class(id))
         })?;
         marked.customs().iter().try_for_each(|marked| {
-            let spec = items::custom::Spec::parse(marked.item())?;
+            let spec = items::custom_type::Spec::parse(marked.item())?;
             declared_types.register_custom_type(
                 marked.scope(),
                 CustomTypeId::new(marked.module().qualified(&spec.name().to_string())),
@@ -162,11 +162,11 @@ impl DeclaredTypes {
         scope: &ModuleScope,
         ty: &syn::Type,
     ) -> Result<Option<&CustomTypeId>, ScanError> {
-        let remote = match items::custom::RemoteType::scan(ty) {
+        let remote = match items::custom_type::RemoteType::scan(ty) {
             Ok(remote) => remote,
             Err(_) => return Ok(None),
         };
-        let identity = items::custom::RemoteIdentity::query(scope, &remote);
+        let identity = items::custom_type::RemoteIdentity::query(scope, &remote);
         if identity.ambiguous() {
             return Err(ScanError::AmbiguousPath {
                 path: spelling::ty(ty),
@@ -201,7 +201,7 @@ impl DeclaredTypes {
         id: CustomTypeId,
         remote: &syn::Type,
     ) -> Result<(), ScanError> {
-        let remote = items::custom::RemoteType::scan(remote)?;
+        let remote = items::custom_type::RemoteType::scan(remote)?;
         let scope = ModuleScope::new(module.clone(), &[]);
         self.register_custom_type(&scope, id, &remote)
     }
@@ -228,7 +228,7 @@ impl DeclaredTypes {
         remote: &CustomRemoteType,
     ) -> Result<(), ScanError> {
         self.register(DeclaredType::Custom(id.clone()))?;
-        let identity = items::custom::RemoteIdentity::registered(scope, remote);
+        let identity = items::custom_type::RemoteIdentity::registered(scope, remote);
         if identity.ambiguous() || identity.exact().is_empty() {
             return Err(ScanError::InvalidCustomType {
                 message: "ambiguous custom remote type".to_owned(),

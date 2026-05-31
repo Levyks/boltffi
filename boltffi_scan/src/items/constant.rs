@@ -1,4 +1,4 @@
-use boltffi_ast::{ConstantDef, ConstantId, TypeExpr};
+use boltffi_ast::{ConstExpr, ConstantDef, ConstantId, TypeExpr};
 use syn::spanned::Spanned;
 
 use crate::attributes::Attributes;
@@ -6,6 +6,7 @@ use crate::const_expr;
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr;
+use crate::unsupported::UnsupportedFeature;
 use crate::{ModuleScope, ScanError, attributes, name};
 
 pub fn scan(
@@ -25,11 +26,13 @@ fn build(
         return Err(ScanError::AnonymousConstant);
     }
     let types = type_expr::Scanner::new(declared_types, scope);
+    let type_expr = constant_type(&types, &item.ty)?;
     let value = const_expr::Scanner::new(&types).scan(&item.expr);
+    validate_value(&type_expr, &value)?;
     let mut constant = ConstantDef::new(
         ConstantId::new(scope.path().qualified(&ident.to_string())),
         name::canonical(ident),
-        constant_type(&types, &item.ty)?,
+        type_expr,
         value,
     );
     let attrs = Attributes::new(&item.attrs, &types);
@@ -41,12 +44,26 @@ fn build(
     Ok(constant)
 }
 
+fn validate_value(type_expr: &TypeExpr, value: &ConstExpr) -> Result<(), ScanError> {
+    if matches!(type_expr, TypeExpr::Enum(_)) && !matches!(value, ConstExpr::Path(_)) {
+        return Err(crate::unsupported::feature(
+            UnsupportedFeature::PayloadEnumVariantConstant,
+        ));
+    }
+    Ok(())
+}
+
 fn constant_type(types: &type_expr::Scanner<'_>, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
     match type_expr::unwrapped(ty) {
         syn::Type::Reference(reference)
             if reference.mutability.is_none() && is_str(&reference.elem) =>
         {
             Ok(TypeExpr::String)
+        }
+        syn::Type::Reference(reference)
+            if reference.mutability.is_none() && is_bytes(&reference.elem) =>
+        {
+            Ok(TypeExpr::Bytes)
         }
         _ => types.scan(ty),
     }
@@ -60,6 +77,25 @@ fn is_str(ty: &syn::Type) -> bool {
                 && type_path.path.leading_colon.is_none()
                 && type_path.path.segments.len() == 1
                 && type_path.path.segments[0].ident == "str"
+                && matches!(type_path.path.segments[0].arguments, syn::PathArguments::None)
+    )
+}
+
+fn is_bytes(ty: &syn::Type) -> bool {
+    matches!(
+        type_expr::unwrapped(ty),
+        syn::Type::Slice(slice) if is_u8(&slice.elem)
+    )
+}
+
+fn is_u8(ty: &syn::Type) -> bool {
+    matches!(
+        type_expr::unwrapped(ty),
+        syn::Type::Path(type_path)
+            if type_path.qself.is_none()
+                && type_path.path.leading_colon.is_none()
+                && type_path.path.segments.len() == 1
+                && type_path.path.segments[0].ident == "u8"
                 && matches!(type_path.path.segments[0].arguments, syn::PathArguments::None)
     )
 }
@@ -126,6 +162,12 @@ mod tests {
                 .value,
             ConstExpr::Literal(Literal::Bytes(b"ffi".to_vec()))
         );
+        let bytes = scan("pub const BYTES: &'static [u8] = b\"ffi\";").expect("scan");
+        assert_eq!(bytes.type_expr, TypeExpr::Bytes);
+        assert_eq!(
+            bytes.value,
+            ConstExpr::Literal(Literal::Bytes(b"ffi".to_vec()))
+        );
         assert_eq!(
             scan("pub const PAIR: (bool, u8) = (true, 7);")
                 .expect("scan")
@@ -171,6 +213,23 @@ mod tests {
                 PathRoot::Relative,
                 vec![PathSegment::new("Mode"), PathSegment::new("Fast")]
             ))
+        );
+    }
+
+    #[test]
+    fn rejects_payload_enum_variant_constants_before_raw_fallback() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_enum(EnumId::new("demo::Shape"));
+        let error = super::build(
+            &parse("pub const DEFAULT: Shape = Shape::Circle { radius: 1.0 };"),
+            &ModuleScope::root("demo"),
+            &declared_types,
+        )
+        .expect_err("payload enum constant rejects");
+
+        assert_eq!(
+            error,
+            crate::unsupported::feature(UnsupportedFeature::PayloadEnumVariantConstant)
         );
     }
 
