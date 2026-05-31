@@ -1,27 +1,71 @@
-final class _$$Native {
 {%- for cfunc in cfuncs %}
-  @$$ffi.Native<
-    {{ cfunc.return_type.native_type() }} Function(
+@$$ffi.Native<
+  {{ cfunc.return_type.native_type() }} Function(
 {%- for param in cfunc.params %}
-      {{ param.native_type.native_type() }},
+    {{ param.native_type.native_type() }},
 {%- endfor %}
     )
-  >({%if cfunc.is_leaf %}isLeaf: true{% endif %})
-  external static {{ cfunc.return_type.dart_sub_type() }} {{ cfunc.symbol }}(
-  {%- for param in cfunc.params %}
-    {{ param.native_type.dart_sub_type() }} {{ param.name }},
-  {%- endfor %}
-  );
-{% endfor %}
-  @$$ffi.Native<$$ffi.Void Function(_$$FFIString)>()
-  external static void boltffi_free_string(_$$FFIString s);
+>(symbol: '{{ cfunc.symbol }}'{%if cfunc.is_leaf %}, isLeaf: true{% endif %})
+external {{ cfunc.return_type.dart_sub_type() }} _f${{ cfunc.symbol }}(
+{%- for param in cfunc.params %}
+  {{ param.native_type.dart_sub_type() }} {{ param.name }},
+{%- endfor %}
+);
+{%- match cfunc.call_mode %}
+{%- when super::DartNativeFunctionCallMode::Async with { poll_symbol, complete_symbol, complete_ty, cancel_symbol, free_symbol } %}
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint64,
+    $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>>
+  )
+>(symbol: '{{ poll_symbol }}', isLeaf: false)
+external void _f${{ poll_symbol }}(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int callback_data,
+  $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>> callback
+);
 
-  @$$ffi.Native<$$ffi.Void Function(_$$FFIBuf)>()
-  external static void boltffi_free_buf(_$$FFIBuf buf);
+@$$ffi.Native<
+  {{ complete_ty.native_type() }} Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Pointer<_$$FFIStatus>
+  )
+>(symbol: '{{ complete_symbol }}', isLeaf: true)
+external {{ complete_ty.dart_sub_type() }} _f${{ complete_symbol }}(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  $$ffi.Pointer<_$$FFIStatus> status
+);
 
-  @$$ffi.Native<_$$FFIStatus Function($$ffi.Pointer<_$$FFIString>)>()
-  external static _$$FFIStatus boltffi_last_error_message($$ffi.Pointer<_$$FFIString> out);
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+  )
+>(symbol: '{{ cancel_symbol }}', isLeaf: true)
+external void _f${{ cancel_symbol }}(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
 
-  @$$ffi.Native<$$ffi.Void Function()>()
-  external static void boltffi_clear_last_error();
-}
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+  )
+>(symbol: '{{ free_symbol }}', isLeaf: true)
+external void _f${{ free_symbol }}(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+{% else -%}
+{% endmatch -%}
+{%- endfor %}
+
+@$$ffi.Native<$$ffi.Void Function(_$$FFIString)>(symbol: 'boltffi_free_string', isLeaf: true)
+external void _f$boltffi_free_string(_$$FFIString s);
+
+@$$ffi.Native<$$ffi.Void Function(_$$FFIBuf)>(symbol: 'boltffi_free_buf', isLeaf: true)
+external void _f$boltffi_free_buf(_$$FFIBuf buf);
+
+@$$ffi.Native<_$$FFIStatus Function($$ffi.Pointer<_$$FFIString>)>(symbol: 'boltffi_last_error_message', isLeaf: true)
+external _$$FFIStatus _f$boltffi_last_error_message($$ffi.Pointer<_$$FFIString> out);
+
+@$$ffi.Native<$$ffi.Void Function()>(symbol: 'boltffi_clear_last_error', isLeaf: true)
+external void _f$boltffi_clear_last_error();

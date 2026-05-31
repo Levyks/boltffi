@@ -2,40 +2,38 @@
 source: boltffi_bindgen/src/render/dart/templates.rs
 expression: template.render().unwrap()
 ---
-final class _$$Native$Person {
-  @$$ffi.Native<
-    $$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)
-  >(isLeaf: true)
-  external static void boltffi_person_free($$ffi.Pointer<$$ffi.Void> handle);
+@$$ffi.Native<
+  $$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)
+>(symbol: 'boltffi_person_free', isLeaf: true)
+external void _f$boltffi_person_free($$ffi.Pointer<$$ffi.Void> handle);
 
-  @$$ffi.Native<
-    $$ffi.Pointer<$$ffi.Void> Function(
-      $$ffi.Pointer<$$ffi.Uint8>,
-      $$ffi.UintPtr,
-      $$ffi.Uint32,
-    )
-  >(isLeaf: true)
-  external static $$ffi.Pointer<$$ffi.Void> boltffi_person_new(
-    $$ffi.Pointer<$$ffi.Uint8> namePtr,
-    int nameLen,
-    int age,
-  );
+@$$ffi.Native<
+  $$ffi.Pointer<$$ffi.Void> Function(
+    $$ffi.Pointer<$$ffi.Uint8>,
+    $$ffi.UintPtr,
+    $$ffi.Uint32,
+  )
+>(symbol: 'boltffi_person_new', isLeaf: true)
+external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_new(
+  $$ffi.Pointer<$$ffi.Uint8> namePtr,
+  int nameLen,
+  int age,
+);
 
-  @$$ffi.Native<
-    $$ffi.Pointer<$$ffi.Void> Function(
-      $$ffi.Pointer<$$ffi.Uint8>,
-      $$ffi.UintPtr,
-    )
-  >(isLeaf: true)
-  external static $$ffi.Pointer<$$ffi.Void> boltffi_person_new_with_default_age(
-    $$ffi.Pointer<$$ffi.Uint8> namePtr,
-    int nameLen,
-  );
-}
+@$$ffi.Native<
+  $$ffi.Pointer<$$ffi.Void> Function(
+    $$ffi.Pointer<$$ffi.Uint8>,
+    $$ffi.UintPtr,
+  )
+>(symbol: 'boltffi_person_new_with_default_age', isLeaf: true)
+external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_new_with_default_age(
+  $$ffi.Pointer<$$ffi.Uint8> namePtr,
+  int nameLen,
+);
 
 final class Person implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
-    $$ffi.Native.addressOf(_$$Native$Person.boltffi_person_free)
+    $$ffi.Native.addressOf(_f$boltffi_person_free)
   );
 
   final $$ffi.Pointer<$$ffi.Void> _handle;

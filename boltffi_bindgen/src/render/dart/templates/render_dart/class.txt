@@ -1,27 +1,24 @@
-final class _$$Native${{ class.name }} {
-  @$$ffi.Native<
-    $$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)
-  >(isLeaf: true)
-  external static void {{ class.free_symbol }}($$ffi.Pointer<$$ffi.Void> handle);
+@$$ffi.Native<
+  $$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)
+>(symbol: '{{ class.free_symbol }}', isLeaf: true)
+external void _f${{ class.free_symbol }}($$ffi.Pointer<$$ffi.Void> handle);
 {% for ctor in class.constructors %}
-  @$$ffi.Native<
-    {{ ctor.native.return_type.native_type() }} Function(
+@$$ffi.Native<
+  {{ ctor.native.return_type.native_type() }} Function(
 {%- for param in ctor.native.params %}
-      {{ param.native_type.native_type() }},
+    {{ param.native_type.native_type() }},
 {%- endfor %}
-    )
-  >({%if ctor.native.is_leaf %}isLeaf: true{% endif %})
-  external static {{ ctor.native.return_type.dart_sub_type() }} {{ ctor.native.symbol }}(
-  {%- for param in ctor.native.params %}
-    {{ param.native_type.dart_sub_type() }} {{ param.name }},
-  {%- endfor %}
-  );
-{% endfor -%}
-}
-
+  )
+>(symbol: '{{ ctor.native.symbol }}'{%if ctor.native.is_leaf %}, isLeaf: true{% endif %})
+external {{ ctor.native.return_type.dart_sub_type() }} _f${{ ctor.native.symbol }}(
+{%- for param in ctor.native.params %}
+  {{ param.native_type.dart_sub_type() }} {{ param.name }},
+{%- endfor %}
+);
+{% endfor %}
 final class {{ class.name }} implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
-    $$ffi.Native.addressOf(_$$Native${{ class.name }}.{{ class.free_symbol }})
+    $$ffi.Native.addressOf(_f${{ class.free_symbol }})
   );
 
   final $$ffi.Pointer<$$ffi.Void> _handle;
