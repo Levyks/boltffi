@@ -91,3 +91,25 @@ define_id!(
     CustomTypeId,
     "Identifies a custom type declaration and its conversion hooks."
 );
+
+/// Identity of any top-level declaration in a source contract.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum DeclarationId {
+    /// Record declaration id.
+    Record(RecordId),
+    /// Enum declaration id.
+    Enum(EnumId),
+    /// Class declaration id.
+    Class(ClassId),
+    /// Function declaration id.
+    Function(FunctionId),
+    /// Callback trait declaration id.
+    Trait(TraitId),
+    /// Stream declaration id.
+    Stream(StreamId),
+    /// Constant declaration id.
+    Constant(ConstantId),
+    /// Custom type declaration id.
+    CustomType(CustomTypeId),
+}
