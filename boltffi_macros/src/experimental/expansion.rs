@@ -1,11 +1,13 @@
 use boltffi_ast::{FunctionDef, SourceContract};
-use boltffi_binding::{FunctionDecl, LoweredBindings, Surface};
+use boltffi_binding::{LoweredBindings, Surface};
 use proc_macro2::TokenStream;
-use quote::quote;
 use syn::ItemFn;
 
+use super::decl::DeclarationPair;
 use super::error::Error;
-use super::index::{DeclPair, ExpansionIndex, PairedDecl, SourceDecl};
+use super::index::ExpansionIndex;
+use super::syntax::{self, Expand};
+use super::target::Target;
 
 pub struct Expansion<'a, S: Surface> {
     source: &'a SourceContract,
@@ -29,29 +31,29 @@ impl<'a, S: Surface> Expansion<'a, S> {
     pub fn bindings(&self) -> &'a boltffi_binding::Bindings<S> {
         self.lowered.bindings()
     }
+}
 
-    pub fn decl(&self, source: SourceDecl<'a>) -> Result<PairedDecl<'a, S>, Error> {
-        self.index.decl(self.lowered, source)
-    }
-
-    pub fn function(&self, source: &'a FunctionDef, item: ItemFn) -> Result<TokenStream, Error> {
-        let pair = match self.decl(SourceDecl::Function(source))? {
-            PairedDecl::Function(pair) => pair,
-            _ => return Err(Error::WrongDeclaration),
-        };
-        self.expand_function(pair, item)
-    }
-
-    fn expand_function(
+impl<'a, S: Target> Expansion<'a, S> {
+    pub fn pair<I>(
         &self,
-        pair: DeclPair<'a, FunctionDef, FunctionDecl<S>>,
-        item: ItemFn,
-    ) -> Result<TokenStream, Error> {
-        pair.source();
-        pair.binding();
-        Ok(quote! {
-            #item
-        })
+        source: &'a I::Source,
+    ) -> Result<DeclarationPair<'a, I::Source, I::Binding>, Error>
+    where
+        I: Expand<'a, S>,
+    {
+        I::pair(self.index.paired(self.lowered, I::source(source))?)
+    }
+
+    pub fn expand<I>(&self, source: &'a I::Source, syntax: I) -> Result<TokenStream, Error>
+    where
+        I: Expand<'a, S> + 'a,
+    {
+        let pair = self.pair::<I>(source)?;
+        syntax.render(pair)
+    }
+
+    pub fn function(&self, source: &'a FunctionDef, syntax: ItemFn) -> Result<TokenStream, Error> {
+        self.expand(source, syntax::function::ExpandableFunction::new(syntax))
     }
 }
 
@@ -61,7 +63,7 @@ mod tests {
         CanonicalName, FunctionDef, FunctionId, PackageInfo, Primitive, ReturnDef, SourceContract,
         TypeExpr,
     };
-    use boltffi_binding::{Native, lower_with_declarations};
+    use boltffi_binding::{Native, Wasm32, lower_with_declarations};
     use quote::quote;
 
     use super::Expansion;
@@ -83,14 +85,14 @@ mod tests {
         let source = source_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
         let expansion = Expansion::new(&source, &lowered);
-        let item = syn::parse_quote! {
+        let syntax = syn::parse_quote! {
             pub fn answer() -> u32 {
                 42
             }
         };
 
         let tokens = expansion
-            .function(&source.functions[0], item)
+            .function(&source.functions[0], syntax)
             .expect("expanded function");
 
         assert_eq!(
@@ -98,6 +100,42 @@ mod tests {
             quote! {
                 pub fn answer() -> u32 {
                     42
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                    answer()
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn wasm_function_expansion_uses_wasm_cfg() {
+        let source = source_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&source, &lowered);
+        let syntax = syn::parse_quote! {
+            pub fn answer() -> u32 {
+                42
+            }
+        };
+
+        let tokens = expansion
+            .function(&source.functions[0], syntax)
+            .expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn answer() -> u32 {
+                    42
+                }
+                #[cfg(target_arch = "wasm32")]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                    answer()
                 }
             }
             .to_string()

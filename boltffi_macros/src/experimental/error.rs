@@ -6,9 +6,14 @@ use boltffi_binding::{DeclarationId, LowerError};
 #[derive(Debug)]
 pub enum Error {
     Lower(LowerError),
+
     MissingBinding(SourceDeclarationId),
+
     MissingDeclaration(DeclarationId),
+
     WrongDeclaration,
+
+    UnsupportedExpansion(&'static str),
 }
 
 impl From<LowerError> for Error {
@@ -28,6 +33,7 @@ impl fmt::Display for Error {
             Self::WrongDeclaration => {
                 formatter.write_str("lowered declaration has the wrong source kind")
             }
+            Self::UnsupportedExpansion(kind) => write!(formatter, "unsupported expansion: {kind}"),
         }
     }
 }

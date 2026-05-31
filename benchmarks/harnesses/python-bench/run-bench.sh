@@ -74,7 +74,9 @@ RUNNER_COMMAND=(
     --uniffi-dir "$ROOT_DIR/benchmarks/adapters/uniffi/dist/python"
 )
 
-RUNNER_COMMAND+=("${PYPERF_ARGS[@]}")
+if (( ${#PYPERF_ARGS[@]} > 0 )); then
+    RUNNER_COMMAND+=("${PYPERF_ARGS[@]}")
+fi
 RUNNER_COMMAND+=(--output "$RESULTS_DIR/results.json")
 
 if [[ -n "$INCLUDE" ]]; then
