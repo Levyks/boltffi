@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+
+use boltffi_ast::{SourceFile, SourceSpan};
+use proc_macro2::{LineColumn, Span};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ModulePath {
     segments: Vec<String>,
@@ -23,53 +28,354 @@ impl ModulePath {
         path
     }
 
-    pub(super) fn resolve(&self, path: &syn::Path) -> Option<String> {
-        if path.leading_colon.is_some() {
-            return None;
-        }
+    pub(super) fn segments(&self) -> &[String] {
+        &self.segments
+    }
+}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ModuleScope {
+    path: ModulePath,
+    imports: Imports,
+    spans: Option<SpanMap>,
+}
+
+pub(super) enum ImportLookup<'a> {
+    None,
+    Unique(&'a [String]),
+    Ambiguous,
+}
+
+pub(super) enum PathExpansion {
+    Relative(String),
+    Imported { local: String, path: String },
+    Qualified(String),
+    Ambiguous,
+    Unsupported,
+}
+
+impl PathExpansion {
+    #[cfg(test)]
+    pub(super) fn candidate(&self) -> Option<&str> {
+        match self {
+            Self::Relative(path) | Self::Imported { path, .. } | Self::Qualified(path) => {
+                Some(path)
+            }
+            Self::Ambiguous | Self::Unsupported => None,
+        }
+    }
+}
+
+impl ModuleScope {
+    #[cfg(test)]
+    pub(super) fn new(path: ModulePath, items: &[syn::Item]) -> Self {
+        Self::with_spans(path, items, None)
+    }
+
+    pub(super) fn with_spans(
+        path: ModulePath,
+        items: &[syn::Item],
+        spans: Option<SpanMap>,
+    ) -> Self {
+        Self {
+            imports: Imports::scan(&path, items),
+            path,
+            spans,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn root(crate_name: impl Into<String>) -> Self {
+        Self::new(ModulePath::root(crate_name), &[])
+    }
+
+    pub(super) fn path(&self) -> &ModulePath {
+        &self.path
+    }
+
+    pub(super) fn source_span(&self, span: Span) -> Option<SourceSpan> {
+        self.spans.as_ref()?.source_span(span)
+    }
+
+    pub(super) fn expand(&self, path: &syn::Path) -> PathExpansion {
+        if path.leading_colon.is_some() {
+            return PathExpansion::Unsupported;
+        }
         let segments = path
             .segments
             .iter()
             .map(|segment| segment.ident.to_string())
             .collect::<Vec<_>>();
-        let (first, rest) = segments.split_first()?;
+        self.expand_segments(&segments)
+    }
+
+    pub(super) fn imported(&self, name: &str) -> ImportLookup<'_> {
+        self.imports.get(name)
+    }
+
+    pub(super) fn has_glob_imports(&self) -> bool {
+        !self.imports.globs().is_empty()
+    }
+
+    pub(super) fn glob_candidates_for_segments(&self, segments: &[String]) -> Vec<String> {
+        self.imports
+            .globs()
+            .iter()
+            .map(|glob| {
+                glob.iter()
+                    .cloned()
+                    .chain(segments.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            })
+            .collect()
+    }
+
+    fn expand_segments(&self, segments: &[String]) -> PathExpansion {
+        let Some((first, rest)) = segments.split_first() else {
+            return PathExpansion::Unsupported;
+        };
         match first.as_str() {
             "crate" => {
                 let mut resolved = self
+                    .path
                     .segments
                     .first()
                     .cloned()
                     .into_iter()
                     .collect::<Vec<_>>();
                 resolved.extend(rest.iter().cloned());
-                Some(resolved.join("::"))
+                PathExpansion::Qualified(resolved.join("::"))
             }
             "self" => {
-                let mut resolved = self.segments.clone();
+                let mut resolved = self.path.segments.clone();
                 resolved.extend(rest.iter().cloned());
-                Some(resolved.join("::"))
+                PathExpansion::Qualified(resolved.join("::"))
             }
             "super" => {
                 let super_count = segments
                     .iter()
                     .take_while(|segment| segment.as_str() == "super")
                     .count();
-                let retained_segments = self.segments.len().saturating_sub(super_count).max(1);
+                let retained_segments = self.path.segments.len().saturating_sub(super_count).max(1);
                 let mut resolved = self
+                    .path
                     .segments
                     .iter()
                     .take(retained_segments)
                     .cloned()
                     .collect::<Vec<_>>();
                 resolved.extend(segments.iter().skip(super_count).cloned());
-                Some(resolved.join("::"))
+                PathExpansion::Qualified(resolved.join("::"))
             }
-            _ => {
-                let mut resolved = self.segments.clone();
-                resolved.extend(segments);
-                Some(resolved.join("::"))
+            _ => match self.imports.get(first) {
+                ImportLookup::Unique(imported) => {
+                    let mut resolved = imported.to_vec();
+                    resolved.extend(rest.iter().cloned());
+                    PathExpansion::Imported {
+                        local: first.clone(),
+                        path: resolved.join("::"),
+                    }
+                }
+                ImportLookup::Ambiguous => PathExpansion::Ambiguous,
+                ImportLookup::None => {
+                    let mut resolved = self.path.segments.clone();
+                    resolved.extend(segments.iter().cloned());
+                    PathExpansion::Relative(resolved.join("::"))
+                }
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SpanMap {
+    file: SourceFile,
+    line_starts: Vec<usize>,
+}
+
+impl SpanMap {
+    pub(super) fn new(file: impl Into<String>, source: &str) -> Self {
+        let line_starts = std::iter::once(0)
+            .chain(
+                source
+                    .bytes()
+                    .enumerate()
+                    .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
+            )
+            .collect();
+        Self {
+            file: SourceFile::new(file),
+            line_starts,
+        }
+    }
+
+    fn source_span(&self, span: Span) -> Option<SourceSpan> {
+        let start = self.offset(span.start())?;
+        let end = self.offset(span.end())?;
+        (end >= start).then(|| SourceSpan::new(self.file.clone(), start, end))
+    }
+
+    fn offset(&self, location: LineColumn) -> Option<usize> {
+        let line_start = self.line_starts.get(location.line.checked_sub(1)?)?;
+        Some(line_start + location.column)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Imports {
+    by_name: HashMap<String, ImportBinding>,
+    globs: Vec<Vec<String>>,
+}
+
+impl Imports {
+    fn scan(module: &ModulePath, items: &[syn::Item]) -> Self {
+        let mut imports = Self::default();
+        items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Use(item) => Some(item),
+                _ => None,
+            })
+            .for_each(|item| {
+                let prefix = UsePrefix::new(item.leading_colon.is_some());
+                imports.insert_tree(module, prefix, &item.tree);
+            });
+        imports
+    }
+
+    fn get(&self, name: &str) -> ImportLookup<'_> {
+        match self.by_name.get(name) {
+            Some(ImportBinding::Unique(path)) => ImportLookup::Unique(path),
+            Some(ImportBinding::Ambiguous) => ImportLookup::Ambiguous,
+            None => ImportLookup::None,
+        }
+    }
+
+    fn globs(&self) -> &[Vec<String>] {
+        &self.globs
+    }
+
+    fn insert_tree(&mut self, module: &ModulePath, prefix: UsePrefix, tree: &syn::UseTree) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                let next = prefix.join(path.ident.to_string());
+                self.insert_tree(module, next, &path.tree);
             }
+            syn::UseTree::Name(name) => {
+                if name.ident == "self" {
+                    self.insert_self(module, prefix);
+                } else {
+                    let imported = prefix.join(name.ident.to_string());
+                    self.insert(module, name.ident.to_string(), imported);
+                }
+            }
+            syn::UseTree::Rename(rename) => {
+                let imported = if rename.ident == "self" {
+                    prefix
+                } else {
+                    prefix.join(rename.ident.to_string())
+                };
+                self.insert(module, rename.rename.to_string(), imported);
+            }
+            syn::UseTree::Group(group) => group
+                .items
+                .iter()
+                .for_each(|tree| self.insert_tree(module, prefix.clone(), tree)),
+            syn::UseTree::Glob(_) => self.insert_glob(module, prefix),
+        }
+    }
+
+    fn insert_self(&mut self, module: &ModulePath, prefix: UsePrefix) {
+        if let Some(local) = prefix.segments.last().cloned() {
+            self.insert(module, local, prefix);
+        }
+    }
+
+    fn insert(&mut self, module: &ModulePath, local: String, prefix: UsePrefix) {
+        let path = prefix.into_qualified_segments(module).collect::<Vec<_>>();
+        match self.by_name.get(&local) {
+            Some(ImportBinding::Unique(existing)) if existing == &path => {}
+            Some(ImportBinding::Unique(_)) | Some(ImportBinding::Ambiguous) => {
+                self.by_name.insert(local, ImportBinding::Ambiguous);
+            }
+            None => {
+                self.by_name.insert(local, ImportBinding::Unique(path));
+            }
+        }
+    }
+
+    fn insert_glob(&mut self, module: &ModulePath, prefix: UsePrefix) {
+        let path = prefix.into_qualified_segments(module).collect::<Vec<_>>();
+        if !self.globs.contains(&path) {
+            self.globs.push(path);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ImportBinding {
+    Unique(Vec<String>),
+    Ambiguous,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UsePrefix {
+    leading_colon: bool,
+    segments: Vec<String>,
+}
+
+impl UsePrefix {
+    fn new(leading_colon: bool) -> Self {
+        Self {
+            leading_colon,
+            segments: Vec::new(),
+        }
+    }
+
+    fn join(mut self, segment: String) -> Self {
+        self.segments.push(segment);
+        self
+    }
+
+    fn into_qualified_segments(self, module: &ModulePath) -> impl Iterator<Item = String> {
+        let segments = self.segments;
+        let root = segments
+            .first()
+            .map(String::as_str)
+            .filter(|_| !self.leading_colon);
+        match root {
+            Some("crate") => module
+                .segments
+                .first()
+                .cloned()
+                .into_iter()
+                .chain(segments.into_iter().skip(1))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            Some("self") => module
+                .segments
+                .iter()
+                .cloned()
+                .chain(segments.into_iter().skip(1))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            Some("super") => {
+                let super_count = segments
+                    .iter()
+                    .take_while(|segment| segment.as_str() == "super")
+                    .count();
+                let retained_segments = module.segments.len().saturating_sub(super_count).max(1);
+                module
+                    .segments
+                    .iter()
+                    .take(retained_segments)
+                    .cloned()
+                    .chain(segments.into_iter().skip(super_count))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            }
+            _ => segments.into_iter().collect::<Vec<_>>().into_iter(),
         }
     }
 }
@@ -100,24 +406,72 @@ mod tests {
     }
 
     #[test]
-    fn resolves_type_paths_from_module_context() {
+    fn expands_type_paths_from_module_context() {
         let module = ModulePath::root("demo").child("geometry").child("shape");
+        let scope = ModuleScope::new(module, &[]);
 
         assert_eq!(
-            module.resolve(&syn::parse_str("Point").expect("path")),
-            Some("demo::geometry::shape::Point".to_owned())
+            scope
+                .expand(&syn::parse_str("Point").expect("path"))
+                .candidate(),
+            Some("demo::geometry::shape::Point")
         );
         assert_eq!(
-            module.resolve(&syn::parse_str("self::Point").expect("path")),
-            Some("demo::geometry::shape::Point".to_owned())
+            scope
+                .expand(&syn::parse_str("self::Point").expect("path"))
+                .candidate(),
+            Some("demo::geometry::shape::Point")
         );
         assert_eq!(
-            module.resolve(&syn::parse_str("super::Point").expect("path")),
-            Some("demo::geometry::Point".to_owned())
+            scope
+                .expand(&syn::parse_str("super::Point").expect("path"))
+                .candidate(),
+            Some("demo::geometry::Point")
         );
         assert_eq!(
-            module.resolve(&syn::parse_str("crate::Point").expect("path")),
-            Some("demo::Point".to_owned())
+            scope
+                .expand(&syn::parse_str("crate::Point").expect("path"))
+                .candidate(),
+            Some("demo::Point")
+        );
+    }
+
+    #[test]
+    fn expands_explicit_import_aliases() {
+        let file = syn::parse_str::<syn::File>(
+            "use chrono::{DateTime as Date, Utc}; \
+             use crate::domain::Money as Cash; \
+             use super::shared::Id;",
+        )
+        .expect("source");
+        let scope = ModuleScope::new(
+            ModulePath::root("demo").child("api").child("v1"),
+            &file.items,
+        );
+
+        assert_eq!(
+            scope
+                .expand(&syn::parse_str("Date").expect("path"))
+                .candidate(),
+            Some("chrono::DateTime")
+        );
+        assert_eq!(
+            scope
+                .expand(&syn::parse_str("Utc").expect("path"))
+                .candidate(),
+            Some("chrono::Utc")
+        );
+        assert_eq!(
+            scope
+                .expand(&syn::parse_str("Cash").expect("path"))
+                .candidate(),
+            Some("demo::domain::Money")
+        );
+        assert_eq!(
+            scope
+                .expand(&syn::parse_str("Id").expect("path"))
+                .candidate(),
+            Some("demo::api::shared::Id")
         );
     }
 }

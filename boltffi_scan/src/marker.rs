@@ -4,15 +4,31 @@ use syn::parse::Parser;
 use crate::ScanError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Marker {
+pub enum Marker {
     Data,
     DataImpl,
     Error,
     Export,
+    Skip,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Disposition {
+    Skip,
+    Reject(Marker),
+    Unmarked,
+}
+
+pub fn disposition(attrs: &[syn::Attribute]) -> Result<Disposition, ScanError> {
+    Ok(match Marker::detect(attrs)? {
+        Some(Marker::Skip) => Disposition::Skip,
+        Some(marker) => Disposition::Reject(marker),
+        None => Disposition::Unmarked,
+    })
 }
 
 impl Marker {
-    pub(super) fn detect(attrs: &[syn::Attribute]) -> Result<Option<Self>, ScanError> {
+    pub fn detect(attrs: &[syn::Attribute]) -> Result<Option<Self>, ScanError> {
         attrs.iter().try_fold(None, |detected: Option<Self>, attr| {
             let marker = Self::from_attribute(attr)?;
             match (detected, marker) {
@@ -26,16 +42,24 @@ impl Marker {
         })
     }
 
-    pub(super) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Data => "data",
             Self::DataImpl => "data(impl)",
             Self::Error => "error",
             Self::Export => "export",
+            Self::Skip => "skip",
         }
     }
 
-    pub(super) fn append_value_attrs(self, attrs: &mut Vec<UserAttr>) {
+    pub fn invalid_placement(self, item: impl Into<String>) -> ScanError {
+        ScanError::InvalidMarkerPlacement {
+            marker: self.as_str().to_owned(),
+            item: item.into(),
+        }
+    }
+
+    pub fn append_value_attrs(self, attrs: &mut Vec<UserAttr>) {
         if self == Self::Error {
             attrs.push(UserAttr::new(Path::single("error"), AttributeInput::Empty));
         }
@@ -46,6 +70,7 @@ impl Marker {
             Some("data") => Self::from_data(attr).map(Some),
             Some("error") => Self::empty(attr, Self::Error).map(Some),
             Some("export") => Self::empty(attr, Self::Export).map(Some),
+            Some("skip") => Self::empty(attr, Self::Skip).map(Some),
             _ => Ok(None),
         }
     }
@@ -78,31 +103,16 @@ fn marker_name(attr: &syn::Attribute) -> Option<String> {
     let segments = attr.path().segments.iter().collect::<Vec<_>>();
     match segments.as_slice() {
         [segment] => Some(segment.ident.to_string())
-            .filter(|name| matches!(name.as_str(), "data" | "error" | "export")),
+            .filter(|name| matches!(name.as_str(), "data" | "error" | "export" | "skip")),
         [namespace, marker] if namespace.ident == "boltffi" => Some(marker.ident.to_string())
-            .filter(|name| matches!(name.as_str(), "data" | "error" | "export")),
+            .filter(|name| matches!(name.as_str(), "data" | "error" | "export" | "skip")),
         _ => None,
     }
 }
 
 fn invalid(attr: &syn::Attribute) -> ScanError {
     ScanError::InvalidMarker {
-        attribute: spelling(attr),
-    }
-}
-
-fn spelling(attr: &syn::Attribute) -> String {
-    let path = attr
-        .path()
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::");
-    match &attr.meta {
-        syn::Meta::Path(_) => path,
-        syn::Meta::List(list) => format!("{}({})", path, list.tokens),
-        syn::Meta::NameValue(_) => path,
+        attribute: crate::spelling::attr(attr),
     }
 }
 
@@ -131,6 +141,12 @@ mod tests {
     fn enum_attrs(source: &str) -> Vec<syn::Attribute> {
         syn::parse_str::<syn::ItemEnum>(source)
             .expect("valid enum")
+            .attrs
+    }
+
+    fn const_attrs(source: &str) -> Vec<syn::Attribute> {
+        syn::parse_str::<syn::ItemConst>(source)
+            .expect("valid const")
             .attrs
     }
 
@@ -215,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_export_on_functions() {
+    fn detects_export_on_exported_items() {
         assert_eq!(
             Marker::detect(&fn_attrs("#[export] fn f() {}")),
             Ok(Some(Marker::Export))
@@ -225,5 +241,27 @@ mod tests {
             Ok(Some(Marker::Export))
         );
         assert_eq!(Marker::detect(&fn_attrs("fn f() {}")), Ok(None));
+        assert_eq!(
+            Marker::detect(&const_attrs("#[export] const ANSWER: u32 = 42;")),
+            Ok(Some(Marker::Export))
+        );
+    }
+
+    #[test]
+    fn detects_skip_through_the_marker_set() {
+        assert_eq!(
+            Marker::detect(&fn_attrs("#[skip] fn f() {}")),
+            Ok(Some(Marker::Skip))
+        );
+        assert_eq!(
+            Marker::detect(&fn_attrs("#[boltffi::skip] fn f() {}")),
+            Ok(Some(Marker::Skip))
+        );
+        assert_eq!(
+            Marker::detect(&fn_attrs("#[skip(reason)] fn f() {}")),
+            Err(ScanError::InvalidMarker {
+                attribute: "skip(reason)".to_owned()
+            })
+        );
     }
 }

@@ -22,10 +22,10 @@ fn items(attribute: &syn::Attribute) -> Vec<ReprItem> {
 fn item(meta: syn::Meta) -> ReprItem {
     match meta {
         syn::Meta::Path(path) => {
-            path_item(&path).unwrap_or_else(|| ReprItem::Other(path_text(&path)))
+            path_item(&path).unwrap_or_else(|| ReprItem::Other(crate::spelling::path(&path)))
         }
         syn::Meta::List(list) => {
-            let name = path_text(&list.path);
+            let name = crate::spelling::path(&list.path);
             match name.as_str() {
                 "packed" => ReprItem::Packed(int_arg(&list)),
                 "align" => int_arg(&list)
@@ -34,7 +34,7 @@ fn item(meta: syn::Meta) -> ReprItem {
                 _ => ReprItem::Other(format!("{}({})", name, list.tokens)),
             }
         }
-        syn::Meta::NameValue(value) => ReprItem::Other(path_text(&value.path)),
+        syn::Meta::NameValue(value) => ReprItem::Other(crate::spelling::path(&value.path)),
     }
 }
 
@@ -62,14 +62,6 @@ fn int_arg(list: &syn::MetaList) -> Option<u16> {
     syn::parse2::<syn::LitInt>(list.tokens.clone())
         .ok()
         .and_then(|literal| literal.base10_parse().ok())
-}
-
-fn path_text(path: &syn::Path) -> String {
-    path.segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::")
 }
 
 #[cfg(test)]

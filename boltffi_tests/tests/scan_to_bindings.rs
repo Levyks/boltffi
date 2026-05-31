@@ -1,5 +1,8 @@
 use boltffi_ast::PackageInfo;
-use boltffi_binding::{Decl, Native, RecordDecl, lower};
+use boltffi_binding::{
+    Bindings, ClassDecl, ConstantDecl, ConstantValueDecl, Decl, DefaultValue, IncomingParam,
+    IntegerValue, Native, ParamPlan, Primitive, Receive, RecordDecl, ReturnPlan, TypeRef, lower,
+};
 use boltffi_scan::scan_file;
 
 const SOURCE: &str = "
@@ -9,6 +12,26 @@ const SOURCE: &str = "
         pub x: f64,
         pub y: f64,
     }
+
+    #[data]
+    pub enum Mode {
+        VeryFast,
+        Slow,
+    }
+
+    #[export]
+    pub const DEFAULT_LIMIT: u32 = 42;
+
+    #[export]
+    pub const DEFAULT_MODE: Mode = Mode::VeryFast;
+
+    custom_type!(
+        pub UtcDateTime,
+        remote = DateTime<Utc>,
+        repr = i64,
+        into_ffi = to_millis,
+        try_from_ffi = from_millis,
+    );
 
     #[data(impl)]
     impl Point {
@@ -23,9 +46,35 @@ const SOURCE: &str = "
         }
     }
 
+    pub struct Engine;
+
+    #[export]
+    impl Engine {
+        pub fn new(seed: u64) -> Self {
+            todo!()
+        }
+
+        pub fn start(&mut self) {}
+    }
+
+    #[export]
+    pub trait ValueCallback {
+        fn on_value(&self, value: u32) -> u32;
+    }
+
+    #[export]
+    pub fn invoke_callback(callback: impl ValueCallback, value: u32) -> u32 {
+        callback.on_value(value)
+    }
+
     #[export]
     pub fn make_handler() -> impl Fn(u32) -> u32 {
         |value| value
+    }
+
+    #[export]
+    pub fn round_trip_time(value: DateTime<Utc>) -> DateTime<Utc> {
+        value
     }
 ";
 
@@ -35,6 +84,23 @@ fn record_method_counts(record: &RecordDecl<Native>) -> (usize, usize) {
         RecordDecl::Encoded(encoded) => (encoded.initializers().len(), encoded.methods().len()),
         _ => panic!("unexpected RecordDecl variant"),
     }
+}
+
+fn class_method_counts(class: &ClassDecl<Native>) -> (usize, usize) {
+    (class.initializers().len(), class.methods().len())
+}
+
+fn constant<'a>(bindings: &'a Bindings<Native>, name: &str) -> &'a ConstantDecl<Native> {
+    bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::Constant(constant) if constant.name().as_path_string() == name => {
+                Some(constant.as_ref())
+            }
+            _ => None,
+        })
+        .expect("constant declaration")
 }
 
 #[test]
@@ -53,8 +119,32 @@ fn scans_and_lowers_point_contract_to_bindings() {
         .iter()
         .filter(|decl| matches!(decl, Decl::Function(_)))
         .count();
+    let callbacks = bindings
+        .decls()
+        .iter()
+        .filter(|decl| matches!(decl, Decl::Callback(_)))
+        .count();
+    let classes = bindings
+        .decls()
+        .iter()
+        .filter(|decl| matches!(decl, Decl::Class(_)))
+        .count();
+    let constants = bindings
+        .decls()
+        .iter()
+        .filter(|decl| matches!(decl, Decl::Constant(_)))
+        .count();
+    let customs = bindings
+        .decls()
+        .iter()
+        .filter(|decl| matches!(decl, Decl::CustomType(_)))
+        .count();
     assert_eq!(records, 1, "Point lowers to one record");
-    assert_eq!(functions, 1, "make_handler lowers to one function");
+    assert_eq!(functions, 3, "functions lower from scanned exports");
+    assert_eq!(callbacks, 1, "ValueCallback lowers to one callback");
+    assert_eq!(classes, 1, "Engine lowers to one class");
+    assert_eq!(constants, 2, "exported constants lower to constants");
+    assert_eq!(customs, 1, "custom types lower from scanned macros");
 
     let record = bindings
         .decls()
@@ -66,4 +156,78 @@ fn scans_and_lowers_point_contract_to_bindings() {
         .expect("record declaration");
 
     assert_eq!(record_method_counts(record), (1, 1));
+
+    let class = bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::Class(class) => Some(class.as_ref()),
+            _ => None,
+        })
+        .expect("class declaration");
+
+    assert_eq!(class_method_counts(class), (1, 1));
+    assert_eq!(class.initializers()[0].name().as_path_string(), "new");
+    assert_eq!(class.methods()[0].name().as_path_string(), "start");
+    assert_eq!(
+        class.methods()[0].callable().receiver(),
+        Some(Receive::ByMutRef)
+    );
+
+    match constant(&bindings, "default::limit").value() {
+        ConstantValueDecl::Inline { ty, value, .. } => {
+            assert_eq!(ty, &TypeRef::Primitive(Primitive::U32));
+            assert_eq!(value, &DefaultValue::Integer(IntegerValue::new(42)));
+        }
+        other => panic!("expected inline integer constant, got {other:?}"),
+    }
+
+    match constant(&bindings, "default::mode").value() {
+        ConstantValueDecl::Inline {
+            value:
+                DefaultValue::EnumVariant {
+                    enum_name,
+                    variant_name,
+                },
+            ..
+        } => {
+            assert_eq!(enum_name.as_path_string(), "mode");
+            assert_eq!(variant_name.as_path_string(), "very::fast");
+        }
+        other => panic!("expected inline enum constant, got {other:?}"),
+    }
+
+    let custom = bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::CustomType(custom) => Some(custom.as_ref()),
+            _ => None,
+        })
+        .expect("custom type declaration");
+    let custom_id = custom.id();
+    assert_eq!(custom.representation(), &TypeRef::Primitive(Primitive::I64));
+
+    let round_trip = bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::Function(function) if function.name().as_path_string() == "round::trip::time" => {
+                Some(function.as_ref())
+            }
+            _ => None,
+        })
+        .expect("round_trip_time function");
+    match round_trip.callable().params()[0].payload() {
+        IncomingParam::Value(ParamPlan::Encoded { ty, .. }) => {
+            assert_eq!(ty, &TypeRef::Custom(custom_id));
+        }
+        other => panic!("expected encoded custom param, got {other:?}"),
+    }
+    match round_trip.callable().returns().plan() {
+        ReturnPlan::EncodedViaReturnSlot { ty, .. } => {
+            assert_eq!(ty, &TypeRef::Custom(custom_id));
+        }
+        other => panic!("expected encoded custom return, got {other:?}"),
+    }
 }

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::num::NonZeroUsize;
 
 use serde::{Deserialize, Serialize};
 
@@ -118,8 +119,8 @@ pub enum PathRoot {
     Crate,
     /// A path starting at the current module.
     Self_,
-    /// A path starting at the parent module.
-    Super,
+    /// A path starting at one or more parent modules.
+    Super(NonZeroUsize),
     /// A path starting at the extern prelude.
     Absolute,
 }

@@ -20,6 +20,12 @@ pub enum ScanError {
     InvalidMarker {
         attribute: String,
     },
+    InvalidAttribute {
+        attribute: String,
+    },
+    InvalidDefault {
+        attribute: String,
+    },
     InvalidMarkerPlacement {
         marker: String,
         item: String,
@@ -28,7 +34,27 @@ pub enum ScanError {
         first: String,
         second: String,
     },
+    ConflictingDeclarations {
+        path: String,
+        first: String,
+        second: String,
+    },
+    AmbiguousPath {
+        path: String,
+    },
+    InvalidCustomType {
+        message: String,
+    },
+    InvalidStream {
+        message: String,
+    },
     UnsupportedMarkedImpl {
+        target: String,
+    },
+    UnsupportedClassImpl {
+        target: String,
+    },
+    UnsupportedClassImplShape {
         target: String,
     },
     UnsupportedGenerics {
@@ -40,6 +66,19 @@ pub enum ScanError {
     UnsupportedExternAbi {
         item: String,
     },
+    UnsupportedSupertraits {
+        item: String,
+    },
+    UnsupportedTraitItem {
+        item: String,
+    },
+    UnsupportedImplItem {
+        item: String,
+    },
+    UnsupportedTraitMethodBody {
+        item: String,
+    },
+    AnonymousConstant,
     UnnamedParameter,
     ReceiverOnFreeFunction,
     TupleOrUnitStruct,
@@ -63,24 +102,8 @@ impl ScanError {
 
     pub(super) fn unsupported_type(ty: &syn::Type) -> Self {
         Self::UnsupportedType {
-            spelling: type_spelling(ty),
+            spelling: crate::spelling::ty(ty),
         }
-    }
-}
-
-fn type_spelling(ty: &syn::Type) -> String {
-    match ty {
-        syn::Type::Paren(paren) => type_spelling(&paren.elem),
-        syn::Type::Group(group) => type_spelling(&group.elem),
-        syn::Type::Path(type_path) => type_path
-            .path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.to_string())
-            .collect::<Vec<_>>()
-            .join("::"),
-        syn::Type::Reference(reference) => format!("&{}", type_spelling(&reference.elem)),
-        _ => "unrecognized type".to_owned(),
     }
 }
 
@@ -106,6 +129,12 @@ impl fmt::Display for ScanError {
             Self::InvalidMarker { attribute } => {
                 write!(formatter, "invalid BoltFFI marker `{attribute}`")
             }
+            Self::InvalidAttribute { attribute } => {
+                write!(formatter, "invalid source attribute `{attribute}`")
+            }
+            Self::InvalidDefault { attribute } => {
+                write!(formatter, "invalid default attribute `{attribute}`")
+            }
             Self::InvalidMarkerPlacement { marker, item } => {
                 write!(
                     formatter,
@@ -118,10 +147,41 @@ impl fmt::Display for ScanError {
                     "conflicting BoltFFI markers `{first}` and `{second}`"
                 )
             }
+            Self::ConflictingDeclarations {
+                path,
+                first,
+                second,
+            } => {
+                write!(
+                    formatter,
+                    "conflicting BoltFFI declarations `{first}` and `{second}` for `{path}`"
+                )
+            }
+            Self::AmbiguousPath { path } => {
+                write!(formatter, "ambiguous source path `{path}`")
+            }
+            Self::InvalidCustomType { message } => {
+                write!(formatter, "invalid custom type declaration: {message}")
+            }
+            Self::InvalidStream { message } => {
+                write!(formatter, "invalid stream declaration: {message}")
+            }
             Self::UnsupportedMarkedImpl { target } => {
                 write!(
                     formatter,
                     "marked impl target `{target}` is not a supported value type"
+                )
+            }
+            Self::UnsupportedClassImpl { target } => {
+                write!(
+                    formatter,
+                    "exported class impl target `{target}` is not a supported class type"
+                )
+            }
+            Self::UnsupportedClassImplShape { target } => {
+                write!(
+                    formatter,
+                    "exported class impl `{target}` cannot implement a trait"
                 )
             }
             Self::UnsupportedGenerics { item } => {
@@ -133,6 +193,22 @@ impl fmt::Display for ScanError {
             Self::UnsupportedExternAbi { item } => {
                 write!(formatter, "`{item}` cannot declare an extern ABI")
             }
+            Self::UnsupportedSupertraits { item } => {
+                write!(formatter, "`{item}` cannot use supertraits")
+            }
+            Self::UnsupportedTraitItem { item } => {
+                write!(formatter, "`{item}` is not supported in exported traits")
+            }
+            Self::UnsupportedImplItem { item } => {
+                write!(
+                    formatter,
+                    "`{item}` is not supported in exported impl blocks"
+                )
+            }
+            Self::UnsupportedTraitMethodBody { item } => {
+                write!(formatter, "`{item}` cannot define a default body")
+            }
+            Self::AnonymousConstant => formatter.write_str("exported constant cannot be anonymous"),
             Self::UnnamedParameter => formatter.write_str("parameter pattern is not a plain name"),
             Self::ReceiverOnFreeFunction => {
                 formatter.write_str("free function cannot have a receiver")
@@ -206,6 +282,20 @@ mod tests {
             "invalid BoltFFI marker `data(foo)`"
         );
         assert_eq!(
+            ScanError::InvalidAttribute {
+                attribute: "deprecated(because = \"old\")".to_owned()
+            }
+            .to_string(),
+            "invalid source attribute `deprecated(because = \"old\")`"
+        );
+        assert_eq!(
+            ScanError::InvalidDefault {
+                attribute: "default([1 , 2])".to_owned()
+            }
+            .to_string(),
+            "invalid default attribute `default([1 , 2])`"
+        );
+        assert_eq!(
             ScanError::InvalidMarkerPlacement {
                 marker: "export".to_owned(),
                 item: "struct".to_owned()
@@ -222,11 +312,41 @@ mod tests {
             "conflicting BoltFFI markers `data` and `error`"
         );
         assert_eq!(
+            ScanError::ConflictingDeclarations {
+                path: "demo::Engine".to_owned(),
+                first: "record".to_owned(),
+                second: "class".to_owned()
+            }
+            .to_string(),
+            "conflicting BoltFFI declarations `record` and `class` for `demo::Engine`"
+        );
+        assert_eq!(
             ScanError::UnsupportedMarkedImpl {
                 target: "Missing".to_owned()
             }
             .to_string(),
             "marked impl target `Missing` is not a supported value type"
+        );
+        assert_eq!(
+            ScanError::InvalidStream {
+                message: "ffi_stream requires item = <type>".to_owned()
+            }
+            .to_string(),
+            "invalid stream declaration: ffi_stream requires item = <type>"
+        );
+        assert_eq!(
+            ScanError::UnsupportedClassImpl {
+                target: "Missing".to_owned()
+            }
+            .to_string(),
+            "exported class impl target `Missing` is not a supported class type"
+        );
+        assert_eq!(
+            ScanError::UnsupportedClassImplShape {
+                target: "Engine".to_owned()
+            }
+            .to_string(),
+            "exported class impl `Engine` cannot implement a trait"
         );
         assert_eq!(
             ScanError::UnsupportedGenerics {
@@ -248,6 +368,38 @@ mod tests {
             }
             .to_string(),
             "`function add` cannot declare an extern ABI"
+        );
+        assert_eq!(
+            ScanError::UnsupportedSupertraits {
+                item: "trait Listener".to_owned()
+            }
+            .to_string(),
+            "`trait Listener` cannot use supertraits"
+        );
+        assert_eq!(
+            ScanError::UnsupportedTraitItem {
+                item: "trait Listener::Item".to_owned()
+            }
+            .to_string(),
+            "`trait Listener::Item` is not supported in exported traits"
+        );
+        assert_eq!(
+            ScanError::UnsupportedImplItem {
+                item: "demo::Engine::VERSION".to_owned()
+            }
+            .to_string(),
+            "`demo::Engine::VERSION` is not supported in exported impl blocks"
+        );
+        assert_eq!(
+            ScanError::UnsupportedTraitMethodBody {
+                item: "trait Listener::call".to_owned()
+            }
+            .to_string(),
+            "`trait Listener::call` cannot define a default body"
+        );
+        assert_eq!(
+            ScanError::AnonymousConstant.to_string(),
+            "exported constant cannot be anonymous"
         );
     }
 }

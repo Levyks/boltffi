@@ -86,7 +86,7 @@ fn lower_value_decl<S: SurfaceLower>(
     // delivered through a Rust-side getter the foreign side calls once:
     // byte-string, array, tuple, and raw (unevaluated) expressions, plus
     // any constant whose declared type is not an inline scalar type.
-    match inline_default(idx, constant)? {
+    match inline_default::<S>(idx, constant)? {
         Some(value) => {
             let ty = types::lower(ids, &constant.type_expr)?;
             Ok(ConstantValueDecl::inline(ty, value))
@@ -100,14 +100,14 @@ fn lower_value_decl<S: SurfaceLower>(
     }
 }
 
-fn inline_default(
+fn inline_default<S: SurfaceLower>(
     idx: &Index<'_>,
     constant: &SourceConstant,
 ) -> Result<Option<DefaultValue>, LowerError> {
     // Returns the inline literal for a constant, `None` when the value
     // must be delivered through an accessor, or an error when the value
     // cannot inhabit its declared type.
-    let Some(expected) = InlineConstantType::from_type_expr(idx, &constant.type_expr) else {
+    let Some(expected) = InlineConstantType::from_type_expr::<S>(idx, &constant.type_expr) else {
         return Ok(None);
     };
     expected.lower_value(constant)
@@ -123,12 +123,12 @@ enum InlineConstantType<'src> {
 }
 
 impl<'src> InlineConstantType<'src> {
-    fn from_type_expr(idx: &Index<'src>, type_expr: &TypeExpr) -> Option<Self> {
+    fn from_type_expr<S: SurfaceLower>(idx: &Index<'src>, type_expr: &TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::Primitive(SourcePrimitive::Bool) => Some(Self::Bool),
             TypeExpr::Primitive(SourcePrimitive::F32 | SourcePrimitive::F64) => Some(Self::Float),
             TypeExpr::Primitive(primitive) => {
-                IntegerBounds::for_primitive(*primitive).map(Self::Integer)
+                IntegerBounds::for_primitive::<S>(*primitive).map(Self::Integer)
             }
             TypeExpr::String => Some(Self::String),
             TypeExpr::Enum(id) => idx.enumeration(id).map(Self::Enum),
@@ -156,10 +156,9 @@ impl<'src> InlineConstantType<'src> {
                 Ok(Some(DefaultValue::String(value.clone())))
             }
             (Self::Enum(enumeration), ConstExpr::Path(path)) => {
-                enum_variant_from_path(enumeration, path)
-                    .map(Some)
-                    .ok_or_else(|| LowerError::invalid_constant_value(&constant.id))
+                enum_variant_from_path(enumeration, path, &constant.id)
             }
+            (_, ConstExpr::Path(_)) => Ok(None),
             (_, ConstExpr::Literal(Literal::Bytes(_)))
             | (_, ConstExpr::Array(_))
             | (_, ConstExpr::Tuple(_))
@@ -169,19 +168,28 @@ impl<'src> InlineConstantType<'src> {
     }
 }
 
-fn enum_variant_from_path(enumeration: &SourceEnum, path: &SourcePath) -> Option<DefaultValue> {
-    let (variant_segment, qualifier) = path.segments.split_last()?;
+fn enum_variant_from_path(
+    enumeration: &SourceEnum,
+    path: &SourcePath,
+    constant_id: &boltffi_ast::ConstantId,
+) -> Result<Option<DefaultValue>, LowerError> {
+    let Some((variant_segment, qualifier)) = path.segments.split_last() else {
+        return Ok(None);
+    };
     if !enum_qualifier_matches(enumeration, qualifier) {
-        return None;
+        return Ok(None);
     }
     let variant = enumeration.variants.iter().find(|variant| {
         matches!(variant.payload, VariantPayload::Unit)
             && canonical_name_matches_segment(&variant.name, variant_segment.name.as_str())
-    })?;
-    Some(DefaultValue::EnumVariant {
+    });
+    let Some(variant) = variant else {
+        return Err(LowerError::invalid_constant_value(constant_id));
+    };
+    Ok(Some(DefaultValue::EnumVariant {
         enum_name: CanonicalName::from(&enumeration.name),
         variant_name: CanonicalName::from(&variant.name),
-    })
+    }))
 }
 
 fn enum_qualifier_matches(
@@ -220,8 +228,46 @@ fn enum_qualifier_matches(
 }
 
 fn canonical_name_matches_segment(name: &SourceName, segment: &str) -> bool {
-    let mut parts = name.parts();
-    matches!(parts.next(), Some(part) if part.as_str() == segment) && parts.next().is_none()
+    let parts = name.parts().map(|part| part.as_str()).collect::<Vec<_>>();
+    parts.as_slice() == [segment] || parts == source_name_parts(segment)
+}
+
+fn source_name_parts(segment: &str) -> Vec<String> {
+    snake_case(segment.strip_prefix("r#").unwrap_or(segment))
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn snake_case(name: &str) -> String {
+    let characters = name.chars().collect::<Vec<_>>();
+    characters.iter().enumerate().fold(
+        String::with_capacity(name.len()),
+        |mut normalized, (index, character)| {
+            if *character == '_' {
+                if !normalized.is_empty() && !normalized.ends_with('_') {
+                    normalized.push('_');
+                }
+                return normalized;
+            }
+
+            if character.is_uppercase() && index > 0 {
+                let previous = characters[index - 1];
+                let next = characters.get(index + 1).copied();
+                let previous_is_word = previous.is_lowercase() || previous.is_ascii_digit();
+                let acronym_boundary =
+                    previous.is_uppercase() && next.is_some_and(char::is_lowercase);
+
+                if (previous_is_word || acronym_boundary) && !normalized.ends_with('_') {
+                    normalized.push('_');
+                }
+            }
+
+            normalized.extend(character.to_lowercase());
+            normalized
+        },
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -235,7 +281,7 @@ impl IntegerBounds {
         Self { min, max }
     }
 
-    const fn for_primitive(primitive: SourcePrimitive) -> Option<Self> {
+    fn for_primitive<S: SurfaceLower>(primitive: SourcePrimitive) -> Option<Self> {
         match primitive {
             SourcePrimitive::I8 => Some(Self::new(i8::MIN as i128, i8::MAX as i128)),
             SourcePrimitive::U8 => Some(Self::new(0, u8::MAX as i128)),
@@ -243,11 +289,30 @@ impl IntegerBounds {
             SourcePrimitive::U16 => Some(Self::new(0, u16::MAX as i128)),
             SourcePrimitive::I32 => Some(Self::new(i32::MIN as i128, i32::MAX as i128)),
             SourcePrimitive::U32 => Some(Self::new(0, u32::MAX as i128)),
-            SourcePrimitive::I64 | SourcePrimitive::ISize => {
-                Some(Self::new(i64::MIN as i128, i64::MAX as i128))
-            }
-            SourcePrimitive::U64 | SourcePrimitive::USize => Some(Self::new(0, u64::MAX as i128)),
+            SourcePrimitive::I64 => Some(Self::new(i64::MIN as i128, i64::MAX as i128)),
+            SourcePrimitive::U64 => Some(Self::new(0, u64::MAX as i128)),
+            SourcePrimitive::ISize => Some(Self::signed_pointer::<S>()),
+            SourcePrimitive::USize => Some(Self::unsigned_pointer::<S>()),
             SourcePrimitive::Bool | SourcePrimitive::F32 | SourcePrimitive::F64 => None,
+        }
+    }
+
+    fn signed_pointer<S: SurfaceLower>() -> Self {
+        match S::POINTER_SIZE.get() {
+            4 => Self::new(i32::MIN as i128, i32::MAX as i128),
+            8 => Self::new(i64::MIN as i128, i64::MAX as i128),
+            bytes => {
+                let bits = bytes * 8;
+                Self::new(-(1_i128 << (bits - 1)), (1_i128 << (bits - 1)) - 1)
+            }
+        }
+    }
+
+    fn unsigned_pointer<S: SurfaceLower>() -> Self {
+        match S::POINTER_SIZE.get() {
+            4 => Self::new(0, u32::MAX as i128),
+            8 => Self::new(0, u64::MAX as i128),
+            bytes => Self::new(0, (1_i128 << (bytes * 8)) - 1),
         }
     }
 
@@ -413,6 +478,35 @@ mod tests {
     }
 
     #[test]
+    fn usize_constant_bounds_follow_surface_pointer_width() {
+        let value = u32::MAX as i128 + 1;
+        let native = lower_constants_ok::<Native>(vec![constant(
+            "demo::LIMIT",
+            "LIMIT",
+            TypeExpr::Primitive(Primitive::USize),
+            ConstExpr::Literal(Literal::Integer(IntegerLiteral::new(value, "4294967296"))),
+        )]);
+
+        assert!(matches!(
+            only_constant(&native).value(),
+            ConstantValueDecl::Inline { .. }
+        ));
+
+        let wasm = lower_constants::<Wasm32>(vec![constant(
+            "demo::LIMIT",
+            "LIMIT",
+            TypeExpr::Primitive(Primitive::USize),
+            ConstExpr::Literal(Literal::Integer(IntegerLiteral::new(value, "4294967296"))),
+        )])
+        .expect_err("usize constant larger than u32 must reject on wasm32");
+
+        assert!(matches!(
+            wasm.kind(),
+            LowerErrorKind::InvalidConstantValue(constant) if constant == "demo::LIMIT"
+        ));
+    }
+
+    #[test]
     fn constants_use_same_inline_value_on_wasm32() {
         let bindings = lower_constants_ok::<Wasm32>(vec![constant(
             "demo::MAX_SIZE",
@@ -511,19 +605,21 @@ mod tests {
     }
 
     #[test]
-    fn path_constant_on_non_enum_type_is_rejected_with_invalid_value() {
-        let error = lower_constants::<Native>(vec![constant(
+    fn path_constant_on_non_enum_type_lowers_via_accessor() {
+        let bindings = lower_constants_ok::<Native>(vec![constant(
             "demo::ALIAS",
             "ALIAS",
             TypeExpr::String,
             ConstExpr::Path(SourcePath::single("OTHER")),
-        )])
-        .expect_err("path value on a String-typed constant must reject");
+        )]);
 
-        assert!(matches!(
-            error.kind(),
-            LowerErrorKind::InvalidConstantValue(constant) if constant == "demo::ALIAS"
-        ));
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Accessor { symbol, callable } => {
+                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_alias");
+                assert!(callable.params().is_empty());
+            }
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
     }
 
     #[test]
@@ -563,6 +659,47 @@ mod tests {
                 assert_eq!(variant_name, &CanonicalName::single("Fast"));
             }
             other => panic!("expected inline enum-variant constant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enum_constant_accepts_source_spelled_multi_word_variant_path() {
+        use boltffi_ast::{
+            EnumDef, EnumId as SourceEnumId, NamePart, PathRoot, PathSegment, VariantDef,
+        };
+
+        let mut contract = package();
+        let mut mode = EnumDef::new(SourceEnumId::new("demo::Mode"), name("Mode"));
+        mode.variants.push(VariantDef::unit(SourceName::new(vec![
+            NamePart::new("very"),
+            NamePart::new("fast"),
+        ])));
+        contract.enums.push(mode);
+        contract.constants.push(constant(
+            "demo::DEFAULT_MODE",
+            "DEFAULT_MODE",
+            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            ConstExpr::Path(SourcePath::new(
+                PathRoot::Relative,
+                vec![PathSegment::new("Mode"), PathSegment::new("VeryFast")],
+            )),
+        ));
+
+        let bindings = lower::<Native>(&contract).expect("enum constant should lower");
+
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Inline {
+                value:
+                    DefaultValue::EnumVariant {
+                        enum_name,
+                        variant_name,
+                    },
+                ..
+            } => {
+                assert_eq!(enum_name, &CanonicalName::single("Mode"));
+                assert_eq!(variant_name.as_path_string(), "very::fast");
+            }
+            other => panic!("expected enum-variant default, got {other:?}"),
         }
     }
 
@@ -608,14 +745,9 @@ mod tests {
     }
 
     #[test]
-    fn enum_constant_rejects_qualified_path_for_same_named_enum_in_other_module() {
+    fn enum_constant_path_for_same_named_enum_in_other_module_lowers_via_accessor() {
         use boltffi_ast::{EnumDef, EnumId as SourceEnumId, PathRoot, PathSegment, VariantDef};
 
-        // The constant is typed `demo::Mode`, but the value path is
-        // `other::Mode::Fast`. The leaf enum segment (`Mode`) and variant
-        // (`Fast`) match, yet the qualifier names a different enum. The
-        // full qualifier must be validated against the enum id, not just
-        // the segment adjacent to the variant.
         let mut contract = package();
         let mut mode = EnumDef::new(SourceEnumId::new("demo::Mode"), name("Mode"));
         mode.variants.push(VariantDef::unit(name("Fast")));
@@ -634,17 +766,19 @@ mod tests {
             )),
         ));
 
-        let error = lower::<Native>(&contract)
-            .expect_err("qualified path naming a different module's enum must reject");
+        let bindings = lower::<Native>(&contract).expect("enum alias path should lower");
 
-        assert!(matches!(
-            error.kind(),
-            LowerErrorKind::InvalidConstantValue(constant) if constant == "demo::DEFAULT_MODE"
-        ));
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Accessor { symbol, callable } => {
+                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert!(callable.params().is_empty());
+            }
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
     }
 
     #[test]
-    fn enum_constant_rejects_path_for_another_enum() {
+    fn enum_constant_path_for_another_qualifier_lowers_via_accessor() {
         use boltffi_ast::{EnumDef, EnumId as SourceEnumId, PathSegment, VariantDef};
 
         let mut contract = package();
@@ -661,12 +795,15 @@ mod tests {
             )),
         ));
 
-        let error = lower::<Native>(&contract).expect_err("wrong enum path must reject");
+        let bindings = lower::<Native>(&contract).expect("enum alias path should lower");
 
-        assert!(matches!(
-            error.kind(),
-            LowerErrorKind::InvalidConstantValue(constant) if constant == "demo::DEFAULT_MODE"
-        ));
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Accessor { symbol, callable } => {
+                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert!(callable.params().is_empty());
+            }
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
     }
 
     #[test]
@@ -744,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_constant_with_bare_variant_path_is_rejected() {
+    fn enum_constant_with_bare_path_lowers_via_accessor() {
         use boltffi_ast::{EnumDef, EnumId as SourceEnumId};
 
         let mut contract = package();
@@ -759,13 +896,15 @@ mod tests {
             ConstExpr::Path(SourcePath::single("Fast")),
         ));
 
-        let error =
-            lower::<Native>(&contract).expect_err("bare-variant path must reject (enum unknown)");
+        let bindings = lower::<Native>(&contract).expect("bare enum path should lower");
 
-        assert!(matches!(
-            error.kind(),
-            LowerErrorKind::InvalidConstantValue(constant) if constant == "demo::DEFAULT_MODE"
-        ));
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Accessor { symbol, callable } => {
+                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert!(callable.params().is_empty());
+            }
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
     }
 
     #[test]

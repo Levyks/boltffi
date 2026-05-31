@@ -1,11 +1,16 @@
+use crate::items;
 use crate::marker::Marker;
 use crate::source_tree::SourceTree;
-use crate::{ModulePath, ScanError};
+use crate::{ModulePath, ModuleScope, ScanError};
 
 pub(super) struct MarkedItems<'source> {
     records: Vec<Marked<'source, syn::ItemStruct>>,
     enums: Vec<Marked<'source, syn::ItemEnum>>,
     functions: Vec<Marked<'source, syn::ItemFn>>,
+    traits: Vec<Marked<'source, syn::ItemTrait>>,
+    classes: Vec<Marked<'source, syn::ItemImpl>>,
+    constants: Vec<Marked<'source, syn::ItemConst>>,
+    customs: Vec<MarkedCustom<'source>>,
     impls: Vec<Marked<'source, syn::ItemImpl>>,
 }
 
@@ -13,9 +18,14 @@ impl<'source> MarkedItems<'source> {
     pub(super) fn collect(tree: &'source SourceTree) -> Result<Self, ScanError> {
         tree.modules()
             .iter()
-            .flat_map(|module| module.items().iter().map(move |item| (module.path(), item)))
-            .try_fold(Self::empty(), |mut marked, (module, item)| {
-                marked.push(module, item)?;
+            .flat_map(|module| {
+                module
+                    .items()
+                    .iter()
+                    .map(move |item| (module.scope(), item))
+            })
+            .try_fold(Self::empty(), |mut marked, (scope, item)| {
+                marked.push(scope, item)?;
                 Ok(marked)
             })
     }
@@ -25,6 +35,10 @@ impl<'source> MarkedItems<'source> {
             records: Vec::new(),
             enums: Vec::new(),
             functions: Vec::new(),
+            traits: Vec::new(),
+            classes: Vec::new(),
+            constants: Vec::new(),
+            customs: Vec::new(),
             impls: Vec::new(),
         }
     }
@@ -41,60 +55,124 @@ impl<'source> MarkedItems<'source> {
         &self.functions
     }
 
+    pub(super) fn traits(&self) -> &[Marked<'source, syn::ItemTrait>] {
+        &self.traits
+    }
+
+    pub(super) fn classes(&self) -> &[Marked<'source, syn::ItemImpl>] {
+        &self.classes
+    }
+
+    pub(super) fn constants(&self) -> &[Marked<'source, syn::ItemConst>] {
+        &self.constants
+    }
+
+    pub(super) fn customs(&self) -> &[MarkedCustom<'source>] {
+        &self.customs
+    }
+
     pub(super) fn impls(&self) -> &[Marked<'source, syn::ItemImpl>] {
         &self.impls
     }
 
     fn push(
         &mut self,
-        module: &'source ModulePath,
+        scope: &'source ModuleScope,
         item: &'source syn::Item,
     ) -> Result<(), ScanError> {
+        if let Some(error) = items::misplaced_stream_marker(attrs(item), item_kind(item))? {
+            return Err(error);
+        }
+
+        if let Some(item_macro) = custom_type_macro(item) {
+            if let Some(marker) = Marker::detect(attrs(item))? {
+                return Err(marker.invalid_placement(item_kind(item)));
+            }
+            self.customs.push(MarkedCustom::new(scope, item_macro));
+            return Ok(());
+        }
+
         let Some(marker) = Marker::detect(attrs(item))? else {
             return Ok(());
         };
         match (marker, item) {
             (Marker::Data | Marker::Error, syn::Item::Struct(item)) => {
-                self.records.push(Marked::new(module, marker, item));
+                self.records.push(Marked::new(scope, marker, item));
                 Ok(())
             }
             (Marker::Data | Marker::Error, syn::Item::Enum(item)) => {
-                self.enums.push(Marked::new(module, marker, item));
+                self.enums.push(Marked::new(scope, marker, item));
                 Ok(())
             }
             (Marker::DataImpl, syn::Item::Impl(item)) => {
-                self.impls.push(Marked::new(module, marker, item));
+                self.impls.push(Marked::new(scope, marker, item));
                 Ok(())
             }
             (Marker::Export, syn::Item::Fn(item)) => {
-                self.functions.push(Marked::new(module, marker, item));
+                self.functions.push(Marked::new(scope, marker, item));
                 Ok(())
             }
-            _ => Err(ScanError::InvalidMarkerPlacement {
-                marker: marker.as_str().to_owned(),
-                item: item_kind(item).to_owned(),
-            }),
+            (Marker::Export, syn::Item::Trait(item)) => {
+                self.traits.push(Marked::new(scope, marker, item));
+                Ok(())
+            }
+            (Marker::Export, syn::Item::Impl(item)) => {
+                self.classes.push(Marked::new(scope, marker, item));
+                Ok(())
+            }
+            (Marker::Export, syn::Item::Const(item)) => {
+                self.constants.push(Marked::new(scope, marker, item));
+                Ok(())
+            }
+            _ => Err(marker.invalid_placement(item_kind(item))),
         }
     }
 }
 
+pub(super) struct MarkedCustom<'source> {
+    scope: &'source ModuleScope,
+    item: &'source syn::ItemMacro,
+}
+
+impl<'source> MarkedCustom<'source> {
+    pub(super) fn new(scope: &'source ModuleScope, item: &'source syn::ItemMacro) -> Self {
+        Self { scope, item }
+    }
+
+    pub(super) fn module(&self) -> &'source ModulePath {
+        self.scope.path()
+    }
+
+    pub(super) fn scope(&self) -> &'source ModuleScope {
+        self.scope
+    }
+
+    pub(super) fn item(&self) -> &'source syn::ItemMacro {
+        self.item
+    }
+}
+
 pub(super) struct Marked<'source, T> {
-    module: &'source ModulePath,
+    scope: &'source ModuleScope,
     marker: Marker,
     item: &'source T,
 }
 
 impl<'source, T> Marked<'source, T> {
-    fn new(module: &'source ModulePath, marker: Marker, item: &'source T) -> Self {
+    fn new(scope: &'source ModuleScope, marker: Marker, item: &'source T) -> Self {
         Self {
-            module,
+            scope,
             marker,
             item,
         }
     }
 
     pub(super) fn module(&self) -> &'source ModulePath {
-        self.module
+        self.scope.path()
+    }
+
+    pub(super) fn scope(&self) -> &'source ModuleScope {
+        self.scope
     }
 
     pub(super) fn marker(&self) -> Marker {
@@ -103,6 +181,26 @@ impl<'source, T> Marked<'source, T> {
 
     pub(super) fn item(&self) -> &'source T {
         self.item
+    }
+}
+
+fn custom_type_macro(item: &syn::Item) -> Option<&syn::ItemMacro> {
+    let syn::Item::Macro(item_macro) = item else {
+        return None;
+    };
+    custom_type_path(&item_macro.mac.path).then_some(item_macro)
+}
+
+fn custom_type_path(path: &syn::Path) -> bool {
+    let segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [name] => path.leading_colon.is_none() && name == "custom_type",
+        [namespace, name] => namespace == "boltffi" && name == "custom_type",
+        _ => false,
     }
 }
 
@@ -164,6 +262,10 @@ mod tests {
             "#[data] struct Point { x: i32 } \
              #[error] enum ParseError { Eof } \
              #[export] fn origin() {} \
+             #[export] trait Listener { fn call(&self); } \
+             #[export] impl Engine {} \
+             #[export] const ANSWER: u32 = 42; \
+             custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis); \
              #[data(impl)] impl Point {}",
         );
 
@@ -174,6 +276,10 @@ mod tests {
         assert_eq!(marked.enums().len(), 1);
         assert_eq!(marked.enums()[0].marker(), Marker::Error);
         assert_eq!(marked.functions().len(), 1);
+        assert_eq!(marked.traits().len(), 1);
+        assert_eq!(marked.classes().len(), 1);
+        assert_eq!(marked.constants().len(), 1);
+        assert_eq!(marked.customs().len(), 1);
         assert_eq!(marked.impls().len(), 1);
     }
 
@@ -193,5 +299,65 @@ mod tests {
                 item: "struct".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn rejects_marker_on_custom_type_macro() {
+        let tree = tree(
+            "#[export] custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis);",
+        );
+
+        let error = match MarkedItems::collect(&tree) {
+            Ok(_) => panic!("marked custom type macro must reject"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "export".to_owned(),
+                item: "macro".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_stream_marker_on_top_level_items() {
+        let tree = tree("#[ffi_stream(item = i32)] fn values() {}");
+
+        let error = match MarkedItems::collect(&tree) {
+            Ok(_) => panic!("top-level stream marker must reject"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error,
+            ScanError::InvalidMarkerPlacement {
+                marker: "ffi_stream".to_owned(),
+                item: "function".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn collects_owned_qualified_custom_type_macro() {
+        let tree = tree(
+            "boltffi::custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis);",
+        );
+
+        let marked = MarkedItems::collect(&tree).expect("marked items");
+
+        assert_eq!(marked.customs().len(), 1);
+    }
+
+    #[test]
+    fn ignores_unowned_qualified_custom_type_macro() {
+        let tree = tree(
+            "other::custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis);",
+        );
+
+        let marked = MarkedItems::collect(&tree).expect("marked items");
+
+        assert_eq!(marked.customs().len(), 0);
     }
 }
