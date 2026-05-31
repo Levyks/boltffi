@@ -7,7 +7,7 @@ A high-performance multi-language bindings generator for Rust. Up to 1,000x fast
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/udqGGXA4">
+  <a href="https://discord.gg/Q6A7zNNFk3">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" />
   </a>
 </p>
