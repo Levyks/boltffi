@@ -1,6 +1,6 @@
 mod npm;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
@@ -72,7 +72,7 @@ pub(crate) fn pack_wasm(
         step.finish_success();
     }
 
-    let wasm_artifact_path = config.wasm_artifact_path(wasm_artifact_profile);
+    let wasm_artifact_path = WasmArtifactPath::resolve(config, wasm_artifact_profile)?.into_path();
     if !wasm_artifact_path.exists() {
         return Err(CliError::FileNotFound(wasm_artifact_path));
     }
@@ -181,6 +181,41 @@ fn build_wasm_target(
 
     let failed = failed_targets(&results);
     Err(PackError::BuildFailed { targets: failed }.into())
+}
+
+struct WasmArtifactPath {
+    path: PathBuf,
+}
+
+impl WasmArtifactPath {
+    fn resolve(config: &Config, profile: WasmProfile) -> Result<Self> {
+        Ok(Self::in_target_directory(
+            config,
+            profile,
+            super::cargo_target_directory()?,
+        ))
+    }
+
+    fn in_target_directory(
+        config: &Config,
+        profile: WasmProfile,
+        cargo_target_directory: PathBuf,
+    ) -> Self {
+        let path = if config.wasm_has_artifact_path_override() {
+            config.wasm_artifact_path(profile)
+        } else {
+            cargo_target_directory
+                .join(config.wasm_triple())
+                .join(profile.as_str())
+                .join(format!("{}.wasm", config.crate_artifact_name()))
+        };
+
+        Self { path }
+    }
+
+    fn into_path(self) -> PathBuf {
+        self.path
+    }
 }
 
 fn optimize_wasm_binary(config: &Config, wasm_path: &Path) -> Result<()> {
@@ -292,4 +327,63 @@ fn transpile_typescript_bundle(
         command: format!("tsc failed: {}", String::from_utf8_lossy(&output.stderr)),
         status: output.status.code(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::WasmArtifactPath;
+    use crate::config::{Config, WasmProfile};
+
+    fn parse_config(input: &str) -> Config {
+        toml::from_str(input).expect("toml parse failed")
+    }
+
+    #[test]
+    fn default_wasm_artifact_uses_cargo_target_directory() {
+        let config = parse_config(
+            r#"
+            [package]
+            name = "demo"
+            "#,
+        );
+
+        let artifact_path = WasmArtifactPath::in_target_directory(
+            &config,
+            WasmProfile::Release,
+            PathBuf::from("/tmp/boltffi-target"),
+        )
+        .into_path();
+
+        assert_eq!(
+            artifact_path,
+            PathBuf::from("/tmp/boltffi-target")
+                .join("wasm32-unknown-unknown")
+                .join("release")
+                .join("demo.wasm")
+        );
+    }
+
+    #[test]
+    fn configured_wasm_artifact_path_is_preserved() {
+        let config = parse_config(
+            r#"
+            [package]
+            name = "demo"
+
+            [targets.wasm]
+            artifact_path = "artifacts/demo.wasm"
+            "#,
+        );
+
+        let artifact_path = WasmArtifactPath::in_target_directory(
+            &config,
+            WasmProfile::Release,
+            PathBuf::from("/tmp/boltffi-target"),
+        )
+        .into_path();
+
+        assert_eq!(artifact_path, PathBuf::from("artifacts/demo.wasm"));
+    }
 }

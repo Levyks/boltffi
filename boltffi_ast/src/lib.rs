@@ -45,7 +45,8 @@ pub use custom::{
 pub use documentation::{DeprecationInfo, DocComment};
 pub use enumeration::{EnumDef, VariantDef, VariantPayload};
 pub use ids::{
-    ClassId, ConstantId, CustomTypeId, EnumId, FunctionId, MethodId, RecordId, StreamId, TraitId,
+    ClassId, ConstantId, CustomTypeId, DeclarationId, EnumId, FunctionId, MethodId, RecordId,
+    StreamId, TraitId,
 };
 pub use literal::{ConstExpr, DefaultValue, FloatLiteral, IntegerLiteral, Literal};
 pub use name::{CanonicalName, GenericArgument, NamePart, Path, PathRoot, PathSegment};

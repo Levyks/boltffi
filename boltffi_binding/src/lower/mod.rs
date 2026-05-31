@@ -70,22 +70,72 @@ pub use self::surface::SurfaceLower;
 
 use self::{ids::DeclarationIds, index::Index, symbol::SymbolAllocator};
 
+pub use self::ids::DeclarationMap;
+
+/// Binding contract plus the source declaration ids that produced it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoweredBindings<S: crate::Surface> {
+    bindings: Bindings<S>,
+    declarations: DeclarationMap,
+}
+
+impl<S: crate::Surface> LoweredBindings<S> {
+    /// Builds a lowered binding result.
+    pub fn new(bindings: Bindings<S>, declarations: DeclarationMap) -> Self {
+        Self {
+            bindings,
+            declarations,
+        }
+    }
+
+    /// Returns the binding contract.
+    pub fn bindings(&self) -> &Bindings<S> {
+        &self.bindings
+    }
+
+    /// Returns the source-to-binding declaration map.
+    pub fn declarations(&self) -> &DeclarationMap {
+        &self.declarations
+    }
+
+    /// Returns the binding contract.
+    pub fn into_bindings(self) -> Bindings<S> {
+        self.bindings
+    }
+}
+
 /// Lowers a source contract into a binding contract for surface `S`.
 ///
 /// See the module-level docs for the steps each call runs through.
 pub fn lower<S: SurfaceLower>(source: &SourceContract) -> Result<Bindings<S>, LowerError> {
+    lower_with_declarations(source).map(LoweredBindings::into_bindings)
+}
+
+/// Lowers a source contract and keeps the source-to-binding declaration map.
+pub fn lower_with_declarations<S: SurfaceLower>(
+    source: &SourceContract,
+) -> Result<LoweredBindings<S>, LowerError> {
     let ids = DeclarationIds::from_source(source)?;
+    let bindings = lower_with_ids::<S>(source, &ids)?;
+    let declarations = ids.declaration_map();
+    Ok(LoweredBindings::new(bindings, declarations))
+}
+
+fn lower_with_ids<S: SurfaceLower>(
+    source: &SourceContract,
+    ids: &DeclarationIds,
+) -> Result<Bindings<S>, LowerError> {
     let index = Index::new(source);
     let mut allocator = SymbolAllocator::new();
 
-    let records = records::lower::<S>(&index, &ids, &mut allocator)?;
-    let enums = enums::lower::<S>(&index, &ids, &mut allocator)?;
-    let classes = classes::lower::<S>(&index, &ids, &mut allocator)?;
-    let callbacks = callbacks::lower::<S>(&index, &ids, &mut allocator)?;
-    let functions = functions::lower::<S>(&index, &ids, &mut allocator)?;
-    let streams = streams::lower::<S>(&index, &ids, &mut allocator)?;
-    let constants = constants::lower::<S>(&index, &ids, &mut allocator)?;
-    let customs = customs::lower(&index, &ids)?;
+    let records = records::lower::<S>(&index, ids, &mut allocator)?;
+    let enums = enums::lower::<S>(&index, ids, &mut allocator)?;
+    let classes = classes::lower::<S>(&index, ids, &mut allocator)?;
+    let callbacks = callbacks::lower::<S>(&index, ids, &mut allocator)?;
+    let functions = functions::lower::<S>(&index, ids, &mut allocator)?;
+    let streams = streams::lower::<S>(&index, ids, &mut allocator)?;
+    let constants = constants::lower::<S>(&index, ids, &mut allocator)?;
+    let customs = customs::lower(&index, ids)?;
 
     let decls = records
         .into_iter()
@@ -138,5 +188,46 @@ pub fn lower<S: SurfaceLower>(source: &SourceContract) -> Result<Bindings<S>, Lo
 impl From<BindingError> for LowerError {
     fn from(error: BindingError) -> Self {
         Self::new(LowerErrorKind::InvalidBindings(error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use boltffi_ast::{
+        CanonicalName as SourceName, DeclarationId as SourceDeclarationId,
+        FunctionDef as SourceFunction, FunctionId as SourceFunctionId,
+        PackageInfo as SourcePackage, Primitive as SourcePrimitive, ReturnDef as SourceReturn,
+        SourceContract, TypeExpr as SourceType,
+    };
+
+    use crate::{DeclarationId, FunctionId, Native};
+
+    use super::lower_with_declarations;
+
+    fn source_contract() -> SourceContract {
+        let mut function = SourceFunction::new(
+            SourceFunctionId::new("demo::answer"),
+            SourceName::single("answer"),
+        );
+        function.returns = SourceReturn::Value(SourceType::Primitive(SourcePrimitive::U32));
+
+        let mut source = SourceContract::new(SourcePackage::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
+    #[test]
+    fn lower_with_declarations_preserves_function_identity() {
+        let source = source_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+
+        assert_eq!(
+            lowered
+                .declarations()
+                .get(&SourceDeclarationId::Function(SourceFunctionId::new(
+                    "demo::answer"
+                ))),
+            Some(DeclarationId::Function(FunctionId::from_raw(0)))
+        );
     }
 }

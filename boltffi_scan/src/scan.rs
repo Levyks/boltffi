@@ -3,9 +3,14 @@ use std::path::Path as FsPath;
 use boltffi_ast::{PackageInfo, SourceContract};
 
 use crate::declared_types::DeclaredTypes;
+use crate::input::ScanInput;
 use crate::marked::MarkedItems;
 use crate::source_tree::SourceTree;
 use crate::{ScanError, items};
+
+pub fn scan(input: &ScanInput) -> Result<SourceContract, ScanError> {
+    scan_source(input.root(), input.package().clone())
+}
 
 pub fn scan_source(
     path: impl AsRef<FsPath>,

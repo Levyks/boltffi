@@ -17,7 +17,7 @@
 //!         ▼
 //!   Bindings                              ← what crosses, in what shape
 //!         │
-//!         │  expand (this crate, via boltffi_macros)
+//!         │  macros and backends consume the binding facts
 //!         ▼
 //!   Rust glue + serialized metadata in the user's .rlib
 //!         │
@@ -47,13 +47,6 @@
 //!   the serialized metadata embedded in the user's compiled
 //!   artifact and reads it through the [`ir`] types.
 //!
-//! `expand` is the macro-internal lane that emits Rust glue and is
-//! not part of the public surface. Each `#[data]` or `#[export]` item
-//! needs an `extern "C"` wrapper, a `Passable` or `WirePassable`
-//! impl, and an entry in the serialized metadata. The lane pairs
-//! each AST item with its binding-contract counterpart so the macros
-//! emit that glue without rebinding anything themselves.
-//!
 //! # What this crate does not do
 //!
 //! No target-language code generation. No filesystem writes. No
@@ -64,11 +57,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-mod expand;
 pub mod ir;
 mod lower;
 
 pub use ir::*;
 pub use lower::{
-    DeclarationFamily, LowerError, LowerErrorKind, SurfaceLower, UnsupportedType, lower,
+    DeclarationFamily, DeclarationMap, LowerError, LowerErrorKind, LoweredBindings, SurfaceLower,
+    UnsupportedType, lower, lower_with_declarations,
 };
