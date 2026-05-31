@@ -10,6 +10,7 @@ RESULTS_DIR="$SCRIPT_DIR/build/results/benchmarkjs"
 GENERATED_DIR="$SCRIPT_DIR/build/generated"
 PUBLISH=false
 BENCH_FILTER=""
+WASM_RUST_TARGET="wasm32-unknown-unknown"
 
 cd "$SCRIPT_DIR"
 
@@ -33,13 +34,15 @@ done
 mkdir -p "$RESULTS_DIR"
 mkdir -p "$GENERATED_DIR"
 
+rustup target add "$WASM_RUST_TARGET"
+
 npm ci
 
 export CARGO_TARGET_DIR="$ROOT_DIR/benchmarks/generated/boltffi/target"
 (
     cd "$DEMO_DIR"
-    cargo run -p boltffi_cli --manifest-path "$ROOT_DIR/Cargo.toml" -- --overlay "$BENCH_OVERLAY" pack wasm --release --regenerate
-    cargo run -p boltffi_cli --manifest-path "$ROOT_DIR/Cargo.toml" -- pack wasm --release --regenerate
+    cargo run -p boltffi_cli --manifest-path "$ROOT_DIR/Cargo.toml" -- -v --overlay "$BENCH_OVERLAY" pack wasm --release --regenerate
+    cargo run -p boltffi_cli --manifest-path "$ROOT_DIR/Cargo.toml" -- -v pack wasm --release --regenerate
 )
 
 rm -rf "$GENERATED_DIR/boltffi"
@@ -132,14 +135,14 @@ JS
 fi
 
 export CARGO_TARGET_DIR="$ROOT_DIR/benchmarks/generated/wasm-bindgen/target"
-cargo build --manifest-path "$DEMO_DIR/Cargo.toml" --release --target wasm32-unknown-unknown --features wasm-bench
+cargo build --manifest-path "$DEMO_DIR/Cargo.toml" --release --target "$WASM_RUST_TARGET" --features wasm-bench
 
 rm -rf "$ROOT_DIR/benchmarks/generated/wasm-bindgen/dist"
 mkdir -p "$ROOT_DIR/benchmarks/generated/wasm-bindgen/dist"
 wasm-bindgen \
     --target nodejs \
     --out-dir "$ROOT_DIR/benchmarks/generated/wasm-bindgen/dist" \
-    "$ROOT_DIR/benchmarks/generated/wasm-bindgen/target/wasm32-unknown-unknown/release/demo.wasm"
+    "$ROOT_DIR/benchmarks/generated/wasm-bindgen/target/$WASM_RUST_TARGET/release/demo.wasm"
 
 rm -rf "$GENERATED_DIR/wasmbindgen"
 mkdir -p "$GENERATED_DIR/wasmbindgen"
