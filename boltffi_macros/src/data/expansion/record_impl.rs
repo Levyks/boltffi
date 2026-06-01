@@ -455,21 +455,13 @@ fn generate_value_return_export(
         ))
     } else if let Some(strategy) = return_abi.encoded_return_strategy() {
         let inner_ty = return_abi.rust_type();
-        let encoded_call = if conversions.is_empty() {
-            call_expr
-        } else {
-            quote! {
-                #(#conversions)*
-                #call_expr
-            }
-        };
         let result_ident = syn::Ident::new("result", export_name.span());
         let body = encoded_return_body(
             inner_ty,
             strategy,
             &result_ident,
-            encoded_call,
-            &[],
+            call_expr,
+            conversions,
             custom_types,
         );
         Some(emit_ffi_function(

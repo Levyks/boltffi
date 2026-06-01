@@ -32,6 +32,13 @@ pub struct FixtureMessageRecord {
     pub status: FixtureStatus,
 }
 
+#[data]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct FixtureStringConfig {
+    pub name: String,
+    pub source: String,
+}
+
 #[export]
 pub trait SyncValueCallback {
     fn on_value(&self, value: i32) -> i32;
@@ -932,6 +939,23 @@ impl FixturePoint {
         FixturePoint {
             x: (a.x + b.x) / 2.0,
             y: (a.y + b.y) / 2.0,
+        }
+    }
+}
+
+#[data(impl)]
+impl FixtureStringConfig {
+    pub fn from_owned_name(name: String) -> Self {
+        Self {
+            name,
+            source: "owned".to_string(),
+        }
+    }
+
+    pub fn from_borrowed_name(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            source: "borrowed".to_string(),
         }
     }
 }

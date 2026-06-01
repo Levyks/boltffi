@@ -1,4 +1,11 @@
-use boltffi_tests::FixturePoint;
+use boltffi::__private::FfiBuf;
+use boltffi_core::wire::WireDecode;
+use boltffi_tests::{FixturePoint, FixtureStringConfig};
+
+fn decode_buf<T: WireDecode>(buf: &FfiBuf) -> T {
+    let (result, _) = T::decode_from(unsafe { buf.as_byte_slice() }).unwrap();
+    result
+}
 
 unsafe extern "C" {
     fn boltffi_fixture_point_origin() -> FixturePoint;
@@ -6,6 +13,14 @@ unsafe extern "C" {
     fn boltffi_fixture_point_distance_to_origin(self_value: FixturePoint) -> f64;
     fn boltffi_fixture_point_scale(self_value: FixturePoint, factor: f64) -> FixturePoint;
     fn boltffi_fixture_point_midpoint_to(a: FixturePoint, b: FixturePoint) -> FixturePoint;
+    fn boltffi_fixture_string_config_from_owned_name(
+        name_ptr: *const u8,
+        name_len: usize,
+    ) -> FfiBuf;
+    fn boltffi_fixture_string_config_from_borrowed_name(
+        name_ptr: *const u8,
+        name_len: usize,
+    ) -> FfiBuf;
 }
 
 mod constructors {
@@ -21,6 +36,36 @@ mod constructors {
     fn new_at_returns_specified_coordinates() {
         let point = unsafe { boltffi_fixture_point_new_at(3.0, 4.0) };
         assert_eq!(point, FixturePoint { x: 3.0, y: 4.0 });
+    }
+
+    #[test]
+    fn owned_string_constructor_returns_wire_encoded_record() {
+        let name = "owned config";
+        let buf =
+            unsafe { boltffi_fixture_string_config_from_owned_name(name.as_ptr(), name.len()) };
+        let config: FixtureStringConfig = decode_buf(&buf);
+        assert_eq!(
+            config,
+            FixtureStringConfig {
+                name: name.to_string(),
+                source: "owned".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn borrowed_string_constructor_returns_wire_encoded_record() {
+        let name = "borrowed config";
+        let buf =
+            unsafe { boltffi_fixture_string_config_from_borrowed_name(name.as_ptr(), name.len()) };
+        let config: FixtureStringConfig = decode_buf(&buf);
+        assert_eq!(
+            config,
+            FixtureStringConfig {
+                name: name.to_string(),
+                source: "borrowed".to_string(),
+            }
+        );
     }
 }
 
