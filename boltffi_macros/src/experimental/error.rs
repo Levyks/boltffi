@@ -13,6 +13,8 @@ pub enum Error {
 
     WrongDeclaration,
 
+    SourceSyntaxMismatch(&'static str),
+
     UnsupportedExpansion(&'static str),
 }
 
@@ -33,6 +35,7 @@ impl fmt::Display for Error {
             Self::WrongDeclaration => {
                 formatter.write_str("lowered declaration has the wrong source kind")
             }
+            Self::SourceSyntaxMismatch(message) => formatter.write_str(message),
             Self::UnsupportedExpansion(kind) => write!(formatter, "unsupported expansion: {kind}"),
         }
     }

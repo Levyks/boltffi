@@ -6,7 +6,7 @@ use syn::ItemFn;
 use crate::experimental::{
     decl::{DeclarationPair, PairedDeclaration, SourceDeclaration},
     error::Error,
-    render,
+    render::{self, Rule as RenderRule},
     syntax::Expand,
     target::Target,
 };
@@ -21,7 +21,14 @@ impl ExpandableFunction {
     }
 }
 
-impl<'a, S: Target> Expand<'a, S> for ExpandableFunction {
+impl<'a, S> Expand<'a, S> for ExpandableFunction
+where
+    S: Target,
+    for<'syntax> render::callable::Rule:
+        RenderRule<S, render::callable::Input<'a, 'syntax, S>, Output = render::callable::Tokens>,
+    render::returns::Rule:
+        RenderRule<S, render::returns::Input<'a, S>, Output = render::returns::Tokens>,
+{
     type Source = FunctionDef;
     type Binding = FunctionDecl<S>;
 

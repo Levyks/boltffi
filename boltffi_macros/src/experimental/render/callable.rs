@@ -1,5 +1,6 @@
 use boltffi_binding::{ErrorDecl, ExecutionDecl, ExportedCallable};
 use proc_macro2::TokenStream;
+use syn::PatType;
 
 use crate::experimental::{
     error::Error,
@@ -9,30 +10,50 @@ use crate::experimental::{
 
 pub struct Rule;
 
+pub struct Input<'binding, 'syntax, S: Target> {
+    callable: &'binding ExportedCallable<S>,
+    params: &'syntax [&'syntax PatType],
+}
+
+impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
+    pub fn new(
+        callable: &'binding ExportedCallable<S>,
+        params: &'syntax [&'syntax PatType],
+    ) -> Self {
+        Self { callable, params }
+    }
+}
+
 pub struct Tokens {
-    ffi_params: Vec<TokenStream>,
-    call_args: Vec<TokenStream>,
-    return_type: TokenStream,
+    ffi_parameters: Vec<TokenStream>,
+    conversions: Vec<TokenStream>,
+    arguments: Vec<TokenStream>,
 }
 
 impl Tokens {
-    pub fn ffi_params(&self) -> &[TokenStream] {
-        &self.ffi_params
+    pub fn ffi_parameters(&self) -> &[TokenStream] {
+        &self.ffi_parameters
     }
 
-    pub fn call_args(&self) -> &[TokenStream] {
-        &self.call_args
+    pub fn conversions(&self) -> &[TokenStream] {
+        &self.conversions
     }
 
-    pub fn return_type(&self) -> &TokenStream {
-        &self.return_type
+    pub fn arguments(&self) -> &[TokenStream] {
+        &self.arguments
     }
 }
 
-impl<'a, S: Target> RenderRule<S, &'a ExportedCallable<S>> for Rule {
+impl<'binding, 'syntax, S> RenderRule<S, Input<'binding, 'syntax, S>> for Rule
+where
+    S: Target,
+    render::param::Rule:
+        RenderRule<S, render::param::Input<'binding, 'syntax, S>, Output = render::param::Tokens>,
+{
     type Output = Tokens;
 
-    fn apply(self, callable: &'a ExportedCallable<S>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, 'syntax, S>) -> Result<Self::Output, Error> {
+        let callable = input.callable;
         match callable.execution() {
             ExecutionDecl::Synchronous(_) => {}
             ExecutionDecl::Asynchronous(_) => {
@@ -52,30 +73,40 @@ impl<'a, S: Target> RenderRule<S, &'a ExportedCallable<S>> for Rule {
             _ => return Err(Error::UnsupportedExpansion("unknown error channel")),
         }
 
+        if callable.params().len() != input.params.len() {
+            return Err(Error::SourceSyntaxMismatch(
+                "function syntax parameter count does not match binding parameter count",
+            ));
+        }
+
         let params = callable
             .params()
             .iter()
-            .map(|param| {
-                <render::param::Rule as RenderRule<S, _>>::apply(render::param::Rule, param)
+            .zip(input.params.iter().copied())
+            .map(|(param, syntax)| {
+                <render::param::Rule as RenderRule<S, _>>::apply(
+                    render::param::Rule,
+                    render::param::Input::new(param, syntax),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let ffi_params = params
+        let ffi_parameters = params
             .iter()
-            .map(|param| param.ffi_param().clone())
+            .flat_map(|param| param.ffi_parameters().iter().cloned())
             .collect();
-        let call_args = params
+        let conversions = params
             .iter()
-            .map(|param| param.call_arg().clone())
+            .flat_map(|param| param.conversions().iter().cloned())
             .collect();
-        let return_type = <render::returns::Rule as RenderRule<S, _>>::apply(
-            render::returns::Rule,
-            callable.returns(),
-        )?;
+        let arguments = params
+            .iter()
+            .map(|param| param.argument().clone())
+            .collect();
 
         Ok(Tokens {
-            ffi_params,
-            call_args,
-            return_type,
+            ffi_parameters,
+            conversions,
+            arguments,
         })
     }
 }
