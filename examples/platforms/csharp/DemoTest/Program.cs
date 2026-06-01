@@ -506,6 +506,17 @@ public static class DemoTest
         DemoCase("case:records.default_values.service_config.maybe_with_retries.should_return_none");
         Require(ServiceConfig.MaybeWithRetries(-1) is null, "ServiceConfig.MaybeWithRetries(-1) == null");
 
+        DemoCase("case:records.default_values.service_config.from_owned_name.should_return_config");
+        Require(
+            ServiceConfig.FromOwnedName("owned").Describe() == "owned:3:standard:none:https://default",
+            "ServiceConfig.FromOwnedName(string)"
+        );
+        DemoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config");
+        Require(
+            ServiceConfig.FromBorrowedName("borrowed").Describe() == "borrowed:3:standard:none:https://default",
+            "ServiceConfig.FromBorrowedName(string)"
+        );
+
         Console.WriteLine("  PASS\n");
     }
 

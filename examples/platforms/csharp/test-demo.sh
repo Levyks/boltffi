@@ -25,17 +25,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 cargo_profile="debug"
-pack_flags=()
+pack_command=(cargo run --quiet --manifest-path "$manifest_path" -p boltffi_cli -- pack csharp)
 if [[ "$configuration" == "Release" ]]; then
   cargo_profile="release"
-  pack_flags=(--release)
+  pack_command+=(--release)
 fi
 
 package_dir="$script_dir/dist/packages"
 packages_cache="$script_dir/dist/.nuget/packages"
 
 echo "=== boltffi pack csharp ($cargo_profile) ==="
-(cd "$demo_dir" && cargo run --quiet --manifest-path "$manifest_path" -p boltffi_cli -- pack csharp "${pack_flags[@]}")
+(cd "$demo_dir" && "${pack_command[@]}")
 
 echo "=== dotnet build DemoTest ==="
 rm -rf "$packages_cache"

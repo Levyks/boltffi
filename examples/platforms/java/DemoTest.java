@@ -492,6 +492,10 @@ public final class DemoTest {
         assert explicitBackupEndpoint.describe().equals("worker:9:eu-west:https://edge:https://backup") : "ServiceConfig.describe(explicitBackupEndpoint)";
         demoCase("case:records.default_values.service_config.should_describe_with_prefix");
         assert explicitBackupEndpoint.describeWithPrefix("cfg").equals("cfg:worker:9:eu-west:https://edge:https://backup") : "ServiceConfig.describeWithPrefix";
+        demoCase("case:records.default_values.service_config.from_owned_name.should_return_config");
+        assert ServiceConfig.fromOwnedName("owned").describe().equals("owned:3:standard:none:https://default") : "ServiceConfig.fromOwnedName";
+        demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config");
+        assert ServiceConfig.fromBorrowedName("borrowed").describe().equals("borrowed:3:standard:none:https://default") : "ServiceConfig.fromBorrowedName";
         System.out.println("  PASS\n");
     }
 

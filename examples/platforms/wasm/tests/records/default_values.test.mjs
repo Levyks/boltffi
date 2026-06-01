@@ -26,4 +26,9 @@ export async function run() {
   assert.equal(demo.ServiceConfig.describe(explicitConfig), "worker:9:eu-west:https://edge:https://backup");
   globalThis.demoCase("case:records.default_values.service_config.should_describe_with_prefix");
   assert.equal(demo.ServiceConfig.describeWithPrefix(explicitConfig, "cfg"), "cfg:worker:9:eu-west:https://edge:https://backup");
+
+  globalThis.demoCase("case:records.default_values.service_config.from_owned_name.should_return_config");
+  assert.equal(demo.ServiceConfig.describe(demo.ServiceConfig.fromOwnedName("owned")), "owned:3:standard:none:https://default");
+  globalThis.demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config");
+  assert.equal(demo.ServiceConfig.describe(demo.ServiceConfig.fromBorrowedName("borrowed")), "borrowed:3:standard:none:https://default");
 }

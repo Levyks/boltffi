@@ -56,5 +56,10 @@ final class DefaultValuesRecordsTests: DemoTestCase {
         XCTAssertEqual(explicitBackupEndpoint.describe(), "worker:9:eu-west:https://edge:https://backup")
         demoCase("case:records.default_values.service_config.should_describe_with_prefix")
         XCTAssertEqual(explicitBackupEndpoint.describeWithPrefix(prefix: "cfg"), "cfg:worker:9:eu-west:https://edge:https://backup")
+
+        demoCase("case:records.default_values.service_config.from_owned_name.should_return_config")
+        XCTAssertEqual(ServiceConfig(fromOwnedName: "owned").describe(), "owned:3:standard:none:https://default")
+        demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config")
+        XCTAssertEqual(ServiceConfig(fromBorrowedName: "borrowed").describe(), "borrowed:3:standard:none:https://default")
     }
 }

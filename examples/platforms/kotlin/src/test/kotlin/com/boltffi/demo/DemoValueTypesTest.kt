@@ -931,5 +931,10 @@ class DemoValueTypesTest {
         assertEquals("worker:9:eu-west:https://edge:https://backup", explicitBackupEndpoint.describe())
         demoCase("case:records.default_values.service_config.should_describe_with_prefix")
         assertEquals("cfg:worker:9:eu-west:https://edge:https://backup", explicitBackupEndpoint.describeWithPrefix("cfg"))
+
+        demoCase("case:records.default_values.service_config.from_owned_name.should_return_config")
+        assertEquals("owned:3:standard:none:https://default", ServiceConfig.fromOwnedName("owned").describe())
+        demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config")
+        assertEquals("borrowed:3:standard:none:https://default", ServiceConfig.fromBorrowedName("borrowed").describe())
     }
 }

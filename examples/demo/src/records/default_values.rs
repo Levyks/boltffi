@@ -17,6 +17,46 @@ pub struct ServiceConfig {
 #[data(impl)]
 impl ServiceConfig {
     #[demo_bench_macros::demo_case(
+        "records.default_values.service_config.from_owned_name.should_return_config",
+        justification = "Ensure a non-blittable record constructor accepts an owned String and returns the encoded record.",
+        directions = "Call `records::default_values::ServiceConfig::from_owned_name` through the generated binding and assert it returns a ServiceConfig using the provided name.",
+        exclude(
+            python,
+            reason = ExclusionReason::ImplementationGap,
+            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
+        )
+    )]
+    pub fn from_owned_name(name: String) -> Self {
+        Self {
+            name,
+            retries: 3,
+            region: "standard".to_string(),
+            endpoint: None,
+            backup_endpoint: Some("https://default".to_string()),
+        }
+    }
+
+    #[demo_bench_macros::demo_case(
+        "records.default_values.service_config.from_borrowed_name.should_return_config",
+        justification = "Ensure a non-blittable record constructor accepts a borrowed string and returns the encoded record.",
+        directions = "Call `records::default_values::ServiceConfig::from_borrowed_name` through the generated binding and assert it returns a ServiceConfig using the provided name.",
+        exclude(
+            python,
+            reason = ExclusionReason::ImplementationGap,
+            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
+        )
+    )]
+    pub fn from_borrowed_name(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            retries: 3,
+            region: "standard".to_string(),
+            endpoint: None,
+            backup_endpoint: Some("https://default".to_string()),
+        }
+    }
+
+    #[demo_bench_macros::demo_case(
         "records.default_values.service_config.should_describe_values",
         justification = "Ensure ServiceConfig::describe formats defaulted and explicit fields into a stable string.",
         directions = "Call `records::default_values::ServiceConfig::describe` through the generated binding and assert ServiceConfig::describe formats defaulted and explicit fields into a stable string.",
