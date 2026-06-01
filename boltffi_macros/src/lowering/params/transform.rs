@@ -29,6 +29,7 @@ pub(super) fn len_ident(base: &syn::Ident) -> syn::Ident {
 pub(super) enum ParamTransform {
     PassThrough,
     StrRef,
+    StringRef,
     OwnedString,
     Callback {
         params: Vec<syn::Type>,
@@ -315,6 +316,16 @@ impl<'a> ParamTransformClassifier<'a> {
             };
         }
 
+        if param_syntax.is_string_ref() {
+            return ClassifiedParamTransform {
+                contract: ParamContract::new(
+                    ParamValueStrategy::Utf8String,
+                    ParamPassingStrategy::SharedRef,
+                ),
+                transform: ParamTransform::StringRef,
+            };
+        }
+
         if let Type::Reference(type_ref) = ty
             && self
                 .named_type_transport_classifier
@@ -448,6 +459,22 @@ impl<'a> ParamSyntax<'a> {
     fn is_str_ref(&self) -> bool {
         self.spelling == "&str"
             || (self.spelling.starts_with("&'") && self.spelling.ends_with("str"))
+    }
+
+    fn is_string_ref(&self) -> bool {
+        let Type::Reference(reference) = self.ty else {
+            return false;
+        };
+
+        matches!(
+            reference.elem.as_ref(),
+            Type::Path(type_path)
+                if type_path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "String")
+        )
     }
 
     fn is_owned_string(&self) -> bool {

@@ -21,6 +21,10 @@ unsafe extern "C" {
         name_ptr: *const u8,
         name_len: usize,
     ) -> FfiBuf;
+    fn boltffi_fixture_string_config_from_string_ref_name(
+        name_ptr: *const u8,
+        name_len: usize,
+    ) -> FfiBuf;
 }
 
 mod constructors {
@@ -64,6 +68,22 @@ mod constructors {
             FixtureStringConfig {
                 name: name.to_string(),
                 source: "borrowed".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn string_ref_constructor_returns_wire_encoded_record() {
+        let name = "string ref config";
+        let buf = unsafe {
+            boltffi_fixture_string_config_from_string_ref_name(name.as_ptr(), name.len())
+        };
+        let config: FixtureStringConfig = decode_buf(&buf);
+        assert_eq!(
+            config,
+            FixtureStringConfig {
+                name: name.to_string(),
+                source: "string_ref".to_string(),
             }
         );
     }

@@ -496,6 +496,8 @@ public final class DemoTest {
         assert ServiceConfig.fromOwnedName("owned").describe().equals("owned:3:standard:none:https://default") : "ServiceConfig.fromOwnedName";
         demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config");
         assert ServiceConfig.fromBorrowedName("borrowed").describe().equals("borrowed:3:standard:none:https://default") : "ServiceConfig.fromBorrowedName";
+        demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config");
+        assert ServiceConfig.fromStringRefName("stringref").describe().equals("stringref:3:standard:none:https://default") : "ServiceConfig.fromStringRefName";
         System.out.println("  PASS\n");
     }
 

@@ -277,6 +277,45 @@ impl<'a> ValueParamDecoder<'a> {
         acc.call_args.push(quote! { #name });
     }
 
+    fn lower_sync_string_ref_param(&self, acc: &mut ParamLoweringState, name: &Ident) {
+        let ptr_name = ptr_ident(name);
+        let len_name = len_ident(name);
+        let sync_string_expr = self.utf8_string_expression(name, &ptr_name, &len_name, false);
+        let owned_name = Ident::new(&format!("{}_owned", name), name.span());
+        acc.ffi_params.push(quote! { #ptr_name: *const u8 });
+        acc.ffi_params.push(quote! { #len_name: usize });
+        acc.setup.push(quote! {
+            let #owned_name: String = if #ptr_name.is_null() {
+                String::new()
+            } else {
+                #sync_string_expr
+            };
+            let #name: &String = &#owned_name;
+        });
+        acc.call_args.push(quote! { #name });
+    }
+
+    fn lower_async_string_ref_param(&self, acc: &mut ParamLoweringState, name: &Ident) {
+        let ptr_name = ptr_ident(name);
+        let len_name = len_ident(name);
+        let async_string_expr = self.utf8_string_expression(name, &ptr_name, &len_name, true);
+        let owned_name = Ident::new(&format!("{}_owned", name), name.span());
+        acc.ffi_params.push(quote! { #ptr_name: *const u8 });
+        acc.ffi_params.push(quote! { #len_name: usize });
+        acc.setup.push(quote! {
+            let #owned_name: String = if #ptr_name.is_null() {
+                String::new()
+            } else {
+                #async_string_expr
+            };
+        });
+        acc.thread_setup.push(quote! {
+            let #name: &String = &#owned_name;
+        });
+        acc.move_vars.push(owned_name);
+        acc.call_args.push(quote! { #name });
+    }
+
     fn lower_sync_owned_string_param(&self, acc: &mut ParamLoweringState, name: &Ident) {
         let ptr_name = ptr_ident(name);
         let len_name = len_ident(name);
@@ -645,6 +684,7 @@ impl<'a> SyncValueParamLowerer<'a> {
     ) {
         match param_transform {
             ParamTransform::StrRef => self.decoder.lower_sync_str_ref_param(acc, name),
+            ParamTransform::StringRef => self.decoder.lower_sync_string_ref_param(acc, name),
             ParamTransform::OwnedString => self.decoder.lower_sync_owned_string_param(acc, name),
             ParamTransform::SliceRef(inner_type) => {
                 self.decoder
@@ -718,6 +758,7 @@ impl<'a> AsyncValueParamLowerer<'a> {
     ) {
         match param_transform {
             ParamTransform::StrRef => self.decoder.lower_async_str_ref_param(acc, name),
+            ParamTransform::StringRef => self.decoder.lower_async_string_ref_param(acc, name),
             ParamTransform::OwnedString => self.decoder.lower_async_owned_string_param(acc, name),
             ParamTransform::SliceRef(inner_type) => {
                 self.decoder

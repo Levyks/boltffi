@@ -31,4 +31,6 @@ export async function run() {
   assert.equal(demo.ServiceConfig.describe(demo.ServiceConfig.fromOwnedName("owned")), "owned:3:standard:none:https://default");
   globalThis.demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config");
   assert.equal(demo.ServiceConfig.describe(demo.ServiceConfig.fromBorrowedName("borrowed")), "borrowed:3:standard:none:https://default");
+  globalThis.demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config");
+  assert.equal(demo.ServiceConfig.describe(demo.ServiceConfig.fromStringRefName("stringref")), "stringref:3:standard:none:https://default");
 }

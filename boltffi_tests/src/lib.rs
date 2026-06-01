@@ -958,4 +958,12 @@ impl FixtureStringConfig {
             source: "borrowed".to_string(),
         }
     }
+
+    #[allow(clippy::ptr_arg)]
+    pub fn from_string_ref_name(name: &String) -> Self {
+        Self {
+            name: name.clone(),
+            source: "string_ref".to_string(),
+        }
+    }
 }

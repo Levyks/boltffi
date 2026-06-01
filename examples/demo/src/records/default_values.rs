@@ -57,6 +57,27 @@ impl ServiceConfig {
     }
 
     #[demo_bench_macros::demo_case(
+        "records.default_values.service_config.from_string_ref_name.should_return_config",
+        justification = "Ensure a non-blittable record constructor accepts a borrowed String reference and returns the encoded record.",
+        directions = "Call `records::default_values::ServiceConfig::from_string_ref_name` through the generated binding and assert it returns a ServiceConfig using the provided name.",
+        exclude(
+            python,
+            reason = ExclusionReason::ImplementationGap,
+            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
+        )
+    )]
+    #[allow(clippy::ptr_arg)]
+    pub fn from_string_ref_name(name: &String) -> Self {
+        Self {
+            name: name.clone(),
+            retries: 3,
+            region: "standard".to_string(),
+            endpoint: None,
+            backup_endpoint: Some("https://default".to_string()),
+        }
+    }
+
+    #[demo_bench_macros::demo_case(
         "records.default_values.service_config.should_describe_values",
         justification = "Ensure ServiceConfig::describe formats defaulted and explicit fields into a stable string.",
         directions = "Call `records::default_values::ServiceConfig::describe` through the generated binding and assert ServiceConfig::describe formats defaulted and explicit fields into a stable string.",

@@ -516,6 +516,11 @@ public static class DemoTest
             ServiceConfig.FromBorrowedName("borrowed").Describe() == "borrowed:3:standard:none:https://default",
             "ServiceConfig.FromBorrowedName(string)"
         );
+        DemoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config");
+        Require(
+            ServiceConfig.FromStringRefName("stringref").Describe() == "stringref:3:standard:none:https://default",
+            "ServiceConfig.FromStringRefName(string)"
+        );
 
         Console.WriteLine("  PASS\n");
     }

@@ -239,6 +239,7 @@ impl<'a> AsyncParamLowerer<'a> {
                 "boltffi: async exports do not support trait object callback parameters (`Box<dyn Trait>`, `Arc<dyn Trait>`, `Option<Box<dyn Trait>>`, `Option<Arc<dyn Trait>>`) yet",
             ),
             ParamTransform::StrRef
+            | ParamTransform::StringRef
             | ParamTransform::OwnedString
             | ParamTransform::SliceRef(_)
             | ParamTransform::VecPrimitive(_)
@@ -309,6 +310,7 @@ fn param_transform_name(param_transform: &ParamTransform) -> &'static str {
     match param_transform {
         ParamTransform::PassThrough => "PassThrough",
         ParamTransform::StrRef => "StrRef",
+        ParamTransform::StringRef => "StringRef",
         ParamTransform::OwnedString => "OwnedString",
         ParamTransform::Callback { .. } => "Callback",
         ParamTransform::SliceRef(_) => "SliceRef",
@@ -454,7 +456,7 @@ mod tests {
     #[test]
     fn accepts_supported_async_params() {
         let function: syn::ItemFn = parse_quote! {
-            async fn demo(name: String, ids: Vec<i32>, scores: &[i32], id: i64) {}
+            async fn demo(name: String, label: &String, ids: Vec<i32>, scores: &[i32], id: i64) {}
         };
 
         assert!(

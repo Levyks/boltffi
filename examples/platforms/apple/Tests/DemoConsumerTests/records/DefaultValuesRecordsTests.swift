@@ -61,5 +61,7 @@ final class DefaultValuesRecordsTests: DemoTestCase {
         XCTAssertEqual(ServiceConfig(fromOwnedName: "owned").describe(), "owned:3:standard:none:https://default")
         demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config")
         XCTAssertEqual(ServiceConfig(fromBorrowedName: "borrowed").describe(), "borrowed:3:standard:none:https://default")
+        demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config")
+        XCTAssertEqual(ServiceConfig(fromStringRefName: "stringref").describe(), "stringref:3:standard:none:https://default")
     }
 }

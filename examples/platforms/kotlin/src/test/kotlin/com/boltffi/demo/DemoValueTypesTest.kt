@@ -936,5 +936,7 @@ class DemoValueTypesTest {
         assertEquals("owned:3:standard:none:https://default", ServiceConfig.fromOwnedName("owned").describe())
         demoCase("case:records.default_values.service_config.from_borrowed_name.should_return_config")
         assertEquals("borrowed:3:standard:none:https://default", ServiceConfig.fromBorrowedName("borrowed").describe())
+        demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config")
+        assertEquals("stringref:3:standard:none:https://default", ServiceConfig.fromStringRefName("stringref").describe())
     }
 }
