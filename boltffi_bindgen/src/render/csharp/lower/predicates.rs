@@ -44,6 +44,7 @@ impl<'a> CSharpLowerer<'a> {
                 self.is_supported_callback(id)
             }
             (ParamPassing::Value, _) => self.is_supported_type(&param.type_expr),
+            (ParamPassing::Ref, TypeExpr::Vec(inner)) => self.is_supported_vec_element(inner),
             (ParamPassing::RefMut, TypeExpr::Vec(inner)) => self.is_blittable_vec_element(inner),
             _ => false,
         }

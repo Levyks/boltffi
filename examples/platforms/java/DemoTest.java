@@ -1564,6 +1564,25 @@ public final class DemoTest {
             assert collectionRecords.vectorCount() == 7 : "with_collection_records vectorCount";
         }
 
+        try (ConstructorCoverageMatrix borrowedPoints = new ConstructorCoverageMatrix(
+            "borrowed",
+            Arrays.asList(new Point(2.0, 3.0), new Point(4.0, 5.0))
+        )) {
+            assert borrowedPoints.constructorVariant().equals("with_borrowed_points") : "with_borrowed_points variant";
+            assert borrowedPoints.summary().equals("label=borrowed;points=2;first=2.0:3.0") : "with_borrowed_points summary";
+            assert borrowedPoints.payloadChecksum() == 0 : "with_borrowed_points checksum";
+            assert borrowedPoints.vectorCount() == 2 : "with_borrowed_points vectorCount";
+        }
+
+        try (ConstructorCoverageMatrix borrowedPeople = new ConstructorCoverageMatrix(
+            Arrays.asList(new Person("Ada", 40), new Person("Grace", 41))
+        )) {
+            assert borrowedPeople.constructorVariant().equals("with_borrowed_people") : "with_borrowed_people variant";
+            assert borrowedPeople.summary().equals("people=2;age_total=81;names=Ada|Grace") : "with_borrowed_people summary";
+            assert borrowedPeople.payloadChecksum() == 0 : "with_borrowed_people checksum";
+            assert borrowedPeople.vectorCount() == 83 : "with_borrowed_people vectorCount";
+        }
+
         try (ConstructorCoverageMatrix enumMix = new ConstructorCoverageMatrix(
             new Filter.ByGroups(Arrays.asList(
                 Arrays.asList("café", "🌍"),

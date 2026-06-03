@@ -94,6 +94,15 @@ impl WireEncodedParam {
             },
         }
     }
+
+    pub(super) fn from_slice_ref(inner_type: &Type) -> Self {
+        let decoded_type: Type = syn::parse_quote!(Vec<#inner_type>);
+        Self {
+            kind: WireEncodedParamKind::Vec,
+            decoded_type,
+            passing: WireEncodedPassing::SharedRef,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -178,13 +187,28 @@ impl<'a> ParamTransformClassifier<'a> {
                     } else {
                         ParamPassingStrategy::SharedRef
                     };
-                    let value_strategy = Self::direct_buffer_value_strategy(&slice.inner);
-                    ClassifiedParamTransform {
-                        contract: ParamContract::new(value_strategy, passing_strategy),
-                        transform: if slice.is_mutable {
-                            ParamTransform::SliceMut(slice.inner)
-                        } else {
-                            ParamTransform::SliceRef(slice.inner)
+                    if slice.is_mutable {
+                        return ClassifiedParamTransform {
+                            contract: ParamContract::new(
+                                Self::direct_buffer_value_strategy(&slice.inner),
+                                passing_strategy,
+                            ),
+                            transform: ParamTransform::SliceMut(slice.inner),
+                        };
+                    }
+                    match self.direct_slice_value_strategy(&slice.inner) {
+                        Some(value_strategy) => ClassifiedParamTransform {
+                            contract: ParamContract::new(value_strategy, passing_strategy),
+                            transform: ParamTransform::SliceRef(slice.inner),
+                        },
+                        None => ClassifiedParamTransform {
+                            contract: ParamContract::new(
+                                ParamValueStrategy::WireEncoded(WireParamStrategy::Vec),
+                                passing_strategy,
+                            ),
+                            transform: ParamTransform::WireEncoded(
+                                WireEncodedParam::from_slice_ref(&slice.inner),
+                            ),
                         },
                     }
                 }
@@ -404,6 +428,23 @@ impl<'a> ParamTransformClassifier<'a> {
         } else {
             ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::CompositeElements)
         }
+    }
+
+    fn direct_slice_value_strategy(&self, inner_ty: &Type) -> Option<ParamValueStrategy> {
+        if inner_ty.is_primitive_type() {
+            return Some(ParamValueStrategy::DirectBuffer(
+                DirectBufferParamStrategy::ScalarElements,
+            ));
+        }
+
+        matches!(
+            self.named_type_transport_classifier
+                .named_type_category(inner_ty),
+            Some(DataTypeCategory::Blittable)
+        )
+        .then_some(ParamValueStrategy::DirectBuffer(
+            DirectBufferParamStrategy::CompositeElements,
+        ))
     }
 
     fn named_value_strategy(&self, ty: &Type) -> ParamValueStrategy {
@@ -670,4 +711,83 @@ impl TraitObjectShape {
 
 pub(super) fn is_primitive_vec_inner(type_string: &str) -> bool {
     type_string.parse::<Primitive>().is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::custom_types::CustomTypeRegistry;
+    use crate::index::data_types::{DataTypeCategory, DataTypeRegistry};
+
+    fn classifier(data_types: &'static DataTypeRegistry) -> ParamTransformClassifier<'static> {
+        let custom_types = Box::leak(Box::new(CustomTypeRegistry::default()));
+        ParamTransformClassifier::new(NamedTypeTransportClassifier::new(custom_types, data_types))
+    }
+
+    fn empty_data_types() -> &'static DataTypeRegistry {
+        Box::leak(Box::new(DataTypeRegistry::default()))
+    }
+
+    fn data_types(entries: &[(&str, DataTypeCategory)]) -> &'static DataTypeRegistry {
+        Box::leak(Box::new(DataTypeRegistry::with_entries(entries)))
+    }
+
+    #[test]
+    fn primitive_slice_stays_direct_buffer() {
+        let ty: Type = syn::parse_quote!(&[i32]);
+        let classified = classifier(empty_data_types()).classify(&ty);
+
+        assert_eq!(
+            classified.contract.value_strategy(),
+            ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::ScalarElements),
+        );
+        assert_eq!(
+            classified.contract.passing_strategy(),
+            ParamPassingStrategy::SharedRef,
+        );
+        assert!(matches!(classified.transform, ParamTransform::SliceRef(_)));
+    }
+
+    #[test]
+    fn blittable_record_slice_stays_direct_buffer() {
+        let ty: Type = syn::parse_quote!(&[Point]);
+        let classified =
+            classifier(data_types(&[("Point", DataTypeCategory::Blittable)])).classify(&ty);
+
+        assert_eq!(
+            classified.contract.value_strategy(),
+            ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::CompositeElements),
+        );
+        assert_eq!(
+            classified.contract.passing_strategy(),
+            ParamPassingStrategy::SharedRef,
+        );
+        assert!(matches!(classified.transform, ParamTransform::SliceRef(_)));
+    }
+
+    #[test]
+    fn wire_encoded_record_slice_decodes_vec_storage() {
+        let ty: Type = syn::parse_quote!(&[Person]);
+        let classified =
+            classifier(data_types(&[("Person", DataTypeCategory::WireEncoded)])).classify(&ty);
+
+        assert_eq!(
+            classified.contract.value_strategy(),
+            ParamValueStrategy::WireEncoded(WireParamStrategy::Vec),
+        );
+        assert_eq!(
+            classified.contract.passing_strategy(),
+            ParamPassingStrategy::SharedRef,
+        );
+        let ParamTransform::WireEncoded(wire_param) = classified.transform else {
+            panic!("expected wire encoded slice transform");
+        };
+        assert!(matches!(wire_param.kind, WireEncodedParamKind::Vec));
+        assert!(matches!(wire_param.passing, WireEncodedPassing::SharedRef));
+        let decoded_type = &wire_param.decoded_type;
+        assert_eq!(
+            quote!(#decoded_type).to_string().replace(' ', ""),
+            "Vec<Person>",
+        );
+    }
 }

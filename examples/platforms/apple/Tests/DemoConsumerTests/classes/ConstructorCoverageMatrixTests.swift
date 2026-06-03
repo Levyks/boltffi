@@ -45,6 +45,18 @@ final class ConstructorCoverageMatrixTests: DemoTestCase {
         XCTAssertEqual(collectionRecords.payloadChecksum(), 0)
         XCTAssertEqual(collectionRecords.vectorCount(), 7)
 
+        let borrowedPoints = ConstructorCoverageMatrix(withBorrowedPoints: "borrowed", points: [Point(x: 2, y: 3), Point(x: 4, y: 5)])
+        XCTAssertEqual(borrowedPoints.constructorVariant(), "with_borrowed_points")
+        XCTAssertEqual(borrowedPoints.summary(), "label=borrowed;points=2;first=2.0:3.0")
+        XCTAssertEqual(borrowedPoints.payloadChecksum(), 0)
+        XCTAssertEqual(borrowedPoints.vectorCount(), 2)
+
+        let borrowedPeople = ConstructorCoverageMatrix(withBorrowedPeople: [Person(name: "Ada", age: 40), Person(name: "Grace", age: 41)])
+        XCTAssertEqual(borrowedPeople.constructorVariant(), "with_borrowed_people")
+        XCTAssertEqual(borrowedPeople.summary(), "people=2;age_total=81;names=Ada|Grace")
+        XCTAssertEqual(borrowedPeople.payloadChecksum(), 0)
+        XCTAssertEqual(borrowedPeople.vectorCount(), 83)
+
         let enumMix = ConstructorCoverageMatrix(withEnumMix: .byGroups(groups: [["café", "🌍"], [], ["common"]]), message: .image(url: "https://example.com/image.png", width: 640, height: 480), task: Task(title: "ship", priority: .critical, completed: false))
         XCTAssertEqual(enumMix.constructorVariant(), "with_enum_mix")
         XCTAssertEqual(enumMix.summary(), "filter=groups:3;message=image:https://example.com/image.png#640x480;task=ship#critical")

@@ -1382,6 +1382,9 @@ impl<'a> TypeScriptLowerer<'a> {
                     input_route: TsInputRoute::CompositeBuffer {
                         codec_name,
                         element_size: layout.total_size,
+                        length_unit: abi_param
+                            .span_length_unit()
+                            .expect("composite span input must carry span length unit"),
                     },
                 }
             }
@@ -3156,7 +3159,8 @@ mod tests {
             &param.input_route,
             TsInputRoute::CompositeBuffer {
                 codec_name,
-                element_size: 16
+                element_size: 16,
+                length_unit: crate::ir::abi::SpanLengthUnit::Bytes
             } if codec_name == "Point"
         ));
         assert_eq!(
@@ -3164,6 +3168,69 @@ mod tests {
             Some(
                 "const points_writer = _module.allocCompositeBuffer(points, 16, (writer, item) => { PointCodec.encode(writer, item); });".to_string()
             )
+        );
+    }
+
+    #[test]
+    fn borrowed_blittable_record_slice_param_passes_element_count() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            is_error: false,
+            id: RecordId::new("Point"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("x"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+                FieldDef {
+                    name: FieldName::new("y"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+            ],
+            constructors: vec![],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        contract.functions.push(function(
+            "path_length",
+            vec![ParamDef {
+                name: ParamName::new("points"),
+                type_expr: TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("Point")))),
+                passing: ParamPassing::Ref,
+                doc: None,
+            }],
+            ReturnDef::Void,
+            ExecutionKind::Sync,
+        ));
+        let module = lower_contract(&contract);
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.name == "pathLength")
+            .expect("function should be lowered");
+        let param = function
+            .params
+            .iter()
+            .find(|param| param.name == "points")
+            .expect("points parameter should exist");
+
+        assert!(matches!(
+            &param.input_route,
+            TsInputRoute::CompositeBuffer {
+                codec_name,
+                element_size: 16,
+                length_unit: crate::ir::abi::SpanLengthUnit::Elements
+            } if codec_name == "Point"
+        ));
+        assert_eq!(
+            param.ffi_args(),
+            vec!["points_writer.ptr".to_string(), "points.length".to_string()]
         );
     }
 

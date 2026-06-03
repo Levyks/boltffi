@@ -1,3 +1,4 @@
+use crate::ir::abi::SpanLengthUnit;
 use crate::ir::ops::{ReadSeq, WriteSeq};
 use crate::ir::plan::AbiType;
 use crate::render::typescript::emit;
@@ -541,6 +542,7 @@ impl TsParam {
             TsInputRoute::CompositeBuffer {
                 codec_name,
                 element_size,
+                ..
             } => {
                 let writer_name = format!("{}_writer", self.name);
                 Some(format!(
@@ -602,10 +604,13 @@ impl TsParam {
                     format!("{}_alloc.len", self.name),
                 ]
             }
-            TsInputRoute::CompositeBuffer { .. } => {
+            TsInputRoute::CompositeBuffer { length_unit, .. } => {
                 vec![
                     format!("{}_writer.ptr", self.name),
-                    format!("{}_writer.len", self.name),
+                    match length_unit {
+                        SpanLengthUnit::Elements => format!("{}.length", self.name),
+                        SpanLengthUnit::Bytes => format!("{}_writer.len", self.name),
+                    },
                 ]
             }
             TsInputRoute::Callback { .. } => {
@@ -661,6 +666,7 @@ pub enum TsInputRoute {
     CompositeBuffer {
         codec_name: String,
         element_size: usize,
+        length_unit: SpanLengthUnit,
     },
     Callback {
         interface_name: String,
@@ -760,6 +766,7 @@ mod tests {
             input_route: TsInputRoute::CompositeBuffer {
                 codec_name: "Point".to_string(),
                 element_size: 16,
+                length_unit: SpanLengthUnit::Bytes,
             },
         };
 
@@ -781,6 +788,24 @@ mod tests {
             Some("_module.freeWriter(points_writer);".to_string())
         );
         assert!(param.needs_cleanup());
+    }
+
+    #[test]
+    fn borrowed_composite_buffer_param_passes_element_count() {
+        let param = TsParam {
+            name: "points".to_string(),
+            ts_type: "Point[]".to_string(),
+            input_route: TsInputRoute::CompositeBuffer {
+                codec_name: "Point".to_string(),
+                element_size: 16,
+                length_unit: SpanLengthUnit::Elements,
+            },
+        };
+
+        assert_eq!(
+            param.ffi_args(),
+            vec!["points_writer.ptr".to_string(), "points.length".to_string()]
+        );
     }
 }
 

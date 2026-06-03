@@ -2066,6 +2066,25 @@ public static class DemoTest
             Require(m.VectorCount() == 4u, "WithCollectionRecords.VectorCount (members 2 + students 1 + polygon 1)");
         }
 
+        using (var m = ConstructorCoverageMatrix.WithBorrowedPoints(
+            "borrowed",
+            new[] { new Point(2.0, 3.0), new Point(4.0, 5.0) }))
+        {
+            Require(m.ConstructorVariant() == "with_borrowed_points", "WithBorrowedPoints.ConstructorVariant");
+            Require(m.Summary() == "label=borrowed;points=2;first=2.0:3.0", "WithBorrowedPoints.Summary");
+            Require(m.PayloadChecksum() == 0u, "WithBorrowedPoints.PayloadChecksum");
+            Require(m.VectorCount() == 2u, "WithBorrowedPoints.VectorCount");
+        }
+
+        using (var m = ConstructorCoverageMatrix.WithBorrowedPeople(
+            new[] { new Person("Ada", 40u), new Person("Grace", 41u) }))
+        {
+            Require(m.ConstructorVariant() == "with_borrowed_people", "WithBorrowedPeople.ConstructorVariant");
+            Require(m.Summary() == "people=2;age_total=81;names=Ada|Grace", "WithBorrowedPeople.Summary");
+            Require(m.PayloadChecksum() == 0u, "WithBorrowedPeople.PayloadChecksum");
+            Require(m.VectorCount() == 83u, "WithBorrowedPeople.VectorCount");
+        }
+
         // Static factory with `Option<wire-encoded record>` +
         // `Option<string>` parameters: drives both the Some path and
         // the None path through the same setup machinery.

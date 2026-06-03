@@ -68,6 +68,25 @@ class DemoConstructorCoverageMatrixTest {
         }
 
         ConstructorCoverageMatrix(
+            "borrowed",
+            listOf(Point(2.0, 3.0), Point(4.0, 5.0)),
+        ).use { matrix ->
+            assertEquals("with_borrowed_points", matrix.constructorVariant())
+            assertEquals("label=borrowed;points=2;first=2.0:3.0", matrix.summary())
+            assertEquals(0u, matrix.payloadChecksum())
+            assertEquals(2u, matrix.vectorCount())
+        }
+
+        ConstructorCoverageMatrix(
+            listOf(Person("Ada", 40u), Person("Grace", 41u)),
+        ).use { matrix ->
+            assertEquals("with_borrowed_people", matrix.constructorVariant())
+            assertEquals("people=2;age_total=81;names=Ada|Grace", matrix.summary())
+            assertEquals(0u, matrix.payloadChecksum())
+            assertEquals(83u, matrix.vectorCount())
+        }
+
+        ConstructorCoverageMatrix(
             Filter.ByGroups(listOf(listOf("café", "🌍"), emptyList(), listOf("common"))),
             Message.Image("https://example.com/image.png", 640u, 480u),
             Task("ship", Priority.CRITICAL, false),

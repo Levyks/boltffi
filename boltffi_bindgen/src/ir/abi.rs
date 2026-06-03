@@ -5,15 +5,15 @@ use crate::ir::ids::{
     VariantName,
 };
 use crate::ir::ops::{ReadSeq, WriteSeq};
-use crate::ir::plan::{AbiType, Mutability, Transport};
+use crate::ir::plan::{AbiType, Mutability, SpanContent, Transport};
 use crate::ir::types::TypeExpr;
 use boltffi_ffi_rules::callable::ExecutionKind;
 use boltffi_ffi_rules::naming::{
     CreateFn, GlobalSymbol, Name, RegisterFn, VtableField, VtableType,
 };
 use boltffi_ffi_rules::transport::{
-    EnumTagStrategy, ErrorReturnStrategy, ParamContract, ReturnContract, ReturnInvocationContext,
-    ReturnPlatform, ValueReturnMethod, ValueReturnStrategy,
+    EnumTagStrategy, ErrorReturnStrategy, ParamContract, ParamPassingStrategy, ReturnContract,
+    ReturnInvocationContext, ReturnPlatform, ValueReturnMethod, ValueReturnStrategy,
 };
 
 /// The resolved FFI boundary for the whole crate.
@@ -174,6 +174,28 @@ pub struct AbiParam {
     pub name: ParamName,
     pub abi_type: AbiType,
     pub role: ParamRole,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpanLengthUnit {
+    Elements,
+    Bytes,
+}
+
+impl SpanLengthUnit {
+    pub fn for_input(contract: ParamContract, transport: &Transport) -> Option<Self> {
+        match transport {
+            Transport::Span(SpanContent::Scalar(_)) => Some(Self::Elements),
+            Transport::Span(SpanContent::Utf8 | SpanContent::Encoded(_)) => Some(Self::Bytes),
+            Transport::Span(SpanContent::Composite(_)) => match contract.passing_strategy() {
+                ParamPassingStrategy::ByValue => Some(Self::Bytes),
+                ParamPassingStrategy::SharedRef | ParamPassingStrategy::MutableRef => {
+                    Some(Self::Elements)
+                }
+            },
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -366,18 +388,29 @@ impl AbiParam {
             _ => None,
         }
     }
+
+    pub fn span_length_unit(&self) -> Option<SpanLengthUnit> {
+        match &self.role {
+            ParamRole::Input {
+                contract,
+                transport,
+                ..
+            } => SpanLengthUnit::for_input(*contract, transport),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ir::ids::FunctionId;
-    use crate::ir::plan::ScalarOrigin;
+    use crate::ir::plan::{CompositeLayout, ScalarOrigin};
     use crate::ir::types::PrimitiveType;
     use boltffi_ffi_rules::naming;
     use boltffi_ffi_rules::transport::{
-        ParamContract, ParamPassingStrategy, ParamValueStrategy, ReturnContract,
-        ScalarParamStrategy, ScalarReturnStrategy, ValueReturnStrategy,
+        DirectBufferParamStrategy, ParamContract, ParamPassingStrategy, ParamValueStrategy,
+        ReturnContract, ScalarParamStrategy, ScalarReturnStrategy, ValueReturnStrategy,
     };
 
     fn scalar_param(name: &str, abi: AbiType) -> AbiParam {
@@ -418,6 +451,59 @@ mod tests {
                 ParamValueStrategy::Scalar(ScalarParamStrategy::PrimitiveValue),
                 ParamPassingStrategy::ByValue,
             ))
+        );
+    }
+
+    #[test]
+    fn span_length_unit_tracks_span_contract() {
+        let composite_span = Transport::Span(SpanContent::Composite(CompositeLayout {
+            record_id: RecordId::new("Point"),
+            total_size: 16,
+            fields: vec![],
+        }));
+        let scalar_span = Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
+            PrimitiveType::I32,
+        )));
+        let by_value_composite = ParamContract::new(
+            ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::CompositeElements),
+            ParamPassingStrategy::ByValue,
+        );
+        let shared_composite = ParamContract::new(
+            ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::CompositeElements),
+            ParamPassingStrategy::SharedRef,
+        );
+        let mutable_composite = ParamContract::new(
+            ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::CompositeElements),
+            ParamPassingStrategy::MutableRef,
+        );
+        let shared_scalar = ParamContract::new(
+            ParamValueStrategy::DirectBuffer(DirectBufferParamStrategy::ScalarElements),
+            ParamPassingStrategy::SharedRef,
+        );
+        let by_value_string = ParamContract::new(
+            ParamValueStrategy::Utf8String,
+            ParamPassingStrategy::ByValue,
+        );
+
+        assert_eq!(
+            SpanLengthUnit::for_input(by_value_composite, &composite_span),
+            Some(SpanLengthUnit::Bytes),
+        );
+        assert_eq!(
+            SpanLengthUnit::for_input(shared_composite, &composite_span),
+            Some(SpanLengthUnit::Elements),
+        );
+        assert_eq!(
+            SpanLengthUnit::for_input(mutable_composite, &composite_span),
+            Some(SpanLengthUnit::Elements),
+        );
+        assert_eq!(
+            SpanLengthUnit::for_input(shared_scalar, &scalar_span),
+            Some(SpanLengthUnit::Elements),
+        );
+        assert_eq!(
+            SpanLengthUnit::for_input(by_value_string, &Transport::Span(SpanContent::Utf8)),
+            Some(SpanLengthUnit::Bytes),
         );
     }
 

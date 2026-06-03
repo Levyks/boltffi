@@ -40,7 +40,7 @@ impl<'a> CSharpLowerer<'a> {
         let params: Vec<CSharpParamPlan> = function
             .params
             .iter()
-            .map(|p| self.lower_param(p, &wire_writers))
+            .map(|p| self.lower_param_for_call(p, &call.params, &wire_writers))
             .collect::<Option<Vec<_>>>()?;
 
         let name = (&function.id).into();

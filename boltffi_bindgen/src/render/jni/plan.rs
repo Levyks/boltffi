@@ -1,3 +1,4 @@
+use crate::ir::abi::SpanLengthUnit;
 use crate::ir::ids::CallbackId;
 
 #[derive(Clone)]
@@ -294,11 +295,48 @@ pub enum JniParamKind {
         release_mode: JniArrayReleaseMode,
         stack_copy_max_len: Option<usize>,
     },
-    Buffer,
+    Buffer {
+        length: JniBufferLength,
+    },
     Composite {
         c_type: String,
     },
     Closure,
+}
+
+#[derive(Clone)]
+pub enum JniBufferLength {
+    Bytes,
+    CompositeElements { c_type: String },
+}
+
+impl JniBufferLength {
+    pub fn composite(unit: SpanLengthUnit, c_type: String) -> Self {
+        match unit {
+            SpanLengthUnit::Elements => Self::CompositeElements { c_type },
+            SpanLengthUnit::Bytes => Self::Bytes,
+        }
+    }
+
+    fn expr(&self, name: &str) -> String {
+        match self {
+            Self::Bytes => {
+                format!("(_{name}_ptr && _{name}_size > 0) ? (uintptr_t)_{name}_size : 0")
+            }
+            Self::CompositeElements { c_type } => format!(
+                "(_{name}_ptr && _{name}_size > 0) ? (uintptr_t)(_{name}_size / (jlong)sizeof({c_type})) : 0"
+            ),
+        }
+    }
+
+    fn check(&self, name: &str) -> Option<String> {
+        match self {
+            Self::Bytes => None,
+            Self::CompositeElements { c_type } => Some(format!(
+                "if (_{name}_size < 0 || (_{name}_size > 0 && (_{name}_size % (jlong)sizeof({c_type})) != 0)) _boltffi_input_error = true;"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -407,7 +445,7 @@ impl JniParam {
     }
 
     pub fn is_buffer(&self) -> bool {
-        matches!(self.kind, JniParamKind::Buffer)
+        matches!(self.kind, JniParamKind::Buffer { .. })
     }
 
     pub fn is_closure(&self) -> bool {
@@ -416,6 +454,27 @@ impl JniParam {
 
     pub fn is_composite(&self) -> bool {
         matches!(self.kind, JniParamKind::Composite { .. })
+    }
+
+    pub fn buffer_len_expr(&self) -> String {
+        match &self.kind {
+            JniParamKind::Buffer { length } => length.expr(&self.name),
+            _ => String::new(),
+        }
+    }
+
+    pub fn has_buffer_len_check(&self) -> bool {
+        match &self.kind {
+            JniParamKind::Buffer { length } => length.check(&self.name).is_some(),
+            _ => false,
+        }
+    }
+
+    pub fn buffer_len_check(&self) -> String {
+        match &self.kind {
+            JniParamKind::Buffer { length } => length.check(&self.name).unwrap_or_default(),
+            _ => String::new(),
+        }
     }
 
     pub fn composite_c_type(&self) -> &str {

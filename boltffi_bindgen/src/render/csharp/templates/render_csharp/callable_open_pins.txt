@@ -3,7 +3,7 @@
             {
 {%- for param in callable.params %}
 {%- match param.kind %}
-{%- when CSharpParamKind::PinnedArray with { element_type, ptr_local } %}
+{%- when CSharpParamKind::PinnedArray with { element_type, ptr_local, .. } %}
                 fixed ({{ element_type }}* {{ ptr_local }} = {{ param.name }})
                 {
 {%- when _ %}

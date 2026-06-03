@@ -1,3 +1,4 @@
+use crate::ir::abi::SpanLengthUnit;
 use crate::ir::ops::{
     OffsetExpr, ReadOp, ReadSeq, ValueExpr, WriteOp, WriteSeq, remap_root_in_seq,
 };
@@ -1223,12 +1224,21 @@ impl SwiftParam {
                     .collect();
                 format!("{}({})", c_type, field_inits.join(", "))
             }
-            SwiftConversion::ToCompositeBuffer { c_type, .. } => {
-                format!(
-                    "{}Ptr.baseAddress, UInt({}Raw.count * MemoryLayout<{}>.stride)",
-                    self.name, self.name, c_type
-                )
-            }
+            SwiftConversion::ToCompositeBuffer {
+                c_type,
+                length_unit,
+                ..
+            } => match length_unit {
+                SpanLengthUnit::Elements => {
+                    format!("{}Ptr.baseAddress, UInt({}Raw.count)", self.name, self.name)
+                }
+                SpanLengthUnit::Bytes => {
+                    format!(
+                        "{}Ptr.baseAddress, UInt({}Raw.count * MemoryLayout<{}>.stride)",
+                        self.name, self.name, c_type
+                    )
+                }
+            },
             SwiftConversion::ToString => format!(
                 "{}Buf.baseAddress!, UInt({}Buf.count)",
                 self.name, self.name
@@ -1280,7 +1290,7 @@ impl SwiftParam {
     pub fn wrapper_code(&self) -> Option<String> {
         match &self.conversion {
             SwiftConversion::ToString => Some(format!("var {n} = {n}", n = self.name)),
-            SwiftConversion::ToCompositeBuffer { c_type, fields } => {
+            SwiftConversion::ToCompositeBuffer { c_type, fields, .. } => {
                 let field_inits = fields
                     .iter()
                     .map(|field| format!("{}: item.{}", field.c_name, field.swift_name))
@@ -1472,6 +1482,7 @@ pub enum SwiftConversion {
     ToCompositeBuffer {
         c_type: String,
         fields: Vec<CompositeFieldMapping>,
+        length_unit: SpanLengthUnit,
     },
     PrimitiveBuffer {
         element_type: String,

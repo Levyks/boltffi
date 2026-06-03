@@ -20,7 +20,10 @@ JNIEXPORT {{ jni_return_type }} JNICALL {{ jni_name }}(JNIEnv *env, jclass cls{%
 {%- if param.is_buffer() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
     uint8_t* _{{ param.name }}_ptr = (uint8_t*)(*env)->GetDirectBufferAddress(env, {{ param.name }});
-    uintptr_t _{{ param.name }}_len = (_{{ param.name }}_ptr && _{{ param.name }}_size > 0) ? (uintptr_t)_{{ param.name }}_size : 0;
+    uintptr_t _{{ param.name }}_len = {{ param.buffer_len_expr() }};
+{%- if param.has_buffer_len_check() %}
+    {{ param.buffer_len_check() }}
+{%- endif %}
 {%- endif %}
 {%- if param.is_composite() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
