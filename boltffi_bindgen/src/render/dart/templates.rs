@@ -69,7 +69,8 @@ mod tests {
         ir::{
             self, CallbackId, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ClassId,
             ConstructorDef, FfiContract, MethodDef, MethodId, PackageInfo, ParamDef, ParamName,
-            ParamPassing, PrimitiveType, Receiver, ReturnDef, TypeExpr,
+            ParamPassing, PrimitiveType, Receiver, ReturnDef, StreamDef, StreamId, StreamMode,
+            TypeExpr,
         },
         render::dart::{DartLibrary, DartLowerer},
     };
@@ -182,6 +183,22 @@ mod tests {
     #[test]
     pub fn snapshot_class() {
         let mut ffi = empty_contract();
+
+        let stream = |mode: StreamMode| StreamDef {
+            id: StreamId::new(format!(
+                "temperature_event_{}",
+                match mode {
+                    StreamMode::Async => "async",
+                    StreamMode::Batch => "batch",
+                    StreamMode::Callback => "callback",
+                }
+            )),
+            item_type: TypeExpr::Primitive(PrimitiveType::F32),
+            mode,
+            doc: None,
+            deprecated: None,
+        };
+
         ffi.catalog.insert_class(ClassDef {
             id: ClassId::new("Person"),
             constructors: vec![
@@ -229,7 +246,10 @@ mod tests {
                 doc: None,
                 deprecated: None,
             }],
-            streams: vec![],
+            streams: [StreamMode::Async, StreamMode::Batch, StreamMode::Callback]
+                .into_iter()
+                .map(stream)
+                .collect(),
             doc: None,
             deprecated: None,
         });

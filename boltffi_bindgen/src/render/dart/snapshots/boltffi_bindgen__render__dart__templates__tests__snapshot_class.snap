@@ -19,7 +19,6 @@ external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_new(
   int nameLen,
   int age,
 );
-
 @$$ffi.Native<
   $$ffi.Pointer<$$ffi.Void> Function(
     $$ffi.Pointer<$$ffi.Uint8>,
@@ -31,6 +30,197 @@ external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_new_with_default_age(
   int nameLen,
 );
 
+@$$ffi.Native<
+  $$ffi.Pointer<$$ffi.Void> Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_async', isLeaf: true)
+external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_temperature_event_async(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint64,
+    $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>>,
+    )
+>(symbol: 'boltffi_person_temperature_event_async_poll')
+external void _f$boltffi_person_temperature_event_async_poll(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int callback_data,
+  $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>> callback,
+);
+
+@$$ffi.Native<
+  $$ffi.UintPtr Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Pointer<$$ffi.Float>,
+    $$ffi.UintPtr,
+    )
+>(symbol: 'boltffi_person_temperature_event_async_pop_batch', isLeaf: true)
+external int _f$boltffi_person_temperature_event_async_pop_batch(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  $$ffi.Pointer<$$ffi.Float> output_ptr,
+  int output_capacity,
+);
+
+@$$ffi.Native<
+  $$ffi.Int32 Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint32,
+    )
+>(symbol: 'boltffi_person_temperature_event_async_wait', isLeaf: true)
+external int _f$boltffi_person_temperature_event_async_wait(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int timeout_milliseconds,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_async_unsubscribe', isLeaf: true)
+external void _f$boltffi_person_temperature_event_async_unsubscribe(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_async_free')
+external void _f$boltffi_person_temperature_event_async_free(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Pointer<$$ffi.Void> Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_batch', isLeaf: true)
+external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_temperature_event_batch(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint64,
+    $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>>,
+    )
+>(symbol: 'boltffi_person_temperature_event_batch_poll')
+external void _f$boltffi_person_temperature_event_batch_poll(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int callback_data,
+  $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>> callback,
+);
+
+@$$ffi.Native<
+  $$ffi.UintPtr Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Pointer<$$ffi.Float>,
+    $$ffi.UintPtr,
+    )
+>(symbol: 'boltffi_person_temperature_event_batch_pop_batch', isLeaf: true)
+external int _f$boltffi_person_temperature_event_batch_pop_batch(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  $$ffi.Pointer<$$ffi.Float> output_ptr,
+  int output_capacity,
+);
+
+@$$ffi.Native<
+  $$ffi.Int32 Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint32,
+    )
+>(symbol: 'boltffi_person_temperature_event_batch_wait', isLeaf: true)
+external int _f$boltffi_person_temperature_event_batch_wait(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int timeout_milliseconds,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_batch_unsubscribe', isLeaf: true)
+external void _f$boltffi_person_temperature_event_batch_unsubscribe(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_batch_free')
+external void _f$boltffi_person_temperature_event_batch_free(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Pointer<$$ffi.Void> Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_callback', isLeaf: true)
+external $$ffi.Pointer<$$ffi.Void> _f$boltffi_person_temperature_event_callback(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint64,
+    $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>>,
+    )
+>(symbol: 'boltffi_person_temperature_event_callback_poll')
+external void _f$boltffi_person_temperature_event_callback_poll(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int callback_data,
+  $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>> callback,
+);
+
+@$$ffi.Native<
+  $$ffi.UintPtr Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Pointer<$$ffi.Float>,
+    $$ffi.UintPtr,
+    )
+>(symbol: 'boltffi_person_temperature_event_callback_pop_batch', isLeaf: true)
+external int _f$boltffi_person_temperature_event_callback_pop_batch(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  $$ffi.Pointer<$$ffi.Float> output_ptr,
+  int output_capacity,
+);
+
+@$$ffi.Native<
+  $$ffi.Int32 Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Uint32,
+    )
+>(symbol: 'boltffi_person_temperature_event_callback_wait', isLeaf: true)
+external int _f$boltffi_person_temperature_event_callback_wait(
+  $$ffi.Pointer<$$ffi.Void> handle,
+  int timeout_milliseconds,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_callback_unsubscribe', isLeaf: true)
+external void _f$boltffi_person_temperature_event_callback_unsubscribe(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
+
+@$$ffi.Native<
+  $$ffi.Void Function(
+    $$ffi.Pointer<$$ffi.Void>,
+    )
+>(symbol: 'boltffi_person_temperature_event_callback_free')
+external void _f$boltffi_person_temperature_event_callback_free(
+  $$ffi.Pointer<$$ffi.Void> handle,
+);
 final class Person implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
     $$ffi.Native.addressOf(_f$boltffi_person_free)
@@ -53,4 +243,71 @@ final class Person implements $$ffi.Finalizable {
 
   String getName(
   ) {}
+
+  Stream<double> temperatureEventAsync() {
+    final ctx = _$$BoltFFIStreamCtx(
+      subscribe: () => _f$boltffi_person_temperature_event_async(_handle),
+      pollFn: _f$boltffi_person_temperature_event_async_poll,
+      popBatchFn: _f$boltffi_person_temperature_event_async_pop_batch,
+      waitFn: _f$boltffi_person_temperature_event_async_wait,
+      unsubscribeFn: _f$boltffi_person_temperature_event_async_unsubscribe,
+      freeFn: _f$boltffi_person_temperature_event_async_free,
+      itemSize: 4
+    );
+
+    return ctx.stream((handle, buf, controller) {
+      final popped = _f$boltffi_person_temperature_event_async_pop_batch(
+        handle,
+        buf.address.cast(),
+        _$$BoltFFIStreamCtx._k$defaultBatchSize,
+      );
+    });
+  }
+
+  $$BoltFFIStreamPopBatchHandle<double> temperatureEventBatch() {
+    final ctx = _$$BoltFFIStreamCtx(
+      subscribe: () => _f$boltffi_person_temperature_event_batch(_handle),
+      pollFn: _f$boltffi_person_temperature_event_batch_poll,
+      popBatchFn: _f$boltffi_person_temperature_event_batch_pop_batch,
+      waitFn: _f$boltffi_person_temperature_event_batch_wait,
+      unsubscribeFn: _f$boltffi_person_temperature_event_batch_unsubscribe,
+      freeFn: _f$boltffi_person_temperature_event_batch_free,
+      itemSize: 4
+    );
+
+    return ctx.batch((handle, buf, batchSize) {
+      final popped = _f$boltffi_person_temperature_event_batch_pop_batch(
+        handle,
+        buf.address.cast(),
+        batchSize,
+      );
+      if (popped == 0) {
+        return [];
+      }
+
+      return [];
+    });
+  }
+
+  $$async.StreamSubscription<double> temperatureEventCallback(void Function(double) cb) {
+    final ctx = _$$BoltFFIStreamCtx(
+      subscribe: () => _f$boltffi_person_temperature_event_callback(_handle),
+      pollFn: _f$boltffi_person_temperature_event_callback_poll,
+      popBatchFn: _f$boltffi_person_temperature_event_callback_pop_batch,
+      waitFn: _f$boltffi_person_temperature_event_callback_wait,
+      unsubscribeFn: _f$boltffi_person_temperature_event_callback_unsubscribe,
+      freeFn: _f$boltffi_person_temperature_event_callback_free,
+      itemSize: 4
+    );
+
+    final Stream<double> stream = ctx.stream((handle, buf, controller) {
+      final popped = _f$boltffi_person_temperature_event_callback_pop_batch(
+        handle,
+        buf.address.cast(),
+        _$$BoltFFIStreamCtx._k$defaultBatchSize,
+      );
+    });
+
+    return stream.listen(cb);
+  }
 }
