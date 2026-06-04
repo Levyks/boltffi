@@ -1,3 +1,4 @@
+use crate::ir::abi::AbiParam;
 use crate::ir::definitions::{CallbackKind, ParamDef, ParamPassing, ReturnDef};
 use crate::ir::types::TypeExpr;
 
@@ -8,29 +9,29 @@ use super::super::plan::{CSharpParamKind, CSharpParamPlan, CSharpWireWriterPlan}
 use super::lowerer::CSharpLowerer;
 
 impl<'a> CSharpLowerer<'a> {
+    pub(super) fn lower_param_for_call(
+        &self,
+        param: &ParamDef,
+        abi_params: &[AbiParam],
+        wire_writers: &[CSharpWireWriterPlan],
+    ) -> Option<CSharpParamPlan> {
+        let abi_param = abi_params
+            .iter()
+            .find(|abi_param| !abi_param.is_hidden() && abi_param.name == param.name)?;
+        self.lower_param(param, abi_param, wire_writers)
+    }
+
     /// Lowers a Rust param to a [`CSharpParamPlan`]. Returns `None` for
     /// non-by-value passing, unsupported types, or wire-encoded params
     /// whose `wire_writer` isn't pre-registered.
     pub(super) fn lower_param(
         &self,
         param: &ParamDef,
+        abi_param: &AbiParam,
         wire_writers: &[CSharpWireWriterPlan],
     ) -> Option<CSharpParamPlan> {
-        if param.passing != ParamPassing::Value {
-            if let TypeExpr::Callback(id) = &param.type_expr {
-                return self.lower_callback_param(param, id);
-            }
-            // `&mut [T]` is only safe when T uses an in-place array
-            // representation. Wire-encoded element types would mutate a
-            // temporary buffer with no writeback to the managed caller
-            // (#345).
-            if !matches!(
-                (&param.passing, &param.type_expr),
-                (ParamPassing::RefMut, TypeExpr::Vec(inner))
-                    if self.is_blittable_vec_element(inner)
-            ) {
-                return None;
-            }
+        if param.passing != ParamPassing::Value && !self.is_supported_non_value_param(param) {
+            return None;
         }
 
         let csharp_type = self.lower_type(&param.type_expr)?;
@@ -100,6 +101,7 @@ impl<'a> CSharpLowerer<'a> {
                 CSharpParamKind::PinnedArray {
                     element_type,
                     ptr_local: CSharpLocalName::for_pinned_ptr(&csharp_param_name),
+                    length: abi_param.span_length_unit()?,
                 }
             }
             TypeExpr::Vec(inner) if self.is_supported_vec_element(inner) => {
@@ -129,6 +131,19 @@ impl<'a> CSharpLowerer<'a> {
             csharp_type,
             kind,
         })
+    }
+
+    fn is_supported_non_value_param(&self, param: &ParamDef) -> bool {
+        match (&param.passing, &param.type_expr) {
+            (ParamPassing::ImplTrait | ParamPassing::BoxedDyn, TypeExpr::Callback(_)) => true,
+            (ParamPassing::Ref, TypeExpr::Vec(inner)) => self.is_supported_vec_element(inner),
+            // `&mut [T]` is only safe when T uses an in-place array
+            // representation. Wire-encoded element types would mutate a
+            // temporary buffer with no writeback to the managed caller
+            // (#345).
+            (ParamPassing::RefMut, TypeExpr::Vec(inner)) => self.is_blittable_vec_element(inner),
+            _ => false,
+        }
     }
 
     /// Lowers a return signature to its C# type. For `Result<T, E>`

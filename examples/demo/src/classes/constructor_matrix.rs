@@ -103,6 +103,35 @@ impl ConstructorCoverageMatrix {
         )
     }
 
+    pub fn with_borrowed_points(label: String, points: &[Point]) -> Self {
+        let point_count = points.len() as u32;
+        let first_point = points
+            .first()
+            .map(|point| format!("{:.1}:{:.1}", point.x, point.y))
+            .unwrap_or_else(|| "none".to_string());
+        Self::from_parts(
+            "with_borrowed_points",
+            format!("label={label};points={point_count};first={first_point}"),
+            0,
+            point_count,
+        )
+    }
+
+    pub fn with_borrowed_people(people: &[Person]) -> Self {
+        let names = people
+            .iter()
+            .map(|person| person.name.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        let age_total = people.iter().map(|person| person.age).sum::<u32>();
+        Self::from_parts(
+            "with_borrowed_people",
+            format!("people={};age_total={age_total};names={names}", people.len()),
+            0,
+            people.len() as u32 + age_total,
+        )
+    }
+
     pub fn with_enum_mix(filter: Filter, message: Message, task: Task) -> Self {
         Self::from_parts(
             "with_enum_mix",

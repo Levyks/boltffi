@@ -276,6 +276,65 @@ mod tests {
     }
 
     #[test]
+    fn lowerer_matches_public_param_when_synthetic_len_name_collides() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("point"),
+            is_repr_c: true,
+            is_error: false,
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("x"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+                FieldDef {
+                    name: FieldName::new("y"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+            ],
+            constructors: vec![],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        contract.functions.push(FunctionDef {
+            id: FunctionId::new("path_length"),
+            params: vec![
+                ParamDef {
+                    name: ParamName::new("points"),
+                    type_expr: TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("point")))),
+                    passing: ParamPassing::Ref,
+                    doc: None,
+                },
+                ParamDef {
+                    name: ParamName::new("points_len"),
+                    type_expr: TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("point")))),
+                    passing: ParamPassing::Value,
+                    doc: None,
+                },
+            ],
+            returns: ReturnDef::Void,
+            execution_kind: ExecutionKind::Sync,
+            doc: None,
+            deprecated: None,
+        });
+
+        let abi = IrLowerer::new(&contract).to_abi_contract();
+        let options = CSharpOptions::default();
+        let module = CSharpLowerer::new(&contract, &abi, &options).lower();
+
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(
+            module.functions[0].native_call_args().to_string(),
+            "(IntPtr)_pointsPtr, (UIntPtr)points.Length, (IntPtr)_pointsLenPtr, (UIntPtr)(pointsLen.Length * Unsafe.SizeOf<Point>())"
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "non-blittable")]
     fn lowerer_panics_for_non_blittable_stream_item() {
         let mut contract = empty_contract();

@@ -24,9 +24,9 @@ use crate::render::kotlin::{NamingConvention as KotlinNamingConvention, primitiv
 
 use super::plan::{
     JniArrayReleaseMode, JniAsyncCallbackInvoker, JniAsyncCallbackMethod, JniAsyncCompleteKind,
-    JniAsyncFunction, JniCallbackCParam, JniCallbackMethod, JniCallbackProxyAsyncMethod,
-    JniCallbackProxySyncMethod, JniCallbackReturn, JniCallbackTrait, JniClass,
-    JniClosureTrampoline, JniClosureTrampolineReturn, JniFunction, JniFunctionReturn,
+    JniAsyncFunction, JniBufferLength, JniCallbackCParam, JniCallbackMethod,
+    JniCallbackProxyAsyncMethod, JniCallbackProxySyncMethod, JniCallbackReturn, JniCallbackTrait,
+    JniClass, JniClosureTrampoline, JniClosureTrampolineReturn, JniFunction, JniFunctionReturn,
     JniInvokerResult, JniModule, JniOptionInnerKind, JniOptionView, JniParam, JniParamKind,
     JniPrimitiveArrayElementsKind, JniResultVariant, JniResultView, JniStream, JniWireCtor,
     JniWireFunction, JniWireMethod, TrampolineReturnStrategy,
@@ -460,7 +460,9 @@ impl<'a> JniLowerer<'a> {
                 name: "self_buf".to_string(),
                 ffi_arg: "(uint8_t*)_self_buf_ptr, (uintptr_t)_self_buf_len".to_string(),
                 jni_decl: "jobject self_buf".to_string(),
-                kind: JniParamKind::Buffer,
+                kind: JniParamKind::Buffer {
+                    length: JniBufferLength::Bytes,
+                },
             },
         }
     }
@@ -835,11 +837,28 @@ impl<'a> JniLowerer<'a> {
                 let kind = JniParamKind::Composite { c_type };
                 (jni_type, ffi_arg, kind)
             }
-            Transport::Span(SpanContent::Encoded(_))
-            | Transport::Span(SpanContent::Composite(_)) => {
+            Transport::Span(SpanContent::Encoded(_)) => {
                 let jni_type = "jobject".to_string();
                 let ffi_arg = format!("(const uint8_t*)_{}_ptr, (uintptr_t)_{}_len", name, name);
-                (jni_type, ffi_arg, JniParamKind::Buffer)
+                (
+                    jni_type,
+                    ffi_arg,
+                    JniParamKind::Buffer {
+                        length: JniBufferLength::Bytes,
+                    },
+                )
+            }
+            Transport::Span(SpanContent::Composite(layout)) => {
+                let jni_type = "jobject".to_string();
+                let ffi_arg = format!("(const uint8_t*)_{}_ptr, (uintptr_t)_{}_len", name, name);
+                let c_type = format!("___{}", layout.record_id.as_str());
+                let length = JniBufferLength::composite(
+                    abi_param
+                        .span_length_unit()
+                        .expect("composite span input must carry span length unit"),
+                    c_type,
+                );
+                (jni_type, ffi_arg, JniParamKind::Buffer { length })
             }
             Transport::Handle { .. } => {
                 let jni_type = "jlong".to_string();

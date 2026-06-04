@@ -313,7 +313,7 @@ impl<'a> CSharpLowerer<'a> {
         let param_defs = ctor.params();
         let params: Vec<CSharpParamPlan> = param_defs
             .iter()
-            .map(|p| self.lower_param(p, &wire_writers))
+            .map(|p| self.lower_param_for_call(p, &call.params, &wire_writers))
             .collect::<Option<Vec<_>>>()?;
         Some(CSharpMethodPlan {
             summary_doc: CSharpComment::from_str_option(ctor.doc()),
@@ -381,7 +381,7 @@ impl<'a> CSharpLowerer<'a> {
         let params: Vec<CSharpParamPlan> = method_def
             .params
             .iter()
-            .map(|p| self.lower_param(p, &wire_writers))
+            .map(|p| self.lower_param_for_call(p, explicit_abi_params, &wire_writers))
             .collect::<Option<Vec<_>>>()?;
         Some(CSharpMethodPlan {
             summary_doc: CSharpComment::from_str_option(method_def.doc.as_deref()),

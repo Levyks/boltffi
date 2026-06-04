@@ -1192,7 +1192,13 @@ impl<'a> SwiftLowerer<'a> {
                 let fields = self.composite_field_mappings(layout);
                 (
                     format!("[{}]", self.swift_name_for_record(&layout.record_id)),
-                    SwiftConversion::ToCompositeBuffer { c_type, fields },
+                    SwiftConversion::ToCompositeBuffer {
+                        c_type,
+                        fields,
+                        length_unit: abi_param
+                            .span_length_unit()
+                            .expect("composite span input must carry span length unit"),
+                    },
                 )
             }
             ParamRole::Input {

@@ -104,7 +104,7 @@ impl<'a> CSharpLowerer<'a> {
         let params: Vec<CSharpParamPlan> = ctor
             .params()
             .iter()
-            .map(|p| self.lower_param(p, &wire_writers))
+            .map(|p| self.lower_param_for_call(p, &call.params, &wire_writers))
             .collect::<Option<_>>()?;
 
         Some(CSharpConstructorPlan {
@@ -185,7 +185,7 @@ impl<'a> CSharpLowerer<'a> {
         let params: Vec<CSharpParamPlan> = method_def
             .params
             .iter()
-            .map(|p| self.lower_param(p, &wire_writers))
+            .map(|p| self.lower_param_for_call(p, explicit_abi_params, &wire_writers))
             .collect::<Option<_>>()?;
 
         let name: CSharpMethodName = (&method_def.id).into();

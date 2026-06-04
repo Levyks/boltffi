@@ -65,6 +65,25 @@ export async function run() {
     7,
   );
   assertMatrix(
+    demo.ConstructorCoverageMatrix.withBorrowedPoints(
+      "borrowed",
+      [{ x: 2, y: 3 }, { x: 4, y: 5 }],
+    ),
+    "with_borrowed_points",
+    "label=borrowed;points=2;first=2.0:3.0",
+    0,
+    2,
+  );
+  assertMatrix(
+    demo.ConstructorCoverageMatrix.withBorrowedPeople(
+      [{ name: "Ada", age: 40 }, { name: "Grace", age: 41 }],
+    ),
+    "with_borrowed_people",
+    "people=2;age_total=81;names=Ada|Grace",
+    0,
+    83,
+  );
+  assertMatrix(
     demo.ConstructorCoverageMatrix.withEnumMix(
       { tag: "ByGroups", groups: [["café", "🌍"], [], ["common"]] },
       { tag: "Image", url: "https://example.com/image.png", width: 640, height: 480 },

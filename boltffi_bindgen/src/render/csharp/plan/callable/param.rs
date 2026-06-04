@@ -1,3 +1,5 @@
+use crate::ir::abi::SpanLengthUnit;
+
 use super::super::super::ast::{
     CSharpArgumentList, CSharpAttribute, CSharpAttributeArg, CSharpBinaryOp, CSharpClassName,
     CSharpExpression, CSharpIdentity, CSharpLocalDecl, CSharpLocalName, CSharpMethodName,
@@ -167,6 +169,7 @@ impl CSharpParamPlan {
             CSharpParamKind::PinnedArray {
                 element_type,
                 ptr_local,
+                length,
             } => {
                 let ptr_arg = CSharpExpression::Cast {
                     target: CSharpType::IntPtr,
@@ -174,10 +177,13 @@ impl CSharpParamPlan {
                         ptr_local.clone(),
                     ))),
                 };
-                let length_arg = CSharpExpression::Cast {
-                    target: CSharpType::UIntPtr,
-                    inner: Box::new(CSharpExpression::Paren(Box::new(
-                        CSharpExpression::Binary {
+                let length_expr = match length {
+                    SpanLengthUnit::Elements => CSharpExpression::MemberAccess {
+                        receiver: Box::new(param_ident(&self.name)),
+                        name: CSharpPropertyName::from_source("length"),
+                    },
+                    SpanLengthUnit::Bytes => {
+                        CSharpExpression::Paren(Box::new(CSharpExpression::Binary {
                             op: CSharpBinaryOp::Mul,
                             left: Box::new(CSharpExpression::MemberAccess {
                                 receiver: Box::new(param_ident(&self.name)),
@@ -191,8 +197,12 @@ impl CSharpParamPlan {
                                 type_args: vec![element_type.clone()],
                                 args: CSharpArgumentList::default(),
                             }),
-                        },
-                    ))),
+                        }))
+                    }
+                };
+                let length_arg = CSharpExpression::Cast {
+                    target: CSharpType::UIntPtr,
+                    inner: Box::new(length_expr),
                 };
                 vec![ptr_arg, length_arg]
             }
@@ -316,6 +326,7 @@ pub enum CSharpParamKind {
     PinnedArray {
         element_type: CSharpType,
         ptr_local: CSharpLocalName,
+        length: SpanLengthUnit,
     },
     /// A generated callback trait instance passed as `BoltFFICallbackHandle`.
     CallbackHandle { bridge_class: CSharpClassName },
@@ -362,6 +373,19 @@ mod tests {
 
     fn wire_encoded_local() -> CSharpLocalName {
         CSharpLocalName::for_bytes(&CSharpParamName::from_source("person"))
+    }
+
+    fn pinned_record_param(length: SpanLengthUnit) -> CSharpParamPlan {
+        let name = CSharpParamName::from_source("points");
+        CSharpParamPlan {
+            name: name.clone(),
+            csharp_type: CSharpType::Array(Box::new(record_type("point"))),
+            kind: CSharpParamKind::PinnedArray {
+                element_type: record_type("point"),
+                ptr_local: CSharpLocalName::for_pinned_ptr(&name),
+                length,
+            },
+        }
     }
 
     /// Render a Vec of native_declarations as it would appear inside the
@@ -453,6 +477,24 @@ mod tests {
         assert_eq!(
             render_native_args(&p),
             "_personBytes, (UIntPtr)_personBytes.Length"
+        );
+    }
+
+    #[test]
+    fn native_call_arg_pinned_vec_uses_byte_length() {
+        let p = pinned_record_param(SpanLengthUnit::Bytes);
+        assert_eq!(
+            render_native_args(&p),
+            "(IntPtr)_pointsPtr, (UIntPtr)(points.Length * Unsafe.SizeOf<Point>())"
+        );
+    }
+
+    #[test]
+    fn native_call_arg_pinned_slice_uses_element_length() {
+        let p = pinned_record_param(SpanLengthUnit::Elements);
+        assert_eq!(
+            render_native_args(&p),
+            "(IntPtr)_pointsPtr, (UIntPtr)points.Length"
         );
     }
 
