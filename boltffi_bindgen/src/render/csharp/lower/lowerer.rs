@@ -144,6 +144,7 @@ mod tests {
     use boltffi_ffi_rules::callable::ExecutionKind;
 
     use super::super::super::CSharpOptions;
+    use super::super::super::plan::CSharpStreamDelivery;
 
     fn empty_contract() -> FfiContract {
         FfiContract {
@@ -335,8 +336,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "non-blittable")]
-    fn lowerer_panics_for_non_blittable_stream_item() {
+    fn lowerer_accepts_wire_encoded_stream_item() {
         let mut contract = empty_contract();
         contract.catalog.insert_class(ClassDef {
             id: ClassId::new("event_bus"),
@@ -355,6 +355,12 @@ mod tests {
 
         let abi = IrLowerer::new(&contract).to_abi_contract();
         let options = CSharpOptions::default();
-        let _ = CSharpLowerer::new(&contract, &abi, &options).lower();
+        let module = CSharpLowerer::new(&contract, &abi, &options).lower();
+
+        let stream = &module.classes[0].streams[0];
+        assert!(matches!(
+            &stream.delivery,
+            CSharpStreamDelivery::WireEncoded { .. }
+        ));
     }
 }

@@ -1564,6 +1564,7 @@ public final class DemoTest {
             assert collectionRecords.vectorCount() == 7 : "with_collection_records vectorCount";
         }
 
+        demoCase("case:classes.constructor_matrix.with_borrowed_points.should_accept_borrowed_blittable_slice");
         try (ConstructorCoverageMatrix borrowedPoints = new ConstructorCoverageMatrix(
             "borrowed",
             Arrays.asList(new Point(2.0, 3.0), new Point(4.0, 5.0))
@@ -1574,6 +1575,7 @@ public final class DemoTest {
             assert borrowedPoints.vectorCount() == 2 : "with_borrowed_points vectorCount";
         }
 
+        demoCase("case:classes.constructor_matrix.with_borrowed_people.should_accept_borrowed_encoded_record_slice");
         try (ConstructorCoverageMatrix borrowedPeople = new ConstructorCoverageMatrix(
             Arrays.asList(new Person("Ada", 40), new Person("Grace", 41))
         )) {
@@ -2519,6 +2521,35 @@ public final class DemoTest {
             bus.close();
         } catch (Exception e) {
             throw new RuntimeException("callback stream test failed", e);
+        }
+        System.out.println("  PASS\n");
+
+        System.out.println("Testing streams (encoded record items)...");
+        demoCase("case:classes.streams.event_bus.subscribe_messages.should_deliver_encoded_record_items");
+        try {
+            java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(2);
+            java.util.concurrent.CopyOnWriteArrayList<StreamMessage> received = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+            EventBus bus = new EventBus();
+            StreamSubscription<StreamMessage> subscription = bus.subscribeMessages(message -> {
+                received.add(message);
+                latch.countDown();
+            });
+
+            StreamMessage first = new StreamMessage("alpha", new int[] { 1, 2 });
+            StreamMessage second = new StreamMessage("beta", new int[] { 3, 4, 5 });
+            bus.emitMessage(first);
+            bus.emitMessage(second);
+
+            boolean done = latch.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            assert done : "encoded stream should deliver 2 items within 5 seconds";
+            assert received.contains(first) : "encoded stream should contain first message";
+            assert received.contains(second) : "encoded stream should contain second message";
+
+            subscription.close();
+            bus.close();
+        } catch (Exception e) {
+            throw new RuntimeException("encoded stream test failed", e);
         }
         System.out.println("  PASS\n");
     }

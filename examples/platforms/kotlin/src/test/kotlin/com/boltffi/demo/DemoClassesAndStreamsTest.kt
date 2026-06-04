@@ -129,6 +129,7 @@ class DemoClassesAndStreamsTest {
 
     @Test
     fun eventBusStreamsDeliverValuesAndPoints() = runBlocking {
+        demoCase("case:classes.streams.event_bus.subscribe_messages.should_deliver_encoded_record_items")
         withTimeout(10_000) {
             EventBus().use { bus ->
                 val valuesDeferred = async {
@@ -141,13 +142,25 @@ class DemoClassesAndStreamsTest {
                         bus.subscribePoints().take(2).toList()
                     }
                 }
+                val messagesDeferred = async {
+                    withTimeout(5_000) {
+                        bus.subscribeMessages().take(2).toList()
+                    }
+                }
                 delay(100)
                 bus.emitValue(1)
                 assertEquals(3u, bus.emitBatch(intArrayOf(2, 3, 4)))
                 bus.emitPoint(Point(1.0, 2.0))
                 bus.emitPoint(Point(3.0, 4.0))
+                bus.emitMessage(StreamMessage("alpha", intArrayOf(1, 2)))
+                bus.emitMessage(StreamMessage("beta", intArrayOf(3, 4, 5)))
                 assertEquals(listOf(1, 2, 3, 4), valuesDeferred.await())
                 assertEquals(listOf(Point(1.0, 2.0), Point(3.0, 4.0)), pointsDeferred.await())
+                val messages = messagesDeferred.await()
+                assertEquals("alpha", messages[0].text)
+                assertContentEquals(intArrayOf(1, 2), messages[0].values)
+                assertEquals("beta", messages[1].text)
+                assertContentEquals(intArrayOf(3, 4, 5), messages[1].values)
             }
         }
     }

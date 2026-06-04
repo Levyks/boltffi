@@ -328,12 +328,12 @@ impl<T: Send + 'static> Drop for SubscriberSlot<T> {
     }
 }
 
-pub struct StreamProducer<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize = 32> {
+pub struct StreamProducer<T: Send + Clone + 'static, const MAX_SUBSCRIBERS: usize = 32> {
     subscriber_slots: [SubscriberSlot<T>; MAX_SUBSCRIBERS],
     default_capacity: usize,
 }
 
-impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, MAX_SUBSCRIBERS> {
+impl<T: Send + Clone + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, MAX_SUBSCRIBERS> {
     pub fn new(default_capacity: usize) -> Self {
         Self {
             subscriber_slots: core::array::from_fn(|_| SubscriberSlot::empty()),
@@ -370,7 +370,7 @@ impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, M
     pub fn push(&self, event: T) {
         self.subscriber_slots.iter().for_each(|slot| {
             if let Some(subscription) = slot.upgrade().filter(|s| s.is_active()) {
-                subscription.push_event(event);
+                subscription.push_event(event.clone());
             }
         });
     }
@@ -383,7 +383,7 @@ impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, M
     }
 }
 
-impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Default
+impl<T: Send + Clone + 'static, const MAX_SUBSCRIBERS: usize> Default
     for StreamProducer<T, MAX_SUBSCRIBERS>
 {
     fn default() -> Self {
@@ -391,11 +391,11 @@ impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Default
     }
 }
 
-unsafe impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Send
+unsafe impl<T: Send + Clone + 'static, const MAX_SUBSCRIBERS: usize> Send
     for StreamProducer<T, MAX_SUBSCRIBERS>
 {
 }
-unsafe impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Sync
+unsafe impl<T: Send + Clone + 'static, const MAX_SUBSCRIBERS: usize> Sync
     for StreamProducer<T, MAX_SUBSCRIBERS>
 {
 }
@@ -474,5 +474,17 @@ mod tests {
                 .enumerate()
                 .all(|(index, &value)| value == index as i32)
         );
+    }
+
+    #[test]
+    fn test_stream_producer_broadcasts_clone_items() {
+        let producer = StreamProducer::<String>::new(16);
+        let first = producer.subscribe();
+        let second = producer.subscribe();
+
+        producer.push("hello".to_string());
+
+        assert_eq!(first.pop_event(), Some("hello".to_string()));
+        assert_eq!(second.pop_event(), Some("hello".to_string()));
     }
 }

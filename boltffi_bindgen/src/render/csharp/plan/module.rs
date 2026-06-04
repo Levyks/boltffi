@@ -200,6 +200,7 @@ impl CSharpModulePlan {
     /// enum exists so the `WireReader` (which takes `FfiBuf`) compiles.
     pub fn needs_ffi_buf(&self) -> bool {
         self.has_ffi_buf_returns()
+            || self.has_wire_encoded_streams()
             || !self.records.is_empty()
             || !self.enums.is_empty()
             || self.callbacks.iter().any(|callback| callback.needs_ffi_buf)
@@ -211,6 +212,7 @@ impl CSharpModulePlan {
     /// enum wire helpers (`StatusWire.Decode`, `Shape.Decode`).
     pub fn needs_wire_reader(&self) -> bool {
         self.has_ffi_buf_returns()
+            || self.has_wire_encoded_streams()
             || !self.records.is_empty()
             || !self.enums.is_empty()
             || self
@@ -221,6 +223,13 @@ impl CSharpModulePlan {
                 .closures
                 .iter()
                 .any(|closure| closure.needs_wire_reader)
+    }
+
+    fn has_wire_encoded_streams(&self) -> bool {
+        self.classes
+            .iter()
+            .flat_map(|class| class.streams.iter())
+            .any(|stream| stream.uses_wire_encoded_batch())
     }
 
     /// Whether the `WireWriter` helper is emitted. Needed for wire-encoded
@@ -324,6 +333,7 @@ mod tests {
     use super::super::{
         CFunctionName, CSharpConstructorKind, CSharpConstructorPlan, CSharpEnumKind,
         CSharpFunctionPlan, CSharpMethodPlan, CSharpReceiver, CSharpReturnKind,
+        CSharpStreamDelivery, CSharpStreamPlan,
     };
     use super::*;
 
@@ -420,6 +430,52 @@ mod tests {
         }
     }
 
+    fn wire_encoded_stream_class_plan() -> CSharpClassPlan {
+        CSharpClassPlan {
+            summary_doc: None,
+            class_name: CSharpClassName::from_source("event_bus"),
+            ffi_free: CFunctionName::new("boltffi_event_bus_free".to_string()),
+            native_free_method_name: CSharpMethodName::from_source("EventBusFree"),
+            constructors: vec![],
+            methods: vec![],
+            streams: vec![CSharpStreamPlan {
+                summary_doc: None,
+                name: CSharpMethodName::from_source("subscribe_labels"),
+                item_type: CSharpType::String,
+                mode: crate::ir::definitions::StreamMode::Async,
+                delivery: CSharpStreamDelivery::WireEncoded {
+                    decode_expr: CSharpExpression::Identity(CSharpIdentity::Local(
+                        CSharpLocalName::new("reader"),
+                    )),
+                },
+                subscribe_method_name: CSharpMethodName::from_source("EventBusSubscribeLabels"),
+                subscribe_ffi_name: CFunctionName::new(
+                    "boltffi_event_bus_subscribe_labels".to_string(),
+                ),
+                pop_batch_method_name: CSharpMethodName::from_source(
+                    "EventBusSubscribeLabelsPopBatch",
+                ),
+                pop_batch_ffi_name: CFunctionName::new(
+                    "boltffi_event_bus_subscribe_labels_pop_batch".to_string(),
+                ),
+                wait_method_name: CSharpMethodName::from_source("EventBusSubscribeLabelsWait"),
+                wait_ffi_name: CFunctionName::new(
+                    "boltffi_event_bus_subscribe_labels_wait".to_string(),
+                ),
+                unsubscribe_method_name: CSharpMethodName::from_source(
+                    "EventBusSubscribeLabelsUnsubscribe",
+                ),
+                unsubscribe_ffi_name: CFunctionName::new(
+                    "boltffi_event_bus_subscribe_labels_unsubscribe".to_string(),
+                ),
+                free_method_name: CSharpMethodName::from_source("EventBusSubscribeLabelsFree"),
+                free_ffi_name: CFunctionName::new(
+                    "boltffi_event_bus_subscribe_labels_free".to_string(),
+                ),
+            }],
+        }
+    }
+
     fn throwing_record_plan() -> CSharpRecordPlan {
         CSharpRecordPlan {
             summary_doc: None,
@@ -491,6 +547,15 @@ mod tests {
         module.classes.push(fallible_constructor_class_plan());
         assert!(module.needs_last_error());
         assert!(module.needs_ffi_status());
+    }
+
+    #[test]
+    fn encoded_streams_need_ffi_buf_and_wire_reader() {
+        let mut module = empty_module();
+        module.classes.push(wire_encoded_stream_class_plan());
+
+        assert!(module.needs_ffi_buf());
+        assert!(module.needs_wire_reader());
     }
 
     /// A record method that returns `Result<_, _>` flips the predicate

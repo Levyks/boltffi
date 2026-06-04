@@ -63,6 +63,7 @@ fun main(args: Array<String>) {
             }
         }
         "event-bus-streams" -> runBlocking {
+            demoCase("case:classes.streams.event_bus.subscribe_messages.should_deliver_encoded_record_items")
             withTimeout(10_000) {
                 EventBus().use { bus ->
                     val valuesDeferred = async {
@@ -75,16 +76,29 @@ fun main(args: Array<String>) {
                             bus.subscribePoints().take(2).toList()
                         }
                     }
+                    val messagesDeferred = async {
+                        withTimeout(5_000) {
+                            bus.subscribeMessages().take(2).toList()
+                        }
+                    }
                     delay(100)
                     bus.emitValue(1)
                     check(bus.emitBatch(intArrayOf(2, 3, 4)) == 3u)
                     bus.emitPoint(Point(1.0, 2.0))
                     bus.emitPoint(Point(3.0, 4.0))
+                    bus.emitMessage(StreamMessage("alpha", intArrayOf(1, 2)))
+                    bus.emitMessage(StreamMessage("beta", intArrayOf(3, 4, 5)))
                     check(valuesDeferred.await() == listOf(1, 2, 3, 4))
                     val points = pointsDeferred.await()
                     check(points.size == 2)
                     check(points[0] == Point(1.0, 2.0))
                     check(points[1] == Point(3.0, 4.0))
+                    val messages = messagesDeferred.await()
+                    check(messages.size == 2)
+                    check(messages[0].text == "alpha")
+                    check(messages[0].values.contentEquals(intArrayOf(1, 2)))
+                    check(messages[1].text == "beta")
+                    check(messages[1].values.contentEquals(intArrayOf(3, 4, 5)))
                 }
             }
         }

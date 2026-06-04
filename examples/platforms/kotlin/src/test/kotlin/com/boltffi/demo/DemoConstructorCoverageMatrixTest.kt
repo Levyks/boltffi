@@ -67,6 +67,7 @@ class DemoConstructorCoverageMatrixTest {
             assertEquals(7u, matrix.vectorCount())
         }
 
+        demoCase("case:classes.constructor_matrix.with_borrowed_points.should_accept_borrowed_blittable_slice")
         ConstructorCoverageMatrix(
             "borrowed",
             listOf(Point(2.0, 3.0), Point(4.0, 5.0)),
@@ -77,6 +78,7 @@ class DemoConstructorCoverageMatrixTest {
             assertEquals(2u, matrix.vectorCount())
         }
 
+        demoCase("case:classes.constructor_matrix.with_borrowed_people.should_accept_borrowed_encoded_record_slice")
         ConstructorCoverageMatrix(
             listOf(Person("Ada", 40u), Person("Grace", 41u)),
         ).use { matrix ->

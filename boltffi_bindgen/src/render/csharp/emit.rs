@@ -3322,6 +3322,7 @@ mod tests {
                     TypeExpr::Record(RecordId::new("point")),
                     StreamMode::Async,
                 ),
+                stream_def("subscribe_labels", TypeExpr::String, StreamMode::Async),
             ],
             doc: None,
             deprecated: None,
@@ -3365,6 +3366,11 @@ mod tests {
         );
         assert_source_contains(
             class_source,
+            "public async IAsyncEnumerable<string> SubscribeLabels([EnumeratorCancellation] CancellationToken cancellationToken = default)",
+            "wire-encoded stream items render with their generated item type",
+        );
+        assert_source_contains(
+            class_source,
             "fixed (int* _itemsPtr = _items)",
             "direct primitive stream batches pin the managed output buffer",
         );
@@ -3374,9 +3380,24 @@ mod tests {
             "direct record stream batches pin the managed output buffer",
         );
         assert_source_contains(
+            class_source,
+            "FfiBuf _buf = NativeMethods.EventBusSubscribeLabelsPopBatch(subscription, (UIntPtr)BoltFFIStream.DefaultBatchSize);",
+            "wire-encoded stream batches call the FfiBuf pop_batch shape",
+        );
+        assert_source_contains(
+            class_source,
+            "_items[_i] = reader.ReadString();",
+            "wire-encoded stream batches decode items with the shared WireReader path",
+        );
+        assert_source_contains(
             main_source,
             "internal static extern UIntPtr EventBusSubscribeValuesPopBatch(IntPtr subscription, IntPtr outputPtr, UIntPtr outputCapacity);",
             "direct stream native signature follows the C ABI output-buffer shape",
+        );
+        assert_source_contains(
+            main_source,
+            "internal static extern FfiBuf EventBusSubscribeLabelsPopBatch(IntPtr subscription, UIntPtr maxCount);",
+            "wire-encoded stream native signature follows the FfiBuf batch shape",
         );
         assert_source_lacks(
             class_source,
