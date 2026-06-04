@@ -64,6 +64,7 @@ export async function run() {
     0,
     7,
   );
+  globalThis.demoCase("case:classes.constructor_matrix.with_borrowed_points.should_accept_borrowed_blittable_slice");
   assertMatrix(
     demo.ConstructorCoverageMatrix.withBorrowedPoints(
       "borrowed",
@@ -74,6 +75,7 @@ export async function run() {
     0,
     2,
   );
+  globalThis.demoCase("case:classes.constructor_matrix.with_borrowed_people.should_accept_borrowed_encoded_record_slice");
   assertMatrix(
     demo.ConstructorCoverageMatrix.withBorrowedPeople(
       [{ name: "Ada", age: 40 }, { name: "Grace", age: 41 }],

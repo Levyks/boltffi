@@ -462,8 +462,9 @@ final class WireReader {
         return result;
     }
 
-    static <T> List<T> readList(byte[] data, IntFunction<T> decoder) {
-        return new WireReader(data).readList(decoder);
+    static <T> List<T> readList(byte[] data, java.util.function.Function<WireReader, T> decoder) {
+        WireReader reader = new WireReader(data);
+        return reader.readList(_i -> decoder.apply(reader));
     }
 
     static WireReader fromBuffer(ByteBuffer buffer) {

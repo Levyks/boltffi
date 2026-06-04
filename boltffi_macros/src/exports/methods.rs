@@ -18,7 +18,7 @@ use crate::exports::extern_export::{
 use crate::index::CrateIndex;
 use crate::index::callback_traits::CallbackTraitRegistry;
 use crate::lowering::params::{FfiParams, transform_method_params, transform_method_params_async};
-use crate::lowering::returns::lower::encoded_return_body;
+use crate::lowering::returns::lower::{encoded_return_body, encoded_return_buffer_expression};
 use crate::lowering::returns::model::{
     ResolvedReturn, ReturnInvocationContext, ReturnLoweringContext, ReturnPlatform,
     WasmOptionScalarEncoding,
@@ -490,6 +490,7 @@ pub fn ffi_class_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     &type_name,
                     &type_name_str,
                     callable,
+                    &return_lowering,
                     &item_type,
                 ));
             }
@@ -1324,11 +1325,13 @@ fn generate_stream_exports(
     type_name: &syn::Ident,
     class_name: &str,
     callable: MethodCallable<'_>,
+    return_lowering: &ReturnLoweringContext<'_>,
     item_type: &syn::Type,
 ) -> proc_macro2::TokenStream {
     let method = callable.method();
     let method_name = &method.sig.ident;
     let stream_name = method_name.to_string();
+    let item_abi = return_lowering.lower_type(item_type);
 
     let subscribe_ident = syn::Ident::new(
         naming::stream_ffi_subscribe(class_name, &stream_name).as_str(),
@@ -1355,6 +1358,72 @@ fn generate_stream_exports(
         method_name.span(),
     );
 
+    let pop_batch_export = if item_abi.is_primitive_scalar() || item_abi.is_passable_value() {
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #pop_batch_ident(
+                subscription_handle: ::boltffi::__private::SubscriptionHandle,
+                output_ptr: *mut <#item_type as ::boltffi::__private::Passable>::Out,
+                output_capacity: usize,
+            ) -> usize {
+                if subscription_handle.is_null() || output_ptr.is_null() || output_capacity == 0 {
+                    return 0;
+                }
+                let subscription = unsafe {
+                    &*(subscription_handle as *const ::boltffi::__private::EventSubscription<#item_type>)
+                };
+                let output_slots = unsafe {
+                    ::core::slice::from_raw_parts_mut(
+                        output_ptr as *mut ::core::mem::MaybeUninit<<#item_type as ::boltffi::__private::Passable>::Out>,
+                        output_capacity,
+                    )
+                };
+
+                output_slots
+                    .iter_mut()
+                    .map_while(|slot| {
+                        let item = subscription.pop_event()?;
+                        slot.write(<#item_type as ::boltffi::__private::Passable>::pack(item));
+                        Some(())
+                    })
+                    .count()
+            }
+        }
+    } else {
+        let items_ident = syn::Ident::new("__boltffi_stream_items", method_name.span());
+        let batch_type: syn::Type = syn::parse_quote! { Vec<#item_type> };
+        let encoded_batch = encoded_return_buffer_expression(
+            &batch_type,
+            EncodedReturnStrategy::WireEncoded,
+            &items_ident,
+            Some(return_lowering.custom_types()),
+        );
+
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #pop_batch_ident(
+                subscription_handle: ::boltffi::__private::SubscriptionHandle,
+                max_count: usize,
+            ) -> ::boltffi::__private::FfiBuf {
+                if subscription_handle.is_null() || max_count == 0 {
+                    return ::boltffi::__private::FfiBuf::empty();
+                }
+                let subscription = unsafe {
+                    &*(subscription_handle as *const ::boltffi::__private::EventSubscription<#item_type>)
+                };
+                let #items_ident: Vec<#item_type> = ::core::iter::from_fn(|| subscription.pop_event())
+                    .take(max_count)
+                    .collect();
+
+                if #items_ident.is_empty() {
+                    ::boltffi::__private::FfiBuf::empty()
+                } else {
+                    #encoded_batch
+                }
+            }
+        }
+    };
+
     quote! {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #subscribe_ident(
@@ -1368,26 +1437,7 @@ fn generate_stream_exports(
             std::sync::Arc::into_raw(subscription) as ::boltffi::__private::SubscriptionHandle
         }
 
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #pop_batch_ident(
-            subscription_handle: ::boltffi::__private::SubscriptionHandle,
-            output_ptr: *mut #item_type,
-            output_capacity: usize,
-        ) -> usize {
-            if subscription_handle.is_null() || output_ptr.is_null() || output_capacity == 0 {
-                return 0;
-            }
-            let subscription = unsafe {
-                &*(subscription_handle as *const ::boltffi::__private::EventSubscription<#item_type>)
-            };
-            let output_slice = unsafe {
-                std::slice::from_raw_parts_mut(
-                    output_ptr as *mut std::mem::MaybeUninit<#item_type>,
-                    output_capacity,
-                )
-            };
-            subscription.pop_batch_into(output_slice)
-        }
+        #pop_batch_export
 
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #wait_ident(
@@ -1852,5 +1902,88 @@ mod tests {
         assert!(
             generated.contains("let result : Vec < Summary > = (* handle) . summarize (profile) ;")
         );
+    }
+
+    #[test]
+    fn direct_stream_pop_batch_uses_passable_output_slots() {
+        let impl_block = parse_impl(
+            r#"
+            impl EventBus {
+                #[ffi_stream(item = i32)]
+                pub fn subscribe_values(&self) -> std::sync::Arc<EventSubscription<i32>> {
+                    todo!()
+                }
+            }
+            "#,
+        );
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Fn(method) => Some(method),
+                _ => None,
+            })
+            .expect("stream method should exist");
+        let type_name = impl_type_name(&impl_block).expect("impl type name should resolve");
+        let item_type: syn::Type = syn::parse_quote! { i32 };
+
+        let generated = generate_stream_exports(
+            &type_name,
+            "EventBus",
+            MethodCallable::new(method),
+            &return_lowering(),
+            &item_type,
+        )
+        .to_string();
+
+        assert!(
+            generated.contains(
+                "output_ptr : * mut < i32 as :: boltffi :: __private :: Passable > :: Out"
+            )
+        );
+        assert!(
+            generated.contains("< i32 as :: boltffi :: __private :: Passable > :: pack (item)")
+        );
+        assert!(!generated.contains("VecTransport"));
+    }
+
+    #[test]
+    fn encoded_stream_pop_batch_returns_wire_encoded_batch() {
+        let impl_block = parse_impl(
+            r#"
+            impl EventBus {
+                #[ffi_stream(item = UserProfile)]
+                pub fn subscribe_profiles(&self) -> std::sync::Arc<EventSubscription<UserProfile>> {
+                    todo!()
+                }
+            }
+            "#,
+        );
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Fn(method) => Some(method),
+                _ => None,
+            })
+            .expect("stream method should exist");
+        let type_name = impl_type_name(&impl_block).expect("impl type name should resolve");
+        let item_type: syn::Type = syn::parse_quote! { UserProfile };
+
+        let generated = generate_stream_exports(
+            &type_name,
+            "EventBus",
+            MethodCallable::new(method),
+            &return_lowering(),
+            &item_type,
+        )
+        .to_string();
+
+        assert!(generated.contains("max_count : usize"));
+        assert!(generated.contains("-> :: boltffi :: __private :: FfiBuf"));
+        assert!(generated.contains(
+            ":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_stream_items)"
+        ));
+        assert!(!generated.contains("VecTransport"));
     }
 }

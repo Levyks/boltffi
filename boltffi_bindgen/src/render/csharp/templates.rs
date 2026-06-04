@@ -21,7 +21,7 @@ use super::plan::{
     CSharpCallbackProxyCallPlan, CSharpCallbackProxyPlan, CSharpCallbackResultCatchPlan,
     CSharpCallbackResultOkPlan, CSharpClassPlan, CSharpClosureInvokePlan, CSharpClosurePlan,
     CSharpConstructorKind, CSharpEnumPlan, CSharpFieldPlan, CSharpModulePlan, CSharpParamKind,
-    CSharpRecordPlan, CSharpReturnKind, CSharpSyncCallbackOutInitializerPlan,
+    CSharpRecordPlan, CSharpReturnKind, CSharpStreamDelivery, CSharpSyncCallbackOutInitializerPlan,
     CSharpSyncCallbackSuccessPlan,
 };
 
@@ -219,7 +219,7 @@ mod tests {
         CFunctionName, CSharpAsyncCallPlan, CSharpClassPlan, CSharpConstructorKind,
         CSharpConstructorPlan, CSharpEnumKind, CSharpEnumPlan, CSharpEnumVariantPlan,
         CSharpFieldPlan, CSharpFunctionPlan, CSharpMethodPlan, CSharpParamKind, CSharpParamPlan,
-        CSharpReceiver, CSharpRecordPlan, CSharpReturnKind, CSharpStreamPlan,
+        CSharpReceiver, CSharpRecordPlan, CSharpReturnKind, CSharpStreamDelivery, CSharpStreamPlan,
     };
     use boltffi_ffi_rules::naming::{LibraryName, Name};
 
@@ -848,6 +848,7 @@ mod tests {
             name: stream_name,
             item_type,
             mode: StreamMode::Async,
+            delivery: CSharpStreamDelivery::Direct,
             subscribe_method_name: subscribe_method_name.clone(),
             subscribe_ffi_name: CFunctionName::new(format!("boltffi_event_bus_{name}")),
             pop_batch_method_name: CSharpMethodName::new(format!(

@@ -2167,7 +2167,7 @@ impl<'a> JavaLowerer<'a> {
             _ => {
                 let StreamItemTransport::WireEncoded { decode_ops } = &stream.item;
                 let item_decode = self.emit_reader_read(decode_ops);
-                format!("WireReader.readList(_bytes, _i -> {})", item_decode)
+                format!("WireReader.readList(_bytes, reader -> {})", item_decode)
             }
         }
     }
@@ -3567,7 +3567,7 @@ mod tests {
     use crate::ir::definitions::{
         CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef,
         CustomTypeDef, DataVariant, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef,
-        ParamPassing, Receiver, RecordDef, ReturnDef, VariantPayload,
+        ParamPassing, Receiver, RecordDef, ReturnDef, StreamDef, StreamMode, VariantPayload,
     };
     use crate::ir::ids::{
         BuiltinId, CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId,
@@ -5271,6 +5271,37 @@ mod tests {
         assert_eq!(param.jni_type, "java.nio.ByteBuffer");
         assert!(param.decode_expr.contains("WireReader.decodeBuffer"));
         assert!(param.decode_expr.contains("reader.readIntArray()"));
+    }
+
+    #[test]
+    fn encoded_stream_items_decode_with_stream_reader() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_class(ClassDef {
+            id: ClassId::new("event_bus"),
+            constructors: vec![],
+            methods: vec![],
+            streams: vec![StreamDef {
+                id: crate::ir::ids::StreamId::new("subscribe_labels"),
+                item_type: TypeExpr::String,
+                mode: StreamMode::Async,
+                doc: None,
+                deprecated: None,
+            }],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower(&contract);
+        let class = module
+            .classes
+            .iter()
+            .find(|class| class.class_name == "EventBus")
+            .expect("event bus class should be lowered");
+
+        assert_eq!(
+            class.streams[0].pop_batch_items_expr,
+            "WireReader.readList(_bytes, reader -> reader.readString())"
+        );
     }
 
     #[test]

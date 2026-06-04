@@ -45,12 +45,14 @@ final class ConstructorCoverageMatrixTests: DemoTestCase {
         XCTAssertEqual(collectionRecords.payloadChecksum(), 0)
         XCTAssertEqual(collectionRecords.vectorCount(), 7)
 
+        demoCase("case:classes.constructor_matrix.with_borrowed_points.should_accept_borrowed_blittable_slice")
         let borrowedPoints = ConstructorCoverageMatrix(withBorrowedPoints: "borrowed", points: [Point(x: 2, y: 3), Point(x: 4, y: 5)])
         XCTAssertEqual(borrowedPoints.constructorVariant(), "with_borrowed_points")
         XCTAssertEqual(borrowedPoints.summary(), "label=borrowed;points=2;first=2.0:3.0")
         XCTAssertEqual(borrowedPoints.payloadChecksum(), 0)
         XCTAssertEqual(borrowedPoints.vectorCount(), 2)
 
+        demoCase("case:classes.constructor_matrix.with_borrowed_people.should_accept_borrowed_encoded_record_slice")
         let borrowedPeople = ConstructorCoverageMatrix(withBorrowedPeople: [Person(name: "Ada", age: 40), Person(name: "Grace", age: 41)])
         XCTAssertEqual(borrowedPeople.constructorVariant(), "with_borrowed_people")
         XCTAssertEqual(borrowedPeople.summary(), "people=2;age_total=81;names=Ada|Grace")

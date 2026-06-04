@@ -2066,6 +2066,7 @@ public static class DemoTest
             Require(m.VectorCount() == 4u, "WithCollectionRecords.VectorCount (members 2 + students 1 + polygon 1)");
         }
 
+        DemoCase("case:classes.constructor_matrix.with_borrowed_points.should_accept_borrowed_blittable_slice");
         using (var m = ConstructorCoverageMatrix.WithBorrowedPoints(
             "borrowed",
             new[] { new Point(2.0, 3.0), new Point(4.0, 5.0) }))
@@ -2076,6 +2077,7 @@ public static class DemoTest
             Require(m.VectorCount() == 2u, "WithBorrowedPoints.VectorCount");
         }
 
+        DemoCase("case:classes.constructor_matrix.with_borrowed_people.should_accept_borrowed_encoded_record_slice");
         using (var m = ConstructorCoverageMatrix.WithBorrowedPeople(
             new[] { new Person("Ada", 40u), new Person("Grace", 41u) }))
         {
@@ -2939,6 +2941,27 @@ public static class DemoTest
             Require(received.Count >= 2, $"point stream received {received.Count} items, expected >= 2");
             Require(received.Contains(first), "point stream should contain first point");
             Require(received.Contains(second), "point stream should contain second point");
+        }
+        Console.WriteLine("  PASS\n");
+
+        Console.WriteLine("Testing streams (encoded record items)...");
+        DemoCase("case:classes.streams.event_bus.subscribe_messages.should_deliver_encoded_record_items");
+        using (var bus = new EventBus())
+        {
+            StreamMessage first = new StreamMessage("alpha", new[] { 1, 2 });
+            StreamMessage second = new StreamMessage("beta", new[] { 3, 4, 5 });
+            global::System.Threading.Tasks.Task<List<StreamMessage>> receivedTask =
+                CollectStreamItems(bus.SubscribeMessages(), 2, "message stream");
+
+            bus.EmitMessage(first);
+            bus.EmitMessage(second);
+
+            List<StreamMessage> received = await receivedTask;
+            Require(received.Count >= 2, $"message stream received {received.Count} items, expected >= 2");
+            Require(received[0].Text == "alpha", "message stream first text");
+            Require(received[0].Values.SequenceEqual(new[] { 1, 2 }), "message stream first values");
+            Require(received[1].Text == "beta", "message stream second text");
+            Require(received[1].Values.SequenceEqual(new[] { 3, 4, 5 }), "message stream second values");
         }
         Console.WriteLine("  PASS\n");
 

@@ -15,20 +15,32 @@ private final class CallbackCollector: @unchecked Sendable {
 
 final class StreamsTests: DemoTestCase {
     func testEventBusStreamsDeliverValuesAndPoints() async throws {
+        demoCase("case:classes.streams.event_bus.subscribe_messages.should_deliver_encoded_record_items")
         let bus = EventBus()
         async let values: [Int32] = collectPrefix(bus.subscribeValues(), count: 4)
         async let points: [Point] = collectPrefix(bus.subscribePoints(), count: 2)
+        async let messages: [StreamMessage] = collectPrefix(bus.subscribeMessages(), count: 2)
 
         try await _Concurrency.Task.sleep(nanoseconds: 100_000_000)
         bus.emitValue(value: 1)
         XCTAssertEqual(bus.emitBatch(values: [2, 3, 4]), 3)
         bus.emitPoint(point: Point(x: 1.0, y: 2.0))
         bus.emitPoint(point: Point(x: 3.0, y: 4.0))
+        bus.emitMessage(message: StreamMessage(text: "alpha", values: [1, 2]))
+        bus.emitMessage(message: StreamMessage(text: "beta", values: [3, 4, 5]))
 
         let emittedValues = await values
         XCTAssertEqual(emittedValues, [1, 2, 3, 4])
         let emittedPoints = await points
         XCTAssertEqual(emittedPoints, [Point(x: 1.0, y: 2.0), Point(x: 3.0, y: 4.0)])
+        let emittedMessages = await messages
+        XCTAssertEqual(
+            emittedMessages,
+            [
+                StreamMessage(text: "alpha", values: [1, 2]),
+                StreamMessage(text: "beta", values: [3, 4, 5]),
+            ]
+        )
     }
 
     func testEventBusSubscribeValuesBatch() throws {
@@ -68,4 +80,3 @@ final class StreamsTests: DemoTestCase {
         cancellable.cancel()
     }
 }
-
