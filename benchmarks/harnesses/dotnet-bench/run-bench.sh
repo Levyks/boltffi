@@ -31,6 +31,7 @@ done
 
 mkdir -p "$RESULTS_DIR"
 rm -rf "$ARTIFACTS_DIR"
+rm -f "$RESULTS_DIR/results.json" "$RESULTS_DIR/benchmark_run.json"
 mkdir -p "$ARTIFACTS_DIR"
 
 export CARGO_TARGET_DIR="$ROOT_DIR/benchmarks/generated/boltffi/target"
@@ -51,16 +52,17 @@ DOTNET_ARGS=("--filter" "${FILTER:-*}")
 
 BOLTFFI_BENCH_ARTIFACTS="$ARTIFACTS_DIR" dotnet run -c Release -- "${DOTNET_ARGS[@]}"
 
-REPORT_PATH="$(find "$ARTIFACTS_DIR/results" -name '*-report-full.json' -print | sort | tail -n1)"
-if [[ -z "$REPORT_PATH" ]]; then
+REPORT_PATHS=()
+while IFS= read -r report_path; do
+    REPORT_PATHS+=("$report_path")
+done < <(find "$ARTIFACTS_DIR/results" -name '*-report-full.json' -print | sort)
+if [[ ${#REPORT_PATHS[@]} -eq 0 ]]; then
     echo "BenchmarkDotNet full JSON report not found under $ARTIFACTS_DIR/results" >&2
     exit 1
 fi
 
-cp "$REPORT_PATH" "$RESULTS_DIR/results.json"
-
 python3 "$ROOT_DIR/benchmarks/scripts/benchmarkdotnet_to_run.py" \
-    --results "$RESULTS_DIR/results.json" \
+    --results "${REPORT_PATHS[@]}" \
     --output "$RESULTS_DIR/benchmark_run.json" \
     --profile release
 
