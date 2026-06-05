@@ -25,7 +25,7 @@ fn build(
     signature::validate(&item.sig, format!("function {ident}"))?;
     let mut function = FunctionDef::new(
         FunctionId::new(scope.path().qualified(&ident.to_string())),
-        name::canonical(ident),
+        name::source(ident),
     );
     let scanner = Scanner::new(declared_types, scope);
     let attrs = Attributes::new(&item.attrs, &scanner);
@@ -88,6 +88,19 @@ mod tests {
         expected.source = Source::new(Visibility::Public, None);
 
         assert_eq!(function, expected);
+    }
+
+    #[test]
+    fn preserves_function_and_parameter_source_spelling() {
+        let function = scan("pub fn HTTPRequest(r#type: i32) -> i32 { r#type }").expect("scan");
+
+        assert_eq!(function.name.spelling(), "HTTPRequest");
+        assert_eq!(function.name.canonical(), &name(&["http", "request"]));
+        assert_eq!(function.parameters[0].name.spelling(), "r#type");
+        assert_eq!(
+            function.parameters[0].name.canonical(),
+            &CanonicalName::single("type")
+        );
     }
 
     #[test]
@@ -215,8 +228,11 @@ mod tests {
         let function = scan("pub fn make_handler(user_id: i32) -> i32 { user_id }").expect("scan");
 
         assert_eq!(function.id, FunctionId::new("demo::make_handler"));
-        assert_eq!(function.name, name(&["make", "handler"]));
-        assert_eq!(function.parameters[0].name, name(&["user", "id"]));
+        assert_eq!(function.name.canonical(), &name(&["make", "handler"]));
+        assert_eq!(
+            function.parameters[0].name.canonical(),
+            &name(&["user", "id"])
+        );
     }
 
     #[test]

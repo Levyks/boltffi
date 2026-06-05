@@ -29,7 +29,7 @@ fn build(
     let value = const_expr::Scanner::new(&types).scan(&item.expr);
     let mut constant = ConstantDef::new(
         ConstantId::new(scope.path().qualified(&ident.to_string())),
-        name::canonical(ident),
+        name::source(ident),
         type_expr,
         value,
     );
@@ -94,7 +94,7 @@ mod tests {
     use super::*;
     use boltffi_ast::{
         CanonicalName, ConstExpr, EnumId, FloatLiteral, IntegerLiteral, Literal, NamePart, Path,
-        PathRoot, PathSegment, Primitive, Source, TypeExpr, Visibility,
+        PathRoot, PathSegment, Primitive, Source, SourceName, TypeExpr, Visibility,
     };
 
     fn parse(source: &str) -> syn::ItemConst {
@@ -118,7 +118,7 @@ mod tests {
         let constant = scan("pub const ANSWER: u32 = 42;").expect("scan");
         let mut expected = ConstantDef::new(
             ConstantId::new("demo::ANSWER"),
-            name(&["answer"]),
+            SourceName::new("ANSWER", name(&["answer"])),
             TypeExpr::Primitive(Primitive::U32),
             ConstExpr::Literal(Literal::Integer(IntegerLiteral::new(42, "42"))),
         );
@@ -243,7 +243,7 @@ mod tests {
         let constant = scan("pub(crate) const DEFAULT_LIMIT: u32 = 8;").expect("scan");
 
         assert_eq!(constant.id, ConstantId::new("demo::DEFAULT_LIMIT"));
-        assert_eq!(constant.name, name(&["default", "limit"]));
+        assert_eq!(constant.name.canonical(), &name(&["default", "limit"]));
         assert_eq!(
             constant.source.visibility,
             Visibility::Restricted("crate".to_owned())

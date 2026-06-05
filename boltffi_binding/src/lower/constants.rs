@@ -30,8 +30,8 @@
 //! [`LowerErrorKind::InvalidConstantValue`]: super::error::LowerErrorKind::InvalidConstantValue
 
 use boltffi_ast::{
-    CanonicalName as SourceName, ConstExpr, ConstantDef as SourceConstant, EnumDef as SourceEnum,
-    Literal, Path as SourcePath, Primitive as SourcePrimitive, TypeExpr, VariantPayload,
+    ConstExpr, ConstantDef as SourceConstant, EnumDef as SourceEnum, Literal, Path as SourcePath,
+    Primitive as SourcePrimitive, SourceName, TypeExpr, VariantPayload,
 };
 
 use crate::{CanonicalName, ConstantDecl, ConstantValueDecl, DefaultValue, IntegerValue};
@@ -841,7 +841,7 @@ mod tests {
         let mut contract = package();
         let mut mode = EnumDef::new(SourceEnumId::new("demo::Mode"), name("Mode"));
         mode.variants.push(VariantDef {
-            name: name("Fast"),
+            name: name("Fast").into(),
             discriminant: None,
             payload: VariantPayload::Tuple(vec![TypeExpr::Primitive(Primitive::U32)]),
             doc: None,
@@ -850,7 +850,7 @@ mod tests {
             source_span: None,
         });
         mode.variants.push(VariantDef {
-            name: name("Slow"),
+            name: name("Slow").into(),
             discriminant: None,
             payload: VariantPayload::Struct(vec![FieldDef::new(
                 name("value"),

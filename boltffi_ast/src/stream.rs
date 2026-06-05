@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, ClassId, DeprecationInfo, DocComment, Source, SourceSpan, StreamId, TypeExpr,
+    ClassId, DeprecationInfo, DocComment, Source, SourceName, SourceSpan, StreamId, TypeExpr,
     UserAttr,
 };
 
@@ -14,8 +14,8 @@ use crate::{
 pub struct StreamDef {
     /// Stable stream identity derived from the canonical Rust path.
     pub id: StreamId,
-    /// Canonical stream name.
-    pub name: CanonicalName,
+    /// Source stream name.
+    pub name: SourceName,
     /// Class owner when the stream is attached to a class.
     pub owner: Option<ClassId>,
     /// Item type yielded by the stream.
@@ -43,10 +43,10 @@ impl StreamDef {
     /// type.
     ///
     /// Returns an async stream with no owner, attributes, or documentation.
-    pub fn new(id: StreamId, name: CanonicalName, item_type: TypeExpr) -> Self {
+    pub fn new(id: StreamId, name: impl Into<SourceName>, item_type: TypeExpr) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             owner: None,
             item_type,
             mode: StreamMode::Async,

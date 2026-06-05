@@ -24,7 +24,7 @@ fn build(
 ) -> Result<RecordDef, ScanError> {
     unsupported::generics(&item.generics, &format!("record {}", item.ident))?;
     let id = RecordId::new(scope.path().qualified(&item.ident.to_string()));
-    let mut record = RecordDef::new(id, name::canonical(&item.ident));
+    let mut record = RecordDef::new(id, name::source(&item.ident));
     let scanner = Scanner::new(declared_types, scope);
     let attrs = Attributes::new(&item.attrs, &scanner);
     record.repr = repr::scan(&item.attrs);
@@ -54,7 +54,7 @@ fn record_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, S
         .ident
         .as_ref()
         .ok_or_else(|| unsupported::feature(UnsupportedFeature::TupleStruct))?;
-    let mut scanned = FieldDef::new(name::canonical(ident), scanner.scan(&field.ty)?);
+    let mut scanned = FieldDef::new(name::source(ident), scanner.scan(&field.ty)?);
     let attrs = Attributes::new(&field.attrs, scanner);
     scanned.source = attributes::source(&field.vis, scanner.scope(), field.span());
     scanned.source_span = scanned.source.span.clone();
@@ -68,7 +68,8 @@ fn record_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, S
 mod tests {
     use super::*;
     use boltffi_ast::{
-        CanonicalName, FieldDef, NamePart, Primitive, ReprItem, Source, TypeExpr, Visibility,
+        CanonicalName, FieldDef, NamePart, Primitive, ReprItem, Source, SourceName, TypeExpr,
+        Visibility,
     };
 
     fn parse(source: &str) -> syn::ItemStruct {
@@ -90,7 +91,10 @@ mod tests {
     #[test]
     fn scans_complete_named_field_record_contract() {
         let record = scan("pub struct Point { pub x: f64, pub y: f64 }").expect("scan");
-        let mut expected = RecordDef::new(RecordId::new("demo::Point"), name(&["point"]));
+        let mut expected = RecordDef::new(
+            RecordId::new("demo::Point"),
+            SourceName::new("Point", name(&["point"])),
+        );
         expected.source = Source::new(Visibility::Public, None);
         expected.fields = vec![
             FieldDef::new(name(&["x"]), TypeExpr::Primitive(Primitive::F64)),
@@ -135,8 +139,8 @@ mod tests {
         let record = scan("pub struct HTTPRequest { pub user_id: i32 }").expect("scan");
 
         assert_eq!(record.id, RecordId::new("demo::HTTPRequest"));
-        assert_eq!(record.name, name(&["http", "request"]));
-        assert_eq!(record.fields[0].name, name(&["user", "id"]));
+        assert_eq!(record.name.canonical(), &name(&["http", "request"]));
+        assert_eq!(record.fields[0].name.canonical(), &name(&["user", "id"]));
     }
 
     #[test]

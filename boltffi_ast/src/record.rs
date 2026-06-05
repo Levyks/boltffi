@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, DefaultValue, DeprecationInfo, DocComment, RecordId, ReprAttr, Source,
-    SourceSpan, TypeExpr, UserAttr,
+    DefaultValue, DeprecationInfo, DocComment, RecordId, ReprAttr, Source, SourceName, SourceSpan,
+    TypeExpr, UserAttr,
 };
 
 /// A Rust struct exported as a BoltFFI record.
@@ -15,8 +15,8 @@ use crate::{
 pub struct RecordDef {
     /// Stable record identity derived from the canonical Rust path.
     pub id: RecordId,
-    /// Canonical record name.
-    pub name: CanonicalName,
+    /// Source record name.
+    pub name: SourceName,
     /// Fields written on the Rust struct.
     pub fields: Vec<FieldDef>,
     /// `repr` attributes written on the struct.
@@ -43,10 +43,10 @@ impl RecordDef {
     /// canonical source name.
     ///
     /// Returns a record with no fields, attributes, or methods.
-    pub fn new(id: RecordId, name: CanonicalName) -> Self {
+    pub fn new(id: RecordId, name: impl Into<SourceName>) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             fields: Vec::new(),
             repr: ReprAttr::none(),
             user_attrs: Vec::new(),
@@ -66,8 +66,8 @@ impl RecordDef {
 /// the field.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct FieldDef {
-    /// Canonical field name.
-    pub name: CanonicalName,
+    /// Source field name.
+    pub name: SourceName,
     /// Source type expression written for the field.
     pub type_expr: TypeExpr,
     /// Documentation attached to the field.
@@ -90,9 +90,9 @@ impl FieldDef {
     /// parameter is the field's source type expression.
     ///
     /// Returns a field definition that can be attached to records and variants.
-    pub fn new(name: CanonicalName, type_expr: TypeExpr) -> Self {
+    pub fn new(name: impl Into<SourceName>, type_expr: TypeExpr) -> Self {
         Self {
-            name,
+            name: name.into(),
             type_expr,
             doc: None,
             default: None,

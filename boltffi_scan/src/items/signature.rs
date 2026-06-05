@@ -1,6 +1,6 @@
 use boltffi_ast::{
-    CanonicalName, ExecutionKind, MethodDef, MethodId, ParameterDef, ParameterPassing, Receiver,
-    Source,
+    ExecutionKind, MethodDef, MethodId, ParameterDef, ParameterPassing, Receiver, Source,
+    SourceName,
 };
 use syn::spanned::Spanned;
 
@@ -33,7 +33,7 @@ pub(super) fn method(
     validate(signature, format!("method {parent}::{ident}"))?;
     let mut method = MethodDef::new(
         MethodId::new(format!("{parent}::{ident}")),
-        name::canonical(ident),
+        name::source(ident),
         receiver(signature),
     );
     let metadata = Attributes::new(attrs, scanner);
@@ -104,9 +104,9 @@ fn parameter_type(ty: &syn::Type) -> (&syn::Type, ParameterPassing) {
     }
 }
 
-fn parameter_name(pat: &syn::Pat) -> Result<CanonicalName, ScanError> {
+fn parameter_name(pat: &syn::Pat) -> Result<SourceName, ScanError> {
     match pat {
-        syn::Pat::Ident(binding) => Ok(name::canonical(&binding.ident)),
+        syn::Pat::Ident(binding) => Ok(name::source(&binding.ident)),
         _ => Err(ScanError::UnnamedParameter),
     }
 }

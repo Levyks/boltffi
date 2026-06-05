@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, ClassId, DeprecationInfo, DocComment, MethodDef, Source, SourceSpan, UserAttr,
+    ClassId, DeprecationInfo, DocComment, MethodDef, Source, SourceName, SourceSpan, UserAttr,
 };
 
 /// A class-style Rust object exported through BoltFFI.
@@ -13,8 +13,8 @@ use crate::{
 pub struct ClassDef {
     /// Stable class identity derived from the canonical Rust path.
     pub id: ClassId,
-    /// Canonical class name.
-    pub name: CanonicalName,
+    /// Source class name.
+    pub name: SourceName,
     /// Methods attached to the class.
     pub methods: Vec<MethodDef>,
     /// User attributes preserved from the class declaration.
@@ -37,10 +37,10 @@ impl ClassDef {
     /// canonical source name.
     ///
     /// Returns a class with no methods, attributes, or docs.
-    pub fn new(id: ClassId, name: CanonicalName) -> Self {
+    pub fn new(id: ClassId, name: impl Into<SourceName>) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             methods: Vec::new(),
             user_attrs: Vec::new(),
             doc: None,

@@ -1,4 +1,12 @@
-use boltffi_ast::{CanonicalName, NamePart};
+use boltffi_ast::{CanonicalName, NamePart, SourceName};
+
+pub(super) fn source(ident: &syn::Ident) -> SourceName {
+    SourceName::new(ident.to_string(), canonical(ident))
+}
+
+pub(super) fn source_segment(segment: &str) -> SourceName {
+    SourceName::new(segment, canonical_segment(segment))
+}
 
 pub(super) fn canonical(ident: &syn::Ident) -> CanonicalName {
     canonical_segment(&ident_source(ident))
@@ -108,5 +116,16 @@ mod tests {
         assert_eq!(canonical(&ident("Point2D")), name(&["point2", "d"]));
         assert_eq!(canonical(&ident("Vector3")), name(&["vector3"]));
         assert_eq!(canonical(&ident("user2_id")), name(&["user2", "id"]));
+    }
+
+    #[test]
+    fn source_name_preserves_spelling_and_canonical_projection() {
+        let http_request = source(&ident("HTTPRequest"));
+        assert_eq!(http_request.spelling(), "HTTPRequest");
+        assert_eq!(http_request.canonical(), &name(&["http", "request"]));
+
+        let raw_type = source(&ident("r#type"));
+        assert_eq!(raw_type.spelling(), "r#type");
+        assert_eq!(raw_type.canonical(), &CanonicalName::single("type"));
     }
 }

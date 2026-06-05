@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, DefaultValue, DeprecationInfo, DocComment, FunctionId, MethodId, Source,
+    DefaultValue, DeprecationInfo, DocComment, FunctionId, MethodId, Source, SourceName,
     SourceSpan, TypeExpr, UserAttr,
 };
 
@@ -38,8 +38,8 @@ pub enum ExecutionKind {
 /// such as by value, by shared reference, or by mutable reference.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct ParameterDef {
-    /// Canonical parameter name.
-    pub name: CanonicalName,
+    /// Source parameter name.
+    pub name: SourceName,
     /// Source type expression after known FFI names have been identified.
     pub type_expr: TypeExpr,
     /// How the parameter was accepted by the Rust callable.
@@ -61,9 +61,9 @@ impl ParameterDef {
     /// parameter is the scanned source type expression.
     ///
     /// Returns a parameter that was passed by value in Rust source.
-    pub fn value(name: CanonicalName, type_expr: TypeExpr) -> Self {
+    pub fn value(name: impl Into<SourceName>, type_expr: TypeExpr) -> Self {
         Self {
-            name,
+            name: name.into(),
             type_expr,
             passing: ParameterPassing::Value,
             doc: None,
@@ -161,8 +161,8 @@ impl Receiver {
 pub struct FunctionDef {
     /// Stable function identity derived from its canonical source path.
     pub id: FunctionId,
-    /// Canonical function name.
-    pub name: CanonicalName,
+    /// Source function name.
+    pub name: SourceName,
     /// Source callable form. For free functions this is always `Function`.
     pub form: CallableForm,
     /// Whether the Rust source used `async`.
@@ -192,10 +192,10 @@ impl FunctionDef {
     ///
     /// Returns a function definition ready for the scanner to fill with source
     /// details.
-    pub fn new(id: crate::FunctionId, name: crate::CanonicalName) -> Self {
+    pub fn new(id: crate::FunctionId, name: impl Into<SourceName>) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             form: CallableForm::Function,
             execution: ExecutionKind::Sync,
             parameters: Vec::new(),
@@ -217,8 +217,8 @@ impl FunctionDef {
 pub struct MethodDef {
     /// Stable method identity within the owning declaration.
     pub id: MethodId,
-    /// Canonical method name.
-    pub name: CanonicalName,
+    /// Source method name.
+    pub name: SourceName,
     /// Receiver written on the Rust method.
     pub receiver: Receiver,
     /// Whether the Rust source used `async`.
@@ -248,10 +248,10 @@ impl MethodDef {
     /// records how `self` was written.
     ///
     /// Returns a method definition ready for scan-time details.
-    pub fn new(id: MethodId, name: crate::CanonicalName, receiver: Receiver) -> Self {
+    pub fn new(id: MethodId, name: impl Into<SourceName>, receiver: Receiver) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             receiver,
             execution: ExecutionKind::Sync,
             parameters: Vec::new(),

@@ -107,6 +107,67 @@ impl CanonicalName {
     }
 }
 
+/// A source name with its exact Rust spelling and canonical API projection.
+///
+/// `spelling` preserves the token text the scanner saw, such as `HTTPRequest`
+/// or `r#type`. `canonical` stores the normalized API name used by binding
+/// contracts and generated language names.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct SourceName {
+    spelling: String,
+    canonical: CanonicalName,
+}
+
+impl SourceName {
+    /// Builds a source name from exact spelling and canonical name.
+    pub fn new(spelling: impl Into<String>, canonical: CanonicalName) -> Self {
+        Self {
+            spelling: spelling.into(),
+            canonical,
+        }
+    }
+
+    /// Builds a source name when only a canonical name is available.
+    pub fn from_canonical(canonical: CanonicalName) -> Self {
+        Self {
+            spelling: canonical.as_path_string(),
+            canonical,
+        }
+    }
+
+    /// Returns the exact Rust source spelling.
+    pub fn spelling(&self) -> &str {
+        &self.spelling
+    }
+
+    /// Returns the canonical API name.
+    pub const fn canonical(&self) -> &CanonicalName {
+        &self.canonical
+    }
+
+    /// Iterates over canonical name parts.
+    pub fn parts(&self) -> impl Iterator<Item = &NamePart> {
+        self.canonical.parts()
+    }
+
+    /// Joins the canonical parts with `::`.
+    pub fn as_path_string(&self) -> String {
+        self.canonical.as_path_string()
+    }
+}
+
+impl From<CanonicalName> for SourceName {
+    fn from(canonical: CanonicalName) -> Self {
+        Self::from_canonical(canonical)
+    }
+}
+
+impl From<&SourceName> for CanonicalName {
+    fn from(name: &SourceName) -> Self {
+        name.canonical.clone()
+    }
+}
+
 /// The root qualifier used by a Rust path.
 ///
 /// `Foo`, `crate::Foo`, `self::Foo`, `super::Foo`, and `::foo::Foo` can name

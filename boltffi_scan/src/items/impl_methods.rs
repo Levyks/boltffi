@@ -216,7 +216,7 @@ mod tests {
 
         assert_eq!(methods.len(), 1);
         assert_eq!(methods[0].id, MethodId::new("demo::Point::distance"));
-        assert_eq!(methods[0].name, name(&["distance"]));
+        assert_eq!(methods[0].name.canonical(), &name(&["distance"]));
         assert_eq!(methods[0].receiver, Receiver::Shared);
         assert_eq!(
             methods[0].parameters[0].type_expr,
@@ -274,7 +274,7 @@ mod tests {
         .expect("scan");
 
         assert_eq!(methods.len(), 1);
-        assert_eq!(methods[0].name, name(&["exported"]));
+        assert_eq!(methods[0].name.canonical(), &name(&["exported"]));
     }
 
     #[test]
@@ -432,7 +432,7 @@ mod tests {
         .expect("scan");
 
         assert_eq!(methods.len(), 1);
-        assert_eq!(methods[0].name, name(&["exported"]));
+        assert_eq!(methods[0].name.canonical(), &name(&["exported"]));
     }
 
     #[test]

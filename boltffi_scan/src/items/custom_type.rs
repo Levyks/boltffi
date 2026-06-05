@@ -20,7 +20,7 @@ pub fn scan(
     declared_types: &DeclaredTypes,
 ) -> Result<CustomTypeDef, ScanError> {
     let spec = Spec::parse(marked.item())?;
-    let custom_name = name::canonical(spec.name());
+    let custom_name = name::source(spec.name());
     let custom_id = CustomTypeId::new(marked.module().qualified(&spec.name().to_string()));
     let scanner = Scanner::new(declared_types, marked.scope());
     let attrs = Attributes::new(&marked.item().attrs, &scanner);
@@ -1034,8 +1034,8 @@ mod tests {
 
         assert_eq!(custom.id, CustomTypeId::new("demo::UtcDateTime"));
         assert_eq!(
-            custom.name,
-            CanonicalName::new(vec!["utc".into(), "date".into(), "time".into()])
+            custom.name.canonical(),
+            &CanonicalName::new(vec!["utc".into(), "date".into(), "time".into()])
         );
         assert_eq!(custom.remote, date_time_utc());
         assert_eq!(custom.repr, TypeExpr::Primitive(Primitive::I64));

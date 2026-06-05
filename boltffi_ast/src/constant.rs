@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, ConstExpr, ConstantId, DeprecationInfo, DocComment, Source, SourceSpan,
-    TypeExpr, UserAttr,
+    ConstExpr, ConstantId, DeprecationInfo, DocComment, Source, SourceName, SourceSpan, TypeExpr,
+    UserAttr,
 };
 
 /// A constant exported in the source contract.
@@ -14,8 +14,8 @@ use crate::{
 pub struct ConstantDef {
     /// Stable constant identity derived from the canonical Rust path.
     pub id: ConstantId,
-    /// Canonical constant name.
-    pub name: CanonicalName,
+    /// Source constant name.
+    pub name: SourceName,
     /// Declared source type.
     pub type_expr: TypeExpr,
     /// Source expression used as the constant value.
@@ -41,10 +41,15 @@ impl ConstantDef {
     /// the source declaration.
     ///
     /// Returns a constant with no attributes, documentation, or deprecation.
-    pub fn new(id: ConstantId, name: CanonicalName, type_expr: TypeExpr, value: ConstExpr) -> Self {
+    pub fn new(
+        id: ConstantId,
+        name: impl Into<SourceName>,
+        type_expr: TypeExpr,
+        value: ConstExpr,
+    ) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             type_expr,
             value,
             user_attrs: Vec::new(),

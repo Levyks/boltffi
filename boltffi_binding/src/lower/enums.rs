@@ -246,7 +246,7 @@ mod tests {
 
     fn variant(variant_name: &str, payload: VariantPayload) -> VariantDef {
         VariantDef {
-            name: name(variant_name),
+            name: name(variant_name).into(),
             discriminant: None,
             payload,
             doc: None,

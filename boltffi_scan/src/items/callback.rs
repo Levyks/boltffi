@@ -28,7 +28,7 @@ fn build(
     unsupported::supertraits(&item.supertraits, &item_name)?;
 
     let id = TraitId::new(scope.path().qualified(&item.ident.to_string()));
-    let mut callback = TraitDef::new(id, name::canonical(&item.ident));
+    let mut callback = TraitDef::new(id, name::source(&item.ident));
     let scanner = Scanner::new(declared_types, scope);
     let attrs = Attributes::new(&item.attrs, &scanner);
     callback.source = attributes::source(&item.vis, scope, item.span());
@@ -140,14 +140,17 @@ mod tests {
             .expect("scan");
 
         assert_eq!(callback.id, TraitId::new("demo::ValueCallback"));
-        assert_eq!(callback.name, name(&["value", "callback"]));
+        assert_eq!(callback.name.canonical(), &name(&["value", "callback"]));
         assert_eq!(callback.source, Source::new(Visibility::Public, None));
         assert_eq!(callback.methods.len(), 1);
         assert_eq!(
             callback.methods[0].id,
             "demo::ValueCallback::on_value".into()
         );
-        assert_eq!(callback.methods[0].name, name(&["on", "value"]));
+        assert_eq!(
+            callback.methods[0].name.canonical(),
+            &name(&["on", "value"])
+        );
         assert_eq!(callback.methods[0].receiver, Receiver::Shared);
         assert_eq!(callback.methods[0].execution, ExecutionKind::Sync);
         assert_eq!(
@@ -174,7 +177,7 @@ mod tests {
             scan("trait Listener { #[skip] fn local(&self); fn remote(&self); }").expect("scan");
 
         assert_eq!(callback.methods.len(), 1);
-        assert_eq!(callback.methods[0].name, name(&["remote"]));
+        assert_eq!(callback.methods[0].name.canonical(), &name(&["remote"]));
     }
 
     #[test]

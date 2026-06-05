@@ -49,7 +49,7 @@ pub use ids::{
     StreamId, TraitId,
 };
 pub use literal::{ConstExpr, DefaultValue, FloatLiteral, IntegerLiteral, Literal};
-pub use name::{CanonicalName, GenericArgument, NamePart, Path, PathRoot, PathSegment};
+pub use name::{CanonicalName, GenericArgument, NamePart, Path, PathRoot, PathSegment, SourceName};
 pub use primitive::Primitive;
 pub use record::{FieldDef, RecordDef};
 pub use source::{Source, SourceFile, SourceSpan, Visibility};

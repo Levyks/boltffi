@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, DeprecationInfo, DocComment, MethodDef, Source, SourceSpan, TraitId, UserAttr,
+    DeprecationInfo, DocComment, MethodDef, Source, SourceName, SourceSpan, TraitId, UserAttr,
 };
 
 /// A trait the source crate exports through BoltFFI.
@@ -17,8 +17,8 @@ use crate::{
 pub struct TraitDef {
     /// Stable trait identity derived from the canonical Rust path.
     pub id: TraitId,
-    /// Canonical trait name.
-    pub name: CanonicalName,
+    /// Source trait name.
+    pub name: SourceName,
     /// Methods that an implementer must provide.
     pub methods: Vec<MethodDef>,
     /// User attributes preserved from the trait declaration.
@@ -41,10 +41,10 @@ impl TraitDef {
     /// the canonical trait name.
     ///
     /// Returns a trait definition with no methods or attributes.
-    pub fn new(id: TraitId, name: CanonicalName) -> Self {
+    pub fn new(id: TraitId, name: impl Into<SourceName>) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             methods: Vec::new(),
             user_attrs: Vec::new(),
             doc: None,

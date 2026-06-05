@@ -1487,7 +1487,7 @@ mod tests {
 
         let wasm_bindings = lower_callback::<Wasm32>(TraitDef {
             id: "demo::HTTPListener".into(),
-            name: name("HTTPListener"),
+            name: name("HTTPListener").into(),
             methods: vec![method("on_request", Receiver::Shared)],
             user_attrs: Vec::new(),
             doc: None,

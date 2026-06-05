@@ -34,9 +34,10 @@ fn build(
     scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<ClassDef, ScanError> {
-    let id = resolve_id(item, scope, declared_types)?;
+    let target = impl_target::Target::class(item)?;
+    let id = resolve_target_id(&target, scope, declared_types)?;
     let path = id.as_str();
-    let name = name::canonical_segment(path.rsplit("::").next().unwrap_or(path));
+    let name = name::source_segment(path.rsplit("::").next().unwrap_or(path));
     let mut class = ClassDef::new(id, name);
     let scanner = Scanner::new(declared_types, scope);
     let attrs = Attributes::new(&item.attrs, &scanner);
@@ -55,8 +56,16 @@ pub(super) fn resolve_id(
     declared_types: &DeclaredTypes,
 ) -> Result<ClassId, ScanError> {
     let target = impl_target::Target::class(item)?;
+    resolve_target_id(&target, scope, declared_types)
+}
+
+fn resolve_target_id(
+    target: &impl_target::Target<'_>,
+    scope: &ModuleScope,
+    declared_types: &DeclaredTypes,
+) -> Result<ClassId, ScanError> {
     let path = declared_types
-        .resolve_impl_target(scope, &target)?
+        .resolve_impl_target(scope, target)?
         .ok_or_else(|| ScanError::UnsupportedClassImpl {
             target: target.spelling().to_owned(),
         })?;
@@ -97,7 +106,7 @@ mod tests {
         .expect("scan");
 
         assert_eq!(class.id, ClassId::new("demo::Engine"));
-        assert_eq!(class.name, name(&["engine"]));
+        assert_eq!(class.name.canonical(), &name(&["engine"]));
         assert_eq!(class.methods.len(), 3);
         assert_eq!(class.methods[0].id, MethodId::new("demo::Engine::new"));
         assert_eq!(class.methods[0].receiver, Receiver::None);
@@ -129,7 +138,7 @@ mod tests {
         .expect("scan");
 
         assert_eq!(class.id, ClassId::new("demo::runtime::Engine"));
-        assert_eq!(class.name, name(&["engine"]));
+        assert_eq!(class.name.canonical(), &name(&["engine"]));
     }
 
     #[test]

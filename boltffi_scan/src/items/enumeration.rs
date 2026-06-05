@@ -26,7 +26,7 @@ fn build(
 ) -> Result<EnumDef, ScanError> {
     unsupported::generics(&item.generics, &format!("enum {}", item.ident))?;
     let id = EnumId::new(scope.path().qualified(&item.ident.to_string()));
-    let mut enumeration = EnumDef::new(id, name::canonical(&item.ident));
+    let mut enumeration = EnumDef::new(id, name::source(&item.ident));
     let scanner = Scanner::new(declared_types, scope);
     let attrs = Attributes::new(&item.attrs, &scanner);
     enumeration.repr = repr::scan(&item.attrs);
@@ -44,7 +44,7 @@ fn build(
 }
 
 fn variant_def(variant: &syn::Variant, scanner: &Scanner<'_>) -> Result<VariantDef, ScanError> {
-    let mut declaration = VariantDef::unit(name::canonical(&variant.ident));
+    let mut declaration = VariantDef::unit(name::source(&variant.ident));
     let attrs = Attributes::new(&variant.attrs, scanner);
     declaration.discriminant = discriminant(variant)?;
     declaration.payload = payload(&variant.fields, scanner)?;
@@ -78,7 +78,7 @@ fn named_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, Sc
         .ident
         .as_ref()
         .expect("named variant field carries an identifier");
-    let mut field_def = FieldDef::new(name::canonical(ident), scanner.scan(&field.ty)?);
+    let mut field_def = FieldDef::new(name::source(ident), scanner.scan(&field.ty)?);
     let attrs = Attributes::new(&field.attrs, scanner);
     field_def.source = attributes::source(&field.vis, scanner.scope(), field.span());
     field_def.source_span = field_def.source.span.clone();
@@ -140,13 +140,13 @@ mod tests {
         let enumeration = scan("#[repr(u8)] pub enum Mode { Fast = 0, Slow = 1 }").expect("scan");
 
         assert_eq!(enumeration.id, EnumId::new("demo::Mode"));
-        assert_eq!(enumeration.name, name(&["mode"]));
+        assert_eq!(enumeration.name.canonical(), &name(&["mode"]));
         assert_eq!(
             enumeration.repr.items,
             vec![ReprItem::Primitive(Primitive::U8)]
         );
         assert_eq!(enumeration.variants.len(), 2);
-        assert_eq!(enumeration.variants[0].name, name(&["fast"]));
+        assert_eq!(enumeration.variants[0].name.canonical(), &name(&["fast"]));
         assert_eq!(enumeration.variants[0].discriminant, Some(0));
         assert_eq!(enumeration.variants[0].payload, VariantPayload::Unit);
         assert_eq!(enumeration.variants[1].discriminant, Some(1));
@@ -169,7 +169,7 @@ mod tests {
         );
         match &enumeration.variants[1].payload {
             VariantPayload::Struct(fields) => {
-                assert_eq!(fields[0].name, name(&["width"]));
+                assert_eq!(fields[0].name.canonical(), &name(&["width"]));
                 assert_eq!(fields[0].type_expr, TypeExpr::Primitive(Primitive::F64));
             }
             other => panic!("expected struct payload, got {other:?}"),

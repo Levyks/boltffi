@@ -867,7 +867,7 @@ mod tests {
         enumeration.variants = vec![
             VariantDef::unit(name("none")),
             VariantDef {
-                name: name("message"),
+                name: name("message").into(),
                 discriminant: None,
                 payload: VariantPayload::Tuple(vec![TypeExpr::String]),
                 doc: None,
@@ -1229,7 +1229,7 @@ mod tests {
         event.variants = vec![
             VariantDef::unit(name("none")),
             VariantDef {
-                name: name("message"),
+                name: name("message").into(),
                 discriminant: None,
                 payload: VariantPayload::Tuple(vec![TypeExpr::String]),
                 doc: None,

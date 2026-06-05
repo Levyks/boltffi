@@ -1017,7 +1017,7 @@ mod tests {
     fn ref_vec_primitive_param_stays_encoded() {
         let mut decl = function("demo::peek", "peek");
         decl.parameters = vec![ParameterDef {
-            name: name("values"),
+            name: name("values").into(),
             type_expr: TypeExpr::vec(TypeExpr::Primitive(Primitive::U32)),
             passing: boltffi_ast::ParameterPassing::Ref,
             doc: None,

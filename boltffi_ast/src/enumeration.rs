@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, DeprecationInfo, DocComment, EnumId, FieldDef, ReprAttr, Source, SourceSpan,
+    DeprecationInfo, DocComment, EnumId, FieldDef, ReprAttr, Source, SourceName, SourceSpan,
     TypeExpr, UserAttr,
 };
 
@@ -13,8 +13,8 @@ use crate::{
 pub struct EnumDef {
     /// Stable enum identity derived from the canonical Rust path.
     pub id: EnumId,
-    /// Canonical enum name.
-    pub name: CanonicalName,
+    /// Source enum name.
+    pub name: SourceName,
     /// Variants written on the Rust enum.
     pub variants: Vec<VariantDef>,
     /// `repr` attributes written on the enum.
@@ -41,10 +41,10 @@ impl EnumDef {
     /// canonical source name.
     ///
     /// Returns an enum with no variants, attributes, or methods.
-    pub fn new(id: EnumId, name: CanonicalName) -> Self {
+    pub fn new(id: EnumId, name: impl Into<SourceName>) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             variants: Vec::new(),
             repr: ReprAttr::none(),
             user_attrs: Vec::new(),
@@ -63,8 +63,8 @@ impl EnumDef {
 /// whether the payload was unit, tuple, or struct style.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct VariantDef {
-    /// Canonical variant name.
-    pub name: CanonicalName,
+    /// Source variant name.
+    pub name: SourceName,
     /// Discriminant written in source, when one exists.
     pub discriminant: Option<i128>,
     /// Payload shape written by the variant.
@@ -86,9 +86,9 @@ impl VariantDef {
     /// The `name` parameter is the canonical variant name.
     ///
     /// Returns a variant with no payload and no discriminant.
-    pub fn unit(name: CanonicalName) -> Self {
+    pub fn unit(name: impl Into<SourceName>) -> Self {
         Self {
-            name,
+            name: name.into(),
             discriminant: None,
             payload: VariantPayload::Unit,
             doc: None,

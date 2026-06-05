@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CanonicalName, ConstExpr, CustomTypeId, DeprecationInfo, DocComment, NamePart, Path, PathRoot,
-    Source, SourceSpan, TypeExpr, UserAttr,
+    ConstExpr, CustomTypeId, DeprecationInfo, DocComment, NamePart, Path, PathRoot, Source,
+    SourceName, SourceSpan, TypeExpr, UserAttr,
 };
 
 /// A user-declared custom type.
@@ -14,8 +14,8 @@ use crate::{
 pub struct CustomTypeDef {
     /// Stable custom type identity derived from the canonical Rust path.
     pub id: CustomTypeId,
-    /// Canonical custom type name.
-    pub name: CanonicalName,
+    /// Source custom type name.
+    pub name: SourceName,
     /// Remote Rust type being represented.
     pub remote: CustomRemoteType,
     /// Source representation type used at the FFI surface.
@@ -47,7 +47,7 @@ impl CustomTypeDef {
     /// Returns a custom type with no user attributes or documentation.
     pub fn new(
         id: CustomTypeId,
-        name: CanonicalName,
+        name: impl Into<SourceName>,
         remote: CustomRemoteType,
         repr: TypeExpr,
         error: Option<CustomRemoteType>,
@@ -55,7 +55,7 @@ impl CustomTypeDef {
     ) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             remote,
             repr,
             error,

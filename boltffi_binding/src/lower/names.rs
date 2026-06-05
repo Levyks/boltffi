@@ -1,4 +1,4 @@
-use boltffi_ast::{CanonicalName as SourceName, FieldDef as SourceField};
+use boltffi_ast::{FieldDef as SourceField, SourceName};
 
 use crate::{CanonicalName, FieldKey, NamePart};
 

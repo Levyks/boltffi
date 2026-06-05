@@ -151,7 +151,7 @@ fn method_stream(
     let stream_name = method.sig.ident.to_string();
     let mut stream = StreamDef::new(
         StreamId::new(format!("{}::{stream_name}", owner.as_str())),
-        name::canonical(&method.sig.ident),
+        name::source(&method.sig.ident),
         item_type,
     );
     let attrs = Attributes::new(&method.attrs, scanner);
