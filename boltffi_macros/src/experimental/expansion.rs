@@ -76,7 +76,7 @@ mod tests {
             FunctionId::new("demo::answer"),
             CanonicalName::single("answer"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -98,7 +98,7 @@ mod tests {
             CanonicalName::single("answer"),
         );
         function.execution = ExecutionKind::Async;
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -121,7 +121,7 @@ mod tests {
             CanonicalName::single("greet"),
         );
         function.execution = ExecutionKind::Async;
-        function.returns = ReturnDef::Value(TypeExpr::String);
+        function.returns = ReturnDef::value(TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -138,7 +138,7 @@ mod tests {
             CanonicalName::single("name"),
             TypeExpr::String,
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -154,7 +154,7 @@ mod tests {
         let mut parameter = ParameterDef::value(CanonicalName::single("name"), TypeExpr::String);
         parameter.passing = ParameterPassing::Ref;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -167,7 +167,7 @@ mod tests {
             CanonicalName::single("try_count"),
         );
         function.execution = ExecutionKind::Async;
-        function.returns = ReturnDef::Value(TypeExpr::result(
+        function.returns = ReturnDef::value(TypeExpr::result(
             TypeExpr::Primitive(Primitive::I32),
             TypeExpr::String,
         ));
@@ -216,10 +216,10 @@ mod tests {
             TypeExpr::closure(ClosureType::new(
                 ClosureKind::Fn,
                 vec![TypeExpr::Primitive(Primitive::U32)],
-                ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+                ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
             )),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -236,10 +236,10 @@ mod tests {
             TypeExpr::closure(ClosureType::new(
                 ClosureKind::Fn,
                 vec![TypeExpr::String],
-                ReturnDef::Value(TypeExpr::String),
+                ReturnDef::value(TypeExpr::String),
             )),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -255,8 +255,8 @@ mod tests {
             CanonicalName::single("callback"),
             TypeExpr::closure(ClosureType::new(
                 ClosureKind::Fn,
-                Vec::new(),
-                ReturnDef::Value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String)),
+                Vec::<TypeExpr>::new(),
+                ReturnDef::value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String)),
             )),
         )];
 
@@ -274,8 +274,8 @@ mod tests {
             CanonicalName::single("callback"),
             TypeExpr::closure(ClosureType::new(
                 ClosureKind::Fn,
-                Vec::new(),
-                ReturnDef::Value(TypeExpr::result(
+                Vec::<TypeExpr>::new(),
+                ReturnDef::value(TypeExpr::result(
                     TypeExpr::Primitive(Primitive::I32),
                     TypeExpr::String,
                 )),
@@ -296,8 +296,8 @@ mod tests {
             CanonicalName::single("callback"),
             TypeExpr::closure(ClosureType::new(
                 ClosureKind::Fn,
-                Vec::new(),
-                ReturnDef::Value(TypeExpr::result(TypeExpr::String, TypeExpr::String)),
+                Vec::<TypeExpr>::new(),
+                ReturnDef::value(TypeExpr::result(TypeExpr::String, TypeExpr::String)),
             )),
         )];
 
@@ -311,10 +311,10 @@ mod tests {
             FunctionId::new("demo::make_callback"),
             CanonicalName::single("make_callback"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
             vec![TypeExpr::Primitive(Primitive::U32)],
-            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
         )));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -330,12 +330,12 @@ mod tests {
         let callback = TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
             vec![TypeExpr::Primitive(Primitive::U32)],
-            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
         ));
-        function.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
             vec![callback],
-            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
         )));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -348,10 +348,10 @@ mod tests {
             FunctionId::new("demo::make_callback"),
             CanonicalName::single("make_callback"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
             ClosureKind::FunctionPointer,
             vec![TypeExpr::Primitive(Primitive::U32)],
-            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
         )));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -364,10 +364,10 @@ mod tests {
             FunctionId::new("demo::make_mapper"),
             CanonicalName::single("make_mapper"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
             vec![TypeExpr::String],
-            ReturnDef::Value(TypeExpr::String),
+            ReturnDef::value(TypeExpr::String),
         )));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -380,10 +380,10 @@ mod tests {
             FunctionId::new("demo::make_callback"),
             CanonicalName::single("make_callback"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
-            Vec::new(),
-            ReturnDef::Value(TypeExpr::result(
+            Vec::<TypeExpr>::new(),
+            ReturnDef::value(TypeExpr::result(
                 TypeExpr::Primitive(Primitive::I32),
                 TypeExpr::String,
             )),
@@ -399,10 +399,10 @@ mod tests {
             FunctionId::new("demo::make_mapper"),
             CanonicalName::single("make_mapper"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::closure(ClosureType::new(
+        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
-            Vec::new(),
-            ReturnDef::Value(TypeExpr::result(TypeExpr::String, TypeExpr::String)),
+            Vec::<TypeExpr>::new(),
+            ReturnDef::value(TypeExpr::result(TypeExpr::String, TypeExpr::String)),
         )));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -418,9 +418,9 @@ mod tests {
         let closure = TypeExpr::closure(ClosureType::new(
             ClosureKind::Fn,
             vec![TypeExpr::Primitive(Primitive::U32)],
-            ReturnDef::Value(TypeExpr::Primitive(Primitive::U32)),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
         ));
-        function.returns = ReturnDef::Value(TypeExpr::result(closure, TypeExpr::String));
+        function.returns = ReturnDef::value(TypeExpr::result(closure, TypeExpr::String));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -434,7 +434,7 @@ mod tests {
             CanonicalName::single("point"),
             TypeExpr::Record("demo::Point".into()),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::F64));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::F64));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(point_record());
@@ -453,7 +453,7 @@ mod tests {
         );
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::F64));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::F64));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(point_record());
@@ -481,7 +481,7 @@ mod tests {
             FunctionId::new("demo::origin"),
             CanonicalName::single("origin"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::Record("demo::Point".into()));
+        function.returns = ReturnDef::value(TypeExpr::Record("demo::Point".into()));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(point_record());
@@ -494,7 +494,7 @@ mod tests {
             FunctionId::new("demo::greet"),
             CanonicalName::single("greet"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::String);
+        function.returns = ReturnDef::value(TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -506,7 +506,7 @@ mod tests {
             FunctionId::new("demo::payload"),
             CanonicalName::single("payload"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::Bytes);
+        function.returns = ReturnDef::value(TypeExpr::Bytes);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -522,7 +522,7 @@ mod tests {
             CanonicalName::single("name"),
             TypeExpr::String,
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -537,7 +537,7 @@ mod tests {
         let mut parameter = ParameterDef::value(CanonicalName::single("name"), TypeExpr::String);
         parameter.passing = ParameterPassing::Ref;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -552,7 +552,7 @@ mod tests {
         let mut parameter = ParameterDef::value(CanonicalName::single("name"), TypeExpr::String);
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -568,7 +568,7 @@ mod tests {
             CanonicalName::single("bytes"),
             TypeExpr::Bytes,
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -581,7 +581,7 @@ mod tests {
         let mut parameter = ParameterDef::value(CanonicalName::single("bytes"), TypeExpr::Bytes);
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -597,7 +597,7 @@ mod tests {
             CanonicalName::single("profile"),
             TypeExpr::Record("demo::Profile".into()),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(profile_record());
@@ -616,7 +616,7 @@ mod tests {
         );
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(profile_record());
@@ -646,7 +646,7 @@ mod tests {
             CanonicalName::single("values"),
             TypeExpr::vec(TypeExpr::Primitive(Primitive::U32)),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -662,7 +662,7 @@ mod tests {
             CanonicalName::single("points"),
             TypeExpr::vec(TypeExpr::Record("demo::Point".into())),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(point_record());
@@ -675,7 +675,7 @@ mod tests {
             FunctionId::new("demo::try_count"),
             CanonicalName::single("try_count"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::result(
+        function.returns = ReturnDef::value(TypeExpr::result(
             TypeExpr::Primitive(Primitive::I32),
             TypeExpr::String,
         ));
@@ -690,7 +690,7 @@ mod tests {
             FunctionId::new("demo::try_ping"),
             CanonicalName::single("try_ping"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String));
+        function.returns = ReturnDef::value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -702,7 +702,7 @@ mod tests {
             FunctionId::new("demo::try_greet"),
             CanonicalName::single("try_greet"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::result(TypeExpr::String, TypeExpr::String));
+        function.returns = ReturnDef::value(TypeExpr::result(TypeExpr::String, TypeExpr::String));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -716,7 +716,7 @@ mod tests {
             CanonicalName::single("engine"),
             TypeExpr::class(ClassId::new("demo::Engine"), HandlePresence::Required),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::class(
+        function.returns = ReturnDef::value(TypeExpr::class(
             ClassId::new("demo::Engine"),
             HandlePresence::Nullable,
         ));
@@ -760,7 +760,7 @@ mod tests {
                 HandlePresence::Nullable,
             ),
         )];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.traits.push(listener_trait());
@@ -779,7 +779,7 @@ mod tests {
         );
         parameter.passing = ParameterPassing::Ref;
         function.parameters = vec![parameter];
-        function.returns = ReturnDef::Value(TypeExpr::Primitive(Primitive::U32));
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.classes.push(engine_class());
@@ -792,7 +792,7 @@ mod tests {
             FunctionId::new("demo::try_open"),
             CanonicalName::single("try_open"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::result(
+        function.returns = ReturnDef::value(TypeExpr::result(
             TypeExpr::class(ClassId::new("demo::Engine"), HandlePresence::Required),
             TypeExpr::String,
         ));
@@ -808,7 +808,7 @@ mod tests {
             FunctionId::new("demo::maybe_count"),
             CanonicalName::single("maybe_count"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::option(TypeExpr::Primitive(Primitive::I32)));
+        function.returns = ReturnDef::value(TypeExpr::option(TypeExpr::Primitive(Primitive::I32)));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -820,7 +820,7 @@ mod tests {
             FunctionId::new("demo::numbers"),
             CanonicalName::single("numbers"),
         );
-        function.returns = ReturnDef::Value(TypeExpr::vec(TypeExpr::Primitive(Primitive::I32)));
+        function.returns = ReturnDef::value(TypeExpr::vec(TypeExpr::Primitive(Primitive::I32)));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -1323,19 +1323,30 @@ mod tests {
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> ::boltffi::__private::RustFutureHandle {
-                    let name: String = if __boltffi_name_ptr.is_null() {
-                        String::new()
-                    } else {
-                        match ::core::str::from_utf8(unsafe {
-                            ::core::slice::from_raw_parts(
-                                __boltffi_name_ptr,
+                    let name: String = {
+                        if __boltffi_name_ptr.is_null() && __boltffi_name_len > 0 {
+                            ::boltffi::__private::set_last_error(format!(
+                                "{}: null pointer with non-zero length (buf_len={})",
+                                stringify!(name),
                                 __boltffi_name_len
-                            )
-                        }) {
-                            Ok(value) => value.to_string(),
+                            ));
+                            return ::boltffi::__private::rustfuture::rust_future_invalid_arg::<u32>();
+                        }
+                        let __boltffi_bytes: &[u8] = if __boltffi_name_len == 0 {
+                            &[]
+                        } else {
+                            unsafe {
+                                ::core::slice::from_raw_parts(
+                                    __boltffi_name_ptr,
+                                    __boltffi_name_len
+                                )
+                            }
+                        };
+                        match ::boltffi::__private::wire::decode::<String>(__boltffi_bytes) {
+                            Ok(value) => value,
                             Err(error) => {
                                 ::boltffi::__private::set_last_error(format!(
-                                    "{}: invalid UTF-8: {} (buf_len={})",
+                                    "{}: wire decode failed: {} (buf_len={})",
                                     stringify!(name),
                                     error,
                                     __boltffi_name_len
@@ -1692,24 +1703,38 @@ mod tests {
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> u32 {
-                    let name: String = if __boltffi_name_ptr.is_null() {
-                        String::new()
-                    } else {
-                        match ::core::str::from_utf8(unsafe {
-                            ::core::slice::from_raw_parts(__boltffi_name_ptr, __boltffi_name_len)
-                        }) {
-                            Ok(value) => value.to_string(),
-                            Err(error) => {
+                    let name: String = {
+                        if __boltffi_name_ptr.is_null() && __boltffi_name_len > 0 {
                             ::boltffi::__private::set_last_error(format!(
-                                "{}: invalid UTF-8: {} (buf_len={})",
+                                "{}: null pointer with non-zero length (buf_len={})",
                                 stringify!(name),
-                                error,
                                 __boltffi_name_len
                             ));
                             return ::core::default::Default::default();
                         }
-                    }
-                };
+                        let __boltffi_bytes: &[u8] = if __boltffi_name_len == 0 {
+                            &[]
+                        } else {
+                            unsafe {
+                                ::core::slice::from_raw_parts(
+                                    __boltffi_name_ptr,
+                                    __boltffi_name_len
+                                )
+                            }
+                        };
+                        match ::boltffi::__private::wire::decode::<String>(__boltffi_bytes) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                ::boltffi::__private::set_last_error(format!(
+                                    "{}: wire decode failed: {} (buf_len={})",
+                                    stringify!(name),
+                                    error,
+                                    __boltffi_name_len
+                                ));
+                                return ::core::default::Default::default();
+                            }
+                        }
+                    };
                     name_len(name)
                 }
             }
@@ -1743,24 +1768,39 @@ mod tests {
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> u32 {
-                    let name: &str = if __boltffi_name_ptr.is_null() {
-                        ""
-                    } else {
-                        match ::core::str::from_utf8(unsafe {
-                            ::core::slice::from_raw_parts(__boltffi_name_ptr, __boltffi_name_len)
-                        }) {
-                            Ok(value) => value,
-                            Err(error) => {
+                    let __boltffi_name_storage: String = {
+                        if __boltffi_name_ptr.is_null() && __boltffi_name_len > 0 {
                             ::boltffi::__private::set_last_error(format!(
-                                "{}: invalid UTF-8: {} (buf_len={})",
-                                stringify!(name),
-                                error,
+                                "{}: null pointer with non-zero length (buf_len={})",
+                                stringify!(__boltffi_name_storage),
                                 __boltffi_name_len
                             ));
                             return ::core::default::Default::default();
                         }
-                    }
-                };
+                        let __boltffi_bytes: &[u8] = if __boltffi_name_len == 0 {
+                            &[]
+                        } else {
+                            unsafe {
+                                ::core::slice::from_raw_parts(
+                                    __boltffi_name_ptr,
+                                    __boltffi_name_len
+                                )
+                            }
+                        };
+                        match ::boltffi::__private::wire::decode::<String>(__boltffi_bytes) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                ::boltffi::__private::set_last_error(format!(
+                                    "{}: wire decode failed: {} (buf_len={})",
+                                    stringify!(__boltffi_name_storage),
+                                    error,
+                                    __boltffi_name_len
+                                ));
+                                return ::core::default::Default::default();
+                            }
+                        }
+                    };
+                    let name = __boltffi_name_storage.as_str();
                     name_len(name)
                 }
             }
@@ -1791,28 +1831,42 @@ mod tests {
                 #[cfg(not(target_arch = "wasm32"))]
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn boltffi_function_demo_rewrite(
-                    __boltffi_name_ptr: *mut u8,
+                    __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> u32 {
-                    let mut __boltffi_name_storage = String::new();
-                    let name: &mut str = if __boltffi_name_ptr.is_null() {
-                        __boltffi_name_storage.as_mut_str()
-                    } else {
-                        match ::core::str::from_utf8_mut(unsafe {
-                            ::core::slice::from_raw_parts_mut(__boltffi_name_ptr, __boltffi_name_len)
-                        }) {
-                            Ok(value) => value,
-                            Err(error) => {
+                    let mut __boltffi_name_storage: String = {
+                        if __boltffi_name_ptr.is_null() && __boltffi_name_len > 0 {
                             ::boltffi::__private::set_last_error(format!(
-                                "{}: invalid UTF-8: {} (buf_len={})",
-                                stringify!(name),
-                                error,
+                                "{}: null pointer with non-zero length (buf_len={})",
+                                stringify!(__boltffi_name_storage),
                                 __boltffi_name_len
                             ));
                             return ::core::default::Default::default();
                         }
-                    }
-                };
+                        let __boltffi_bytes: &[u8] = if __boltffi_name_len == 0 {
+                            &[]
+                        } else {
+                            unsafe {
+                                ::core::slice::from_raw_parts(
+                                    __boltffi_name_ptr,
+                                    __boltffi_name_len
+                                )
+                            }
+                        };
+                        match ::boltffi::__private::wire::decode::<String>(__boltffi_bytes) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                ::boltffi::__private::set_last_error(format!(
+                                    "{}: wire decode failed: {} (buf_len={})",
+                                    stringify!(__boltffi_name_storage),
+                                    error,
+                                    __boltffi_name_len
+                                ));
+                                return ::core::default::Default::default();
+                            }
+                        }
+                    };
+                    let name = __boltffi_name_storage.as_mut_str();
                     rewrite(name)
                 }
             }
@@ -1846,15 +1900,37 @@ mod tests {
                     __boltffi_bytes_ptr: *const u8,
                     __boltffi_bytes_len: usize
                 ) -> u32 {
-                    let bytes: Vec<u8> = if __boltffi_bytes_ptr.is_null() {
-                        Vec::new()
-                    } else {
-                        unsafe {
-                            ::core::slice::from_raw_parts(
-                                __boltffi_bytes_ptr,
+                    let bytes: Vec<u8> = {
+                        if __boltffi_bytes_ptr.is_null() && __boltffi_bytes_len > 0 {
+                            ::boltffi::__private::set_last_error(format!(
+                                "{}: null pointer with non-zero length (buf_len={})",
+                                stringify!(bytes),
                                 __boltffi_bytes_len
-                            )
-                        }.to_vec()
+                            ));
+                            return ::core::default::Default::default();
+                        }
+                        let __boltffi_bytes: &[u8] = if __boltffi_bytes_len == 0 {
+                            &[]
+                        } else {
+                            unsafe {
+                                ::core::slice::from_raw_parts(
+                                    __boltffi_bytes_ptr,
+                                    __boltffi_bytes_len
+                                )
+                            }
+                        };
+                        match ::boltffi::__private::wire::decode::<Vec<u8> >(__boltffi_bytes) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                ::boltffi::__private::set_last_error(format!(
+                                    "{}: wire decode failed: {} (buf_len={})",
+                                    stringify!(bytes),
+                                    error,
+                                    __boltffi_bytes_len
+                                ));
+                                return ::core::default::Default::default();
+                            }
+                        }
                     };
                     bytes_len(bytes)
                 }
@@ -1886,19 +1962,42 @@ mod tests {
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn boltffi_function_demo_fill(
-                    __boltffi_bytes_ptr: *mut u8,
+                    __boltffi_bytes_ptr: *const u8,
                     __boltffi_bytes_len: usize
                 ) -> u32 {
-                    let bytes: &mut [u8] = if __boltffi_bytes_ptr.is_null() {
-                        &mut []
-                    } else {
-                        unsafe {
-                            ::core::slice::from_raw_parts_mut(
-                                __boltffi_bytes_ptr,
+                    let mut __boltffi_bytes_storage: Vec<u8> = {
+                        if __boltffi_bytes_ptr.is_null() && __boltffi_bytes_len > 0 {
+                            ::boltffi::__private::set_last_error(format!(
+                                "{}: null pointer with non-zero length (buf_len={})",
+                                stringify!(__boltffi_bytes_storage),
                                 __boltffi_bytes_len
-                            )
+                            ));
+                            return ::core::default::Default::default();
+                        }
+                        let __boltffi_bytes: &[u8] = if __boltffi_bytes_len == 0 {
+                            &[]
+                        } else {
+                            unsafe {
+                                ::core::slice::from_raw_parts(
+                                    __boltffi_bytes_ptr,
+                                    __boltffi_bytes_len
+                                )
+                            }
+                        };
+                        match ::boltffi::__private::wire::decode::<Vec<u8> >(__boltffi_bytes) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                ::boltffi::__private::set_last_error(format!(
+                                    "{}: wire decode failed: {} (buf_len={})",
+                                    stringify!(__boltffi_bytes_storage),
+                                    error,
+                                    __boltffi_bytes_len
+                                ));
+                                return ::core::default::Default::default();
+                            }
                         }
                     };
+                    let bytes = __boltffi_bytes_storage.as_mut_slice();
                     fill(bytes)
                 }
             }
@@ -2002,7 +2101,7 @@ mod tests {
                                 )
                             }
                         };
-                        match ::boltffi::__private::wire::decode(__boltffi_bytes) {
+                        match ::boltffi::__private::wire::decode::<Profile>(__boltffi_bytes) {
                             Ok(value) => value,
                             Err(error) => {
                                 ::boltffi::__private::set_last_error(format!(
@@ -2067,7 +2166,7 @@ mod tests {
                                 )
                             }
                         };
-                        match ::boltffi::__private::wire::decode(__boltffi_bytes) {
+                        match ::boltffi::__private::wire::decode::<Profile>(__boltffi_bytes) {
                             Ok(value) => value,
                             Err(error) => {
                                 ::boltffi::__private::set_last_error(format!(
@@ -2366,9 +2465,7 @@ mod tests {
                         {
                             let __boltffi_result_buf = unsafe {
                                 let __boltffi_arg0_wire =
-                                    ::boltffi::__private::FfiBuf::from_vec(
-                                        __boltffi_arg0.into_bytes()
-                                    );
+                                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_arg0);
                                 let __boltffi_arg0_ptr = __boltffi_arg0_wire.as_ptr();
                                 let __boltffi_arg0_len = __boltffi_arg0_wire.len();
                                 __boltffi_callback_call(
@@ -2439,9 +2536,7 @@ mod tests {
                         {
                             let __boltffi_result_packed = unsafe {
                                 let __boltffi_arg0_wire =
-                                    ::boltffi::__private::FfiBuf::from_vec(
-                                        __boltffi_arg0.into_bytes()
-                                    );
+                                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_arg0);
                                 let __boltffi_arg0_ptr = __boltffi_arg0_wire.as_ptr();
                                 let __boltffi_arg0_len = __boltffi_arg0_wire.len();
                                 __boltffi_callback_closure____closure__string_to_string_call(
@@ -2749,8 +2844,11 @@ mod tests {
         assert!(rendered.contains(
             "unsafe extern \"C\" fn __boltffi_make_mapper_closure_call (__boltffi_context : * mut :: core :: ffi :: c_void , __boltffi_arg0_ptr : * const u8 , __boltffi_arg0_len : usize) -> :: boltffi :: __private :: FfiBuf"
         ));
+        assert!(rendered.contains("let __boltffi_arg0 : String = {"));
         assert!(
-            rendered.contains("let __boltffi_arg0 : String = if __boltffi_arg0_ptr . is_null ()")
+            rendered.contains(
+                ":: boltffi :: __private :: wire :: decode :: < String > (__boltffi_bytes)"
+            )
         );
         assert!(
             rendered
@@ -2777,11 +2875,14 @@ mod tests {
         assert!(rendered.contains(
             "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_1____closure__string_to_string_call (__boltffi_context : u32 , __boltffi_arg0_ptr : * const u8 , __boltffi_arg0_len : usize) -> u64"
         ));
+        assert!(rendered.contains("let __boltffi_arg0 : String = {"));
         assert!(
-            rendered.contains("let __boltffi_arg0 : String = if __boltffi_arg0_ptr . is_null ()")
+            rendered.contains(
+                ":: boltffi :: __private :: wire :: decode :: < String > (__boltffi_bytes)"
+            )
         );
         assert!(rendered.contains(
-            ":: boltffi :: __private :: FfiBuf :: from_vec (__boltffi_result . into_bytes () . into_boxed_slice () . into_vec ()) . into_packed ()"
+            ":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_result) . into_packed ()"
         ));
     }
 
@@ -2868,10 +2969,10 @@ mod tests {
         ));
         assert!(rendered.contains("match __boltffi_closure ()"));
         assert!(rendered.contains(
-            "* __boltffi_success_out = :: boltffi :: __private :: FfiBuf :: from_vec (__boltffi_success . into_bytes () . into_boxed_slice () . into_vec ()) . into_packed ()"
+            "* __boltffi_success_out = :: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_success) . into_packed ()"
         ));
         assert!(rendered.contains(
-            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: from_vec (__boltffi_error . into_bytes () . into_boxed_slice () . into_vec ()) . into_packed () }"
+            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_error) . into_packed () }"
         ));
     }
 
@@ -3197,9 +3298,7 @@ mod tests {
                             ::boltffi::__private::FfiBuf::default().into_packed()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::from_vec(
-                                __boltffi_error.into_bytes().into_boxed_slice().into_vec()
-                            ).into_packed()
+                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error).into_packed()
                         }
                     }
                 }
@@ -3238,17 +3337,15 @@ mod tests {
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
                                     *__boltffi_return_out =
-                                        ::boltffi::__private::FfiBuf::from_vec(
-                                            __boltffi_success.into_bytes().into_boxed_slice().into_vec()
+                                        ::boltffi::__private::FfiBuf::wire_encode(
+                                            &__boltffi_success
                                         ).into_packed();
                                 }
                             }
                             ::boltffi::__private::FfiBuf::default().into_packed()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::from_vec(
-                                __boltffi_error.into_bytes().into_boxed_slice().into_vec()
-                            ).into_packed()
+                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error).into_packed()
                         }
                     }
                 }
@@ -3446,9 +3543,7 @@ mod tests {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn boltffi_function_demo_greet() -> u64 {
                     let __boltffi_result: String = greet();
-                    ::boltffi::__private::FfiBuf::from_vec(
-                        __boltffi_result.into_bytes().into_boxed_slice().into_vec()
-                    ).into_packed()
+                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result).into_packed()
                 }
             }
             .to_string()
