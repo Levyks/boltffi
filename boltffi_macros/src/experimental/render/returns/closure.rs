@@ -11,7 +11,7 @@ use syn::{
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
     target::Target,
 };
 
@@ -128,9 +128,10 @@ where
         let RustInvocation {
             function,
             conversions,
+            writebacks,
             arguments,
         } = input.invocation;
-        let value = Ident::new("__boltffi_closure", function.span());
+        let value = local::Wrapper::new(function.span()).closure();
         let writer = <Write as RenderRule<S, _>>::apply(
             Write,
             WriteInput::returned(input.closure, rust_type, value.clone(), function.clone()),
@@ -144,6 +145,7 @@ where
             body: quote! {
                 #(#conversions)*
                 let #value = #function(#(#arguments),*);
+                #(#writebacks)*
                 #body
                 ::boltffi::__private::FfiStatus::OK
             },
@@ -194,8 +196,9 @@ impl<'a> NativeClosure<'a> {
         let lane = self.input.lane.suffix();
         let call = format_ident!("__boltffi_{}_{}_call", self.input.owner, lane);
         let release = format_ident!("__boltffi_{}_{}_release", self.input.owner, lane);
-        let output = Ident::new("__boltffi_return_out", self.input.span);
-        let context = Ident::new("__boltffi_closure_context", self.input.span);
+        let locals = local::Wrapper::new(self.input.span);
+        let output = locals.return_out();
+        let context = locals.closure_context();
         let ffi_parameter_types = invoke_parameters
             .ffi_parameter_types
             .into_iter()
@@ -306,7 +309,7 @@ impl<'a> WasmClosure<'a> {
         let registration = self.input.closure.registration().shape();
         let call = Ident::new(registration.call().name().as_str(), self.input.span);
         let release = Ident::new(registration.free().name().as_str(), self.input.span);
-        let output = Ident::new("__boltffi_return_out", self.input.span);
+        let output = local::Wrapper::new(self.input.span).return_out();
         let ffi_parameters = invoke_parameters
             .ffi_parameters
             .into_iter()
@@ -454,7 +457,7 @@ impl<'a, S: Target> InvokeParameterInput<'a, S> {
                 Output = render::param::Tokens,
             >,
     {
-        let argument = format_ident!("__boltffi_arg{}", self.index);
+        let argument = local::ClosureArgument::new(self.index).value();
         match self.payload {
             IncomingParam::Value(ParamPlan::Direct {
                 ty: TypeRef::Primitive(primitive),
@@ -516,9 +519,10 @@ impl<'a, S: Target> InvokeParameterInput<'a, S> {
     }
 
     fn encoded_tokens(&self, ty: &TypeRef) -> Result<InvokeParameterTokens, Error> {
-        let argument = format_ident!("__boltffi_arg{}", self.index);
-        let pointer = format_ident!("__boltffi_arg{}_ptr", self.index);
-        let length = format_ident!("__boltffi_arg{}_len", self.index);
+        let locals = local::ClosureArgument::new(self.index);
+        let argument = locals.value();
+        let pointer = locals.pointer();
+        let length = locals.length();
         let conversion = EncodedInvokeArgument {
             ty,
             rust_type: self.rust_type,
@@ -845,7 +849,7 @@ impl<'a, S: Target> InvokeReturnInput<'a, S> {
         encoded::Rule: RenderRule<T, encoded::Input<'a, T>, Output = encoded::Tokens>
             + RenderRule<T, encoded::Empty<T>, Output = encoded::Tokens>,
     {
-        let error_ident = Ident::new("__boltffi_error", Span::call_site());
+        let error_ident = local::Wrapper::new(Span::call_site()).error();
         let error = <encoded::Rule as RenderRule<T, _>>::apply(
             encoded::Rule,
             encoded::Input::new(error_ty, error_shape, error_ident),
@@ -934,7 +938,7 @@ impl<'a> RenderRule<Native, InvokeReturnInput<'a, Native>> for InvokeReturnRule 
                     ..
                 },
             ) => {
-                let success_ident = Ident::new("__boltffi_success", Span::call_site());
+                let success_ident = local::Wrapper::new(Span::call_site()).success();
                 let success = <encoded::Rule as RenderRule<Native, _>>::apply(
                     encoded::Rule,
                     encoded::Input::new(ok_ty, native::BufferShape::Buffer, success_ident),
@@ -1029,7 +1033,7 @@ impl<'a> RenderRule<Wasm32, InvokeReturnInput<'a, Wasm32>> for InvokeReturnRule 
                     ..
                 },
             ) if matches!(error_ty, TypeRef::String) => {
-                let success_ident = Ident::new("__boltffi_success", Span::call_site());
+                let success_ident = local::Wrapper::new(Span::call_site()).success();
                 let success = <encoded::Rule as RenderRule<Wasm32, _>>::apply(
                     encoded::Rule,
                     encoded::Input::new(ty, wasm32::BufferShape::Packed, success_ident),
@@ -1188,7 +1192,7 @@ enum FallibleSuccess {
 
 impl FallibleSuccess {
     fn ffi_parameters(&self) -> Vec<TokenStream> {
-        let out = Ident::new("__boltffi_success_out", Span::call_site());
+        let out = local::Wrapper::new(Span::call_site()).success_out();
         self.ffi_parameter_types()
             .into_iter()
             .map(|ty| quote! { #out: #ty })
@@ -1207,8 +1211,9 @@ impl FallibleSuccess {
     }
 
     fn body(&self, error: &EncodedError, call: TokenStream) -> TokenStream {
-        let success_out = Ident::new("__boltffi_success_out", Span::call_site());
-        let success_ident = Ident::new("__boltffi_success", Span::call_site());
+        let locals = local::Wrapper::new(Span::call_site());
+        let success_out = locals.success_out();
+        let success_ident = locals.success();
         let empty_error = &error.empty_value;
         let error_value = &error.value;
         let pattern = self.pattern(&success_ident);

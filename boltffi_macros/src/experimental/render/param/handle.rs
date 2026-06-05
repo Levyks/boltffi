@@ -5,7 +5,7 @@ use syn::{GenericArgument, PatType, PathArguments, Type, TypeParamBound};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
 };
 
 use super::Tokens;
@@ -153,6 +153,7 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
             ffi_parameters: vec![quote! { #ident: #ffi_type }],
             ffi_parameter_types: vec![ffi_type.clone()],
             conversions: vec![conversion],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -180,6 +181,7 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
             ffi_parameters: vec![quote! { #ident: #ffi_type }],
             ffi_parameter_types: vec![ffi_type.clone()],
             conversions: vec![conversion],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -313,7 +315,7 @@ impl<'a> CallbackSyntax<'a> {
         for<'ident> CallbackHandle:
             RenderRule<S, CallbackHandleInput<'ident>, Output = TokenStream>,
     {
-        let handle = quote::format_ident!("__boltffi_{}_handle", ident);
+        let handle = local::Parameter::new(ident).handle();
         let handle_binding = <CallbackHandle as RenderRule<S, _>>::apply(
             CallbackHandle,
             CallbackHandleInput::new(ident),

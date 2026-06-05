@@ -1,9 +1,13 @@
 use boltffi_binding::{Native, Receive, TypeRef, Wasm32, native, wasm32};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{PatType, Type};
 
-use crate::experimental::{error::Error, render::Rule as RenderRule, target::Target};
+use crate::experimental::{
+    error::Error,
+    render::{Rule as RenderRule, local},
+    target::Target,
+};
 
 use super::Tokens;
 
@@ -89,13 +93,14 @@ impl<'binding, 'syntax, S: Target> From<Input<'binding, 'syntax, S>> for Slice<'
 impl<'binding, 'syntax> Slice<'binding, 'syntax> {
     fn new<S: Target>(input: Input<'binding, 'syntax, S>) -> Self {
         let ident = input.ident;
+        let locals = local::Parameter::new(ident);
         Self {
             ty: input.ty,
             receive: input.receive,
             syntax: input.syntax,
             ident,
-            pointer: format_ident!("__boltffi_{}_ptr", ident),
-            length: format_ident!("__boltffi_{}_len", ident),
+            pointer: locals.pointer(),
+            length: locals.length(),
             failure: input.failure,
         }
     }
@@ -119,6 +124,7 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
             ],
             ffi_parameter_types: vec![pointer_type, quote! { usize }],
             conversions: vec![conversion],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -177,7 +183,7 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
                 };
             }),
             Receive::ByMutRef => {
-                let storage = format_ident!("__boltffi_{}_storage", ident);
+                let storage = local::Parameter::new(ident).storage();
                 Ok(quote! {
                     let mut #storage = String::new();
                     let #ident: &mut str = if #pointer.is_null() {
@@ -254,7 +260,7 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
                         "shared-reference encoded parameter syntax does not match binding receive mode",
                     ));
                 }
-                let storage = format_ident!("__boltffi_{}_storage", self.ident);
+                let storage = local::Parameter::new(self.ident).storage();
                 let value =
                     self.generic_value_conversion(reference.elem.as_ref(), &storage, false)?;
                 let ident = self.ident;
@@ -274,7 +280,7 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
                         "mutable-reference encoded parameter syntax does not match binding receive mode",
                     ));
                 }
-                let storage = format_ident!("__boltffi_{}_storage", self.ident);
+                let storage = local::Parameter::new(self.ident).storage();
                 let value =
                     self.generic_value_conversion(reference.elem.as_ref(), &storage, true)?;
                 let ident = self.ident;

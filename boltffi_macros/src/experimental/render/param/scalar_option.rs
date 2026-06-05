@@ -1,8 +1,11 @@
 use boltffi_binding::{Native, Primitive, Wasm32};
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::PatType;
 
-use crate::experimental::{error::Error, render::Rule as RenderRule};
+use crate::experimental::{
+    error::Error,
+    render::{Rule as RenderRule, local},
+};
 
 use super::Tokens;
 
@@ -12,14 +15,21 @@ pub struct Input<'syntax> {
     primitive: Primitive,
     syntax: &'syntax PatType,
     ident: &'syntax syn::Ident,
+    failure: proc_macro2::TokenStream,
 }
 
 impl<'syntax> Input<'syntax> {
-    pub fn new(primitive: Primitive, syntax: &'syntax PatType, ident: &'syntax syn::Ident) -> Self {
+    pub fn new(
+        primitive: Primitive,
+        syntax: &'syntax PatType,
+        ident: &'syntax syn::Ident,
+        failure: proc_macro2::TokenStream,
+    ) -> Self {
         Self {
             primitive,
             syntax,
             ident,
+            failure,
         }
     }
 }
@@ -29,9 +39,11 @@ impl<'syntax> RenderRule<Native, Input<'syntax>> for Rule {
 
     fn apply(self, input: Input<'syntax>) -> Result<Self::Output, Error> {
         let ident = input.ident;
-        let pointer = format_ident!("__boltffi_{}_ptr", ident);
-        let length = format_ident!("__boltffi_{}_len", ident);
+        let locals = local::Parameter::new(ident);
+        let pointer = locals.pointer();
+        let length = locals.length();
         let rust_type = input.syntax.ty.as_ref();
+        let failure = input.failure;
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: vec![quote! { #pointer: *const u8 }, quote! { #length: usize }],
@@ -51,11 +63,12 @@ impl<'syntax> RenderRule<Native, Input<'syntax>> for Rule {
                                 error,
                                 #length
                             ));
-                            None
+                            #failure
                         }
                     }
                 };
             }],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -79,6 +92,7 @@ impl<'syntax> RenderRule<Wasm32, Input<'syntax>> for Rule {
                     Some(#value)
                 };
             }],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }

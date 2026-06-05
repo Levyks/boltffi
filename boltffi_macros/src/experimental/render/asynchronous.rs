@@ -9,7 +9,7 @@ use syn::{FnArg, ItemFn, PatType, ReturnType, Type};
 use crate::experimental::{
     error::Error,
     render::{
-        self, Rule as RenderRule,
+        self, Rule as RenderRule, local,
         returns::{direct_vec, encoded, fallible, handle, scalar_option},
     },
     target::Target,
@@ -478,7 +478,7 @@ impl PlainComplete {
         scalar_option::Rule: RenderRule<S, scalar_option::Input, Output = render::returns::Tokens>
             + RenderRule<S, scalar_option::Empty, Output = render::returns::Tokens>,
     {
-        let result = syn::Ident::new("__boltffi_result", proc_macro2::Span::call_site());
+        let result = local::Wrapper::new(proc_macro2::Span::call_site()).result();
         match function.callable().returns().plan() {
             ReturnPlan::Void => Ok(Self {
                 return_type: TokenStream::new(),
@@ -653,7 +653,7 @@ impl FallibleComplete {
         let ErrorDecl::EncodedViaReturnSlot { ty, shape, .. } = function.callable().error() else {
             return Err(Error::UnsupportedExpansion("async error channel"));
         };
-        let error = syn::Ident::new("__boltffi_error", proc_macro2::Span::call_site());
+        let error = local::Wrapper::new(proc_macro2::Span::call_site()).error();
         let encoded_error = <encoded::Rule as RenderRule<S, _>>::apply(
             encoded::Rule,
             encoded::Input::new(ty, *shape, error.clone()),

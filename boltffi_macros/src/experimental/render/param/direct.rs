@@ -5,7 +5,7 @@ use syn::{PatType, Type};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
     target::Target,
 };
 
@@ -180,6 +180,7 @@ impl<'a> PrimitiveParam<'a> {
             ffi_parameters: vec![quote! { #ident: #ffi_type }],
             ffi_parameter_types: vec![ffi_type],
             conversions: self.conversions(),
+            writebacks: Vec::new(),
             argument: Rule::argument(self.receive, ident)?,
         })
     }
@@ -217,6 +218,7 @@ impl<'a> PassableParam<'a> {
             ffi_parameters: vec![quote! { #ident: #ffi_type }],
             ffi_parameter_types: vec![ffi_type],
             conversions: self.conversions(),
+            writebacks: Vec::new(),
             argument: Rule::argument(self.receive, ident)?,
         })
     }
@@ -264,11 +266,13 @@ impl<'a> WasmRecordParam<'a> {
     fn tokens(self) -> Result<Tokens, Error> {
         let ident = self.ident;
         let ffi_type = self.ffi_type()?;
+        let out = local::Parameter::new(ident).writeback();
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: vec![quote! { #ident: #ffi_type }],
             ffi_parameter_types: vec![ffi_type],
-            conversions: vec![self.conversion()?],
+            conversions: vec![self.conversion(&out)?],
+            writebacks: self.writebacks(&out)?,
             argument: Rule::argument(self.receive, ident)?,
         })
     }
@@ -283,32 +287,62 @@ impl<'a> WasmRecordParam<'a> {
         }
     }
 
-    fn conversion(&self) -> Result<TokenStream, Error> {
+    fn conversion(&self, out: &syn::Ident) -> Result<TokenStream, Error> {
         let ident = self.ident;
         let rust_type = self.rust_type;
         let failure = &self.failure;
-        let local_binding = match self.receive {
-            Receive::ByMutRef => quote! { let mut #ident },
-            Receive::ByValue | Receive::ByRef => quote! { let #ident },
-            _ => {
-                return Err(Error::UnsupportedExpansion(
-                    "unknown direct record receive mode",
-                ));
-            }
-        };
-        Ok(quote! {
-            if #ident.is_null() {
-                ::boltffi::__private::set_last_error(format!(
-                    "{}: null direct record pointer",
-                    stringify!(#ident)
-                ));
-                #failure
-            }
-            #local_binding: #rust_type = unsafe {
-                let __boltffi_value =
-                    ::core::ptr::read_unaligned(#ident as *const <#rust_type as ::boltffi::__private::Passable>::In);
-                <#rust_type as ::boltffi::__private::Passable>::unpack(__boltffi_value)
-            };
-        })
+        match self.receive {
+            Receive::ByMutRef => Ok(quote! {
+                let #out = #ident;
+                if #out.is_null() {
+                    ::boltffi::__private::set_last_error(format!(
+                        "{}: null direct record pointer",
+                        stringify!(#ident)
+                    ));
+                    #failure
+                }
+                let mut #ident: #rust_type = unsafe {
+                    let __boltffi_value =
+                        ::core::ptr::read_unaligned(#out as *const <#rust_type as ::boltffi::__private::Passable>::In);
+                    <#rust_type as ::boltffi::__private::Passable>::unpack(__boltffi_value)
+                };
+            }),
+            Receive::ByValue | Receive::ByRef => Ok(quote! {
+                if #ident.is_null() {
+                    ::boltffi::__private::set_last_error(format!(
+                        "{}: null direct record pointer",
+                        stringify!(#ident)
+                    ));
+                    #failure
+                }
+                let #ident: #rust_type = unsafe {
+                    let __boltffi_value =
+                        ::core::ptr::read_unaligned(#ident as *const <#rust_type as ::boltffi::__private::Passable>::In);
+                    <#rust_type as ::boltffi::__private::Passable>::unpack(__boltffi_value)
+                };
+            }),
+            _ => Err(Error::UnsupportedExpansion(
+                "unknown direct record receive mode",
+            )),
+        }
+    }
+
+    fn writebacks(&self, out: &syn::Ident) -> Result<Vec<TokenStream>, Error> {
+        let ident = self.ident;
+        let rust_type = self.rust_type;
+        match self.receive {
+            Receive::ByMutRef => Ok(vec![quote! {
+                unsafe {
+                    ::core::ptr::write_unaligned(
+                        #out as *mut <#rust_type as ::boltffi::__private::Passable>::In,
+                        ::boltffi::__private::Passable::pack(#ident)
+                    );
+                }
+            }]),
+            Receive::ByValue | Receive::ByRef => Ok(Vec::new()),
+            _ => Err(Error::UnsupportedExpansion(
+                "unknown direct record receive mode",
+            )),
+        }
     }
 }

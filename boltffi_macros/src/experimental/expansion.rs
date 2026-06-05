@@ -1577,6 +1577,62 @@ mod tests {
     }
 
     #[test]
+    fn wasm_mutable_direct_record_param_expansion_writes_mutated_value_back() {
+        let source = mutable_direct_record_param_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn shift(point: &mut Point) -> f64 {
+                point.x += 1.0;
+                point.x
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn shift(point: &mut Point) -> f64 {
+                    point.x += 1.0;
+                    point.x
+                }
+                #[cfg(target_arch = "wasm32")]
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn boltffi_function_demo_shift(
+                    point: *mut u8
+                ) -> f64 {
+                    let __boltffi_point_out = point;
+                    if __boltffi_point_out.is_null() {
+                        ::boltffi::__private::set_last_error(format!(
+                            "{}: null direct record pointer",
+                            stringify!(point)
+                        ));
+                        return ::core::default::Default::default();
+                    }
+                    let mut point: Point = unsafe {
+                        let __boltffi_value =
+                            ::core::ptr::read_unaligned(
+                                __boltffi_point_out as *const <Point as ::boltffi::__private::Passable>::In
+                            );
+                        <Point as ::boltffi::__private::Passable>::unpack(__boltffi_value)
+                    };
+                    let __boltffi_result = shift(&mut point);
+                    unsafe {
+                        ::core::ptr::write_unaligned(
+                            __boltffi_point_out as *mut <Point as ::boltffi::__private::Passable>::In,
+                            ::boltffi::__private::Passable::pack(point)
+                        );
+                    }
+                    __boltffi_result
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
     fn mutable_direct_primitive_param_expansion_passes_mutable_local() {
         let source = mutable_direct_primitive_param_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
@@ -1889,7 +1945,7 @@ mod tests {
                                     error,
                                     __boltffi_count_len
                                 ));
-                                None
+                                return ::boltffi::__private::FfiStatus::INVALID_ARG;
                             }
                         }
                     };
@@ -3029,7 +3085,7 @@ mod tests {
                                 ::core::any::type_name::<Point>(),
                                 element_size
                             ));
-                            Vec::new()
+                            return ::core::default::Default::default();
                         }
                     };
                     count_points(points)

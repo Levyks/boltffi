@@ -1,6 +1,8 @@
 use super::error::Error;
 use super::target::Target;
 
+mod local;
+
 pub mod asynchronous;
 pub mod callable;
 pub mod function;

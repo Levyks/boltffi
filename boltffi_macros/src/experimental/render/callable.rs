@@ -35,6 +35,7 @@ pub struct Tokens {
     items: Vec<TokenStream>,
     ffi_parameters: Vec<TokenStream>,
     conversions: Vec<TokenStream>,
+    writebacks: Vec<TokenStream>,
     arguments: Vec<TokenStream>,
 }
 
@@ -49,6 +50,10 @@ impl Tokens {
 
     pub fn conversions(&self) -> &[TokenStream] {
         &self.conversions
+    }
+
+    pub fn writebacks(&self) -> &[TokenStream] {
+        &self.writebacks
     }
 
     pub fn arguments(&self) -> &[TokenStream] {
@@ -96,6 +101,10 @@ where
             .iter()
             .flat_map(|param| param.conversions().iter().cloned())
             .collect();
+        let writebacks = params
+            .iter()
+            .flat_map(|param| param.writebacks().iter().cloned())
+            .collect();
         let arguments = params
             .iter()
             .map(|param| param.argument().clone())
@@ -105,6 +114,7 @@ where
             items,
             ffi_parameters,
             conversions,
+            writebacks,
             arguments,
         })
     }

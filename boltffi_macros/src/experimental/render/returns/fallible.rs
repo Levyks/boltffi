@@ -5,7 +5,7 @@ use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
     target::Target,
 };
 
@@ -125,7 +125,8 @@ impl<'a, S: Target> EncodedError<'a, S> {
         handle::Value:
             RenderRule<S, handle::ValueInput<'a, S::HandleCarrier>, Output = handle::ValueTokens>,
     {
-        let error_ident = syn::Ident::new("__boltffi_error", self.invocation.function.span());
+        let locals = local::Wrapper::new(self.invocation.function.span());
+        let error_ident = locals.error();
         let error = <encoded::Rule as RenderRule<S, _>>::apply(
             encoded::Rule,
             encoded::Input::new(self.error_ty, self.error_shape, error_ident.clone()),
@@ -150,8 +151,21 @@ impl<'a, S: Target> EncodedError<'a, S> {
         let RustInvocation {
             function,
             conversions,
+            writebacks,
             arguments,
         } = self.invocation;
+        let result = local::Wrapper::new(function.span()).result();
+        let result_value = if writebacks.is_empty() {
+            quote! { #function(#(#arguments),*) }
+        } else {
+            quote! {
+                {
+                    let #result = #function(#(#arguments),*);
+                    #(#writebacks)*
+                    #result
+                }
+            }
+        };
 
         Ok(Tokens {
             items: success_items,
@@ -159,7 +173,7 @@ impl<'a, S: Target> EncodedError<'a, S> {
             return_type,
             body: quote! {
                 #(#conversions)*
-                match #function(#(#arguments),*) {
+                match #result_value {
                     Ok(#success_pattern) => {
                         #success_body
                         #empty_error_value
@@ -187,7 +201,8 @@ where
         let result_type = input.rust_type.as_ref().and_then(ResultType::parse).ok_or(
             Error::SourceSyntaxMismatch("fallible binding return requires a source Result type"),
         )?;
-        let success_ident = syn::Ident::new("__boltffi_success", input.span);
+        let locals = local::Wrapper::new(input.span);
+        let success_ident = locals.success();
         match input.returns.plan() {
             ReturnPlan::Void => Ok(SuccessTokens {
                 items: Vec::new(),
@@ -198,7 +213,7 @@ where
             ReturnPlan::DirectViaOutPointer {
                 ty: TypeRef::Primitive(primitive),
             } => {
-                let out = syn::Ident::new("__boltffi_return_out", input.span);
+                let out = locals.return_out();
                 let ty = TypeRef::Primitive(*primitive);
                 let ty = <render::type_ref::Rule as RenderRule<S, &TypeRef>>::apply(
                     render::type_ref::Rule,
@@ -218,7 +233,7 @@ where
                 })
             }
             ReturnPlan::DirectViaOutPointer { .. } => {
-                let out = syn::Ident::new("__boltffi_return_out", input.span);
+                let out = locals.return_out();
                 let ok = result_type.ok();
                 Ok(SuccessTokens {
                     items: Vec::new(),
@@ -236,7 +251,7 @@ where
                 })
             }
             ReturnPlan::EncodedViaOutPointer { ty, shape, .. } => {
-                let out = syn::Ident::new("__boltffi_return_out", input.span);
+                let out = locals.return_out();
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
                     encoded::Input::new(ty, *shape, success_ident.clone()),
@@ -261,7 +276,7 @@ where
                 carrier,
                 presence,
             } => {
-                let out = syn::Ident::new("__boltffi_return_out", input.span);
+                let out = locals.return_out();
                 let ok = result_type.ok();
                 let handle = <handle::Value as RenderRule<S, _>>::apply(
                     handle::Value,

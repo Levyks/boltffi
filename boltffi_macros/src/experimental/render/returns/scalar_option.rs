@@ -4,7 +4,7 @@ use quote::quote;
 
 use crate::experimental::{
     error::Error,
-    render::{Rule as RenderRule, returns::Tokens},
+    render::{Rule as RenderRule, local, returns::Tokens},
 };
 
 pub struct Rule;
@@ -44,7 +44,7 @@ impl RenderRule<Wasm32, Input> for Rule {
 
     fn apply(self, input: Input) -> Result<Self::Output, Error> {
         let value = input.value;
-        let present = syn::Ident::new("__boltffi_value", value.span());
+        let present = local::Wrapper::new(value.span()).value();
         let some = Scalar::new(input.primitive, &present).tokens()?;
         Ok(Tokens {
             items: Vec::new(),

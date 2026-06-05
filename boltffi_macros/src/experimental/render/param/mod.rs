@@ -38,6 +38,7 @@ pub struct Tokens {
     ffi_parameters: Vec<TokenStream>,
     ffi_parameter_types: Vec<TokenStream>,
     conversions: Vec<TokenStream>,
+    writebacks: Vec<TokenStream>,
     argument: TokenStream,
 }
 
@@ -56,6 +57,10 @@ impl Tokens {
 
     pub fn conversions(&self) -> &[TokenStream] {
         &self.conversions
+    }
+
+    pub fn writebacks(&self) -> &[TokenStream] {
+        &self.writebacks
     }
 
     pub fn argument(&self) -> &TokenStream {
@@ -94,13 +99,13 @@ where
             IncomingParam::Value(ParamPlan::ScalarOption { primitive }) => {
                 <scalar_option::Rule as RenderRule<S, _>>::apply(
                     scalar_option::Rule,
-                    scalar_option::Input::new(*primitive, input.syntax, ident),
+                    scalar_option::Input::new(*primitive, input.syntax, ident, input.failure),
                 )
             }
             IncomingParam::Value(ParamPlan::DirectVec { element }) => {
                 <direct_vec::Rule as RenderRule<S, _>>::apply(
                     direct_vec::Rule,
-                    direct_vec::Input::new(element, input.syntax, ident),
+                    direct_vec::Input::new(element, input.syntax, ident, input.failure),
                 )
             }
             IncomingParam::Value(ParamPlan::Handle {

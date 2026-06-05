@@ -3,12 +3,12 @@ use boltffi_binding::{
     ParamPlan, ReturnPlan, TypeRef, Wasm32, native, wasm32,
 };
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{GenericArgument, Ident, PathArguments, ReturnType, Type, TypeImplTrait, TypeParamBound};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
     target::Target,
 };
 
@@ -128,6 +128,7 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
                 release_type,
             ],
             conversions: vec![closure],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -212,7 +213,7 @@ impl<'binding, 'syntax> WasmClosure<'binding, 'syntax> {
             .iter()
             .enumerate()
             .map(|(index, parameter_type)| {
-                let name = format_ident!("__boltffi_ffi_arg{}", index);
+                let name = local::ClosureArgument::new(index).ffi();
                 quote! { #name: #parameter_type }
             })
             .collect::<Vec<_>>();
@@ -228,6 +229,7 @@ impl<'binding, 'syntax> WasmClosure<'binding, 'syntax> {
                 }
                 #closure
             }],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -320,7 +322,7 @@ impl<'binding, 'syntax, S: Target> InvokeParameterInput<'binding, 'syntax, S> {
     }
 
     fn tokens(self) -> Result<InvokeParameterTokens, Error> {
-        let argument = format_ident!("__boltffi_arg{}", self.index);
+        let argument = local::ClosureArgument::new(self.index).value();
         let rust_type = self.rust_type;
         match self.payload {
             OutgoingParam::Value(ParamPlan::Direct {
@@ -350,9 +352,10 @@ impl<'binding, 'syntax, S: Target> InvokeParameterInput<'binding, 'syntax, S> {
                 }],
             }),
             OutgoingParam::Value(ParamPlan::Encoded { ty, .. }) => {
-                let wire = format_ident!("__boltffi_arg{}_wire", self.index);
-                let pointer = format_ident!("__boltffi_arg{}_ptr", self.index);
-                let length = format_ident!("__boltffi_arg{}_len", self.index);
+                let locals = local::ClosureArgument::new(self.index);
+                let wire = locals.wire();
+                let pointer = locals.pointer();
+                let length = locals.length();
                 let buffer = match ty {
                     TypeRef::String => {
                         quote! { ::boltffi::__private::FfiBuf::from_vec(#argument.into_bytes()) }

@@ -70,6 +70,7 @@ where
         let visibility = &syntax.vis;
         let callable_ffi_parameters = callable.ffi_parameters();
         let conversions = callable.conversions();
+        let writebacks = callable.writebacks();
         let arguments = callable.arguments();
         let return_tokens = <render::returns::Rule as RenderRule<S, _>>::apply(
             render::returns::Rule,
@@ -80,6 +81,7 @@ where
                 render::returns::RustInvocation::new(
                     function_ident.clone(),
                     conversions.to_vec(),
+                    writebacks.to_vec(),
                     arguments.to_vec(),
                 ),
             ),

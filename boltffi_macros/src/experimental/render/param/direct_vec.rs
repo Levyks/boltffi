@@ -1,11 +1,11 @@
 use boltffi_binding::{Primitive, TypeRef};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{GenericArgument, PatType, PathArguments, Type};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
     target::Target,
 };
 
@@ -17,6 +17,7 @@ pub struct Input<'binding, 'syntax> {
     element: &'binding TypeRef,
     syntax: &'syntax PatType,
     ident: &'syntax syn::Ident,
+    failure: TokenStream,
 }
 
 impl<'binding, 'syntax> Input<'binding, 'syntax> {
@@ -24,11 +25,13 @@ impl<'binding, 'syntax> Input<'binding, 'syntax> {
         element: &'binding TypeRef,
         syntax: &'syntax PatType,
         ident: &'syntax syn::Ident,
+        failure: TokenStream,
     ) -> Self {
         Self {
             element,
             syntax,
             ident,
+            failure,
         }
     }
 
@@ -73,7 +76,9 @@ where
             TypeRef::Primitive(primitive) => {
                 PrimitiveVec::new(*primitive, input.ident).tokens::<S>()
             }
-            TypeRef::Record(_) => PassableVec::new(input.rust_element()?, input.ident).tokens(),
+            TypeRef::Record(_) => {
+                PassableVec::new(input.rust_element()?, input.ident, input.failure).tokens()
+            }
             _ => Err(Error::UnsupportedExpansion("direct-vector element")),
         }
     }
@@ -95,8 +100,9 @@ impl<'a> PrimitiveVec<'a> {
         for<'ty> render::type_ref::Rule: RenderRule<S, &'ty TypeRef, Output = TokenStream>,
     {
         let ident = self.ident;
-        let pointer = format_ident!("__boltffi_{}_ptr", ident);
-        let length = format_ident!("__boltffi_{}_len", ident);
+        let locals = local::Parameter::new(ident);
+        let pointer = locals.pointer();
+        let length = locals.length();
         let element = TypeRef::Primitive(self.primitive);
         let element_type = <render::type_ref::Rule as RenderRule<S, &TypeRef>>::apply(
             render::type_ref::Rule,
@@ -116,6 +122,7 @@ impl<'a> PrimitiveVec<'a> {
                     unsafe { ::core::slice::from_raw_parts(#pointer, #length) }.to_vec()
                 };
             }],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }
@@ -124,18 +131,25 @@ impl<'a> PrimitiveVec<'a> {
 struct PassableVec<'a> {
     element: &'a Type,
     ident: &'a syn::Ident,
+    failure: TokenStream,
 }
 
 impl<'a> PassableVec<'a> {
-    fn new(element: &'a Type, ident: &'a syn::Ident) -> Self {
-        Self { element, ident }
+    fn new(element: &'a Type, ident: &'a syn::Ident, failure: TokenStream) -> Self {
+        Self {
+            element,
+            ident,
+            failure,
+        }
     }
 
     fn tokens(self) -> Result<Tokens, Error> {
         let element = self.element;
         let ident = self.ident;
-        let pointer = format_ident!("__boltffi_{}_ptr", ident);
-        let length = format_ident!("__boltffi_{}_len", ident);
+        let failure = self.failure;
+        let locals = local::Parameter::new(ident);
+        let pointer = locals.pointer();
+        let length = locals.length();
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: vec![quote! { #pointer: *const u8 }, quote! { #length: usize }],
@@ -160,10 +174,11 @@ impl<'a> PassableVec<'a> {
                             ::core::any::type_name::<#element>(),
                             element_size
                         ));
-                        Vec::new()
+                        #failure
                     }
                 };
             }],
+            writebacks: Vec::new(),
             argument: quote! { #ident },
         })
     }

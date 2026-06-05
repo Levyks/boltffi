@@ -5,7 +5,7 @@ use syn::Type;
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, local},
     target::Target,
 };
 
@@ -60,6 +60,7 @@ pub mod scalar_option;
 pub struct RustInvocation {
     function: syn::Ident,
     conversions: Vec<TokenStream>,
+    writebacks: Vec<TokenStream>,
     arguments: Vec<TokenStream>,
 }
 
@@ -68,11 +69,13 @@ impl RustInvocation {
     pub fn new(
         function: syn::Ident,
         conversions: Vec<TokenStream>,
+        writebacks: Vec<TokenStream>,
         arguments: Vec<TokenStream>,
     ) -> Self {
         Self {
             function,
             conversions,
+            writebacks,
             arguments,
         }
     }
@@ -173,8 +176,10 @@ where
         let RustInvocation {
             function,
             conversions,
+            writebacks,
             arguments,
         } = input.invocation;
+        let locals = local::Wrapper::new(function.span());
         match input.returns.plan() {
             ReturnPlan::Void => Ok(Tokens {
                 items: Vec::new(),
@@ -183,6 +188,7 @@ where
                 body: quote! {
                     #(#conversions)*
                     #function(#(#arguments),*);
+                    #(#writebacks)*
                     ::boltffi::__private::FfiStatus::OK
                 },
             }),
@@ -194,35 +200,57 @@ where
                     render::type_ref::Rule,
                     &ty,
                 )?;
+                let body = if writebacks.is_empty() {
+                    quote! {
+                        #(#conversions)*
+                        #function(#(#arguments),*)
+                    }
+                } else {
+                    let result = locals.result();
+                    quote! {
+                        #(#conversions)*
+                        let #result = #function(#(#arguments),*);
+                        #(#writebacks)*
+                        #result
+                    }
+                };
                 Ok(Tokens {
                     items: Vec::new(),
                     ffi_parameters: Vec::new(),
                     return_type: quote! { -> #ty },
-                    body: quote! {
-                        #(#conversions)*
-                        #function(#(#arguments),*)
-                    },
+                    body,
                 })
             }
             ReturnPlan::DirectViaReturnSlot { .. } => {
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding direct return requires a source return type",
                 ))?;
+                let body = if writebacks.is_empty() {
+                    quote! {
+                        #(#conversions)*
+                        ::boltffi::__private::Passable::pack(#function(#(#arguments),*))
+                    }
+                } else {
+                    let result = locals.result();
+                    quote! {
+                        #(#conversions)*
+                        let #result = #function(#(#arguments),*);
+                        #(#writebacks)*
+                        ::boltffi::__private::Passable::pack(#result)
+                    }
+                };
                 Ok(Tokens {
                     items: Vec::new(),
                     ffi_parameters: Vec::new(),
                     return_type: quote! { -> <#rust_type as ::boltffi::__private::Passable>::Out },
-                    body: quote! {
-                        #(#conversions)*
-                        ::boltffi::__private::Passable::pack(#function(#(#arguments),*))
-                    },
+                    body,
                 })
             }
             ReturnPlan::EncodedViaReturnSlot { ty, shape, .. } => {
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding encoded return requires a source return type",
                 ))?;
-                let result = syn::Ident::new("__boltffi_result", function.span());
+                let result = locals.result();
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
                     encoded::Input::new(ty, *shape, result.clone()),
@@ -236,6 +264,7 @@ where
                     body: quote! {
                         #(#conversions)*
                         let #result: #rust_type = #function(#(#arguments),*);
+                        #(#writebacks)*
                         #value
                     },
                 })
@@ -248,7 +277,7 @@ where
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding handle return requires a source return type",
                 ))?;
-                let result = syn::Ident::new("__boltffi_result", function.span());
+                let result = locals.result();
                 let handle = <handle::Value as RenderRule<S, _>>::apply(
                     handle::Value,
                     handle::ValueInput::new(
@@ -268,6 +297,7 @@ where
                     body: quote! {
                         #(#conversions)*
                         let #result: #rust_type = #function(#(#arguments),*);
+                        #(#writebacks)*
                         #value
                     },
                 })
@@ -276,7 +306,7 @@ where
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding scalar option return requires a source return type",
                 ))?;
-                let result = syn::Ident::new("__boltffi_result", function.span());
+                let result = locals.result();
                 let optional = <scalar_option::Rule as RenderRule<S, _>>::apply(
                     scalar_option::Rule,
                     scalar_option::Input::new(*primitive, result.clone()),
@@ -290,12 +320,13 @@ where
                     body: quote! {
                         #(#conversions)*
                         let #result: #rust_type = #function(#(#arguments),*);
+                        #(#writebacks)*
                         #body
                     },
                 })
             }
             ReturnPlan::DirectVecViaReturnSlot { .. } => {
-                let result = syn::Ident::new("__boltffi_result", function.span());
+                let result = locals.result();
                 let sequence = <direct_vec::Rule as RenderRule<S, _>>::apply(
                     direct_vec::Rule,
                     direct_vec::Input::new(result.clone()),
@@ -309,6 +340,7 @@ where
                     body: quote! {
                         #(#conversions)*
                         let #result = #function(#(#arguments),*);
+                        #(#writebacks)*
                         #body
                     },
                 })
@@ -411,7 +443,7 @@ impl<'a, S: Target> ErrorFailure<'a, S> {
     {
         match self.error {
             ErrorDecl::EncodedViaReturnSlot { ty, shape, .. } if matches!(ty, TypeRef::String) => {
-                let error = syn::Ident::new("__boltffi_error", proc_macro2::Span::call_site());
+                let error = local::Wrapper::new(proc_macro2::Span::call_site()).error();
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
                     encoded::Input::new(ty, *shape, error.clone()),
