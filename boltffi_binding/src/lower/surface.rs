@@ -127,14 +127,14 @@ impl SurfaceLower for Native {
     fn incoming_closure_registration(
         _closure: &ClosureType,
     ) -> Result<Self::IncomingClosureRegistration, LowerError> {
-        Ok(native::ClosureRegistration::InvokeContext)
+        Ok(native::ClosureRegistration::InvokeContextRelease)
     }
 
     fn outgoing_closure_registration(
         _allocator: &mut SymbolAllocator,
         _closure: &ClosureType,
     ) -> Result<Self::OutgoingClosureRegistration, LowerError> {
-        Ok(native::ClosureRegistration::InvokeContext)
+        Ok(native::ClosureRegistration::InvokeContextRelease)
     }
 }
 

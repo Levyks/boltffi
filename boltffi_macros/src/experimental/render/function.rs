@@ -1,5 +1,5 @@
 use boltffi_ast::FunctionDef;
-use boltffi_binding::FunctionDecl;
+use boltffi_binding::{ExecutionDecl, FunctionDecl};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, ItemFn, PatType, ReturnType, Type};
@@ -11,6 +11,10 @@ use crate::experimental::{
     target::Target,
 };
 
+/// A function wrapper renderer for one target surface.
+///
+/// The rule receives a paired source and binding declaration, then renders only the
+/// generated extern wrapper. The original Rust function item remains owned by the caller.
 pub struct Rule<'a, S: Target> {
     pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
 }
@@ -18,55 +22,83 @@ pub struct Rule<'a, S: Target> {
 impl<'a, S> Rule<'a, S>
 where
     S: Target,
-    for<'syntax> render::callable::Rule:
-        RenderRule<S, render::callable::Input<'a, 'syntax, S>, Output = render::callable::Tokens>,
+    for<'params, 'syntax> render::callable::Rule: RenderRule<
+            S,
+            render::callable::Input<'a, 'params, 'syntax, S>,
+            Output = render::callable::Tokens,
+        >,
+    render::returns::Failure:
+        RenderRule<S, render::returns::FailureInput<'a, S>, Output = TokenStream>,
     render::returns::Rule:
         RenderRule<S, render::returns::Input<'a, S>, Output = render::returns::Tokens>,
+    for<'syntax> render::asynchronous::Rule:
+        RenderRule<S, render::asynchronous::Input<'a, 'syntax, S>, Output = TokenStream>,
 {
+    /// Creates a renderer for one paired function declaration.
     pub fn new(pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>) -> Self {
         Self { pair }
     }
 
-    pub fn render_with_function(self, syntax: ItemFn) -> Result<TokenStream, Error> {
-        let export = self.render_export(&syntax)?;
-
-        Ok(quote! {
-            #syntax
-            #export
-        })
-    }
-
-    fn render_export(self, syntax: &ItemFn) -> Result<TokenStream, Error> {
-        let cfg = S::cfg_attr();
+    /// Renders the generated extern wrapper for the given Rust function syntax.
+    pub fn render(self, syntax: &ItemFn) -> Result<TokenStream, Error> {
         let function = self.pair.binding();
+        if matches!(
+            function.callable().execution(),
+            ExecutionDecl::Asynchronous(_)
+        ) {
+            return <render::asynchronous::Rule as RenderRule<S, _>>::apply(
+                render::asynchronous::Rule,
+                render::asynchronous::Input::new(function, syntax),
+            );
+        }
+
+        let cfg = S::cfg_attr();
         let syntax_params = Self::syntax_params(syntax)?;
+        let failure = <render::returns::Failure as RenderRule<S, _>>::apply(
+            render::returns::Failure,
+            render::returns::FailureInput::new(
+                function.callable().returns(),
+                function.callable().error(),
+            ),
+        )?;
         let callable = <render::callable::Rule as RenderRule<S, _>>::apply(
             render::callable::Rule,
-            render::callable::Input::new(function.callable(), &syntax_params),
+            render::callable::Input::new(function.callable(), &syntax_params, failure),
         )?;
         let export_ident = format_ident!("{}", function.symbol().name().as_str());
         let function_ident = &syntax.sig.ident;
         let visibility = &syntax.vis;
-        let ffi_parameters = callable.ffi_parameters();
+        let callable_ffi_parameters = callable.ffi_parameters();
         let conversions = callable.conversions();
+        let writebacks = callable.writebacks();
         let arguments = callable.arguments();
         let return_tokens = <render::returns::Rule as RenderRule<S, _>>::apply(
             render::returns::Rule,
             render::returns::Input::new(
                 function.callable().returns(),
+                function.callable().error(),
                 Self::syntax_return_type(syntax),
                 render::returns::RustInvocation::new(
                     function_ident.clone(),
                     conversions.to_vec(),
+                    writebacks.to_vec(),
                     arguments.to_vec(),
                 ),
             ),
         )?;
+        let ffi_parameters = callable_ffi_parameters
+            .iter()
+            .chain(return_tokens.ffi_parameters().iter())
+            .collect::<Vec<_>>();
         let return_type = return_tokens.return_type();
         let body = return_tokens.body();
+        let callable_items = callable.items();
+        let return_items = return_tokens.items();
         let safety = (!ffi_parameters.is_empty()).then(|| quote! { unsafe });
 
         Ok(quote! {
+            #(#callable_items)*
+            #(#return_items)*
             #cfg
             #[unsafe(no_mangle)]
             #visibility #safety extern "C" fn #export_ident(#(#ffi_parameters),*) #return_type {

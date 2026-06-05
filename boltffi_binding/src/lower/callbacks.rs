@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(outgoing.form(), crate::ClosureForm::Fn);
         assert!(matches!(
             outgoing.registration().shape(),
-            native::ClosureRegistration::InvokeContext
+            native::ClosureRegistration::InvokeContextRelease
         ));
         assert!(matches!(
             outgoing.invoke().returns().plan(),
@@ -745,7 +745,7 @@ mod tests {
         assert_eq!(closure_crossing.presence(), HandlePresence::Required);
         assert_eq!(
             closure_crossing.registration().shape(),
-            &native::ClosureRegistration::InvokeContext
+            &native::ClosureRegistration::InvokeContextRelease
         );
         let invoke = closure_crossing.invoke();
         assert_eq!(invoke.params().len(), 1);

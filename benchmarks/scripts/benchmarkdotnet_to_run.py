@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +46,77 @@ UNIFFI_VERSION = dependency_version(REPO_ROOT / "examples/demo/Cargo.toml", "uni
 SUITE_NAME = "csharp-dotnet-benchmarkdotnet"
 
 
+@dataclass(frozen=True)
+class BenchmarkDotNetResults:
+    paths: list[Path]
+    summaries: list[dict[str, Any]]
+
+    @classmethod
+    def read(cls, paths: list[Path]) -> "BenchmarkDotNetResults":
+        if not paths:
+            raise SystemExit("no BenchmarkDotNet result paths provided")
+
+        results = cls(
+            paths=paths,
+            summaries=[json.loads(path.read_text()) for path in paths],
+        )
+        if not results.benchmarks:
+            joined_paths = ", ".join(str(path) for path in paths)
+            raise SystemExit(f"no BenchmarkDotNet results found in {joined_paths}")
+        return results
+
+    @property
+    def benchmarks(self) -> list[dict[str, Any]]:
+        return [
+            benchmark
+            for summary in self.summaries
+            for benchmark in summary.get("Benchmarks") or []
+        ]
+
+    @property
+    def host_info(self) -> dict[str, Any]:
+        return next(
+            (
+                host_info
+                for summary in self.summaries
+                if (host_info := summary.get("HostEnvironmentInfo") or {})
+            ),
+            {},
+        )
+
+    @property
+    def title(self) -> str | None:
+        titles = list(
+            dict.fromkeys(
+                title
+                for summary in self.summaries
+                if isinstance((title := summary.get("Title")), str) and title
+            )
+        )
+        if not titles:
+            return None
+        if len(titles) == 1:
+            return titles[0]
+        return SUITE_NAME
+
+    @property
+    def report_titles(self) -> list[str]:
+        return list(
+            dict.fromkeys(
+                title
+                for summary in self.summaries
+                if isinstance((title := summary.get("Title")), str) and title
+            )
+        )
+
+    def invocation(self) -> str:
+        joined_paths = " ".join(str(path) for path in self.paths)
+        return f"benchmarkdotnet_to_run.py --results {joined_paths}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--results", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", default="release")
     return parser.parse_args()
@@ -55,14 +124,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    summary = json.loads(args.results.read_text())
-    benchmarks = summary.get("Benchmarks") or []
-    if not benchmarks:
-        raise SystemExit(f"no BenchmarkDotNet results found in {args.results}")
+    results = BenchmarkDotNetResults.read(args.results)
 
     git = git_context()
     collected_at = utc_now()
-    host_info = summary.get("HostEnvironmentInfo") or {}
+    host_info = results.host_info
 
     run_document = {
         "schema_version": "benchmark_run_v1",
@@ -71,9 +137,9 @@ def main() -> None:
         "provenance": {
             "repository": git,
             "collector": collector_context(
-                invocation=f"benchmarkdotnet_to_run.py --results {args.results}"
+                invocation=results.invocation()
             ),
-            "artifacts": artifacts([args.results]),
+            "artifacts": artifacts(results.paths),
         },
         "environment": {
             "host": build_host_context(host_info),
@@ -102,12 +168,13 @@ def main() -> None:
             "profile": args.profile,
             "tags": [],
             "attributes": {
-                "title": summary.get("Title"),
+                "title": results.title,
+                "report_titles": results.report_titles,
                 "benchmarkdotnet_version": host_info.get("BenchmarkDotNetVersion"),
                 "dotnet_cli_version": host_info.get("DotNetCliVersion"),
             },
         },
-        "benchmarks": build_benchmark_entries(benchmarks, host_info, git, args.profile),
+        "benchmarks": build_benchmark_entries(results.benchmarks, host_info, git, args.profile),
         "notes": [],
     }
 

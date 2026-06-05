@@ -1,5 +1,5 @@
 use boltffi_ast::FunctionDef;
-use boltffi_binding::FunctionDecl;
+use boltffi_binding::{FunctionDecl, Surface};
 use proc_macro2::TokenStream;
 use syn::ItemFn;
 
@@ -7,48 +7,61 @@ use crate::experimental::{
     decl::{DeclarationPair, PairedDeclaration, SourceDeclaration},
     error::Error,
     render::{self, Rule as RenderRule},
-    syntax::Expand,
+    syntax::{ExpandableDeclaration, ItemRenderer, RenderableItem},
     target::Target,
 };
 
-pub struct ExpandableFunction {
-    syntax: ItemFn,
-}
+/// The source and lowered declaration pair for a free function expansion.
+///
+/// The marker carries no syntax. The macro item remains owned by the caller, while this
+/// type only selects `FunctionDef` from the source contract and `FunctionDecl<S>` from the
+/// lowered bindings for a specific target surface.
+pub struct ExpandableFunction;
 
-impl ExpandableFunction {
-    pub fn new(syntax: ItemFn) -> Self {
-        Self { syntax }
-    }
-}
-
-impl<'a, S> Expand<'a, S> for ExpandableFunction
-where
-    S: Target,
-    for<'syntax> render::callable::Rule:
-        RenderRule<S, render::callable::Input<'a, 'syntax, S>, Output = render::callable::Tokens>,
-    render::returns::Rule:
-        RenderRule<S, render::returns::Input<'a, S>, Output = render::returns::Tokens>,
-{
+impl ExpandableDeclaration for ExpandableFunction {
     type Source = FunctionDef;
-    type Binding = FunctionDecl<S>;
+
+    type Binding<'a, S: Surface> = DeclarationPair<'a, FunctionDef, FunctionDecl<S>>;
 
     fn source(source: &Self::Source) -> SourceDeclaration<'_> {
         SourceDeclaration::Function(source)
     }
 
-    fn pair(
-        paired: PairedDeclaration<'_, S>,
-    ) -> Result<DeclarationPair<'_, Self::Source, Self::Binding>, Error> {
+    fn binding<'a, S: Surface>(
+        paired: PairedDeclaration<'a, S>,
+    ) -> Result<Self::Binding<'a, S>, Error> {
         match paired {
             PairedDeclaration::Function(pair) => Ok(pair),
             _ => Err(Error::WrongDeclaration),
         }
     }
+}
 
+impl RenderableItem for ExpandableFunction {
+    type Syntax = ItemFn;
+
+    type Renderer<'a, S: Target> = render::function::Rule<'a, S>;
+}
+
+impl<'a, S> ItemRenderer<'a, S, ExpandableFunction> for render::function::Rule<'a, S>
+where
+    S: Target,
+    for<'params, 'syntax> render::callable::Rule: RenderRule<
+            S,
+            render::callable::Input<'a, 'params, 'syntax, S>,
+            Output = render::callable::Tokens,
+        >,
+    render::returns::Failure:
+        RenderRule<S, render::returns::FailureInput<'a, S>, Output = TokenStream>,
+    render::returns::Rule:
+        RenderRule<S, render::returns::Input<'a, S>, Output = render::returns::Tokens>,
+    for<'syntax> render::asynchronous::Rule:
+        RenderRule<S, render::asynchronous::Input<'a, 'syntax, S>, Output = TokenStream>,
+{
     fn render(
-        self,
-        pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
+        binding: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
+        syntax: &ItemFn,
     ) -> Result<TokenStream, Error> {
-        render::function::Rule::new(pair).render_with_function(self.syntax)
+        Self::new(binding).render(syntax)
     }
 }

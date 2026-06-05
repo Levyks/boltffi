@@ -1283,7 +1283,7 @@ mod tests {
         assert_eq!(closure.presence(), HandlePresence::Required);
         assert!(matches!(
             closure.registration().shape(),
-            native::ClosureRegistration::InvokeContext
+            native::ClosureRegistration::InvokeContextRelease
         ));
         let callable = closure.invoke();
         let params = callable.params();
@@ -1322,7 +1322,7 @@ mod tests {
         assert_eq!(closure.form(), crate::ClosureForm::Fn);
         assert!(matches!(
             closure.registration().shape(),
-            native::ClosureRegistration::InvokeContext
+            native::ClosureRegistration::InvokeContextRelease
         ));
         assert!(matches!(
             closure.invoke().returns().plan(),
@@ -1401,7 +1401,7 @@ mod tests {
         // closure returns can only appear through ClosureViaOutPointer.
         assert_eq!(
             closure_crossing.registration().shape(),
-            &native::ClosureRegistration::InvokeContext
+            &native::ClosureRegistration::InvokeContextRelease
         );
         let invoke = closure_crossing.invoke();
         assert_eq!(invoke.params().len(), 1);

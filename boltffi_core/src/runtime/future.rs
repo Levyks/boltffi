@@ -464,7 +464,6 @@ pub unsafe fn rust_future_poll_sync<T: Send + 'static>(handle: RustFutureHandle)
         .with_future_arc(|rust_future| rust_future.poll_sync() as i32)
 }
 
-#[cfg(target_arch = "wasm32")]
 pub unsafe fn rust_future_panic_message<T: Send + 'static>(
     handle: RustFutureHandle,
 ) -> Option<String> {

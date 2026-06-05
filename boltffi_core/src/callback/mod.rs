@@ -10,12 +10,14 @@
 
 mod foreign;
 mod handle;
+mod native;
 mod ownership;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
 pub use foreign::CallbackForeignType;
 pub use handle::CallbackHandle;
+pub use native::NativeCallbackOwner;
 pub use ownership::{ArcFromCallbackHandle, BoxFromCallbackHandle};
 #[cfg(target_arch = "wasm32")]
 pub use wasm::{WasmCallbackOwner, boltffi_create_callback_handle};

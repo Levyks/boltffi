@@ -232,7 +232,8 @@ pub mod native {
     /// boundary.
     ///
     /// Closures cross as an invoke function pointer paired with a
-    /// context pointer. The IR records the logical pair here; the
+    /// context pointer and a release function. The IR records the logical
+    /// registration here; the
     /// position-specific layout is fixed by the wrapper variant that
     /// holds the closure payload:
     ///
@@ -240,12 +241,12 @@ pub mod native {
     ///   ([`crate::IncomingParam::Closure`],
     ///   [`crate::OutgoingParam::Closure`]): two adjacent native
     ///   parameter slots — one function-pointer slot followed by one
-    ///   pointer slot. The C ABI of every native target passes two
-    ///   pointer-sized arguments uniformly.
+    ///   pointer slot and one release-function slot. The C ABI of every
+    ///   native target passes pointer-sized arguments uniformly.
     /// - At a return position
     ///   ([`crate::ReturnPlan::ClosureViaOutPointer`]): an explicit
     ///   out-pointer. The caller allocates storage for
-    ///   `#[repr(C)] struct ClosureReturnStorage { invoke: fn pointer, context: *mut () }`
+    ///   `#[repr(C)] struct ClosureReturnStorage { invoke: fn pointer, context: *mut (), release: fn pointer }`
     ///   and passes its address as a trailing parameter; the callee
     ///   writes the pair through that pointer. The native return
     ///   slot stays free for an error status, so
@@ -254,15 +255,15 @@ pub mod native {
     ///   no toolchain-handled struct-return guesswork.
     ///
     /// Both layouts describe the same logical pair, so one
-    /// [`InvokeContext`](Self::InvokeContext) marker covers them.
+    /// [`InvokeContextRelease`](Self::InvokeContextRelease) marker covers them.
     /// Distinct *wire* shapes are still distinct *variants* at the
     /// wrapper level — `ParamPlan`-side carriage versus
     /// `ClosureViaOutPointer` at return position.
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
     #[non_exhaustive]
     pub enum ClosureRegistration {
-        /// Invoke function plus context pointer.
-        InvokeContext,
+        /// Invoke function, context pointer, and release function.
+        InvokeContextRelease,
     }
 
     impl ClosureRegistrationIntrospect for ClosureRegistration {
