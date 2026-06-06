@@ -30,10 +30,9 @@
 //!   surface's [`Surface::AsyncProtocol`] value built by
 //!   [`super::async_protocol`];
 //! - by-value, by-ref, and by-mut-ref receivers;
-//! - callback-trait params and returns in all four shapes
-//!   ([`TraitUseForm`](boltffi_ast::TraitUseForm) crossed with
-//!   [`HandlePresence`](boltffi_ast::HandlePresence)), routed as
-//!   nullable or required callback handles;
+//! - callback-trait params and returns from `impl Trait`,
+//!   `Box<dyn Trait>`, `Arc<dyn Trait>`, and their optional forms,
+//!   routed as nullable or required callback handles;
 //! - `Result<(), E>` returns, which produce a void plan plus an
 //!   encoded error channel;
 //! - parameter and return types that lower through the existing
@@ -57,8 +56,8 @@ mod params;
 mod returns;
 
 use boltffi_ast::{
-    CanonicalName as SourceName, ClosureType, ExecutionKind, FunctionDef, MethodDef, ParameterDef,
-    Receiver,
+    CanonicalName as SourceName, ClassId, ExecutionKind, FnSig, FnTrait, FunctionDef, MethodDef,
+    ParameterDef, Receiver, ReturnDef, TraitBound, TraitId, TypeExpr,
 };
 
 use crate::{
@@ -96,12 +95,18 @@ pub(super) enum CallableOwner<'src> {
 impl<'src> CallableOwner<'src> {
     fn self_type_expr(self) -> Result<boltffi_ast::TypeExpr, LowerError> {
         match self {
-            Self::Record(record) => Ok(boltffi_ast::TypeExpr::Record(record.id.clone())),
-            Self::Enum(enumeration) => Ok(boltffi_ast::TypeExpr::Enum(enumeration.id.clone())),
-            Self::Class(class) => Ok(boltffi_ast::TypeExpr::Class {
-                id: class.id.clone(),
-                presence: boltffi_ast::HandlePresence::Required,
-            }),
+            Self::Record(record) => Ok(boltffi_ast::TypeExpr::record(
+                record.id.clone(),
+                boltffi_ast::Path::single("Self"),
+            )),
+            Self::Enum(enumeration) => Ok(boltffi_ast::TypeExpr::enumeration(
+                enumeration.id.clone(),
+                boltffi_ast::Path::single("Self"),
+            )),
+            Self::Class(class) => Ok(boltffi_ast::TypeExpr::class(
+                class.id.clone(),
+                boltffi_ast::Path::single("Self"),
+            )),
             Self::Trait(_) => Err(LowerError::unsupported_type(
                 UnsupportedType::SelfInCallbackTrait,
             )),
@@ -113,18 +118,16 @@ impl<'src> CallableOwner<'src> {
         match (self, type_expr) {
             (Self::Trait(_) | Self::Function, boltffi_ast::TypeExpr::SelfType) => false,
             (_, boltffi_ast::TypeExpr::SelfType) => true,
-            (Self::Record(record), boltffi_ast::TypeExpr::Record(id)) => id == &record.id,
-            (Self::Enum(enumeration), boltffi_ast::TypeExpr::Enum(id)) => id == &enumeration.id,
-            (
-                Self::Class(class),
-                boltffi_ast::TypeExpr::Class {
-                    id,
-                    presence: boltffi_ast::HandlePresence::Required,
-                },
-            ) => id == &class.id,
-            (Self::Trait(source_trait), boltffi_ast::TypeExpr::Trait { id, .. }) => {
-                id == &source_trait.id
+            (Self::Record(record), boltffi_ast::TypeExpr::Record { id, .. }) => id == &record.id,
+            (Self::Enum(enumeration), boltffi_ast::TypeExpr::Enum { id, .. }) => {
+                id == &enumeration.id
             }
+            (Self::Class(class), boltffi_ast::TypeExpr::Class { id, .. }) => id == &class.id,
+            (
+                Self::Trait(source_trait),
+                boltffi_ast::TypeExpr::ImplTrait(boltffi_ast::TraitBound::Trait { id, .. })
+                | boltffi_ast::TypeExpr::Dyn(boltffi_ast::TraitBound::Trait { id, .. }),
+            ) => id == &source_trait.id,
             _ => false,
         }
     }
@@ -184,7 +187,7 @@ pub(super) fn lower_imported_method<S: SurfaceLower>(
     )?)
 }
 
-/// Lowers an inline [`ClosureType`] crossing into Rust as a parameter.
+/// Lowers an inline closure crossing into Rust as a parameter.
 ///
 /// The closure was created on the foreign side, so its body lives
 /// there. Rust holds the handle and invokes it. The invoke contract is
@@ -198,14 +201,13 @@ pub(super) fn lower_imported_method<S: SurfaceLower>(
 /// machinery against them. Closure signatures have no execution axis in
 /// the AST, so the invoke is always synchronous. `Self` references
 /// reach the function-scoped substitution path and are rejected there.
-pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
+fn lower_closure_param_into_rust<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
-    presence: boltffi_ast::HandlePresence,
+    closure: ClosureSource<'_>,
 ) -> Result<ClosureParameter<S, IntoRust>, LowerError> {
-    let parts = lower_closure_into_rust_parts(idx, ids, allocator, closure, presence)?;
+    let parts = lower_closure_into_rust_parts(idx, ids, allocator, closure)?;
     Ok(ClosureParameter::new(
         parts.form,
         parts.presence,
@@ -214,14 +216,13 @@ pub(super) fn lower_closure_param_into_rust<S: SurfaceLower>(
     ))
 }
 
-pub(super) fn lower_closure_return_into_rust<S: SurfaceLower>(
+fn lower_closure_return_into_rust<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
-    presence: boltffi_ast::HandlePresence,
+    closure: ClosureSource<'_>,
 ) -> Result<ClosureReturn<S, IntoRust>, LowerError> {
-    let parts = lower_closure_into_rust_parts(idx, ids, allocator, closure, presence)?;
+    let parts = lower_closure_into_rust_parts(idx, ids, allocator, closure)?;
     Ok(ClosureReturn::new(
         parts.form,
         parts.presence,
@@ -241,11 +242,10 @@ fn lower_closure_into_rust_parts<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
-    presence: boltffi_ast::HandlePresence,
+    closure: ClosureSource<'_>,
 ) -> Result<ClosureIntoRustParts<S>, LowerError> {
     let (parameters, returns, error) =
-        lower_closure_invoke_parts::<S, ForeignBody>(idx, ids, allocator, closure)?;
+        lower_closure_invoke_parts::<S, ForeignBody>(idx, ids, allocator, closure.signature)?;
     let invoke = ImportedCallable::<S>::new(
         None,
         parameters,
@@ -254,18 +254,18 @@ fn lower_closure_into_rust_parts<S: SurfaceLower>(
         ExecutionDecl::synchronous(),
     )?;
     let registration = ClosureRegistration::<S, IntoRust>::new(
-        S::incoming_closure_registration(closure)?,
+        S::incoming_closure_registration(closure.signature)?,
         Receive::ByValue,
     );
     Ok(ClosureIntoRustParts {
-        form: ClosureForm::from(closure.kind),
-        presence: lower_handle_presence(presence),
+        form: closure.form,
+        presence: closure.presence,
         registration,
         invoke,
     })
 }
 
-/// Lowers an inline [`ClosureType`] crossing out of Rust as a callback
+/// Lowers an inline closure crossing out of Rust as a callback
 /// parameter.
 ///
 /// The closure was created on the Rust side and crosses out so foreign
@@ -275,14 +275,13 @@ fn lower_closure_into_rust_parts<S: SurfaceLower>(
 /// invocation, returns and error flow back as [`OutOfRust`]. The
 /// registration carries the surface's closure-registration shape with a
 /// `()` receive slot.
-pub(super) fn lower_closure_param_out_of_rust<S: SurfaceLower>(
+fn lower_closure_param_out_of_rust<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
-    presence: boltffi_ast::HandlePresence,
+    closure: ClosureSource<'_>,
 ) -> Result<ClosureParameter<S, OutOfRust>, LowerError> {
-    let parts = lower_closure_out_of_rust_parts(idx, ids, allocator, closure, presence)?;
+    let parts = lower_closure_out_of_rust_parts(idx, ids, allocator, closure)?;
     Ok(ClosureParameter::new(
         parts.form,
         parts.presence,
@@ -291,14 +290,13 @@ pub(super) fn lower_closure_param_out_of_rust<S: SurfaceLower>(
     ))
 }
 
-pub(super) fn lower_closure_return_out_of_rust<S: SurfaceLower>(
+fn lower_closure_return_out_of_rust<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
-    presence: boltffi_ast::HandlePresence,
+    closure: ClosureSource<'_>,
 ) -> Result<ClosureReturn<S, OutOfRust>, LowerError> {
-    let parts = lower_closure_out_of_rust_parts(idx, ids, allocator, closure, presence)?;
+    let parts = lower_closure_out_of_rust_parts(idx, ids, allocator, closure)?;
     Ok(ClosureReturn::new(
         parts.form,
         parts.presence,
@@ -318,11 +316,10 @@ fn lower_closure_out_of_rust_parts<S: SurfaceLower>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
-    presence: boltffi_ast::HandlePresence,
+    closure: ClosureSource<'_>,
 ) -> Result<ClosureOutOfRustParts<S>, LowerError> {
     let (parameters, returns, error) =
-        lower_closure_invoke_parts::<S, RustBody>(idx, ids, allocator, closure)?;
+        lower_closure_invoke_parts::<S, RustBody>(idx, ids, allocator, closure.signature)?;
     let invoke = ExportedCallable::<S>::new(
         None,
         parameters,
@@ -330,13 +327,13 @@ fn lower_closure_out_of_rust_parts<S: SurfaceLower>(
         error,
         ExecutionDecl::synchronous(),
     )?;
-    let shape = S::outgoing_closure_registration(allocator, closure)?;
+    let shape = S::outgoing_closure_registration(allocator, closure.signature)?;
     #[allow(clippy::let_unit_value)]
     let receive = <OutOfRust as Direction>::receive_from(Receive::ByValue);
     let registration = ClosureRegistration::<S, OutOfRust>::new(shape, receive);
     Ok(ClosureOutOfRustParts {
-        form: ClosureForm::from(closure.kind),
-        presence: lower_handle_presence(presence),
+        form: closure.form,
+        presence: closure.presence,
         registration,
         invoke,
     })
@@ -352,7 +349,7 @@ fn lower_closure_invoke_parts<S: SurfaceLower, K: crate::CallableScope>(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
+    closure: &FnSig,
 ) -> Result<ClosureInvokeParts<S, K>, LowerError>
 where
     K::ParamDirection: params::LowerClosure<S>,
@@ -452,6 +449,118 @@ fn lower_receiver(receiver: Receiver) -> Option<Receive> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ClosureSource<'a> {
+    form: ClosureForm,
+    signature: &'a FnSig,
+    presence: HandlePresence,
+}
+
+impl<'a> ClosureSource<'a> {
+    fn from_type_expr(type_expr: &'a TypeExpr) -> Option<Self> {
+        Self::required(type_expr).or_else(|| match type_expr {
+            TypeExpr::Option(inner) => Self::required(inner).map(Self::nullable),
+            _ => None,
+        })
+    }
+
+    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::FnPtr(signature) => Some(Self {
+                form: ClosureForm::FunctionPointer,
+                signature,
+                presence: HandlePresence::Required,
+            }),
+            TypeExpr::ImplTrait(TraitBound::Fn(function_trait)) => Some(Self {
+                form: ClosureForm::from(function_trait.kind),
+                signature: &function_trait.signature,
+                presence: HandlePresence::Required,
+            }),
+            TypeExpr::Boxed(inner) => match inner.as_ref() {
+                TypeExpr::Dyn(TraitBound::Fn(function_trait)) => Some(Self {
+                    form: ClosureForm::from(function_trait.kind),
+                    signature: &function_trait.signature,
+                    presence: HandlePresence::Required,
+                }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn nullable(mut self) -> Self {
+        self.presence = HandlePresence::Nullable;
+        self
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ClassHandleSource<'a> {
+    id: &'a ClassId,
+    presence: HandlePresence,
+}
+
+impl<'a> ClassHandleSource<'a> {
+    fn from_type_expr(type_expr: &'a TypeExpr) -> Option<Self> {
+        Self::required(type_expr).or_else(|| match type_expr {
+            TypeExpr::Option(inner) => Self::required(inner).map(Self::nullable),
+            _ => None,
+        })
+    }
+
+    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::Class { id, .. } => Some(Self {
+                id,
+                presence: HandlePresence::Required,
+            }),
+            _ => None,
+        }
+    }
+
+    fn nullable(mut self) -> Self {
+        self.presence = HandlePresence::Nullable;
+        self
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CallbackHandleSource<'a> {
+    id: &'a TraitId,
+    presence: HandlePresence,
+}
+
+impl<'a> CallbackHandleSource<'a> {
+    fn from_type_expr(type_expr: &'a TypeExpr) -> Option<Self> {
+        Self::required(type_expr).or_else(|| match type_expr {
+            TypeExpr::Option(inner) => Self::required(inner).map(Self::nullable),
+            _ => None,
+        })
+    }
+
+    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::ImplTrait(TraitBound::Trait { id, .. }) => Some(Self {
+                id,
+                presence: HandlePresence::Required,
+            }),
+            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
+                TypeExpr::Dyn(TraitBound::Trait { id, .. }) => Some(Self {
+                    id,
+                    presence: HandlePresence::Required,
+                }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn nullable(mut self) -> Self {
+        self.presence = HandlePresence::Nullable;
+        self
+    }
+}
+
 /// Substitutes occurrences of [`TypeExpr::SelfType`] with the owner's
 /// concrete type expression.
 ///
@@ -468,20 +577,18 @@ pub(super) fn substitute_self_type(
     Ok(match type_expr {
         TypeExpr::SelfType => owner.self_type_expr()?,
         TypeExpr::Vec(inner) => TypeExpr::Vec(Box::new(substitute_self_type(owner, inner)?)),
-        TypeExpr::Option(inner) => match (owner, inner.as_ref()) {
-            (CallableOwner::Class(class), TypeExpr::SelfType) => TypeExpr::Class {
-                id: class.id.clone(),
-                presence: boltffi_ast::HandlePresence::Nullable,
-            },
-            _ => TypeExpr::Option(Box::new(substitute_self_type(owner, inner)?)),
-        },
+        TypeExpr::Slice(inner) => TypeExpr::Slice(Box::new(substitute_self_type(owner, inner)?)),
+        TypeExpr::Option(inner) => TypeExpr::Option(Box::new(substitute_self_type(owner, inner)?)),
+        TypeExpr::Boxed(inner) => TypeExpr::Boxed(Box::new(substitute_self_type(owner, inner)?)),
+        TypeExpr::Arc(inner) => TypeExpr::Arc(Box::new(substitute_self_type(owner, inner)?)),
         TypeExpr::Tuple(elements) => TypeExpr::Tuple(
             elements
                 .iter()
                 .map(|element| substitute_self_type(owner, element))
                 .collect::<Result<Vec<_>, LowerError>>()?,
         ),
-        TypeExpr::Map { key, value } => TypeExpr::Map {
+        TypeExpr::Map { kind, key, value } => TypeExpr::Map {
+            kind: *kind,
             key: Box::new(substitute_self_type(owner, key)?),
             value: Box::new(substitute_self_type(owner, value)?),
         },
@@ -489,53 +596,51 @@ pub(super) fn substitute_self_type(
             ok: Box::new(substitute_self_type(owner, ok)?),
             err: Box::new(substitute_self_type(owner, err)?),
         },
-        TypeExpr::Closure {
-            signature,
-            presence,
-        } => {
-            let mut closure = (**signature).clone();
-            closure.parameters = closure
-                .parameters
-                .iter()
-                .map(|parameter| substitute_self_rust_type(owner, parameter))
-                .collect::<Result<Vec<_>, LowerError>>()?;
-            closure.returns = match closure.returns {
-                boltffi_ast::ReturnDef::Void => boltffi_ast::ReturnDef::Void,
-                boltffi_ast::ReturnDef::Value(value) => {
-                    boltffi_ast::ReturnDef::Value(substitute_self_rust_type(owner, &value)?)
-                }
-            };
-            TypeExpr::Closure {
-                signature: Box::new(closure),
-                presence: *presence,
-            }
+        TypeExpr::FnPtr(signature) => {
+            TypeExpr::FnPtr(Box::new(substitute_self_signature(owner, signature)?))
+        }
+        TypeExpr::Dyn(bound) => TypeExpr::Dyn(substitute_self_trait_bound(owner, bound)?),
+        TypeExpr::ImplTrait(bound) => {
+            TypeExpr::ImplTrait(substitute_self_trait_bound(owner, bound)?)
         }
         TypeExpr::Primitive(_)
         | TypeExpr::Unit
         | TypeExpr::String
-        | TypeExpr::Bytes
-        | TypeExpr::Record(_)
-        | TypeExpr::Enum(_)
+        | TypeExpr::Str
+        | TypeExpr::Record { .. }
+        | TypeExpr::Enum { .. }
         | TypeExpr::Class { .. }
-        | TypeExpr::Trait { .. }
-        | TypeExpr::Custom(_)
+        | TypeExpr::Custom { .. }
         | TypeExpr::Parameter(_) => type_expr.clone(),
     })
 }
 
-fn substitute_self_rust_type(
+fn substitute_self_signature(
     owner: CallableOwner<'_>,
-    rust_type: &boltffi_ast::RustType,
-) -> Result<boltffi_ast::RustType, LowerError> {
-    Ok(boltffi_ast::RustType::new(
-        rust_type.spelling().to_owned(),
-        substitute_self_type(owner, rust_type.expr())?,
+    signature: &FnSig,
+) -> Result<FnSig, LowerError> {
+    Ok(FnSig::new(
+        signature
+            .parameters
+            .iter()
+            .map(|parameter| substitute_self_type(owner, parameter))
+            .collect::<Result<Vec<_>, LowerError>>()?,
+        match &signature.returns {
+            ReturnDef::Void => ReturnDef::Void,
+            ReturnDef::Value(value) => ReturnDef::Value(substitute_self_type(owner, value)?),
+        },
     ))
 }
 
-fn lower_handle_presence(presence: boltffi_ast::HandlePresence) -> HandlePresence {
-    match presence {
-        boltffi_ast::HandlePresence::Required => HandlePresence::Required,
-        boltffi_ast::HandlePresence::Nullable => HandlePresence::Nullable,
+fn substitute_self_trait_bound(
+    owner: CallableOwner<'_>,
+    bound: &TraitBound,
+) -> Result<TraitBound, LowerError> {
+    match bound {
+        TraitBound::Trait { .. } => Ok(bound.clone()),
+        TraitBound::Fn(function_trait) => Ok(TraitBound::Fn(Box::new(FnTrait::new(
+            function_trait.kind,
+            substitute_self_signature(owner, &function_trait.signature)?,
+        )))),
     }
 }

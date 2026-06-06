@@ -298,6 +298,9 @@ pub enum UnsupportedType {
     /// slots and at the return slot of a callable that returns one,
     /// not as elements embedded in encoded values.
     ClosureInValuePosition,
+    /// A Rust-owned pointer container appeared where only callback-handle
+    /// carrier spellings are supported.
+    OpaqueRustContainer,
     /// A stream item type was not wire-encodable.
     StreamItem,
 }
@@ -317,6 +320,7 @@ impl fmt::Display for UnsupportedType {
             Self::BorrowedCallbackParameter => "borrowed callback parameter",
             Self::OwnedClassReceiver => "owned class receiver",
             Self::ClosureInValuePosition => "closure in a value-shaped position",
+            Self::OpaqueRustContainer => "opaque Rust pointer container",
             Self::StreamItem => "stream item type",
         })
     }

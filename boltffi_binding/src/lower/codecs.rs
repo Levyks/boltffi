@@ -1,8 +1,8 @@
-use boltffi_ast::TypeExpr;
+use boltffi_ast::{TraitBound, TypeExpr};
 
 use crate::{CodecNode, CodecPlan, FieldKey, Op, Primitive, ReadPlan, ValueRef, WritePlan};
 
-use super::{LowerError, enums, ids::DeclarationIds, index::Index, records};
+use super::{LowerError, enums, ids::DeclarationIds, index::Index, records, types};
 
 /// Lowers a source type expression into one [`CodecNode`] in the
 /// codec tree.
@@ -20,9 +20,11 @@ pub(super) fn node(
 ) -> Result<CodecNode, LowerError> {
     Ok(match type_expr {
         TypeExpr::Primitive(primitive) => CodecNode::Primitive(Primitive::from(*primitive)),
-        TypeExpr::String => CodecNode::String,
-        TypeExpr::Bytes => CodecNode::Bytes,
-        TypeExpr::Record(id) => {
+        TypeExpr::String | TypeExpr::Str => CodecNode::String,
+        TypeExpr::Vec(inner) | TypeExpr::Slice(inner) if types::is_byte_primitive(inner) => {
+            CodecNode::Bytes
+        }
+        TypeExpr::Record { id, .. } => {
             let record = idx
                 .record(id)
                 .ok_or_else(|| LowerError::unknown_record(id))?;
@@ -33,7 +35,7 @@ pub(super) fn node(
                 CodecNode::EncodedRecord(id)
             }
         }
-        TypeExpr::Enum(id) => {
+        TypeExpr::Enum { id, .. } => {
             let enumeration = idx
                 .enumeration(id)
                 .ok_or_else(|| LowerError::unknown_enum(id))?;
@@ -45,14 +47,34 @@ pub(super) fn node(
             }
         }
         TypeExpr::Class { id, .. } => CodecNode::ClassHandle(ids.class(id)?),
-        TypeExpr::Trait { id, .. } => CodecNode::CallbackHandle(ids.callback(id)?),
-        TypeExpr::Closure { .. } => {
+        TypeExpr::ImplTrait(TraitBound::Trait { id, .. })
+        | TypeExpr::Dyn(TraitBound::Trait { id, .. }) => {
+            CodecNode::CallbackHandle(ids.callback(id)?)
+        }
+        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
+            TypeExpr::Dyn(TraitBound::Trait { id, .. }) => {
+                CodecNode::CallbackHandle(ids.callback(id)?)
+            }
+            TypeExpr::Dyn(TraitBound::Fn(_)) => {
+                return Err(LowerError::unsupported_type(
+                    super::error::UnsupportedType::ClosureInValuePosition,
+                ));
+            }
+            _ => {
+                return Err(LowerError::unsupported_type(
+                    super::error::UnsupportedType::OpaqueRustContainer,
+                ));
+            }
+        },
+        TypeExpr::FnPtr(_)
+        | TypeExpr::ImplTrait(TraitBound::Fn(_))
+        | TypeExpr::Dyn(TraitBound::Fn(_)) => {
             return Err(LowerError::unsupported_type(
                 super::error::UnsupportedType::ClosureInValuePosition,
             ));
         }
-        TypeExpr::Custom(id) => CodecNode::Custom(ids.custom(id)?),
-        TypeExpr::Vec(element) => {
+        TypeExpr::Custom { id, .. } => CodecNode::Custom(ids.custom(id)?),
+        TypeExpr::Vec(element) | TypeExpr::Slice(element) => {
             let element = node(idx, ids, element, ValueRef::self_value())?;
             CodecNode::Sequence {
                 len: Op::sequence_len(value),
@@ -75,7 +97,9 @@ pub(super) fn node(
             ok: Box::new(node(idx, ids, ok, ValueRef::self_value())?),
             err: Box::new(node(idx, ids, err, ValueRef::self_value())?),
         },
-        TypeExpr::Map { key, value: item } => CodecNode::Map {
+        TypeExpr::Map {
+            key, value: item, ..
+        } => CodecNode::Map {
             key: Box::new(node(idx, ids, key, ValueRef::self_value())?),
             value: Box::new(node(idx, ids, item, ValueRef::self_value())?),
         },

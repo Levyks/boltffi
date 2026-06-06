@@ -117,7 +117,10 @@ fn lower_data<S: SurfaceLower>(
         codecs::plan(
             idx,
             ids,
-            &TypeExpr::Enum(enumeration.id.clone()),
+            &TypeExpr::enumeration(
+                enumeration.id.clone(),
+                boltffi_ast::Path::single(enumeration.name.spelling()),
+            ),
             ValueRef::self_value(),
         )?,
     ))
@@ -162,8 +165,8 @@ fn lower_payload(
             .map(|field| {
                 let key = FieldKey::from(field);
                 let value = ValueRef::self_value().field(key.clone());
-                let ty = super::types::lower(ids, field.rust_type.expr())?;
-                let codec = codecs::plan(idx, ids, field.rust_type.expr(), value)?;
+                let ty = super::types::lower(ids, &field.type_expr)?;
+                let codec = codecs::plan(idx, ids, &field.type_expr, value)?;
                 Ok(EncodedFieldDecl::new(
                     key,
                     ty,
@@ -204,11 +207,11 @@ fn discriminants(variants: &[SourceVariant]) -> Result<Vec<(&SourceVariant, i128
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName as SourceName, ClosureKind, ClosureTrait, ClosureType,
-        DefaultValue as SourceDefaultValue, DeprecationInfo as SourceDeprecationInfo,
-        DocComment as SourceDocComment, EnumDef, ExecutionKind, FieldDef, IntegerLiteral,
-        MethodDef, MethodId as SourceMethodId, PackageInfo as SourcePackage, ParameterDef,
-        ParameterPassing, Primitive, Receiver, RecordDef, ReprAttr, ReprItem, ReturnDef, Source,
+        CanonicalName as SourceName, DefaultValue as SourceDefaultValue,
+        DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, EnumDef,
+        ExecutionKind, FieldDef, FnSig, FnTrait, FnTraitKind, IntegerLiteral, MethodDef,
+        MethodId as SourceMethodId, PackageInfo as SourcePackage, ParameterDef, ParameterPassing,
+        Path as SourcePath, Primitive, Receiver, RecordDef, ReprAttr, ReprItem, ReturnDef, Source,
         SourceContract, TypeExpr, VariantDef, VariantPayload,
     };
 
@@ -341,11 +344,18 @@ mod tests {
     }
 
     fn closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
-        TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            parameters,
-            returns,
+        TypeExpr::impl_fn(FnTrait::new(
+            FnTraitKind::Fn,
+            FnSig::new(parameters, returns),
         ))
+    }
+
+    fn record_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::record(id.into(), SourcePath::single(path))
+    }
+
+    fn enum_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::enumeration(id.into(), SourcePath::single(path))
     }
 
     fn enum_with_methods(mut enumeration: EnumDef, methods: Vec<MethodDef>) -> EnumDef {
@@ -1262,7 +1272,7 @@ mod tests {
                 "to_point",
                 Receiver::Shared,
                 Vec::new(),
-                ReturnDef::value(TypeExpr::Record("demo::Point".into())),
+                ReturnDef::value(record_type("demo::Point", "Point")),
             )],
         );
 
@@ -1285,7 +1295,7 @@ mod tests {
                 "heading_for",
                 Receiver::Shared,
                 Vec::new(),
-                ReturnDef::value(TypeExpr::Enum("demo::Direction".into())),
+                ReturnDef::value(enum_type("demo::Direction", "Direction")),
             )],
         );
 

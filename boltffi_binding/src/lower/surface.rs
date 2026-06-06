@@ -17,7 +17,7 @@
 //! [`Native`]: crate::Native
 //! [`Wasm32`]: crate::Wasm32
 
-use boltffi_ast::ClosureType;
+use boltffi_ast::FnSig;
 
 use crate::{Native, Surface, Wasm32, native, wasm32};
 
@@ -92,14 +92,14 @@ pub trait SurfaceLower:
     /// Wire shape used when a foreign-provided closure enters Rust.
     #[doc(hidden)]
     fn incoming_closure_registration(
-        closure: &ClosureType,
+        closure: &FnSig,
     ) -> Result<Self::IncomingClosureRegistration, LowerError>;
 
     /// Wire shape used when a Rust-provided closure leaves Rust.
     #[doc(hidden)]
     fn outgoing_closure_registration(
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
+        closure: &FnSig,
     ) -> Result<Self::OutgoingClosureRegistration, LowerError>;
 }
 
@@ -125,14 +125,14 @@ impl SurfaceLower for Native {
     }
 
     fn incoming_closure_registration(
-        _closure: &ClosureType,
+        _closure: &FnSig,
     ) -> Result<Self::IncomingClosureRegistration, LowerError> {
         Ok(native::ClosureRegistration::InvokeContextRelease)
     }
 
     fn outgoing_closure_registration(
         _allocator: &mut SymbolAllocator,
-        _closure: &ClosureType,
+        _closure: &FnSig,
     ) -> Result<Self::OutgoingClosureRegistration, LowerError> {
         Ok(native::ClosureRegistration::InvokeContextRelease)
     }
@@ -160,14 +160,14 @@ impl SurfaceLower for Wasm32 {
     }
 
     fn incoming_closure_registration(
-        closure: &ClosureType,
+        closure: &FnSig,
     ) -> Result<Self::IncomingClosureRegistration, LowerError> {
         wasm_closure::incoming_registration(closure)
     }
 
     fn outgoing_closure_registration(
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
+        closure: &FnSig,
     ) -> Result<Self::OutgoingClosureRegistration, LowerError> {
         wasm_closure::outgoing_registration(allocator, closure)
     }

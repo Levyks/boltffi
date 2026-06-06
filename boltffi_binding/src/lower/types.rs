@@ -1,4 +1,4 @@
-use boltffi_ast::TypeExpr;
+use boltffi_ast::{TraitBound, TypeExpr};
 
 use crate::{Primitive, TypeRef};
 
@@ -16,13 +16,29 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
     Ok(match type_expr {
         TypeExpr::Primitive(primitive) => TypeRef::Primitive(Primitive::from(*primitive)),
         TypeExpr::String => TypeRef::String,
-        TypeExpr::Bytes => TypeRef::Bytes,
-        TypeExpr::Record(id) => TypeRef::Record(ids.record(id)?),
-        TypeExpr::Enum(id) => TypeRef::Enum(ids.enumeration(id)?),
+        TypeExpr::Str => TypeRef::String,
+        TypeExpr::Vec(inner) | TypeExpr::Slice(inner) if is_byte_primitive(inner) => TypeRef::Bytes,
+        TypeExpr::Record { id, .. } => TypeRef::Record(ids.record(id)?),
+        TypeExpr::Enum { id, .. } => TypeRef::Enum(ids.enumeration(id)?),
         TypeExpr::Class { id, .. } => TypeRef::Class(ids.class(id)?),
-        TypeExpr::Trait { id, .. } => TypeRef::Callback(ids.callback(id)?),
-        TypeExpr::Custom(id) => TypeRef::Custom(ids.custom(id)?),
+        TypeExpr::ImplTrait(TraitBound::Trait { id, .. })
+        | TypeExpr::Dyn(TraitBound::Trait { id, .. }) => TypeRef::Callback(ids.callback(id)?),
+        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
+            TypeExpr::Dyn(TraitBound::Trait { id, .. }) => TypeRef::Callback(ids.callback(id)?),
+            TypeExpr::Dyn(TraitBound::Fn(_)) => {
+                return Err(LowerError::unsupported_type(
+                    UnsupportedType::ClosureInValuePosition,
+                ));
+            }
+            _ => {
+                return Err(LowerError::unsupported_type(
+                    UnsupportedType::OpaqueRustContainer,
+                ));
+            }
+        },
+        TypeExpr::Custom { id, .. } => TypeRef::Custom(ids.custom(id)?),
         TypeExpr::Vec(element) => TypeRef::Sequence(Box::new(lower(ids, element)?)),
+        TypeExpr::Slice(element) => TypeRef::Sequence(Box::new(lower(ids, element)?)),
         TypeExpr::Option(inner) => TypeRef::Optional(Box::new(lower(ids, inner)?)),
         TypeExpr::Tuple(elements) => TypeRef::Tuple(
             elements
@@ -34,11 +50,13 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
             ok: Box::new(lower(ids, ok)?),
             err: Box::new(lower(ids, err)?),
         },
-        TypeExpr::Map { key, value } => TypeRef::Map {
+        TypeExpr::Map { key, value, .. } => TypeRef::Map {
             key: Box::new(lower(ids, key)?),
             value: Box::new(lower(ids, value)?),
         },
-        TypeExpr::Closure { .. } => {
+        TypeExpr::FnPtr(_)
+        | TypeExpr::ImplTrait(TraitBound::Fn(_))
+        | TypeExpr::Dyn(TraitBound::Fn(_)) => {
             return Err(LowerError::unsupported_type(
                 UnsupportedType::ClosureInValuePosition,
             ));
@@ -55,4 +73,8 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
             return Err(LowerError::unsupported_type(UnsupportedType::TypeParameter));
         }
     })
+}
+
+pub(super) fn is_byte_primitive(type_expr: &TypeExpr) -> bool {
+    matches!(type_expr, TypeExpr::Primitive(boltffi_ast::Primitive::U8))
 }
