@@ -54,9 +54,8 @@ fn parameters(sig: &syn::Signature, scanner: &Scanner<'_>) -> Result<Vec<Paramet
 mod tests {
     use super::*;
     use boltffi_ast::{
-        CallableForm, CanonicalName, ClosureKind, ClosureTrait, ExecutionKind, HandlePresence,
-        NamePart, ParameterPassing, Primitive, RecordId, ReturnDef, RustType, Source, TypeExpr,
-        Visibility,
+        CallableForm, CanonicalName, ExecutionKind, FnTraitKind, NamePart, ParameterPassing, Path,
+        Primitive, RecordId, ReturnDef, Source, TraitBound, TypeExpr, Visibility,
     };
 
     fn parse(source: &str) -> syn::ItemFn {
@@ -75,9 +74,9 @@ mod tests {
         CanonicalName::new(parts.iter().copied().map(NamePart::new).collect())
     }
 
-    fn value_return(return_def: &ReturnDef) -> &RustType {
+    fn value_return(return_def: &ReturnDef) -> &TypeExpr {
         match return_def {
-            ReturnDef::Value(rust_type) => rust_type,
+            ReturnDef::Value(type_expr) => type_expr,
             ReturnDef::Void => panic!("expected value return"),
         }
     }
@@ -125,8 +124,8 @@ mod tests {
         let function = scan("pub fn id(value: (i32)) -> (i32) { value }").expect("scan");
 
         assert_eq!(
-            function.parameters[0].rust_type.expr(),
-            &TypeExpr::Primitive(Primitive::I32)
+            function.parameters[0].type_expr,
+            TypeExpr::Primitive(Primitive::I32)
         );
         assert_eq!(
             function.returns,
@@ -150,23 +149,17 @@ mod tests {
             scan("pub fn make_handler() -> impl Send + FnMut(u32, bool) -> i64 { todo!() }")
                 .expect("scan");
 
-        let ReturnDef::Value(rust_type) = function.returns else {
-            panic!("expected closure return");
-        };
-        let TypeExpr::Closure {
-            signature,
-            presence,
-        } = rust_type.into_expr()
+        let ReturnDef::Value(TypeExpr::ImplTrait(TraitBound::Fn(function_trait))) =
+            function.returns
         else {
             panic!("expected closure return");
         };
-        assert_eq!(presence, HandlePresence::Required);
-        assert_eq!(signature.kind, ClosureKind::ImplTrait(ClosureTrait::FnMut));
+        assert_eq!(function_trait.kind, FnTraitKind::FnMut);
         assert_eq!(
-            signature
+            function_trait
+                .signature
                 .parameters
                 .iter()
-                .map(|rust_type| rust_type.expr())
                 .collect::<Vec<_>>(),
             vec![
                 &TypeExpr::Primitive(Primitive::U32),
@@ -174,7 +167,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            signature.returns,
+            function_trait.signature.returns,
             ReturnDef::value(TypeExpr::Primitive(Primitive::I64))
         );
     }
@@ -183,23 +176,22 @@ mod tests {
     fn closure_return_without_arrow_records_void_invoke_return() {
         let function = scan("pub fn make_handler() -> impl FnOnce(u32) { todo!() }").expect("scan");
 
-        let ReturnDef::Value(rust_type) = function.returns else {
-            panic!("expected closure return");
-        };
-        let TypeExpr::Closure { signature, .. } = rust_type.into_expr() else {
+        let ReturnDef::Value(TypeExpr::ImplTrait(TraitBound::Fn(function_trait))) =
+            function.returns
+        else {
             panic!("expected closure return");
         };
 
-        assert_eq!(signature.kind, ClosureKind::ImplTrait(ClosureTrait::FnOnce));
+        assert_eq!(function_trait.kind, FnTraitKind::FnOnce);
         assert_eq!(
-            signature
+            function_trait
+                .signature
                 .parameters
                 .iter()
-                .map(|rust_type| rust_type.expr())
                 .collect::<Vec<_>>(),
             vec![&TypeExpr::Primitive(Primitive::U32)]
         );
-        assert_eq!(signature.returns, ReturnDef::Void);
+        assert_eq!(function_trait.signature.returns, ReturnDef::Void);
     }
 
     #[test]
@@ -224,14 +216,13 @@ mod tests {
         .expect("scan");
 
         assert_eq!(
-            function.parameters[0].rust_type.expr(),
-            &TypeExpr::Record(RecordId::new("demo::Point"))
+            function.parameters[0].type_expr,
+            TypeExpr::record(RecordId::new("demo::Point"), Path::single("Point"))
         );
         assert_eq!(
-            value_return(&function.returns).expr(),
-            &TypeExpr::Record(RecordId::new("demo::Point"))
+            value_return(&function.returns),
+            &TypeExpr::record(RecordId::new("demo::Point"), Path::single("Point"))
         );
-        assert_eq!(value_return(&function.returns).spelling(), "Point");
     }
 
     #[test]

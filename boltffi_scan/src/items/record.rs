@@ -54,7 +54,7 @@ fn record_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, S
         .ident
         .as_ref()
         .ok_or_else(|| unsupported::feature(UnsupportedFeature::TupleStruct))?;
-    let mut scanned = FieldDef::new(name::source(ident), scanner.rust_type(&field.ty)?);
+    let mut scanned = FieldDef::new(name::source(ident), scanner.scan(&field.ty)?);
     let attrs = Attributes::new(&field.attrs, scanner);
     scanned.source = attributes::source(&field.vis, scanner.scope(), field.span());
     scanned.source_span = scanned.source.span.clone();
@@ -68,7 +68,7 @@ fn record_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, S
 mod tests {
     use super::*;
     use boltffi_ast::{
-        CanonicalName, FieldDef, NamePart, Primitive, ReprItem, Source, SourceName, TypeExpr,
+        CanonicalName, FieldDef, NamePart, Path, Primitive, ReprItem, Source, SourceName, TypeExpr,
         Visibility,
     };
 
@@ -158,10 +158,10 @@ mod tests {
         let record =
             scan("pub struct Person { pub name: String, pub scores: Vec<i32> }").expect("scan");
 
-        assert_eq!(record.fields[0].rust_type.expr(), &TypeExpr::String);
+        assert_eq!(record.fields[0].type_expr, TypeExpr::String);
         assert_eq!(
-            record.fields[1].rust_type.expr(),
-            &TypeExpr::vec(TypeExpr::Primitive(Primitive::I32))
+            record.fields[1].type_expr,
+            TypeExpr::vec(TypeExpr::Primitive(Primitive::I32))
         );
     }
 
@@ -177,8 +177,8 @@ mod tests {
         .expect("scan");
 
         assert_eq!(
-            record.fields[0].rust_type.expr(),
-            &TypeExpr::Record(RecordId::new("demo::Point"))
+            record.fields[0].type_expr,
+            TypeExpr::record(RecordId::new("demo::Point"), Path::single("Point"))
         );
     }
 

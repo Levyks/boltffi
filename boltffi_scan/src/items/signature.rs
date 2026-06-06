@@ -1,12 +1,12 @@
 use boltffi_ast::{
-    ExecutionKind, MethodDef, MethodId, ParameterDef, ParameterPassing, Receiver, RustType, Source,
+    ExecutionKind, MethodDef, MethodId, ParameterDef, ParameterPassing, Receiver, Source,
     SourceName,
 };
 use syn::spanned::Spanned;
 
 use crate::attributes::Attributes;
 use crate::type_expr::Scanner;
-use crate::{ScanError, attributes, name, spelling, unsupported};
+use crate::{ScanError, attributes, name, unsupported};
 
 pub(super) fn validate(signature: &syn::Signature, item: String) -> Result<(), ScanError> {
     unsupported::generics(&signature.generics, &item)?;
@@ -54,8 +54,7 @@ pub(super) fn parameter(
 ) -> Result<ParameterDef, ScanError> {
     let binding_name = parameter_name(&typed.pat)?;
     let (source_type, passing) = parameter_type(&typed.ty);
-    let rust_type = RustType::new(spelling::ty(&typed.ty), scanner.scan(source_type)?);
-    let mut parameter = ParameterDef::value(binding_name, rust_type);
+    let mut parameter = ParameterDef::value(binding_name, scanner.scan(source_type)?);
     let metadata = Attributes::new(&typed.attrs, scanner);
     parameter.passing = passing;
     parameter.source = attributes::public_source(scanner.scope(), typed.span());
@@ -131,11 +130,7 @@ mod tests {
     fn records_value_parameter_passing() {
         let parameter = parameter("value: i32");
 
-        assert_eq!(
-            parameter.rust_type.expr(),
-            &TypeExpr::Primitive(Primitive::I32)
-        );
-        assert_eq!(parameter.rust_type.spelling(), "i32");
+        assert_eq!(parameter.type_expr, TypeExpr::Primitive(Primitive::I32));
         assert_eq!(parameter.passing, ParameterPassing::Value);
     }
 
@@ -143,11 +138,7 @@ mod tests {
     fn records_shared_reference_parameter_passing() {
         let parameter = parameter("value: &i32");
 
-        assert_eq!(
-            parameter.rust_type.expr(),
-            &TypeExpr::Primitive(Primitive::I32)
-        );
-        assert_eq!(parameter.rust_type.spelling(), "&i32");
+        assert_eq!(parameter.type_expr, TypeExpr::Primitive(Primitive::I32));
         assert_eq!(parameter.passing, ParameterPassing::Ref);
     }
 
@@ -155,12 +146,29 @@ mod tests {
     fn records_mutable_reference_parameter_passing() {
         let parameter = parameter("value: &mut i32");
 
-        assert_eq!(
-            parameter.rust_type.expr(),
-            &TypeExpr::Primitive(Primitive::I32)
-        );
-        assert_eq!(parameter.rust_type.spelling(), "&mut i32");
+        assert_eq!(parameter.type_expr, TypeExpr::Primitive(Primitive::I32));
         assert_eq!(parameter.passing, ParameterPassing::RefMut);
+    }
+
+    #[test]
+    fn preserves_container_shape_after_reference_passing_is_recorded() {
+        let parameter = parameter("value: &Vec<u8>");
+
+        assert_eq!(
+            parameter.type_expr,
+            TypeExpr::vec(TypeExpr::Primitive(Primitive::U8))
+        );
+        assert_eq!(parameter.passing, ParameterPassing::Ref);
+    }
+
+    #[test]
+    fn records_result_parameters_as_type_expr() {
+        let parameter = parameter("value: Result<u32, String>");
+
+        assert_eq!(
+            parameter.type_expr,
+            TypeExpr::result(TypeExpr::Primitive(Primitive::U32), TypeExpr::String)
+        );
     }
 
     #[test]

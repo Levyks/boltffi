@@ -78,7 +78,7 @@ fn named_field(field: &syn::Field, scanner: &Scanner<'_>) -> Result<FieldDef, Sc
         .ident
         .as_ref()
         .expect("named variant field carries an identifier");
-    let mut field_def = FieldDef::new(name::source(ident), scanner.rust_type(&field.ty)?);
+    let mut field_def = FieldDef::new(name::source(ident), scanner.scan(&field.ty)?);
     let attrs = Attributes::new(&field.attrs, scanner);
     field_def.source = attributes::source(&field.vis, scanner.scope(), field.span());
     field_def.source_span = field_def.source.span.clone();
@@ -117,7 +117,7 @@ fn discriminant_value(expr: &syn::Expr) -> Result<i128, ScanError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boltffi_ast::{CanonicalName, NamePart, Primitive, RecordId, ReprItem, TypeExpr};
+    use boltffi_ast::{CanonicalName, NamePart, Path, Primitive, RecordId, ReprItem, TypeExpr};
 
     fn parse(source: &str) -> syn::ItemEnum {
         syn::parse_str(source).expect("valid enum source")
@@ -165,15 +165,15 @@ mod tests {
 
         assert_eq!(
             enumeration.variants[0].payload,
-            VariantPayload::Tuple(vec![TypeExpr::Record(RecordId::new("demo::Point"))])
+            VariantPayload::Tuple(vec![TypeExpr::record(
+                RecordId::new("demo::Point"),
+                Path::single("Point")
+            )])
         );
         match &enumeration.variants[1].payload {
             VariantPayload::Struct(fields) => {
                 assert_eq!(fields[0].name.canonical(), &name(&["width"]));
-                assert_eq!(
-                    fields[0].rust_type.expr(),
-                    &TypeExpr::Primitive(Primitive::F64)
-                );
+                assert_eq!(fields[0].type_expr, TypeExpr::Primitive(Primitive::F64));
             }
             other => panic!("expected struct payload, got {other:?}"),
         }

@@ -154,8 +154,8 @@ mod tests {
         assert_eq!(callback.methods[0].receiver, Receiver::Shared);
         assert_eq!(callback.methods[0].execution, ExecutionKind::Sync);
         assert_eq!(
-            callback.methods[0].parameters[0].rust_type.expr(),
-            &TypeExpr::Primitive(Primitive::I32)
+            callback.methods[0].parameters[0].type_expr,
+            TypeExpr::Primitive(Primitive::I32)
         );
         assert_eq!(
             callback.methods[0].returns,

@@ -1,4 +1,4 @@
-use boltffi_ast::{ConstantDef, ConstantId, RustType, TypeExpr};
+use boltffi_ast::{ConstantDef, ConstantId, TypeExpr};
 use syn::spanned::Spanned;
 
 use crate::attributes::Attributes;
@@ -6,7 +6,7 @@ use crate::const_expr;
 use crate::declared_types::DeclaredTypes;
 use crate::marked::Marked;
 use crate::type_expr;
-use crate::{ModuleScope, ScanError, attributes, name, spelling};
+use crate::{ModuleScope, ScanError, attributes, name};
 
 pub fn scan(
     marked: &Marked<'_, syn::ItemConst>,
@@ -42,51 +42,13 @@ fn build(
     Ok(constant)
 }
 
-fn constant_type(types: &type_expr::Scanner<'_>, ty: &syn::Type) -> Result<RustType, ScanError> {
+fn constant_type(types: &type_expr::Scanner<'_>, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
     match type_expr::unwrapped(ty) {
-        syn::Type::Reference(reference)
-            if reference.mutability.is_none() && is_str(&reference.elem) =>
-        {
-            Ok(RustType::new(spelling::ty(ty), TypeExpr::String))
+        syn::Type::Reference(reference) if reference.mutability.is_none() => {
+            types.scan(&reference.elem)
         }
-        syn::Type::Reference(reference)
-            if reference.mutability.is_none() && is_bytes(&reference.elem) =>
-        {
-            Ok(RustType::new(spelling::ty(ty), TypeExpr::Bytes))
-        }
-        _ => types.rust_type(ty),
+        _ => types.scan(ty),
     }
-}
-
-fn is_str(ty: &syn::Type) -> bool {
-    matches!(
-        type_expr::unwrapped(ty),
-        syn::Type::Path(type_path)
-            if type_path.qself.is_none()
-                && type_path.path.leading_colon.is_none()
-                && type_path.path.segments.len() == 1
-                && type_path.path.segments[0].ident == "str"
-                && matches!(type_path.path.segments[0].arguments, syn::PathArguments::None)
-    )
-}
-
-fn is_bytes(ty: &syn::Type) -> bool {
-    matches!(
-        type_expr::unwrapped(ty),
-        syn::Type::Slice(slice) if is_u8(&slice.elem)
-    )
-}
-
-fn is_u8(ty: &syn::Type) -> bool {
-    matches!(
-        type_expr::unwrapped(ty),
-        syn::Type::Path(type_path)
-            if type_path.qself.is_none()
-                && type_path.path.leading_colon.is_none()
-                && type_path.path.segments.len() == 1
-                && type_path.path.segments[0].ident == "u8"
-                && matches!(type_path.path.segments[0].arguments, syn::PathArguments::None)
-    )
 }
 
 #[cfg(test)]
@@ -130,7 +92,7 @@ mod tests {
     #[test]
     fn scans_string_float_bytes_array_tuple_and_raw_values() {
         let borrowed_string = scan("pub const NAME: &str = \"bolt\";").expect("scan");
-        assert_eq!(borrowed_string.rust_type.expr(), &TypeExpr::String);
+        assert_eq!(borrowed_string.type_expr, TypeExpr::Str);
         assert_eq!(
             borrowed_string.value,
             ConstExpr::Literal(Literal::String("bolt".to_owned()))
@@ -138,9 +100,8 @@ mod tests {
         assert_eq!(
             scan("pub const STATIC_NAME: &'static str = \"bolt\";")
                 .expect("scan")
-                .rust_type
-                .expr(),
-            &TypeExpr::String
+                .type_expr,
+            TypeExpr::Str
         );
         assert_eq!(
             scan("pub const RATIO: f64 = -1.5f64;").expect("scan").value,
@@ -153,7 +114,10 @@ mod tests {
             ConstExpr::Literal(Literal::Bytes(b"ffi".to_vec()))
         );
         let bytes = scan("pub const BYTES: &'static [u8] = b\"ffi\";").expect("scan");
-        assert_eq!(bytes.rust_type.expr(), &TypeExpr::Bytes);
+        assert_eq!(
+            bytes.type_expr,
+            TypeExpr::slice(TypeExpr::Primitive(Primitive::U8))
+        );
         assert_eq!(
             bytes.value,
             ConstExpr::Literal(Literal::Bytes(b"ffi".to_vec()))
@@ -194,8 +158,8 @@ mod tests {
         .expect("scan");
 
         assert_eq!(
-            constant.rust_type.expr(),
-            &TypeExpr::Enum(EnumId::new("demo::Mode"))
+            constant.type_expr,
+            TypeExpr::enumeration(EnumId::new("demo::Mode"), Path::single("Mode"))
         );
         assert_eq!(
             constant.value,
@@ -218,8 +182,8 @@ mod tests {
         .expect("scan accessor-backed enum constant");
 
         assert_eq!(
-            accessor.rust_type.expr(),
-            &TypeExpr::Enum(EnumId::new("demo::Shape"))
+            accessor.type_expr,
+            TypeExpr::enumeration(EnumId::new("demo::Shape"), Path::single("Shape"))
         );
         assert_eq!(
             accessor.value,
