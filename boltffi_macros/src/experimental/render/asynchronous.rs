@@ -9,7 +9,9 @@ use syn::{FnArg, ItemFn, PatType, ReturnType, Type};
 use crate::experimental::{
     error::Error,
     render::{
-        self, Rule as RenderRule, local,
+        self, Rule as RenderRule,
+        callable::signature,
+        local,
         returns::{direct_vec, encoded, fallible, handle, scalar_option},
     },
     target::Target,
@@ -19,12 +21,21 @@ pub struct Rule;
 
 pub struct Input<'binding, 'syntax, S: Target> {
     function: &'binding FunctionDecl<S>,
+    source: signature::Callable<'binding>,
     syntax: &'syntax ItemFn,
 }
 
 impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
-    pub fn new(function: &'binding FunctionDecl<S>, syntax: &'syntax ItemFn) -> Self {
-        Self { function, syntax }
+    pub fn new(
+        function: &'binding FunctionDecl<S>,
+        source: signature::Callable<'binding>,
+        syntax: &'syntax ItemFn,
+    ) -> Self {
+        Self {
+            function,
+            source,
+            syntax,
+        }
     }
 }
 
@@ -66,13 +77,15 @@ impl<'binding, 'syntax> NativeAsync<'binding, 'syntax> {
             return Err(Error::UnsupportedExpansion("native async protocol"));
         };
 
-        AsyncExports::new(self.input.function, self.input.syntax)?.tokens(NativeProtocol {
-            poll,
-            complete,
-            cancel,
-            free,
-            panic_message,
-        })
+        AsyncExports::new(self.input.function, self.input.source, self.input.syntax)?.tokens(
+            NativeProtocol {
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            },
+        )
     }
 }
 
@@ -98,18 +111,21 @@ impl<'binding, 'syntax> WasmAsync<'binding, 'syntax> {
             return Err(Error::UnsupportedExpansion("wasm async protocol"));
         };
 
-        AsyncExports::new(self.input.function, self.input.syntax)?.tokens(WasmProtocol {
-            poll_sync,
-            complete,
-            cancel,
-            free,
-            panic_message,
-        })
+        AsyncExports::new(self.input.function, self.input.source, self.input.syntax)?.tokens(
+            WasmProtocol {
+                poll_sync,
+                complete,
+                cancel,
+                free,
+                panic_message,
+            },
+        )
     }
 }
 
 struct AsyncExports<'binding, 'syntax, S: Target> {
     function: &'binding FunctionDecl<S>,
+    source: signature::Callable<'binding>,
     syntax: &'syntax ItemFn,
     rust_return_type: Type,
     complete: Complete,
@@ -118,7 +134,7 @@ struct AsyncExports<'binding, 'syntax, S: Target> {
 impl<'binding, 'syntax, S> AsyncExports<'binding, 'syntax, S>
 where
     S: Target,
-    encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+    for<'plan> encoded::Rule: RenderRule<S, encoded::Input<'plan, S>, Output = encoded::Tokens>,
     encoded::Rule: RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
     direct_vec::Rule: RenderRule<S, direct_vec::Input, Output = render::returns::Tokens>
         + RenderRule<S, direct_vec::Empty, Output = render::returns::Tokens>,
@@ -133,11 +149,16 @@ where
     scalar_option::Rule: RenderRule<S, scalar_option::Input, Output = render::returns::Tokens>
         + RenderRule<S, scalar_option::Empty, Output = render::returns::Tokens>,
 {
-    fn new(function: &'binding FunctionDecl<S>, syntax: &'syntax ItemFn) -> Result<Self, Error> {
+    fn new(
+        function: &'binding FunctionDecl<S>,
+        source: signature::Callable<'binding>,
+        syntax: &'syntax ItemFn,
+    ) -> Result<Self, Error> {
         let rust_return_type = syntax_return_type(syntax);
-        let complete = Complete::new(function, &rust_return_type)?;
+        let complete = Complete::new(function, source.returns(), &rust_return_type)?;
         Ok(Self {
             function,
+            source,
             syntax,
             rust_return_type,
             complete,
@@ -165,7 +186,12 @@ where
         };
         let params = <render::callable::Parameters as RenderRule<S, _>>::apply(
             render::callable::Parameters,
-            render::callable::Input::new(self.function.callable(), &syntax_params, failure),
+            render::callable::Input::new(
+                self.function.callable(),
+                self.source,
+                &syntax_params,
+                failure,
+            ),
         )?;
         let ffi_parameters = params.ffi_parameters();
         let conversions = params.conversions();
@@ -423,9 +449,13 @@ struct PlainComplete {
 }
 
 impl Complete {
-    fn new<S: Target>(function: &FunctionDecl<S>, rust_return_type: &Type) -> Result<Self, Error>
+    fn new<S: Target>(
+        function: &FunctionDecl<S>,
+        source: signature::Return<'_>,
+        rust_return_type: &Type,
+    ) -> Result<Self, Error>
     where
-        encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+        for<'plan> encoded::Rule: RenderRule<S, encoded::Input<'plan, S>, Output = encoded::Tokens>,
         encoded::Rule: RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
         direct_vec::Rule: RenderRule<S, direct_vec::Input, Output = render::returns::Tokens>
             + RenderRule<S, direct_vec::Empty, Output = render::returns::Tokens>,
@@ -444,9 +474,10 @@ impl Complete {
             + RenderRule<S, scalar_option::Empty, Output = render::returns::Tokens>,
     {
         if !matches!(function.callable().error(), ErrorDecl::None(_)) {
-            return FallibleComplete::new(function, rust_return_type).map(Self::Fallible);
+            return FallibleComplete::new(function, source.fallible()?, rust_return_type)
+                .map(Self::Fallible);
         }
-        PlainComplete::new(function, rust_return_type).map(Self::Plain)
+        PlainComplete::new(function, source, rust_return_type).map(Self::Plain)
     }
 
     fn tokens<S: Target>(
@@ -463,9 +494,13 @@ impl Complete {
 }
 
 impl PlainComplete {
-    fn new<S: Target>(function: &FunctionDecl<S>, rust_return_type: &Type) -> Result<Self, Error>
+    fn new<S: Target>(
+        function: &FunctionDecl<S>,
+        source: signature::Return<'_>,
+        rust_return_type: &Type,
+    ) -> Result<Self, Error>
     where
-        encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+        for<'plan> encoded::Rule: RenderRule<S, encoded::Input<'plan, S>, Output = encoded::Tokens>,
         encoded::Rule: RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
         direct_vec::Rule: RenderRule<S, direct_vec::Input, Output = render::returns::Tokens>
             + RenderRule<S, direct_vec::Empty, Output = render::returns::Tokens>,
@@ -514,10 +549,10 @@ impl PlainComplete {
                     }
                 },
             }),
-            ReturnPlan::EncodedViaReturnSlot { shape, .. } => {
+            ReturnPlan::EncodedViaReturnSlot { codec, shape, .. } => {
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
-                    encoded::Input::new(*shape, result.clone()),
+                    encoded::Input::new(codec, *shape, result.clone()),
                 )?;
                 let empty = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
@@ -535,15 +570,10 @@ impl PlainComplete {
                 carrier,
                 presence,
             } => {
+                source.handle(target, *presence)?;
                 let handle = <handle::Value as RenderRule<S, _>>::apply(
                     handle::Value,
-                    handle::ValueInput::new(
-                        target,
-                        *carrier,
-                        *presence,
-                        rust_return_type.clone(),
-                        result.clone(),
-                    ),
+                    handle::ValueInput::new(target, *carrier, *presence, result.clone()),
                 )?;
                 let carrier = <render::handle::Carrier as RenderRule<S, _>>::apply(
                     render::handle::Carrier,
@@ -558,6 +588,7 @@ impl PlainComplete {
                 })
             }
             ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+                source.scalar_option(*primitive)?;
                 let optional = <scalar_option::Rule as RenderRule<S, _>>::apply(
                     scalar_option::Rule,
                     scalar_option::Input::new(*primitive, result.clone()),
@@ -574,6 +605,7 @@ impl PlainComplete {
                 })
             }
             ReturnPlan::DirectVecViaReturnSlot { .. } => {
+                source.direct_vec()?;
                 let sequence = <direct_vec::Rule as RenderRule<S, _>>::apply(
                     direct_vec::Rule,
                     direct_vec::Input::new(result.clone()),
@@ -639,9 +671,13 @@ struct FallibleComplete {
 }
 
 impl FallibleComplete {
-    fn new<S: Target>(function: &FunctionDecl<S>, rust_return_type: &Type) -> Result<Self, Error>
+    fn new<S: Target>(
+        function: &FunctionDecl<S>,
+        source: signature::Fallible<'_>,
+        rust_return_type: &Type,
+    ) -> Result<Self, Error>
     where
-        encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+        for<'plan> encoded::Rule: RenderRule<S, encoded::Input<'plan, S>, Output = encoded::Tokens>,
         encoded::Rule: RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
         fallible::Success: for<'plan> RenderRule<
                 S,
@@ -650,13 +686,14 @@ impl FallibleComplete {
             >,
         for<'plan> handle::Value: RenderRule<S, handle::ValueInput<'plan, S::HandleCarrier>, Output = handle::ValueTokens>,
     {
-        let ErrorDecl::EncodedViaReturnSlot { shape, .. } = function.callable().error() else {
+        let ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } = function.callable().error()
+        else {
             return Err(Error::UnsupportedExpansion("async error channel"));
         };
         let error = local::Wrapper::new(proc_macro2::Span::call_site()).error();
         let encoded_error = <encoded::Rule as RenderRule<S, _>>::apply(
             encoded::Rule,
-            encoded::Input::new(*shape, error.clone()),
+            encoded::Input::new(codec, *shape, error.clone()),
         )?;
         let empty_error =
             <encoded::Rule as RenderRule<S, _>>::apply(encoded::Rule, encoded::Empty::new(*shape))?;
@@ -664,6 +701,7 @@ impl FallibleComplete {
             fallible::Success,
             fallible::SuccessInput::new(
                 function.callable().returns(),
+                source,
                 Some(rust_return_type.clone()),
                 format_ident!("{}", function.symbol().name().as_str()),
             ),

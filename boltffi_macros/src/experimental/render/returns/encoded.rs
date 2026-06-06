@@ -1,19 +1,28 @@
-use boltffi_binding::{Native, Wasm32, native, wasm32};
+use boltffi_binding::{Native, ReadPlan, Wasm32, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::experimental::{error::Error, render::Rule as RenderRule, target::Target};
+use crate::experimental::{
+    error::Error,
+    render::{Rule as RenderRule, codec},
+    target::Target,
+};
 
 pub struct Rule;
 
-pub struct Input<S: Target> {
+pub struct Input<'a, S: Target> {
+    codec: &'a ReadPlan,
     shape: S::BufferShape,
     value: syn::Ident,
 }
 
-impl<S: Target> Input<S> {
-    pub fn new(shape: S::BufferShape, value: syn::Ident) -> Self {
-        Self { shape, value }
+impl<'a, S: Target> Input<'a, S> {
+    pub fn new(codec: &'a ReadPlan, shape: S::BufferShape, value: syn::Ident) -> Self {
+        Self {
+            codec,
+            shape,
+            value,
+        }
     }
 }
 
@@ -47,17 +56,21 @@ impl<S: Target> Empty<S> {
     }
 }
 
-impl RenderRule<Native, Input<Native>> for Rule {
+impl<'a> RenderRule<Native, Input<'a, Native>> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<Native>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'a, Native>) -> Result<Self::Output, Error> {
         let value = input.value;
         match input.shape {
-            native::BufferShape::Buffer => Ok(Tokens {
-                value_type: quote! { ::boltffi::__private::FfiBuf },
-                return_type: quote! { -> ::boltffi::__private::FfiBuf },
-                value: quote! { ::boltffi::__private::FfiBuf::wire_encode(&#value) },
-            }),
+            native::BufferShape::Buffer => {
+                let value =
+                    codec::EncodedValue::new(input.codec.root()).buffer(quote! { #value })?;
+                Ok(Tokens {
+                    value_type: quote! { ::boltffi::__private::FfiBuf },
+                    return_type: quote! { -> ::boltffi::__private::FfiBuf },
+                    value,
+                })
+            }
             native::BufferShape::Slice | native::BufferShape::BufferPointer => {
                 Err(Error::UnsupportedExpansion("native encoded return shape"))
             }
@@ -88,18 +101,22 @@ impl RenderRule<Native, Empty<Native>> for Rule {
     }
 }
 
-impl RenderRule<Wasm32, Input<Wasm32>> for Rule {
+impl<'a> RenderRule<Wasm32, Input<'a, Wasm32>> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<Wasm32>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'a, Wasm32>) -> Result<Self::Output, Error> {
         let value = input.value;
 
         match input.shape {
-            wasm32::BufferShape::Packed => Ok(Tokens {
-                value_type: quote! { u64 },
-                return_type: quote! { -> u64 },
-                value: quote! { ::boltffi::__private::FfiBuf::wire_encode(&#value).into_packed() },
-            }),
+            wasm32::BufferShape::Packed => {
+                let buffer =
+                    codec::EncodedValue::new(input.codec.root()).buffer(quote! { #value })?;
+                Ok(Tokens {
+                    value_type: quote! { u64 },
+                    return_type: quote! { -> u64 },
+                    value: quote! { #buffer.into_packed() },
+                })
+            }
             wasm32::BufferShape::Slice => {
                 Err(Error::UnsupportedExpansion("wasm encoded return shape"))
             }

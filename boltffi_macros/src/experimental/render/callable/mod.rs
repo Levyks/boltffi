@@ -8,11 +8,14 @@ use crate::experimental::{
     target::Target,
 };
 
+pub mod signature;
+
 pub struct Rule;
 pub struct Parameters;
 
 pub struct Input<'binding, 'params, 'syntax, S: Target> {
     callable: &'binding ExportedCallable<S>,
+    source: signature::Callable<'binding>,
     params: &'params [&'syntax PatType],
     failure: TokenStream,
 }
@@ -20,11 +23,13 @@ pub struct Input<'binding, 'params, 'syntax, S: Target> {
 impl<'binding, 'params, 'syntax, S: Target> Input<'binding, 'params, 'syntax, S> {
     pub fn new(
         callable: &'binding ExportedCallable<S>,
+        source: signature::Callable<'binding>,
         params: &'params [&'syntax PatType],
         failure: TokenStream,
     ) -> Self {
         Self {
             callable,
+            source,
             params,
             failure,
         }
@@ -77,15 +82,26 @@ where
                 "function syntax parameter count does not match binding parameter count",
             ));
         }
+        if callable.params().len() != input.source.parameters().len() {
+            return Err(Error::SourceSyntaxMismatch(
+                "source parameter count does not match binding parameter count",
+            ));
+        }
 
         let params = callable
             .params()
             .iter()
+            .zip(input.source.parameters())
             .zip(input.params.iter().copied())
-            .map(|(param, syntax)| {
+            .map(|((param, source), syntax)| {
                 <render::param::Rule as RenderRule<S, _>>::apply(
                     render::param::Rule,
-                    render::param::Input::new(param, syntax, input.failure.clone()),
+                    render::param::Input::new(
+                        param,
+                        signature::Parameter::new(source),
+                        syntax,
+                        input.failure.clone(),
+                    ),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;

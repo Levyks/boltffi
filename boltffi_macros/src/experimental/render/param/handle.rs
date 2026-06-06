@@ -5,7 +5,7 @@ use syn::{GenericArgument, PatType, PathArguments, Type, TypeParamBound};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule, local},
+    render::{self, Rule as RenderRule, callable::signature, local},
 };
 
 use super::Tokens;
@@ -13,11 +13,16 @@ use super::Tokens;
 pub struct Rule;
 struct CallbackHandle;
 
-pub struct Input<'binding, 'syntax, C> {
+pub struct Plan<'binding, C> {
     target: &'binding HandleTarget,
     carrier: C,
     presence: HandlePresence,
     receive: Receive,
+}
+
+pub struct Input<'binding, 'syntax, C> {
+    plan: Plan<'binding, C>,
+    source: signature::Parameter<'binding>,
     syntax: &'syntax PatType,
     ident: &'syntax syn::Ident,
     failure: TokenStream,
@@ -51,21 +56,33 @@ impl<'a> RenderRule<Wasm32, CallbackHandleInput<'a>> for CallbackHandle {
     }
 }
 
-impl<'binding, 'syntax, C> Input<'binding, 'syntax, C> {
+impl<'binding, C> Plan<'binding, C> {
     pub fn new(
         target: &'binding HandleTarget,
         carrier: C,
         presence: HandlePresence,
         receive: Receive,
-        syntax: &'syntax PatType,
-        ident: &'syntax syn::Ident,
-        failure: TokenStream,
     ) -> Self {
         Self {
             target,
             carrier,
             presence,
             receive,
+        }
+    }
+}
+
+impl<'binding, 'syntax, C> Input<'binding, 'syntax, C> {
+    pub fn new(
+        plan: Plan<'binding, C>,
+        source: signature::Parameter<'binding>,
+        syntax: &'syntax PatType,
+        ident: &'syntax syn::Ident,
+        failure: TokenStream,
+    ) -> Self {
+        Self {
+            plan,
+            source,
             syntax,
             ident,
             failure,
@@ -117,7 +134,7 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
         render::handle::Carrier:
             RenderRule<S, render::handle::CarrierInput<C>, Output = render::handle::CarrierTokens>,
     {
-        match self.input.target {
+        match self.input.plan.target {
             HandleTarget::Class(_) => self.class_tokens::<S>(),
             HandleTarget::Callback(_) => self.callback_tokens::<S>(),
             _ => Err(Error::UnsupportedExpansion(
@@ -135,16 +152,19 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
         render::handle::Carrier:
             RenderRule<S, render::handle::CarrierInput<C>, Output = render::handle::CarrierTokens>,
     {
+        self.input
+            .source
+            .handle(self.input.plan.target, self.input.plan.presence)?;
         let carrier = <render::handle::Carrier as RenderRule<S, _>>::apply(
             render::handle::Carrier,
-            render::handle::CarrierInput::new(self.input.carrier),
+            render::handle::CarrierInput::new(self.input.plan.carrier),
         )?;
         let ident = self.input.ident;
         let ffi_type = carrier.ty();
         let rust_type = ClassSyntax::new(
             self.input.syntax.ty.as_ref(),
-            self.input.receive,
-            self.input.presence,
+            self.input.plan.receive,
+            self.input.plan.presence,
         )?;
         let conversion = self.conversion(&rust_type, carrier.zero())?;
 
@@ -167,13 +187,17 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
         render::handle::Carrier:
             RenderRule<S, render::handle::CarrierInput<C>, Output = render::handle::CarrierTokens>,
     {
+        self.input
+            .source
+            .handle(self.input.plan.target, self.input.plan.presence)?;
         let carrier = <render::handle::Carrier as RenderRule<S, _>>::apply(
             render::handle::Carrier,
-            render::handle::CarrierInput::new(self.input.carrier),
+            render::handle::CarrierInput::new(self.input.plan.carrier),
         )?;
         let ident = self.input.ident;
         let ffi_type = carrier.ty();
-        let callback = CallbackSyntax::new(self.input.syntax.ty.as_ref(), self.input.presence)?;
+        let callback =
+            CallbackSyntax::new(self.input.syntax.ty.as_ref(), self.input.plan.presence)?;
         let conversion = callback.conversion::<S>(ident, &self.input.failure)?;
 
         Ok(Tokens {
@@ -195,7 +219,7 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
         let mutable_pointer = rust_type.mutable_pointer(ident);
         let const_pointer = rust_type.const_pointer(ident);
         let failure = &self.input.failure;
-        let null_check = matches!(self.input.presence, HandlePresence::Required).then(|| {
+        let null_check = matches!(self.input.plan.presence, HandlePresence::Required).then(|| {
             quote! {
                 if #ident == #zero {
                     ::boltffi::__private::set_last_error(format!(
@@ -207,7 +231,7 @@ impl<'binding, 'syntax, C> ClassParam<'binding, 'syntax, C> {
             }
         });
 
-        Ok(match (self.input.receive, rust_type) {
+        Ok(match (self.input.plan.receive, rust_type) {
             (Receive::ByValue, ClassSyntax::Required { ty }) => quote! {
                 #null_check
                 let #ident: #ty = unsafe {

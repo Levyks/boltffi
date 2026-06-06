@@ -1,11 +1,11 @@
-use boltffi_binding::{ErrorDecl, OutOfRust, ReturnDecl, ReturnPlan, TypeRef};
+use boltffi_binding::{ErrorDecl, OutOfRust, ReadPlan, ReturnDecl, ReturnPlan, TypeRef};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule, local},
+    render::{self, Rule as RenderRule, callable::signature, local},
     target::Target,
 };
 
@@ -17,12 +17,14 @@ pub struct Success;
 pub struct Input<'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
     error: &'a ErrorDecl<S, OutOfRust>,
+    source: signature::Return<'a>,
     rust_type: Option<Type>,
     invocation: RustInvocation,
 }
 
 pub struct SuccessInput<'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
+    source: signature::Fallible<'a>,
     rust_type: Option<Type>,
     owner: Ident,
     span: Span,
@@ -31,12 +33,14 @@ pub struct SuccessInput<'a, S: Target> {
 impl<'a, S: Target> SuccessInput<'a, S> {
     pub fn new(
         returns: &'a ReturnDecl<S, OutOfRust>,
+        source: signature::Fallible<'a>,
         rust_type: Option<Type>,
         owner: Ident,
     ) -> Self {
         let span = owner.span();
         Self {
             returns,
+            source,
             rust_type,
             owner,
             span,
@@ -48,12 +52,14 @@ impl<'a, S: Target> Input<'a, S> {
     pub fn new(
         returns: &'a ReturnDecl<S, OutOfRust>,
         error: &'a ErrorDecl<S, OutOfRust>,
+        source: signature::Return<'a>,
         rust_type: Option<Type>,
         invocation: RustInvocation,
     ) -> Self {
         Self {
             returns,
             error,
+            source,
             rust_type,
             invocation,
         }
@@ -63,7 +69,7 @@ impl<'a, S: Target> Input<'a, S> {
 impl<'a, S> RenderRule<S, Input<'a, S>> for Rule
 where
     S: Target,
-    encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>
+    encoded::Rule: RenderRule<S, encoded::Input<'a, S>, Output = encoded::Tokens>
         + RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
     Success: RenderRule<S, SuccessInput<'a, S>, Output = SuccessTokens>,
     handle::Value:
@@ -73,10 +79,15 @@ where
 
     fn apply(self, input: Input<'a, S>) -> Result<Self::Output, Error> {
         match input.error {
-            ErrorDecl::EncodedViaReturnSlot { ty, shape, .. } => {
-                EncodedError::new(input.returns, ty, *shape, input.rust_type, input.invocation)
-                    .tokens()
-            }
+            ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } => EncodedError::new(
+                input.returns,
+                codec,
+                *shape,
+                input.source.fallible()?,
+                input.rust_type,
+                input.invocation,
+            )
+            .tokens(),
             ErrorDecl::StatusViaReturnSlot { .. } => {
                 Err(Error::UnsupportedExpansion("status error return"))
             }
@@ -94,8 +105,9 @@ where
 
 struct EncodedError<'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
-    error_ty: &'a TypeRef,
+    error_codec: &'a ReadPlan,
     error_shape: S::BufferShape,
+    source: signature::Fallible<'a>,
     rust_type: Option<Type>,
     invocation: RustInvocation,
 }
@@ -103,15 +115,17 @@ struct EncodedError<'a, S: Target> {
 impl<'a, S: Target> EncodedError<'a, S> {
     fn new(
         returns: &'a ReturnDecl<S, OutOfRust>,
-        error_ty: &'a TypeRef,
+        error_codec: &'a ReadPlan,
         error_shape: S::BufferShape,
+        source: signature::Fallible<'a>,
         rust_type: Option<Type>,
         invocation: RustInvocation,
     ) -> Self {
         Self {
             returns,
-            error_ty,
+            error_codec,
             error_shape,
+            source,
             rust_type,
             invocation,
         }
@@ -119,7 +133,7 @@ impl<'a, S: Target> EncodedError<'a, S> {
 
     fn tokens(self) -> Result<Tokens, Error>
     where
-        encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>
+        encoded::Rule: RenderRule<S, encoded::Input<'a, S>, Output = encoded::Tokens>
             + RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
         Success: RenderRule<S, SuccessInput<'a, S>, Output = SuccessTokens>,
         handle::Value:
@@ -129,7 +143,7 @@ impl<'a, S: Target> EncodedError<'a, S> {
         let error_ident = locals.error();
         let error = <encoded::Rule as RenderRule<S, _>>::apply(
             encoded::Rule,
-            encoded::Input::new(self.error_shape, error_ident.clone()),
+            encoded::Input::new(self.error_codec, self.error_shape, error_ident.clone()),
         )?;
         let empty_error = <encoded::Rule as RenderRule<S, _>>::apply(
             encoded::Rule,
@@ -142,6 +156,7 @@ impl<'a, S: Target> EncodedError<'a, S> {
             Success,
             SuccessInput::new(
                 self.returns,
+                self.source,
                 self.rust_type,
                 self.invocation.function.clone(),
             ),
@@ -190,7 +205,7 @@ impl<'a, S: Target> EncodedError<'a, S> {
 impl<'a, S> RenderRule<S, SuccessInput<'a, S>> for Success
 where
     S: Target,
-    encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+    encoded::Rule: RenderRule<S, encoded::Input<'a, S>, Output = encoded::Tokens>,
     closure::Write: RenderRule<S, closure::WriteInput<'a, S>, Output = closure::WriteTokens>,
     handle::Value:
         RenderRule<S, handle::ValueInput<'a, S::HandleCarrier>, Output = handle::ValueTokens>,
@@ -198,7 +213,7 @@ where
     type Output = SuccessTokens;
 
     fn apply(self, input: SuccessInput<'a, S>) -> Result<Self::Output, Error> {
-        let result_type = input.rust_type.as_ref().and_then(ResultType::parse).ok_or(
+        let result_type = input.rust_type.as_ref().and_then(RustResult::parse).ok_or(
             Error::SourceSyntaxMismatch("fallible binding return requires a source Result type"),
         )?;
         let locals = local::Wrapper::new(input.span);
@@ -250,11 +265,11 @@ where
                     },
                 })
             }
-            ReturnPlan::EncodedViaOutPointer { shape, .. } => {
+            ReturnPlan::EncodedViaOutPointer { codec, shape, .. } => {
                 let out = locals.return_out();
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
-                    encoded::Input::new(*shape, success_ident.clone()),
+                    encoded::Input::new(codec, *shape, success_ident.clone()),
                 )?;
                 let out_ty = encoded.return_type_without_arrow();
                 let encoded_value = encoded.value();
@@ -276,17 +291,11 @@ where
                 carrier,
                 presence,
             } => {
+                input.source.ok_handle(target, *presence)?;
                 let out = locals.return_out();
-                let ok = result_type.ok();
                 let handle = <handle::Value as RenderRule<S, _>>::apply(
                     handle::Value,
-                    handle::ValueInput::new(
-                        target,
-                        *carrier,
-                        *presence,
-                        ok.clone(),
-                        success_ident.clone(),
-                    ),
+                    handle::ValueInput::new(target, *carrier, *presence, success_ident.clone()),
                 )?;
                 let out_ty = handle.ty();
                 let handle_value = handle.value();
@@ -305,9 +314,16 @@ where
             }
             ReturnPlan::ClosureViaOutPointer(closure) => {
                 let ok = result_type.ok().clone();
+                let source_closure = input.source.ok_closure(closure.presence())?;
                 let writer = <closure::Write as RenderRule<S, _>>::apply(
                     closure::Write,
-                    closure::WriteInput::success(closure, ok, success_ident.clone(), input.owner),
+                    closure::WriteInput::success(
+                        closure,
+                        source_closure,
+                        ok,
+                        success_ident.clone(),
+                        input.owner,
+                    ),
                 )?;
                 let (items, ffi_parameters, body) = writer.into_parts();
                 Ok(SuccessTokens {
@@ -335,11 +351,11 @@ impl SuccessTokens {
     }
 }
 
-struct ResultType {
+struct RustResult {
     ok: Type,
 }
 
-impl ResultType {
+impl RustResult {
     fn parse(ty: &Type) -> Option<Self> {
         let Type::Path(path) = ty else {
             return None;

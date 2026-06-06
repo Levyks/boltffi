@@ -1,7 +1,6 @@
 use boltffi_binding::{HandlePresence, HandleTarget, Native, Wasm32, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Type;
 
 use crate::experimental::{
     error::Error,
@@ -15,7 +14,6 @@ pub struct ValueInput<'a, C> {
     target: &'a HandleTarget,
     carrier: C,
     presence: HandlePresence,
-    rust_type: Type,
     value: syn::Ident,
 }
 
@@ -24,14 +22,12 @@ impl<'a, C> ValueInput<'a, C> {
         target: &'a HandleTarget,
         carrier: C,
         presence: HandlePresence,
-        rust_type: Type,
         value: syn::Ident,
     ) -> Self {
         Self {
             target,
             carrier,
             presence,
-            rust_type,
             value,
         }
     }
@@ -132,17 +128,14 @@ impl<'a, C> ClassReturn<'a, C> {
             HandlePresence::Required => Ok(quote! {
                 Box::into_raw(Box::new(#value)) as usize as #ty
             }),
-            HandlePresence::Nullable => {
-                NullableReturn::parse(&self.input.rust_type)?;
-                Ok(quote! {
-                    match #value {
-                        Some(__boltffi_value) => {
-                            Box::into_raw(Box::new(__boltffi_value)) as usize as #ty
-                        }
-                        None => #zero,
+            HandlePresence::Nullable => Ok(quote! {
+                match #value {
+                    Some(__boltffi_value) => {
+                        Box::into_raw(Box::new(__boltffi_value)) as usize as #ty
                     }
-                })
-            }
+                    None => #zero,
+                }
+            }),
             _ => Err(Error::UnsupportedExpansion("unknown class handle presence")),
         }
     }
@@ -175,43 +168,5 @@ impl<C> ClassFailure<C> {
         )?;
         let zero = carrier.zero();
         Ok(quote! { return #zero; })
-    }
-}
-
-struct NullableReturn;
-
-impl NullableReturn {
-    fn parse(ty: &Type) -> Result<Self, Error> {
-        let Type::Path(path) = ty else {
-            return Err(Error::SourceSyntaxMismatch(
-                "nullable class return syntax does not match binding presence",
-            ));
-        };
-        let segment = path
-            .path
-            .segments
-            .last()
-            .ok_or(Error::SourceSyntaxMismatch(
-                "nullable class return syntax does not match binding presence",
-            ))?;
-        if segment.ident != "Option" {
-            return Err(Error::SourceSyntaxMismatch(
-                "nullable class return syntax does not match binding presence",
-            ));
-        }
-        let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-            return Err(Error::SourceSyntaxMismatch(
-                "nullable class return syntax does not match binding presence",
-            ));
-        };
-        match arguments.args.iter().find_map(|argument| match argument {
-            syn::GenericArgument::Type(ty) => Some(ty),
-            _ => None,
-        }) {
-            Some(_) => Ok(Self),
-            None => Err(Error::SourceSyntaxMismatch(
-                "nullable class return syntax does not match binding presence",
-            )),
-        }
     }
 }

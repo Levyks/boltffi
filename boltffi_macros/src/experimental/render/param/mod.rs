@@ -2,7 +2,11 @@ use boltffi_binding::{IncomingParam, IntoRust, ParamDecl, ParamPlan};
 use proc_macro2::TokenStream;
 use syn::{Pat, PatType};
 
-use crate::experimental::{error::Error, render::Rule as RenderRule, target::Target};
+use crate::experimental::{
+    error::Error,
+    render::{Rule as RenderRule, callable::signature},
+    target::Target,
+};
 
 pub mod closure;
 mod direct;
@@ -15,6 +19,7 @@ pub struct Rule;
 
 pub struct Input<'binding, 'syntax, S: Target> {
     param: &'binding ParamDecl<S, IntoRust>,
+    source: signature::Parameter<'binding>,
     syntax: &'syntax PatType,
     failure: TokenStream,
 }
@@ -22,11 +27,13 @@ pub struct Input<'binding, 'syntax, S: Target> {
 impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
     pub fn new(
         param: &'binding ParamDecl<S, IntoRust>,
+        source: signature::Parameter<'binding>,
         syntax: &'syntax PatType,
         failure: TokenStream,
     ) -> Self {
         Self {
             param,
+            source,
             syntax,
             failure,
         }
@@ -91,18 +98,23 @@ where
                 )
             }
             IncomingParam::Value(ParamPlan::Encoded {
-                ty, shape, receive, ..
+                codec,
+                shape,
+                receive,
+                ..
             }) => <encoded::Rule as RenderRule<S, _>>::apply(
                 encoded::Rule,
-                encoded::Input::new(ty, *shape, *receive, input.syntax, ident, input.failure),
+                encoded::Input::new(codec, *shape, *receive, input.syntax, ident, input.failure),
             ),
             IncomingParam::Value(ParamPlan::ScalarOption { primitive }) => {
+                input.source.scalar_option(*primitive)?;
                 <scalar_option::Rule as RenderRule<S, _>>::apply(
                     scalar_option::Rule,
                     scalar_option::Input::new(*primitive, input.syntax, ident, input.failure),
                 )
             }
             IncomingParam::Value(ParamPlan::DirectVec { element }) => {
+                input.source.direct_vec()?;
                 <direct_vec::Rule as RenderRule<S, _>>::apply(
                     direct_vec::Rule,
                     direct_vec::Input::new(element, input.syntax, ident, input.failure),
@@ -116,10 +128,8 @@ where
             }) => <handle::Rule as RenderRule<S, _>>::apply(
                 handle::Rule,
                 handle::Input::new(
-                    target,
-                    *carrier,
-                    *presence,
-                    *receive,
+                    handle::Plan::new(target, *carrier, *presence, *receive),
+                    input.source,
                     input.syntax,
                     ident,
                     input.failure,
@@ -127,7 +137,13 @@ where
             ),
             IncomingParam::Closure(closure) => <closure::Rule as RenderRule<S, _>>::apply(
                 closure::Rule,
-                closure::Input::new(closure, input.syntax.ty.as_ref(), ident, input.failure),
+                closure::Input::new(
+                    closure,
+                    input.source.closure(closure.presence())?,
+                    input.syntax.ty.as_ref(),
+                    ident,
+                    input.failure,
+                ),
             ),
             IncomingParam::Value(_) => Err(Error::UnsupportedExpansion("unknown parameter plan")),
         }

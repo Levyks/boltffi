@@ -1,11 +1,11 @@
-use boltffi_binding::{Native, Receive, TypeRef, Wasm32, native, wasm32};
+use boltffi_binding::{Native, Receive, Wasm32, WritePlan, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{PatType, Type};
+use syn::PatType;
 
 use crate::experimental::{
     error::Error,
-    render::{Rule as RenderRule, local},
+    render::{Rule as RenderRule, codec, local},
     target::Target,
 };
 
@@ -14,7 +14,7 @@ use super::Tokens;
 pub struct Rule;
 
 pub struct Input<'binding, 'syntax, S: Target> {
-    ty: &'binding TypeRef,
+    codec: &'binding WritePlan,
     shape: S::BufferShape,
     receive: Receive,
     syntax: &'syntax PatType,
@@ -24,7 +24,7 @@ pub struct Input<'binding, 'syntax, S: Target> {
 
 impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
     pub fn new(
-        ty: &'binding TypeRef,
+        codec: &'binding WritePlan,
         shape: S::BufferShape,
         receive: Receive,
         syntax: &'syntax PatType,
@@ -32,7 +32,7 @@ impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
         failure: TokenStream,
     ) -> Self {
         Self {
-            ty,
+            codec,
             shape,
             receive,
             syntax,
@@ -75,7 +75,7 @@ impl<'binding, 'syntax> RenderRule<Wasm32, Input<'binding, 'syntax, Wasm32>> for
 }
 
 struct Slice<'binding, 'syntax> {
-    ty: &'binding TypeRef,
+    codec: &'binding WritePlan,
     receive: Receive,
     syntax: &'syntax PatType,
     ident: &'syntax syn::Ident,
@@ -95,7 +95,7 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
         let ident = input.ident;
         let locals = local::Parameter::new(ident);
         Self {
-            ty: input.ty,
+            codec: input.codec,
             receive: input.receive,
             syntax: input.syntax,
             ident,
@@ -110,11 +110,15 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
         let length = &self.length;
         let ident = self.ident;
         let pointer_type = self.pointer_type();
-        let conversion = match self.ty {
-            TypeRef::String => self.string_conversion()?,
-            TypeRef::Bytes => self.bytes_conversion()?,
-            _ => self.generic_conversion()?,
-        };
+        let conversion =
+            codec::EncodedValue::new(self.codec.root()).conversion(codec::DecodeInput::new(
+                self.receive,
+                self.syntax.ty.as_ref(),
+                ident,
+                pointer,
+                length,
+                &self.failure,
+            ))?;
 
         Ok(Tokens {
             items: Vec::new(),
@@ -131,189 +135,5 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
 
     fn pointer_type(&self) -> TokenStream {
         quote! { *const u8 }
-    }
-
-    fn string_conversion(&self) -> Result<TokenStream, Error> {
-        let ident = self.ident;
-        match self.receive {
-            Receive::ByValue => self.owned_value_conversion(quote! { String }, ident, false),
-            Receive::ByRef => {
-                let storage = local::Parameter::new(ident).storage();
-                let value = self.owned_value_conversion(quote! { String }, &storage, false)?;
-                Ok(quote! {
-                    #value
-                    let #ident = #storage.as_str();
-                })
-            }
-            Receive::ByMutRef => {
-                let storage = local::Parameter::new(ident).storage();
-                let value = self.owned_value_conversion(quote! { String }, &storage, true)?;
-                Ok(quote! {
-                    #value
-                    let #ident = #storage.as_mut_str();
-                })
-            }
-            _ => Err(Error::UnsupportedExpansion(
-                "unknown encoded string parameter receive mode",
-            )),
-        }
-    }
-
-    fn bytes_conversion(&self) -> Result<TokenStream, Error> {
-        let ident = self.ident;
-        match self.receive {
-            Receive::ByValue => self.owned_value_conversion(quote! { Vec<u8> }, ident, false),
-            Receive::ByRef => {
-                let storage = local::Parameter::new(ident).storage();
-                let value = self.owned_value_conversion(quote! { Vec<u8> }, &storage, false)?;
-                Ok(quote! {
-                    #value
-                    let #ident = #storage.as_slice();
-                })
-            }
-            Receive::ByMutRef => {
-                let storage = local::Parameter::new(ident).storage();
-                let value = self.owned_value_conversion(quote! { Vec<u8> }, &storage, true)?;
-                Ok(quote! {
-                    #value
-                    let #ident = #storage.as_mut_slice();
-                })
-            }
-            _ => Err(Error::UnsupportedExpansion(
-                "unknown encoded bytes parameter receive mode",
-            )),
-        }
-    }
-
-    fn generic_conversion(&self) -> Result<TokenStream, Error> {
-        match self.receive {
-            Receive::ByValue => {
-                self.generic_value_conversion(self.syntax.ty.as_ref(), self.ident, false)
-            }
-            Receive::ByRef => {
-                let Type::Reference(reference) = self.syntax.ty.as_ref() else {
-                    return Err(Error::SourceSyntaxMismatch(
-                        "shared-reference encoded parameter syntax does not match binding receive mode",
-                    ));
-                };
-                if reference.mutability.is_some() {
-                    return Err(Error::SourceSyntaxMismatch(
-                        "shared-reference encoded parameter syntax does not match binding receive mode",
-                    ));
-                }
-                let storage = local::Parameter::new(self.ident).storage();
-                let value =
-                    self.generic_value_conversion(reference.elem.as_ref(), &storage, false)?;
-                let ident = self.ident;
-                Ok(quote! {
-                    #value
-                    let #ident = &#storage;
-                })
-            }
-            Receive::ByMutRef => {
-                let Type::Reference(reference) = self.syntax.ty.as_ref() else {
-                    return Err(Error::SourceSyntaxMismatch(
-                        "mutable-reference encoded parameter syntax does not match binding receive mode",
-                    ));
-                };
-                if reference.mutability.is_none() {
-                    return Err(Error::SourceSyntaxMismatch(
-                        "mutable-reference encoded parameter syntax does not match binding receive mode",
-                    ));
-                }
-                let storage = local::Parameter::new(self.ident).storage();
-                let value =
-                    self.generic_value_conversion(reference.elem.as_ref(), &storage, true)?;
-                let ident = self.ident;
-                Ok(quote! {
-                    #value
-                    let #ident = &mut #storage;
-                })
-            }
-            _ => Err(Error::UnsupportedExpansion(
-                "unknown encoded parameter receive mode",
-            )),
-        }
-    }
-
-    fn generic_value_conversion(
-        &self,
-        rust_type: &Type,
-        binding: &syn::Ident,
-        mutable: bool,
-    ) -> Result<TokenStream, Error> {
-        self.owned_value_conversion(quote! { #rust_type }, binding, mutable)
-    }
-
-    fn owned_value_conversion(
-        &self,
-        rust_type: TokenStream,
-        binding: &syn::Ident,
-        mutable: bool,
-    ) -> Result<TokenStream, Error> {
-        let pointer = &self.pointer;
-        let length = &self.length;
-        let failure = &self.failure;
-        let mutability = mutable.then(|| quote! { mut });
-        if let Some(empty) = self.empty_value() {
-            return Ok(quote! {
-                let #mutability #binding: #rust_type = if #pointer.is_null() || #length == 0 {
-                    #empty
-                } else {
-                    match ::boltffi::__private::wire::decode::<#rust_type>(unsafe {
-                        ::core::slice::from_raw_parts(#pointer, #length)
-                    }) {
-                        Ok(value) => value,
-                        Err(error) => {
-                            ::boltffi::__private::set_last_error(format!(
-                                "{}: wire decode failed: {} (buf_len={})",
-                                stringify!(#binding),
-                                error,
-                                #length
-                            ));
-                            #empty
-                        }
-                    }
-                };
-            });
-        }
-
-        Ok(quote! {
-            let #mutability #binding: #rust_type = {
-                if #pointer.is_null() && #length > 0 {
-                    ::boltffi::__private::set_last_error(format!(
-                        "{}: null pointer with non-zero length (buf_len={})",
-                        stringify!(#binding),
-                        #length
-                    ));
-                    #failure
-                }
-                let __boltffi_bytes: &[u8] = if #length == 0 {
-                    &[]
-                } else {
-                    unsafe { ::core::slice::from_raw_parts(#pointer, #length) }
-                };
-                match ::boltffi::__private::wire::decode::<#rust_type>(__boltffi_bytes) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        ::boltffi::__private::set_last_error(format!(
-                            "{}: wire decode failed: {} (buf_len={})",
-                            stringify!(#binding),
-                            error,
-                            #length
-                        ));
-                        #failure
-                    }
-                }
-            };
-        })
-    }
-
-    fn empty_value(&self) -> Option<TokenStream> {
-        match self.ty {
-            TypeRef::Optional(_) => Some(quote! { None }),
-            TypeRef::Sequence(_) => Some(quote! { Vec::new() }),
-            _ => None,
-        }
     }
 }

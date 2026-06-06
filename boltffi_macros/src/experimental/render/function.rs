@@ -7,7 +7,7 @@ use syn::{FnArg, ItemFn, PatType, ReturnType, Type};
 use crate::experimental::{
     decl::DeclarationPair,
     error::Error,
-    render::{self, Rule as RenderRule},
+    render::{self, Rule as RenderRule, callable::signature},
     target::Target,
 };
 
@@ -42,13 +42,15 @@ where
     /// Renders the generated extern wrapper for the given Rust function syntax.
     pub fn render(self, syntax: &ItemFn) -> Result<TokenStream, Error> {
         let function = self.pair.binding();
+        let source = self.pair.source();
+        let source_signature = signature::Callable::function(source);
         if matches!(
             function.callable().execution(),
             ExecutionDecl::Asynchronous(_)
         ) {
             return <render::asynchronous::Rule as RenderRule<S, _>>::apply(
                 render::asynchronous::Rule,
-                render::asynchronous::Input::new(function, syntax),
+                render::asynchronous::Input::new(function, source_signature, syntax),
             );
         }
 
@@ -63,7 +65,12 @@ where
         )?;
         let callable = <render::callable::Rule as RenderRule<S, _>>::apply(
             render::callable::Rule,
-            render::callable::Input::new(function.callable(), &syntax_params, failure),
+            render::callable::Input::new(
+                function.callable(),
+                source_signature,
+                &syntax_params,
+                failure,
+            ),
         )?;
         let export_ident = format_ident!("{}", function.symbol().name().as_str());
         let function_ident = &syntax.sig.ident;
@@ -77,6 +84,7 @@ where
             render::returns::Input::new(
                 function.callable().returns(),
                 function.callable().error(),
+                source_signature.returns(),
                 Self::syntax_return_type(syntax),
                 render::returns::RustInvocation::new(
                     function_ident.clone(),

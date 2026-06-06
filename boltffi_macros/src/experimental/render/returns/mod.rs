@@ -1,11 +1,11 @@
-use boltffi_binding::{ErrorDecl, OutOfRust, ReturnDecl, ReturnPlan, TypeRef};
+use boltffi_binding::{CodecNode, ErrorDecl, OutOfRust, ReturnDecl, ReturnPlan, TypeRef};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Type;
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule, local},
+    render::{self, Rule as RenderRule, callable::signature, local},
     target::Target,
 };
 
@@ -84,6 +84,7 @@ impl RustInvocation {
 pub struct Input<'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
     error: &'a ErrorDecl<S, OutOfRust>,
+    source: signature::Return<'a>,
     rust_type: Option<Type>,
     invocation: RustInvocation,
 }
@@ -92,12 +93,14 @@ impl<'a, S: Target> Input<'a, S> {
     pub fn new(
         returns: &'a ReturnDecl<S, OutOfRust>,
         error: &'a ErrorDecl<S, OutOfRust>,
+        source: signature::Return<'a>,
         rust_type: Option<Type>,
         invocation: RustInvocation,
     ) -> Self {
         Self {
             returns,
             error,
+            source,
             rust_type,
             invocation,
         }
@@ -144,7 +147,7 @@ impl<'a, S> RenderRule<S, Input<'a, S>> for Rule
 where
     S: Target,
     closure::Rule: RenderRule<S, closure::Input<'a, S>, Output = Tokens>,
-    encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+    encoded::Rule: RenderRule<S, encoded::Input<'a, S>, Output = encoded::Tokens>,
     direct_vec::Rule: RenderRule<S, direct_vec::Input, Output = Tokens>,
     fallible::Rule: RenderRule<S, fallible::Input<'a, S>, Output = Tokens>,
     handle::Value:
@@ -160,6 +163,7 @@ where
                 fallible::Input::new(
                     input.returns,
                     input.error,
+                    input.source,
                     input.rust_type,
                     input.invocation,
                 ),
@@ -169,7 +173,12 @@ where
         if let ReturnPlan::ClosureViaOutPointer(closure) = input.returns.plan() {
             return <closure::Rule as RenderRule<S, _>>::apply(
                 closure::Rule,
-                closure::Input::new(closure, input.rust_type, input.invocation),
+                closure::Input::new(
+                    closure,
+                    input.source.closure(closure.presence())?,
+                    input.rust_type,
+                    input.invocation,
+                ),
             );
         }
 
@@ -246,14 +255,14 @@ where
                     body,
                 })
             }
-            ReturnPlan::EncodedViaReturnSlot { shape, .. } => {
+            ReturnPlan::EncodedViaReturnSlot { codec, shape, .. } => {
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding encoded return requires a source return type",
                 ))?;
                 let result = locals.result();
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
-                    encoded::Input::new(*shape, result.clone()),
+                    encoded::Input::new(codec, *shape, result.clone()),
                 )?;
                 let return_type = encoded.return_type().clone();
                 let value = encoded.value();
@@ -274,19 +283,14 @@ where
                 carrier,
                 presence,
             } => {
+                input.source.handle(target, *presence)?;
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding handle return requires a source return type",
                 ))?;
                 let result = locals.result();
                 let handle = <handle::Value as RenderRule<S, _>>::apply(
                     handle::Value,
-                    handle::ValueInput::new(
-                        target,
-                        *carrier,
-                        *presence,
-                        rust_type.clone(),
-                        result.clone(),
-                    ),
+                    handle::ValueInput::new(target, *carrier, *presence, result.clone()),
                 )?;
                 let return_type = handle.ty();
                 let value = handle.value();
@@ -303,6 +307,7 @@ where
                 })
             }
             ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+                input.source.scalar_option(*primitive)?;
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding scalar option return requires a source return type",
                 ))?;
@@ -326,6 +331,7 @@ where
                 })
             }
             ReturnPlan::DirectVecViaReturnSlot { .. } => {
+                input.source.direct_vec()?;
                 let result = locals.result();
                 let sequence = <direct_vec::Rule as RenderRule<S, _>>::apply(
                     direct_vec::Rule,
@@ -367,7 +373,7 @@ where
     S: Target,
     direct_vec::Failure: RenderRule<S, direct_vec::FailureInput, Output = TokenStream>,
     encoded::Rule: RenderRule<S, encoded::Empty<S>, Output = encoded::Tokens>,
-    encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+    encoded::Rule: RenderRule<S, encoded::Input<'a, S>, Output = encoded::Tokens>,
     handle::Failure: RenderRule<S, handle::FailureInput<S::HandleCarrier>, Output = TokenStream>,
     scalar_option::Failure: RenderRule<S, scalar_option::FailureInput, Output = TokenStream>,
 {
@@ -439,18 +445,16 @@ impl<'a, S: Target> ErrorFailure<'a, S> {
 
     fn tokens(self) -> Result<TokenStream, Error>
     where
-        encoded::Rule: RenderRule<S, encoded::Input<S>, Output = encoded::Tokens>,
+        encoded::Rule: RenderRule<S, encoded::Input<'a, S>, Output = encoded::Tokens>,
     {
         match self.error {
-            ErrorDecl::EncodedViaReturnSlot {
-                ty: TypeRef::String,
-                shape,
-                ..
-            } => {
+            ErrorDecl::EncodedViaReturnSlot { codec, shape, .. }
+                if matches!(codec.root(), CodecNode::String) =>
+            {
                 let error = local::Wrapper::new(proc_macro2::Span::call_site()).error();
                 let encoded = <encoded::Rule as RenderRule<S, _>>::apply(
                     encoded::Rule,
-                    encoded::Input::new(*shape, error.clone()),
+                    encoded::Input::new(codec, *shape, error.clone()),
                 )?;
                 let value = encoded.value();
                 Ok(quote! {

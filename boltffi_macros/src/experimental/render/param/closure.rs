@@ -1,3 +1,4 @@
+use boltffi_ast::{ClosureType, ReturnDef};
 use boltffi_binding::{
     ClosureParameter, ErrorDecl, HandlePresence, ImportedCallable, IntoRust, Native, OutgoingParam,
     ParamPlan, ReturnPlan, TypeRef, Wasm32, native, wasm32,
@@ -8,7 +9,7 @@ use syn::{GenericArgument, Ident, PathArguments, ReturnType, Type, TypeImplTrait
 
 use crate::experimental::{
     error::Error,
-    render::{self, Rule as RenderRule, local},
+    render::{self, Rule as RenderRule, callable::signature, codec, local},
     target::Target,
 };
 
@@ -18,6 +19,7 @@ pub struct Rule;
 
 pub struct Input<'binding, 'syntax, S: Target> {
     closure: &'binding ClosureParameter<S, IntoRust>,
+    source: &'binding ClosureType,
     rust_type: &'syntax Type,
     ident: &'syntax Ident,
     failure: TokenStream,
@@ -26,12 +28,14 @@ pub struct Input<'binding, 'syntax, S: Target> {
 impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
     pub fn new(
         closure: &'binding ClosureParameter<S, IntoRust>,
+        source: &'binding ClosureType,
         rust_type: &'syntax Type,
         ident: &'syntax Ident,
         failure: TokenStream,
     ) -> Self {
         Self {
             closure,
+            source,
             rust_type,
             ident,
             failure,
@@ -75,8 +79,10 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
 
     fn invoke_context(self) -> Result<Tokens, Error> {
         let ident = self.input.ident;
-        let syntax = ClosureSyntax::new(self.input.rust_type, self.input.closure)?;
-        let invoke = ClosureInvoke::<Native>::new(self.input.closure.invoke(), &syntax)?;
+        let syntax =
+            ClosureSyntax::new(self.input.rust_type, self.input.source, self.input.closure)?;
+        let invoke =
+            ClosureInvoke::<Native>::new(self.input.closure.invoke(), self.input.source, &syntax)?;
         let invoke_parameters = invoke.parameters()?;
         let names = RegistrationNames::new(ident);
         let callback = &names.call;
@@ -175,8 +181,10 @@ impl<'binding, 'syntax> WasmClosure<'binding, 'syntax> {
 
     fn tokens(self) -> Result<Tokens, Error> {
         let ident = self.input.ident;
-        let syntax = ClosureSyntax::new(self.input.rust_type, self.input.closure)?;
-        let invoke = ClosureInvoke::<Wasm32>::new(self.input.closure.invoke(), &syntax)?;
+        let syntax =
+            ClosureSyntax::new(self.input.rust_type, self.input.source, self.input.closure)?;
+        let invoke =
+            ClosureInvoke::<Wasm32>::new(self.input.closure.invoke(), self.input.source, &syntax)?;
         let invoke_parameters = invoke.parameters()?;
         let return_tokens = invoke.return_tokens()?;
         let registration = self.input.closure.registration().shape();
@@ -257,20 +265,31 @@ impl RegistrationNames {
 
 struct ClosureInvoke<'binding, 'syntax, S: Target> {
     callable: &'binding ImportedCallable<S>,
+    source: &'binding ClosureType,
     syntax: &'syntax ClosureSyntax<'syntax>,
 }
 
 impl<'binding, 'syntax, S: Target> ClosureInvoke<'binding, 'syntax, S> {
     fn new(
         callable: &'binding ImportedCallable<S>,
+        source: &'binding ClosureType,
         syntax: &'syntax ClosureSyntax<'syntax>,
     ) -> Result<Self, Error> {
-        if callable.params().len() != syntax.parameters().len() {
+        if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
-                "closure syntax parameter count does not match binding invoke parameter count",
+                "source closure parameter count does not match binding invoke parameter count",
             ));
         }
-        Ok(Self { callable, syntax })
+        if source.parameters.len() != syntax.parameters().len() {
+            return Err(Error::SourceSyntaxMismatch(
+                "closure syntax parameter count does not match source closure parameter count",
+            ));
+        }
+        Ok(Self {
+            callable,
+            source,
+            syntax,
+        })
     }
 
     fn parameters(&self) -> Result<InvokeParameters, Error> {
@@ -287,19 +306,20 @@ impl<'binding, 'syntax, S: Target> ClosureInvoke<'binding, 'syntax, S> {
         Ok(InvokeParameters::from(tokens))
     }
 
-    fn return_tokens(&self) -> Result<InvokeReturnTokens<'syntax>, Error>
+    fn return_tokens(&self) -> Result<ForeignClosureReturnTokens<'syntax>, Error>
     where
-        InvokeReturnRule: RenderRule<
+        ForeignClosureReturnRule: RenderRule<
                 S,
-                InvokeReturnInput<'binding, 'syntax, S>,
-                Output = InvokeReturnTokens<'syntax>,
+                ForeignClosureReturn<'binding, 'syntax, S>,
+                Output = ForeignClosureReturnTokens<'syntax>,
             >,
     {
-        <InvokeReturnRule as RenderRule<S, InvokeReturnInput<'binding, 'syntax, S>>>::apply(
-            InvokeReturnRule,
-            InvokeReturnInput::new(
+        <ForeignClosureReturnRule as RenderRule<S, ForeignClosureReturn<'binding, 'syntax, S>>>::apply(
+            ForeignClosureReturnRule,
+            ForeignClosureReturn::new(
                 self.callable.returns().plan(),
                 self.callable.error(),
+                &self.source.returns,
                 self.syntax.return_type(),
             ),
         )
@@ -351,16 +371,17 @@ impl<'binding, 'syntax, S: Target> InvokeParameterInput<'binding, 'syntax, S> {
                     ::boltffi::__private::Passable::pack(#argument)
                 }],
             }),
-            OutgoingParam::Value(ParamPlan::Encoded { .. }) => {
+            OutgoingParam::Value(ParamPlan::Encoded { codec, .. }) => {
                 let locals = local::ClosureArgument::new(self.index);
                 let wire = locals.wire();
                 let pointer = locals.pointer();
                 let length = locals.length();
+                let buffer = codec::EncodedValue::new(codec.root()).buffer(quote! { #argument })?;
                 Ok(InvokeParameterTokens {
                     rust_parameter: quote! { #argument: #rust_type },
                     ffi_parameter_types: vec![quote! { *const u8 }, quote! { usize }],
                     setup: vec![quote! {
-                        let #wire = ::boltffi::__private::FfiBuf::wire_encode(&#argument);
+                        let #wire = #buffer;
                         let #pointer = #wire.as_ptr();
                         let #length = #wire.len();
                     }],
@@ -414,73 +435,98 @@ impl From<Vec<InvokeParameterTokens>> for InvokeParameters {
     }
 }
 
-struct InvokeReturnInput<'binding, 'syntax, S: Target> {
+struct ForeignClosureReturn<'binding, 'syntax, S: Target> {
     plan: &'binding ReturnPlan<S, IntoRust>,
     error: &'binding ErrorDecl<S, IntoRust>,
+    source: &'binding ReturnDef,
     rust_type: Option<&'syntax Type>,
 }
 
-impl<'binding, 'syntax, S: Target> InvokeReturnInput<'binding, 'syntax, S> {
+impl<'binding, 'syntax, S: Target> ForeignClosureReturn<'binding, 'syntax, S> {
     fn new(
         plan: &'binding ReturnPlan<S, IntoRust>,
         error: &'binding ErrorDecl<S, IntoRust>,
+        source: &'binding ReturnDef,
         rust_type: Option<&'syntax Type>,
     ) -> Self {
         Self {
             plan,
             error,
+            source,
             rust_type,
         }
     }
 
-    fn direct_tokens(&self) -> Result<Option<InvokeReturnTokens<'syntax>>, Error> {
+    fn direct_tokens(&self) -> Result<Option<ForeignClosureReturnTokens<'syntax>>, Error> {
         if !matches!(self.error, ErrorDecl::None(_)) {
             return Ok(None);
         }
 
         match self.plan {
-            ReturnPlan::Void => Ok(Some(InvokeReturnTokens::Void)),
+            ReturnPlan::Void => {
+                if !matches!(self.source, ReturnDef::Void) {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "source closure invoke return does not match binding return plan",
+                    ));
+                }
+                Ok(Some(ForeignClosureReturnTokens::Void))
+            }
             ReturnPlan::DirectViaReturnSlot {
                 ty: TypeRef::Primitive(primitive),
             } => {
+                if !matches!(self.source, ReturnDef::Value(_)) {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "source closure invoke return does not match binding return plan",
+                    ));
+                }
                 let ty = TypeRef::Primitive(*primitive);
                 let ffi_type = <render::type_ref::Rule as RenderRule<S, &TypeRef>>::apply(
                     render::type_ref::Rule,
                     &ty,
                 )?;
-                Ok(Some(InvokeReturnTokens::DirectPrimitive { ffi_type }))
+                Ok(Some(ForeignClosureReturnTokens::DirectPrimitive {
+                    ffi_type,
+                }))
             }
             ReturnPlan::DirectViaReturnSlot { .. } => {
+                if !matches!(self.source, ReturnDef::Value(_)) {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "source closure invoke return does not match binding return plan",
+                    ));
+                }
                 let rust_type = self.rust_type.ok_or(Error::SourceSyntaxMismatch(
                     "closure invoke direct return requires source return type",
                 ))?;
-                Ok(Some(InvokeReturnTokens::DirectPassable { rust_type }))
+                Ok(Some(ForeignClosureReturnTokens::DirectPassable {
+                    rust_type,
+                }))
             }
             ReturnPlan::EncodedViaReturnSlot { .. } => Ok(None),
             _ => Err(Error::UnsupportedExpansion("closure invoke return shape")),
         }
     }
 
-    fn result_syntax(&self) -> Result<ResultSyntax<'syntax>, Error> {
+    fn rust_fallible_return(&self) -> Result<RustFallibleReturn<'syntax>, Error> {
+        signature::Return::new(self.source).fallible()?;
         let rust_type = self.rust_type.ok_or(Error::SourceSyntaxMismatch(
             "fallible closure invoke requires source Result return type",
         ))?;
-        ResultSyntax::parse(rust_type).ok_or(Error::SourceSyntaxMismatch(
+        RustFallibleReturn::parse(rust_type).ok_or(Error::SourceSyntaxMismatch(
             "fallible closure invoke requires source Result return type",
         ))
     }
 }
 
-struct InvokeReturnRule;
+struct ForeignClosureReturnRule;
 
-impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, Native>>
-    for InvokeReturnRule
+impl<'binding, 'syntax> RenderRule<Native, ForeignClosureReturn<'binding, 'syntax, Native>>
+    for ForeignClosureReturnRule
 {
-    type Output = InvokeReturnTokens<'syntax>;
+    type Output = ForeignClosureReturnTokens<'syntax>;
 
     fn apply(
         self,
-        input: InvokeReturnInput<'binding, 'syntax, Native>,
+        input: ForeignClosureReturn<'binding, 'syntax, Native>,
     ) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
@@ -501,9 +547,9 @@ impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, 
                     render::type_ref::Rule,
                     &ty,
                 )?;
-                Ok(InvokeReturnTokens::NativeFallibleDirectPrimitive {
+                Ok(ForeignClosureReturnTokens::NativeFallibleDirectPrimitive {
                     ffi_type,
-                    error_type: input.result_syntax()?.err,
+                    error_type: input.rust_fallible_return()?.err,
                 })
             }
             (
@@ -513,8 +559,8 @@ impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, 
                     ..
                 },
             ) => {
-                let result = input.result_syntax()?;
-                Ok(InvokeReturnTokens::NativeFallibleDirectPassable {
+                let result = input.rust_fallible_return()?;
+                Ok(ForeignClosureReturnTokens::NativeFallibleDirectPassable {
                     ok_type: result.ok,
                     error_type: result.err,
                 })
@@ -529,8 +575,8 @@ impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, 
                     ..
                 },
             ) => {
-                let result = input.result_syntax()?;
-                Ok(InvokeReturnTokens::NativeFallibleEncoded {
+                let result = input.rust_fallible_return()?;
+                Ok(ForeignClosureReturnTokens::NativeFallibleEncoded {
                     ok_type: result.ok,
                     error_type: result.err,
                 })
@@ -541,8 +587,8 @@ impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, 
                     shape: native::BufferShape::Buffer,
                     ..
                 },
-            ) => Ok(InvokeReturnTokens::NativeFallibleVoid {
-                error_type: input.result_syntax()?.err,
+            ) => Ok(ForeignClosureReturnTokens::NativeFallibleVoid {
+                error_type: input.rust_fallible_return()?.err,
             }),
             (
                 ReturnPlan::EncodedViaReturnSlot {
@@ -554,7 +600,7 @@ impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, 
                 let rust_type = input.rust_type.ok_or(Error::SourceSyntaxMismatch(
                     "closure invoke encoded return requires source return type",
                 ))?;
-                Ok(InvokeReturnTokens::NativeEncoded { rust_type })
+                Ok(ForeignClosureReturnTokens::NativeEncoded { rust_type })
             }
             (ReturnPlan::EncodedViaReturnSlot { .. }, _) => Err(Error::UnsupportedExpansion(
                 "native closure invoke encoded return shape",
@@ -564,14 +610,14 @@ impl<'binding, 'syntax> RenderRule<Native, InvokeReturnInput<'binding, 'syntax, 
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, Wasm32>>
-    for InvokeReturnRule
+impl<'binding, 'syntax> RenderRule<Wasm32, ForeignClosureReturn<'binding, 'syntax, Wasm32>>
+    for ForeignClosureReturnRule
 {
-    type Output = InvokeReturnTokens<'syntax>;
+    type Output = ForeignClosureReturnTokens<'syntax>;
 
     fn apply(
         self,
-        input: InvokeReturnInput<'binding, 'syntax, Wasm32>,
+        input: ForeignClosureReturn<'binding, 'syntax, Wasm32>,
     ) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
@@ -593,7 +639,7 @@ impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, 
                     render::type_ref::Rule,
                     &ty,
                 )?;
-                Ok(InvokeReturnTokens::WasmFallibleDirectPrimitive { ffi_type })
+                Ok(ForeignClosureReturnTokens::WasmFallibleDirectPrimitive { ffi_type })
             }
             (
                 ReturnPlan::DirectViaOutPointer { .. },
@@ -602,8 +648,8 @@ impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, 
                     shape: wasm32::BufferShape::Packed,
                     ..
                 },
-            ) => Ok(InvokeReturnTokens::WasmFallibleDirectPassable {
-                ok_type: input.result_syntax()?.ok,
+            ) => Ok(ForeignClosureReturnTokens::WasmFallibleDirectPassable {
+                ok_type: input.rust_fallible_return()?.ok,
             }),
             (
                 ReturnPlan::EncodedViaOutPointer {
@@ -616,8 +662,8 @@ impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, 
                     shape: wasm32::BufferShape::Packed,
                     ..
                 },
-            ) => Ok(InvokeReturnTokens::WasmFalliblePackedString {
-                ok_type: input.result_syntax()?.ok,
+            ) => Ok(ForeignClosureReturnTokens::WasmFalliblePackedString {
+                ok_type: input.rust_fallible_return()?.ok,
             }),
             (
                 ReturnPlan::Void,
@@ -626,7 +672,7 @@ impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, 
                     shape: wasm32::BufferShape::Packed,
                     ..
                 },
-            ) => Ok(InvokeReturnTokens::WasmFallibleVoidString),
+            ) => Ok(ForeignClosureReturnTokens::WasmFallibleVoidString),
             (
                 ReturnPlan::EncodedViaReturnSlot {
                     ty: TypeRef::String,
@@ -634,7 +680,7 @@ impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, 
                     ..
                 },
                 ErrorDecl::None(_),
-            ) => Ok(InvokeReturnTokens::WasmPackedString),
+            ) => Ok(ForeignClosureReturnTokens::WasmPackedString),
             (
                 ReturnPlan::EncodedViaReturnSlot {
                     shape: wasm32::BufferShape::Packed,
@@ -652,7 +698,7 @@ impl<'binding, 'syntax> RenderRule<Wasm32, InvokeReturnInput<'binding, 'syntax, 
     }
 }
 
-enum InvokeReturnTokens<'syntax> {
+enum ForeignClosureReturnTokens<'syntax> {
     Void,
     DirectPrimitive {
         ffi_type: TokenStream,
@@ -691,7 +737,7 @@ enum InvokeReturnTokens<'syntax> {
     },
 }
 
-impl InvokeReturnTokens<'_> {
+impl ForeignClosureReturnTokens<'_> {
     fn ffi_return_type(&self) -> TokenStream {
         match self {
             Self::Void => TokenStream::new(),
@@ -942,12 +988,12 @@ impl InvokeReturnTokens<'_> {
     }
 }
 
-struct ResultSyntax<'syntax> {
+struct RustFallibleReturn<'syntax> {
     ok: &'syntax Type,
     err: &'syntax Type,
 }
 
-impl<'syntax> ResultSyntax<'syntax> {
+impl<'syntax> RustFallibleReturn<'syntax> {
     fn parse(ty: &'syntax Type) -> Option<Self> {
         let Type::Path(path) = ty else {
             return None;
@@ -976,9 +1022,10 @@ enum ClosureSyntax<'a> {
 impl<'a> ClosureSyntax<'a> {
     fn new<S: Target>(
         ty: &'a Type,
+        source: &ClosureType,
         closure: &ClosureParameter<S, IntoRust>,
     ) -> Result<Self, Error> {
-        match (closure.presence(), ty) {
+        let syntax = match (closure.presence(), ty) {
             (HandlePresence::Required, Type::ImplTrait(impl_trait)) => {
                 Ok(Self::ImplTrait(ClosureSignature::impl_trait(impl_trait)?))
             }
@@ -995,7 +1042,9 @@ impl<'a> ClosureSyntax<'a> {
             _ => Err(Error::SourceSyntaxMismatch(
                 "closure parameter syntax does not match binding closure",
             )),
-        }
+        }?;
+        syntax.matches_source(source, closure.form())?;
+        Ok(syntax)
     }
 
     fn parameters(&self) -> &[Type] {
@@ -1012,6 +1061,19 @@ impl<'a> ClosureSyntax<'a> {
             | Self::Boxed(signature, _)
             | Self::NullableBoxed(signature, _) => signature.return_type.as_ref(),
         }
+    }
+
+    fn matches_source(
+        &self,
+        source: &ClosureType,
+        form: boltffi_binding::ClosureForm,
+    ) -> Result<(), Error> {
+        let signature = match self {
+            Self::ImplTrait(signature)
+            | Self::Boxed(signature, _)
+            | Self::NullableBoxed(signature, _) => signature,
+        };
+        signature.matches_source(source, form)
     }
 
     fn native_binding(&self, input: NativeBinding<'_>) -> Result<TokenStream, Error> {
@@ -1121,6 +1183,7 @@ struct NativeBinding<'a> {
 }
 
 struct ClosureSignature {
+    form: boltffi_binding::ClosureForm,
     parameters: Vec<Type>,
     return_type: Option<Type>,
 }
@@ -1206,12 +1269,12 @@ impl ClosureSignature {
             return None;
         };
         let segment = bound.path.segments.last()?;
-        if !matches!(
-            segment.ident.to_string().as_str(),
-            "Fn" | "FnMut" | "FnOnce"
-        ) {
-            return None;
-        }
+        let form = match segment.ident.to_string().as_str() {
+            "Fn" => boltffi_binding::ClosureForm::Fn,
+            "FnMut" => boltffi_binding::ClosureForm::FnMut,
+            "FnOnce" => boltffi_binding::ClosureForm::FnOnce,
+            _ => return None,
+        };
         let PathArguments::Parenthesized(arguments) = &segment.arguments else {
             return None;
         };
@@ -1221,8 +1284,32 @@ impl ClosureSignature {
             ReturnType::Type(_, ty) => Some(ty.as_ref().clone()),
         };
         Some(Self {
+            form,
             parameters,
             return_type,
         })
+    }
+
+    fn matches_source(
+        &self,
+        source: &ClosureType,
+        form: boltffi_binding::ClosureForm,
+    ) -> Result<(), Error> {
+        if self.form != form || boltffi_binding::ClosureForm::from(source.kind) != form {
+            return Err(Error::SourceSyntaxMismatch(
+                "closure syntax form does not match source closure form",
+            ));
+        }
+        if self.parameters.len() != source.parameters.len() {
+            return Err(Error::SourceSyntaxMismatch(
+                "closure syntax parameter count does not match source closure parameter count",
+            ));
+        }
+        match (&self.return_type, &source.returns) {
+            (None, ReturnDef::Void) | (Some(_), ReturnDef::Value(_)) => Ok(()),
+            _ => Err(Error::SourceSyntaxMismatch(
+                "closure syntax return does not match source closure return",
+            )),
+        }
     }
 }

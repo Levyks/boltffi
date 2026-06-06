@@ -5,6 +5,7 @@ mod local;
 
 pub mod asynchronous;
 pub mod callable;
+mod codec;
 pub mod function;
 pub mod handle;
 pub mod param;
