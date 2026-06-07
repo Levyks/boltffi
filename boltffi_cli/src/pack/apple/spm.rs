@@ -1,23 +1,63 @@
 use std::path::PathBuf;
 
+use askama::Template;
+
 use crate::cli::{CliError, Result};
-use crate::config::{Config, SpmDistribution, SpmLayout};
+use crate::config::{Config, SpmLayout};
+
+use super::names::AppleNames;
 
 pub struct SpmPackageGenerator<'a> {
     config: &'a Config,
-    xcframework_name: String,
-    checksum: Option<String>,
-    version: Option<String>,
+    names: AppleNames,
+    distribution: SpmPackageDistribution,
     layout: SpmLayout,
+}
+
+enum SpmPackageDistribution {
+    Local,
+    Remote(RemoteSpmPackage),
+}
+
+struct RemoteSpmPackage {
+    checksum: String,
+    version: String,
+}
+
+struct ApplePackageManifest {
+    tools_version: String,
+    package_name: String,
+    product_target_name: String,
+    binary_target_name: String,
+    module_name: String,
+    wrapper_sources: String,
+    xcframework_name: String,
+    platform_declarations: Vec<String>,
+    has_wrapper_target: bool,
+}
+
+#[derive(Template)]
+#[template(path = "ApplePackageLocal.swift", escape = "none")]
+struct AppleLocalPackageTemplate<'a> {
+    manifest: &'a ApplePackageManifest,
+    xcframework_path: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "ApplePackageRemote.swift", escape = "none")]
+struct AppleRemotePackageTemplate<'a> {
+    manifest: &'a ApplePackageManifest,
+    repo_url: &'a str,
+    version: &'a str,
+    checksum: &'a str,
 }
 
 impl<'a> SpmPackageGenerator<'a> {
     pub fn new_local(config: &'a Config, layout: SpmLayout) -> Self {
         Self {
             config,
-            xcframework_name: config.xcframework_name(),
-            checksum: None,
-            version: None,
+            names: AppleNames::from_config(config),
+            distribution: SpmPackageDistribution::Local,
             layout,
         }
     }
@@ -30,9 +70,8 @@ impl<'a> SpmPackageGenerator<'a> {
     ) -> Self {
         Self {
             config,
-            xcframework_name: config.xcframework_name(),
-            checksum: Some(checksum),
-            version: Some(version),
+            names: AppleNames::from_config(config),
+            distribution: SpmPackageDistribution::Remote(RemoteSpmPackage { checksum, version }),
             layout,
         }
     }
@@ -40,10 +79,7 @@ impl<'a> SpmPackageGenerator<'a> {
     pub fn generate(&self) -> Result<PathBuf> {
         let output_path = self.config.apple_spm_output().join("Package.swift");
 
-        let content = match self.config.apple_spm_distribution() {
-            SpmDistribution::Local => self.generate_local_package(),
-            SpmDistribution::Remote => self.generate_remote_package()?,
-        };
+        let content = self.render_package()?;
 
         let spm_output = self.config.apple_spm_output();
         std::fs::create_dir_all(&spm_output).map_err(|source| CliError::CreateDirectoryFailed {
@@ -59,193 +95,75 @@ impl<'a> SpmPackageGenerator<'a> {
         Ok(output_path)
     }
 
-    fn generate_local_package(&self) -> String {
-        let layout = self.layout;
-        let package_name = self.package_name_for_layout(layout);
-        let module_name = self.config.swift_module_name();
-        let tools_version = self.config.apple_swift_tools_version().unwrap_or("5.9");
-        let wrapper_sources = self.wrapper_sources_path(layout);
-        let binary_target_name = format!("{}FFI", self.xcframework_name);
+    fn render_package(&self) -> Result<String> {
+        match &self.distribution {
+            SpmPackageDistribution::Local => self.render_local_package(),
+            SpmPackageDistribution::Remote(remote_package) => {
+                self.render_remote_package_with(remote_package)
+            }
+        }
+    }
+
+    fn render_local_package(&self) -> Result<String> {
+        let manifest = self.package_manifest();
         let xcframework_path = self.local_xcframework_path();
 
-        if matches!(layout, SpmLayout::Split) {
-            return format!(
-                r#"// swift-tools-version:{tools_version}
-import PackageDescription
-
-let package = Package(
-    name: "{package_name}",
-    platforms: [
-{platforms}
-    ],
-    products: [
-        .library(
-            name: "{package_name}",
-            targets: ["{binary_target_name}"]
-        ),
-    ],
-    targets: [
-        .binaryTarget(
-            name: "{binary_target_name}",
-            path: "{xcframework_path}"
-        ),
-    ]
-)
-"#,
-                tools_version = tools_version,
-                package_name = package_name,
-                platforms = self.platforms_fragment(),
-                binary_target_name = binary_target_name,
-                xcframework_path = xcframework_path,
-            );
-        }
-
-        format!(
-            r#"// swift-tools-version:{tools_version}
-import PackageDescription
-
-let package = Package(
-    name: "{package_name}",
-    platforms: [
-{platforms}
-    ],
-    products: [
-        .library(
-            name: "{package_name}",
-            targets: ["{module_name}"]
-        ),
-    ],
-    targets: [
-        .binaryTarget(
-            name: "{binary_target_name}",
-            path: "{xcframework_path}"
-        ),
-        .target(
-            name: "{module_name}",
-            dependencies: ["{binary_target_name}"],
-            path: "{wrapper_sources}"
-        ),
-    ]
-)
-"#,
-            tools_version = tools_version,
-            package_name = package_name,
-            module_name = module_name,
-            platforms = self.platforms_fragment(),
-            binary_target_name = binary_target_name,
-            xcframework_path = xcframework_path,
-            wrapper_sources = wrapper_sources,
+        render_apple_package_template(
+            AppleLocalPackageTemplate {
+                manifest: &manifest,
+                xcframework_path: &xcframework_path,
+            },
+            "local",
         )
     }
 
-    fn generate_remote_package(&self) -> Result<String> {
-        let layout = self.layout;
-        let package_name = self.package_name_for_layout(layout);
-        let module_name = self.config.swift_module_name();
-        let tools_version = self.config.apple_swift_tools_version().unwrap_or("5.9");
+    fn render_remote_package_with(&self, remote_package: &RemoteSpmPackage) -> Result<String> {
+        let manifest = self.package_manifest();
         let repo_url = self
             .config
             .apple_spm_repo_url()
             .unwrap_or("https://github.com/user/repo");
+
+        render_apple_package_template(
+            AppleRemotePackageTemplate {
+                manifest: &manifest,
+                repo_url,
+                version: &remote_package.version,
+                checksum: &remote_package.checksum,
+            },
+            "remote",
+        )
+    }
+
+    fn package_manifest(&self) -> ApplePackageManifest {
+        let layout = self.layout;
+        let package_name = self.package_name_for_layout(layout);
+        let module_name = self.names.swift_module_name().to_string();
+        let tools_version = self
+            .config
+            .apple_swift_tools_version()
+            .unwrap_or("5.9")
+            .to_string();
         let wrapper_sources = self.wrapper_sources_path(layout);
-        let binary_target_name = format!("{}FFI", self.xcframework_name);
-        let checksum = self
-            .checksum
-            .clone()
-            .ok_or_else(|| CliError::CommandFailed {
-                command: "missing checksum for remote SPM package".to_string(),
-                status: None,
-            })?;
-        let version = self
-            .version
-            .clone()
-            .ok_or_else(|| CliError::CommandFailed {
-                command: "missing version for remote SPM package".to_string(),
-                status: None,
-            })?;
+        let binary_target_name = self.names.ffi_module_name().to_string();
+        let product_target_name = if matches!(layout, SpmLayout::Split) {
+            binary_target_name.clone()
+        } else {
+            module_name.clone()
+        };
+        let platform_declarations = self.platform_declarations();
 
-        if matches!(layout, SpmLayout::Split) {
-            return Ok(format!(
-                r#"// swift-tools-version:{tools_version}
-import PackageDescription
-
-let releaseTag = "{version}"
-let releaseChecksum = "{checksum}"
-
-let package = Package(
-    name: "{package_name}",
-    platforms: [
-{platforms}
-    ],
-    products: [
-        .library(
-            name: "{package_name}",
-            targets: ["{binary_target_name}"]
-        ),
-    ],
-    targets: [
-        .binaryTarget(
-            name: "{binary_target_name}",
-            url: "{repo_url}/releases/download/\(releaseTag)/{xcframework_name}.xcframework.zip",
-            checksum: releaseChecksum
-        ),
-    ]
-)
-"#,
-                tools_version = tools_version,
-                version = version,
-                checksum = checksum,
-                package_name = package_name,
-                platforms = self.platforms_fragment(),
-                binary_target_name = binary_target_name,
-                repo_url = repo_url,
-                xcframework_name = self.xcframework_name,
-            ));
+        ApplePackageManifest {
+            tools_version,
+            package_name,
+            product_target_name,
+            binary_target_name,
+            module_name,
+            wrapper_sources,
+            xcframework_name: self.names.xcframework_name().to_string(),
+            platform_declarations,
+            has_wrapper_target: !matches!(layout, SpmLayout::Split),
         }
-
-        Ok(format!(
-            r#"// swift-tools-version:{tools_version}
-import PackageDescription
-
-let releaseTag = "{version}"
-let releaseChecksum = "{checksum}"
-
-let package = Package(
-    name: "{package_name}",
-    platforms: [
-{platforms}
-    ],
-    products: [
-        .library(
-            name: "{package_name}",
-            targets: ["{module_name}"]
-        ),
-    ],
-    targets: [
-        .binaryTarget(
-            name: "{binary_target_name}",
-            url: "{repo_url}/releases/download/\(releaseTag)/{xcframework_name}.xcframework.zip",
-            checksum: releaseChecksum
-        ),
-        .target(
-            name: "{module_name}",
-            dependencies: ["{binary_target_name}"],
-            path: "{wrapper_sources}"
-        ),
-    ]
-)
-"#,
-            tools_version = tools_version,
-            version = version,
-            checksum = checksum,
-            package_name = package_name,
-            module_name = module_name,
-            platforms = self.platforms_fragment(),
-            repo_url = repo_url,
-            xcframework_name = self.xcframework_name,
-            binary_target_name = binary_target_name,
-            wrapper_sources = wrapper_sources,
-        ))
     }
 
     fn ios_version_for_spm(&self) -> String {
@@ -258,18 +176,18 @@ let package = Package(
             .unwrap_or_else(|| "v16".to_string())
     }
 
-    fn platforms_fragment(&self) -> String {
+    fn platform_declarations(&self) -> Vec<String> {
         let mut platforms = Vec::new();
 
         if self.supports_ios_platform() {
-            platforms.push(format!("        .iOS(.{})", self.ios_version_for_spm()));
+            platforms.push(format!(".iOS(.{})", self.ios_version_for_spm()));
         }
 
         if self.supports_macos_platform() {
-            platforms.push("        .macOS(.v13)".to_string());
+            platforms.push(".macOS(.v13)".to_string());
         }
 
-        platforms.join(",\n")
+        platforms
     }
 
     fn supports_ios_platform(&self) -> bool {
@@ -297,7 +215,7 @@ let package = Package(
         let xcframework_path = self
             .config
             .apple_xcframework_output()
-            .join(format!("{}.xcframework", self.xcframework_name));
+            .join(format!("{}.xcframework", self.names.xcframework_name()));
         let rel = relative_path(&package_root, &xcframework_path);
         rel.to_string_lossy().to_string()
     }
@@ -307,10 +225,19 @@ let package = Package(
             .apple_spm_package_name()
             .map(|name| name.to_string())
             .unwrap_or_else(|| match layout {
-                SpmLayout::Split => format!("{}FFI", self.config.swift_module_name()),
-                SpmLayout::Bundled | SpmLayout::FfiOnly => self.config.swift_module_name(),
+                SpmLayout::Split => self.names.ffi_module_name().to_string(),
+                SpmLayout::Bundled | SpmLayout::FfiOnly => {
+                    self.names.swift_module_name().to_string()
+                }
             })
     }
+}
+
+fn render_apple_package_template(template: impl Template, distribution: &str) -> Result<String> {
+    template.render().map_err(|source| CliError::CommandFailed {
+        command: format!("render {distribution} Apple Package.swift template: {source}"),
+        status: None,
+    })
 }
 
 fn relative_path(from_dir: &std::path::Path, to_path: &std::path::Path) -> PathBuf {
@@ -336,29 +263,83 @@ fn relative_path(from_dir: &std::path::Path, to_path: &std::path::Path) -> PathB
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{PackageConfig, SpmDistribution, TargetsConfig};
+    use crate::target::AppleArchitecture;
+
     use super::*;
 
-    fn parse_config(input: &str) -> Config {
-        let parsed: Config = toml::from_str(input).expect("toml parse failed");
-        parsed.validate().expect("config validation failed");
-        parsed
+    struct AppleSpmConfigBuilder {
+        config: Config,
+    }
+
+    impl AppleSpmConfigBuilder {
+        fn new() -> Self {
+            Self {
+                config: Config {
+                    experimental: Vec::new(),
+                    cargo: Default::default(),
+                    package: PackageConfig {
+                        name: "mylib".to_string(),
+                        crate_name: None,
+                        version: None,
+                        description: None,
+                        license: None,
+                        repository: None,
+                    },
+                    targets: TargetsConfig::default(),
+                },
+            }
+        }
+
+        fn with_macos_enabled(mut self) -> Self {
+            self.config.targets.apple.include_macos = true;
+            self
+        }
+
+        fn without_macos_slices(mut self) -> Self {
+            self.config.targets.apple.macos_architectures = Some(Vec::new());
+            self
+        }
+
+        fn without_ios_slices(mut self) -> Self {
+            self.config.targets.apple.ios_architectures = Some(Vec::new());
+            self.config.targets.apple.simulator_architectures = Some(Vec::new());
+            self
+        }
+
+        fn with_macos_arm64_slice(mut self) -> Self {
+            self.config.targets.apple.macos_architectures = Some(vec![AppleArchitecture::Arm64]);
+            self
+        }
+
+        fn with_simulator_arm64_slice(mut self) -> Self {
+            self.config.targets.apple.simulator_architectures =
+                Some(vec![AppleArchitecture::Arm64]);
+            self
+        }
+
+        fn with_remote_spm(mut self, repo_url: &str) -> Self {
+            self.config.targets.apple.spm.distribution = SpmDistribution::Remote;
+            self.config.targets.apple.spm.repo_url = Some(repo_url.to_string());
+            self
+        }
+
+        fn build(self) -> Config {
+            self.config.validate().expect("config validation failed");
+            self.config
+        }
     }
 
     #[test]
     fn spm_omits_macos_platform_when_enabled_without_macos_slices() {
-        let config = parse_config(
-            r#"
-[package]
-name = "mylib"
+        let config = AppleSpmConfigBuilder::new()
+            .with_macos_enabled()
+            .without_macos_slices()
+            .build();
 
-[targets.apple]
-include_macos = true
-macos_architectures = []
-"#,
-        );
-
-        let package =
-            SpmPackageGenerator::new_local(&config, SpmLayout::FfiOnly).generate_local_package();
+        let package = SpmPackageGenerator::new_local(&config, SpmLayout::FfiOnly)
+            .render_package()
+            .expect("render local package");
 
         assert!(package.contains(".iOS(.v16)"));
         assert!(!package.contains(".macOS(.v13)"));
@@ -366,21 +347,15 @@ macos_architectures = []
 
     #[test]
     fn spm_omits_ios_platform_for_macos_only_packaging() {
-        let config = parse_config(
-            r#"
-[package]
-name = "mylib"
+        let config = AppleSpmConfigBuilder::new()
+            .with_macos_enabled()
+            .without_ios_slices()
+            .with_macos_arm64_slice()
+            .build();
 
-[targets.apple]
-include_macos = true
-ios_architectures = []
-simulator_architectures = []
-macos_architectures = ["arm64"]
-"#,
-        );
-
-        let package =
-            SpmPackageGenerator::new_local(&config, SpmLayout::FfiOnly).generate_local_package();
+        let package = SpmPackageGenerator::new_local(&config, SpmLayout::FfiOnly)
+            .render_package()
+            .expect("render local package");
 
         assert!(!package.contains(".iOS(.v16)"));
         assert!(package.contains(".macOS(.v13)"));
@@ -388,21 +363,41 @@ macos_architectures = ["arm64"]
 
     #[test]
     fn spm_keeps_ios_platform_for_simulator_only_packaging() {
-        let config = parse_config(
-            r#"
-[package]
-name = "mylib"
+        let config = AppleSpmConfigBuilder::new()
+            .without_ios_slices()
+            .with_simulator_arm64_slice()
+            .build();
 
-[targets.apple]
-ios_architectures = []
-simulator_architectures = ["arm64"]
-"#,
-        );
-
-        let package =
-            SpmPackageGenerator::new_local(&config, SpmLayout::FfiOnly).generate_local_package();
+        let package = SpmPackageGenerator::new_local(&config, SpmLayout::FfiOnly)
+            .render_package()
+            .expect("render local package");
 
         assert!(package.contains(".iOS(.v16)"));
         assert!(!package.contains(".macOS(.v13)"));
+    }
+
+    #[test]
+    fn spm_renders_remote_package_from_template() {
+        let config = AppleSpmConfigBuilder::new()
+            .with_remote_spm("https://example.com/releases")
+            .build();
+
+        let package = SpmPackageGenerator::new_remote(
+            &config,
+            "abc123".to_string(),
+            "1.2.3".to_string(),
+            SpmLayout::Bundled,
+        )
+        .render_package()
+        .expect("render remote package");
+
+        assert!(package.contains("let releaseTag = \"1.2.3\""));
+        assert!(package.contains("let releaseChecksum = \"abc123\""));
+        assert!(package.contains(
+            "url: \"https://example.com/releases/releases/download/\\(releaseTag)/Mylib.xcframework.zip\""
+        ));
+        assert!(package.contains("checksum: releaseChecksum"));
+        assert!(package.contains(".target("));
+        assert!(package.contains("path: \"Sources\""));
     }
 }
