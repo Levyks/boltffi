@@ -2,13 +2,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use askama::Template;
+
 use crate::cli::{CliError, Result};
 use crate::config::Config;
 use crate::pack::PackError;
 use crate::target::{BuiltLibrary, Platform};
 
+use super::names::AppleNames;
+
 pub struct XcframeworkBuilder<'a> {
     config: &'a Config,
+    names: AppleNames,
     libraries: Vec<BuiltLibrary>,
     headers_dir: PathBuf,
     output_dir: PathBuf,
@@ -24,6 +29,7 @@ impl<'a> XcframeworkBuilder<'a> {
     pub fn new(config: &'a Config, libraries: Vec<BuiltLibrary>, headers_dir: PathBuf) -> Self {
         Self {
             config,
+            names: AppleNames::from_config(config),
             libraries,
             headers_dir,
             output_dir: config.apple_xcframework_output(),
@@ -36,18 +42,21 @@ impl<'a> XcframeworkBuilder<'a> {
             source,
         })?;
 
-        let device_libs = self.filter_device_libraries();
-        let simulator_libs = self.filter_simulator_libraries();
-        let macos_libs = self.filter_macos_libraries();
+        let library_groups = AppleLibraryGroups::from_config(self.config, &self.libraries);
+        let library_slices = self.resolve_library_slices(&library_groups)?;
+        let plan = XcframeworkPlan::new(
+            &self.output_dir,
+            &self.names,
+            self.headers_dir.clone(),
+            library_slices,
+        );
 
-        let fat_sim_lib = self.create_fat_library(&simulator_libs, "ios-simulator-fat")?;
-        let fat_macos_lib = self.create_fat_library(&macos_libs, "macos-fat")?;
-
-        let xcframework_path =
-            self.create_xcframework(&device_libs, fat_sim_lib.as_ref(), fat_macos_lib.as_ref())?;
+        plan.prepare_output()?;
+        let framework_paths = plan.create_static_frameworks()?;
+        self.run_create_xcframework(&plan.xcframework_path, &framework_paths)?;
 
         Ok(XcframeworkOutput {
-            xcframework_path,
+            xcframework_path: plan.xcframework_path,
             zip_path: None,
             checksum: None,
         })
@@ -67,35 +76,10 @@ impl<'a> XcframeworkBuilder<'a> {
         Ok(output)
     }
 
-    fn filter_device_libraries(&self) -> Vec<&BuiltLibrary> {
-        self.libraries
-            .iter()
-            .filter(|lib| lib.target.platform() == Platform::Ios)
-            .collect()
-    }
-
-    fn filter_simulator_libraries(&self) -> Vec<&BuiltLibrary> {
-        self.libraries
-            .iter()
-            .filter(|lib| lib.target.platform() == Platform::IosSimulator)
-            .collect()
-    }
-
-    fn filter_macos_libraries(&self) -> Vec<&BuiltLibrary> {
-        if !self.config.apple_include_macos() {
-            return Vec::new();
-        }
-
-        self.libraries
-            .iter()
-            .filter(|lib| lib.target.platform() == Platform::MacOs)
-            .collect()
-    }
-
     fn create_fat_library(
         &self,
         libs: &[&BuiltLibrary],
-        output_dir_name: &str,
+        slice_kind: AppleLibrarySliceKind,
     ) -> Result<Option<PathBuf>> {
         if libs.is_empty() {
             return Ok(None);
@@ -105,14 +89,13 @@ impl<'a> XcframeworkBuilder<'a> {
             return Ok(Some(libs[0].path.clone()));
         }
 
-        let fat_dir = self.output_dir.join(output_dir_name);
+        let fat_dir = self.output_dir.join(slice_kind.fat_output_directory_name());
         fs::create_dir_all(&fat_dir).map_err(|source| CliError::CreateDirectoryFailed {
             path: fat_dir.clone(),
             source,
         })?;
 
-        let lib_name = self.config.library_name();
-        let fat_lib_path = fat_dir.join(format!("lib{}.a", lib_name));
+        let fat_lib_path = fat_dir.join(format!("lib{}.a", self.names.library_name()));
 
         let mut lipo_cmd = Command::new("lipo");
         lipo_cmd.arg("-create");
@@ -137,56 +120,51 @@ impl<'a> XcframeworkBuilder<'a> {
         Ok(Some(fat_lib_path))
     }
 
-    fn create_xcframework(
+    fn resolve_library_slices(
         &self,
-        device_libs: &[&BuiltLibrary],
-        fat_sim_lib: Option<&PathBuf>,
-        fat_macos_lib: Option<&PathBuf>,
-    ) -> Result<PathBuf> {
-        let xcframework_name = self.config.xcframework_name();
-        let xcframework_path = self
-            .output_dir
-            .join(format!("{}.xcframework", xcframework_name));
+        groups: &AppleLibraryGroups<'_>,
+    ) -> Result<Vec<AppleLibrarySlice>> {
+        let mut slices = groups
+            .device_libraries
+            .iter()
+            .map(|library| AppleLibrarySlice::device(library))
+            .collect::<Vec<_>>();
 
-        if xcframework_path.exists() {
-            fs::remove_dir_all(&xcframework_path).map_err(|source| {
-                CliError::CreateDirectoryFailed {
-                    path: xcframework_path.clone(),
-                    source,
-                }
-            })?;
+        if let Some(library_path) = self.create_fat_library(
+            &groups.simulator_libraries,
+            AppleLibrarySliceKind::IosSimulator,
+        )? {
+            slices.push(AppleLibrarySlice::resolved(
+                AppleLibrarySliceKind::IosSimulator,
+                library_path,
+            ));
         }
 
-        let headers_staging = self.prepare_headers()?;
+        if let Some(library_path) =
+            self.create_fat_library(&groups.macos_libraries, AppleLibrarySliceKind::MacOs)?
+        {
+            slices.push(AppleLibrarySlice::resolved(
+                AppleLibrarySliceKind::MacOs,
+                library_path,
+            ));
+        }
 
+        Ok(slices)
+    }
+
+    fn run_create_xcframework(
+        &self,
+        xcframework_path: &Path,
+        framework_paths: &[PathBuf],
+    ) -> Result<()> {
         let mut xcodebuild_cmd = Command::new("xcodebuild");
         xcodebuild_cmd.arg("-create-xcframework");
 
-        device_libs.iter().for_each(|lib| {
-            xcodebuild_cmd
-                .arg("-library")
-                .arg(&lib.path)
-                .arg("-headers")
-                .arg(&headers_staging);
+        framework_paths.iter().for_each(|framework_path| {
+            xcodebuild_cmd.arg("-framework").arg(framework_path);
         });
 
-        if let Some(sim_lib) = fat_sim_lib {
-            xcodebuild_cmd
-                .arg("-library")
-                .arg(sim_lib)
-                .arg("-headers")
-                .arg(&headers_staging);
-        }
-
-        if let Some(macos_lib) = fat_macos_lib {
-            xcodebuild_cmd
-                .arg("-library")
-                .arg(macos_lib)
-                .arg("-headers")
-                .arg(&headers_staging);
-        }
-
-        xcodebuild_cmd.arg("-output").arg(&xcframework_path);
+        xcodebuild_cmd.arg("-output").arg(xcframework_path);
         xcodebuild_cmd.stdout(Stdio::null());
 
         let status = xcodebuild_cmd
@@ -200,156 +178,355 @@ impl<'a> XcframeworkBuilder<'a> {
             });
         }
 
-        HeaderNamespace::new(self.config.library_name(), self.config.xcframework_name())
-            .apply_to_xcframework(&xcframework_path)?;
-
-        Ok(xcframework_path)
-    }
-
-    fn prepare_headers(&self) -> Result<PathBuf> {
-        let headers_staging = self.output_dir.join("headers_staging");
-
-        if headers_staging.exists() {
-            fs::remove_dir_all(&headers_staging).map_err(|source| {
-                CliError::CreateDirectoryFailed {
-                    path: headers_staging.clone(),
-                    source,
-                }
-            })?;
-        }
-
-        fs::create_dir_all(&headers_staging).map_err(|source| CliError::CreateDirectoryFailed {
-            path: headers_staging.clone(),
-            source,
-        })?;
-
-        copy_directory_contents(&self.headers_dir, &headers_staging)?;
-
-        let modulemap_content = generate_modulemap(
-            &self.config.xcframework_name(),
-            &format!("{}.h", self.config.library_name()),
-        );
-        let modulemap_path = headers_staging.join("module.modulemap");
-
-        fs::write(&modulemap_path, modulemap_content).map_err(|source| CliError::WriteFailed {
-            path: modulemap_path,
-            source,
-        })?;
-
-        Ok(headers_staging)
+        Ok(())
     }
 }
 
-struct HeaderNamespace {
-    directory_name: String,
-    module_name: String,
+struct AppleLibraryGroups<'a> {
+    device_libraries: Vec<&'a BuiltLibrary>,
+    simulator_libraries: Vec<&'a BuiltLibrary>,
+    macos_libraries: Vec<&'a BuiltLibrary>,
 }
 
-impl HeaderNamespace {
-    fn new(library_name: impl Into<String>, module_name: impl Into<String>) -> Self {
+impl<'a> AppleLibraryGroups<'a> {
+    fn from_config(config: &Config, libraries: &'a [BuiltLibrary]) -> Self {
         Self {
-            directory_name: library_name.into(),
-            module_name: module_name.into(),
+            device_libraries: libraries
+                .iter()
+                .filter(|library| library.target.platform() == Platform::Ios)
+                .collect(),
+            simulator_libraries: libraries
+                .iter()
+                .filter(|library| library.target.platform() == Platform::IosSimulator)
+                .collect(),
+            macos_libraries: if config.apple_include_macos() {
+                libraries
+                    .iter()
+                    .filter(|library| library.target.platform() == Platform::MacOs)
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppleLibrarySliceKind {
+    IosDevice,
+    IosSimulator,
+    MacOs,
+}
+
+impl AppleLibrarySliceKind {
+    fn fat_output_directory_name(self) -> &'static str {
+        match self {
+            Self::IosDevice => "ios-device-fat",
+            Self::IosSimulator => "ios-simulator-fat",
+            Self::MacOs => "macos-fat",
         }
     }
 
-    fn apply_to_xcframework(&self, xcframework_path: &Path) -> Result<()> {
-        fs::read_dir(xcframework_path)
-            .map_err(|source| CliError::ReadFailed {
-                path: xcframework_path.to_path_buf(),
-                source,
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|source| CliError::ReadFailed {
-                path: xcframework_path.to_path_buf(),
-                source,
-            })?
-            .into_iter()
-            .map(|entry| entry.path().join("Headers"))
-            .filter(|headers_path| headers_path.is_dir())
-            .try_for_each(|headers_path| self.apply_to_headers_dir(&headers_path))
+    fn staging_directory_name(self) -> &'static str {
+        match self {
+            Self::IosDevice => "ios-device",
+            Self::IosSimulator => "ios-simulator",
+            Self::MacOs => "macos",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AppleLibrarySlice {
+    kind: AppleLibrarySliceKind,
+    device_staging_directory_name: Option<String>,
+    library_path: PathBuf,
+}
+
+impl AppleLibrarySlice {
+    fn device(library: &BuiltLibrary) -> Self {
+        Self {
+            kind: AppleLibrarySliceKind::IosDevice,
+            device_staging_directory_name: Some(library.target.triple().to_string()),
+            library_path: library.path.clone(),
+        }
     }
 
-    fn apply_to_headers_dir(&self, headers_path: &Path) -> Result<()> {
-        let namespace_path = headers_path.join(&self.directory_name);
-        let entries = fs::read_dir(headers_path)
-            .map_err(|source| CliError::ReadFailed {
-                path: headers_path.to_path_buf(),
-                source,
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|source| CliError::ReadFailed {
-                path: headers_path.to_path_buf(),
-                source,
-            })?
+    fn resolved(kind: AppleLibrarySliceKind, library_path: PathBuf) -> Self {
+        Self {
+            kind,
+            device_staging_directory_name: None,
+            library_path,
+        }
+    }
+
+    fn staging_directory_name(&self) -> &str {
+        self.device_staging_directory_name
+            .as_deref()
+            .unwrap_or_else(|| self.kind.staging_directory_name())
+    }
+}
+
+struct XcframeworkPlan {
+    xcframework_path: PathBuf,
+    legacy_headers_staging_dir: PathBuf,
+    framework_staging_dir: PathBuf,
+    framework_plans: Vec<StaticFrameworkBundlePlan>,
+}
+
+impl XcframeworkPlan {
+    fn new(
+        output_dir: &Path,
+        names: &AppleNames,
+        headers_dir: PathBuf,
+        library_slices: Vec<AppleLibrarySlice>,
+    ) -> Self {
+        let xcframework_path = output_dir.join(format!("{}.xcframework", names.xcframework_name()));
+        let framework_staging_dir = output_dir.join("framework_staging");
+        let framework_name = names.ffi_module_name().to_string();
+        let library_name = names.library_name().to_string();
+
+        let framework_plans = library_slices
             .into_iter()
-            .map(|entry| entry.path())
-            .filter(|path| path != &namespace_path)
-            .filter(|path| {
-                path.file_name()
-                    .is_none_or(|file_name| file_name != "module.modulemap")
+            .map(|library_slice| {
+                let framework_path = framework_staging_dir
+                    .join(library_slice.staging_directory_name())
+                    .join(format!("{framework_name}.framework"));
+
+                StaticFrameworkBundlePlan::new(
+                    framework_path,
+                    framework_name.clone(),
+                    library_name.clone(),
+                    headers_dir.clone(),
+                    library_slice.library_path,
+                )
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        if entries.is_empty() {
-            return Ok(());
+        Self {
+            xcframework_path,
+            legacy_headers_staging_dir: output_dir.join("headers_staging"),
+            framework_staging_dir,
+            framework_plans,
         }
-
-        fs::create_dir_all(&namespace_path).map_err(|source| CliError::CreateDirectoryFailed {
-            path: namespace_path.clone(),
-            source,
-        })?;
-
-        entries
-            .into_iter()
-            .try_for_each(|source_path| self.move_entry(source_path, &namespace_path))?;
-
-        self.write_root_modulemap(headers_path)
     }
 
-    fn move_entry(&self, source_path: PathBuf, namespace_path: &Path) -> Result<()> {
-        let file_name = source_path
-            .file_name()
-            .map(|file_name| file_name.to_owned())
-            .ok_or_else(|| CliError::FileNotFound(source_path.clone()))?;
-        let target_path = namespace_path.join(file_name);
+    fn prepare_output(&self) -> Result<()> {
+        remove_directory_if_exists(&self.xcframework_path)?;
+        remove_directory_if_exists(&self.legacy_headers_staging_dir)?;
+        remove_directory_if_exists(&self.framework_staging_dir)?;
 
-        fs::rename(&source_path, &target_path).map_err(|source| CliError::WriteFailed {
-            path: target_path,
-            source,
+        fs::create_dir_all(&self.framework_staging_dir).map_err(|source| {
+            CliError::CreateDirectoryFailed {
+                path: self.framework_staging_dir.clone(),
+                source,
+            }
         })
     }
 
-    fn write_root_modulemap(&self, headers_path: &Path) -> Result<()> {
-        let modulemap_path = headers_path.join("module.modulemap");
-        let namespaced_header_path = format!("{}/{}.h", self.directory_name, self.directory_name);
-        let modulemap_content = generate_modulemap(&self.module_name, &namespaced_header_path);
+    fn create_static_frameworks(&self) -> Result<Vec<PathBuf>> {
+        self.framework_plans
+            .iter()
+            .map(StaticFrameworkBundlePlan::execute)
+            .collect()
+    }
+}
+
+struct StaticFrameworkBundlePlan {
+    framework_path: PathBuf,
+    framework_name: String,
+    library_name: String,
+    headers_dir: PathBuf,
+    library_path: PathBuf,
+    public_header_path: String,
+}
+
+impl StaticFrameworkBundlePlan {
+    fn new(
+        framework_path: PathBuf,
+        framework_name: String,
+        library_name: String,
+        headers_dir: PathBuf,
+        library_path: PathBuf,
+    ) -> Self {
+        let public_header_path = format!("{}/{}.h", library_name, library_name);
+
+        Self {
+            framework_path,
+            framework_name,
+            library_name,
+            headers_dir,
+            library_path,
+            public_header_path,
+        }
+    }
+
+    fn execute(&self) -> Result<PathBuf> {
+        remove_directory_if_exists(&self.framework_path)?;
+
+        let namespaced_headers_path = self.namespaced_headers_path();
+        let modules_path = self.modules_path();
+
+        fs::create_dir_all(&namespaced_headers_path).map_err(|source| {
+            CliError::CreateDirectoryFailed {
+                path: namespaced_headers_path.clone(),
+                source,
+            }
+        })?;
+        fs::create_dir_all(&modules_path).map_err(|source| CliError::CreateDirectoryFailed {
+            path: modules_path.clone(),
+            source,
+        })?;
+
+        fs::copy(&self.library_path, self.framework_binary_path()).map_err(|source| {
+            CliError::CopyFailed {
+                from: self.library_path.clone(),
+                to: self.framework_binary_path(),
+                source,
+            }
+        })?;
+
+        copy_directory_contents(&self.headers_dir, &namespaced_headers_path)?;
+        self.write_modulemap()?;
+        self.write_info_plist()?;
+
+        Ok(self.framework_path.clone())
+    }
+
+    fn namespaced_headers_path(&self) -> PathBuf {
+        self.framework_path.join("Headers").join(&self.library_name)
+    }
+
+    fn modules_path(&self) -> PathBuf {
+        self.framework_path.join("Modules")
+    }
+
+    fn framework_binary_path(&self) -> PathBuf {
+        self.framework_path.join(&self.framework_name)
+    }
+
+    fn write_modulemap(&self) -> Result<()> {
+        let modulemap_content =
+            render_framework_modulemap(&self.framework_name, &self.public_header_path)?;
+        let modulemap_path = self.modules_path().join("module.modulemap");
 
         fs::write(&modulemap_path, modulemap_content).map_err(|source| CliError::WriteFailed {
             path: modulemap_path,
             source,
         })
     }
+
+    fn write_info_plist(&self) -> Result<()> {
+        let info_plist_content = render_framework_info_plist(&self.framework_name)?;
+        let info_plist_path = self.framework_path.join("Info.plist");
+
+        fs::write(&info_plist_path, info_plist_content).map_err(|source| CliError::WriteFailed {
+            path: info_plist_path,
+            source,
+        })
+    }
 }
 
-fn generate_modulemap(module_name: &str, header_path: &str) -> String {
-    format!(
-        r#"module {}FFI {{
-    header "{}"
-    export *
-}}
-"#,
-        module_name, header_path
-    )
+#[derive(Template)]
+#[template(path = "AppleFrameworkInfo.plist.xml", escape = "html")]
+struct AppleFrameworkInfoPlistTemplate<'a> {
+    framework_name: &'a str,
+    bundle_identifier: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "AppleFramework.modulemap", escape = "none")]
+struct AppleFrameworkModulemapTemplate<'a> {
+    module_name: &'a str,
+    header_path: &'a str,
+}
+
+fn render_framework_info_plist(framework_name: &str) -> Result<String> {
+    let bundle_identifier = framework_bundle_identifier(framework_name);
+
+    AppleFrameworkInfoPlistTemplate {
+        framework_name,
+        bundle_identifier: &bundle_identifier,
+    }
+    .render()
+    .map_err(|source| CliError::CommandFailed {
+        command: format!("render Apple framework Info.plist template: {source}"),
+        status: None,
+    })
+}
+
+fn framework_bundle_identifier(framework_name: &str) -> String {
+    let suffix = framework_name
+        .chars()
+        .filter_map(|character| {
+            if character.is_ascii_alphanumeric() {
+                Some(character.to_ascii_lowercase())
+            } else if character == '-' || character == '_' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+
+    if suffix.is_empty() {
+        "dev.boltffi.ffi".to_string()
+    } else {
+        format!("dev.boltffi.{suffix}")
+    }
+}
+
+fn render_framework_modulemap(module_name: &str, header_path: &str) -> Result<String> {
+    AppleFrameworkModulemapTemplate {
+        module_name,
+        header_path,
+    }
+    .render()
+    .map_err(|source| CliError::CommandFailed {
+        command: format!("render Apple framework modulemap template: {source}"),
+        status: None,
+    })
+}
+
+fn remove_directory_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    fs::remove_dir_all(path).map_err(|source| CliError::CreateDirectoryFailed {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 fn copy_directory_contents(from: &Path, to: &Path) -> Result<()> {
     walkdir::WalkDir::new(from)
         .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
         .try_for_each(|entry| {
-            let relative = entry.path().strip_prefix(from).unwrap();
+            let entry = entry.map_err(|error| {
+                let path = error
+                    .path()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| from.to_path_buf());
+                let source = error
+                    .into_io_error()
+                    .unwrap_or_else(|| std::io::Error::other("directory walk failed"));
+
+                CliError::ReadFailed { path, source }
+            })?;
+
+            if !entry.file_type().is_file() {
+                return Ok(());
+            }
+
+            let relative =
+                entry
+                    .path()
+                    .strip_prefix(from)
+                    .map_err(|source| CliError::ReadFailed {
+                        path: entry.path().to_path_buf(),
+                        source: std::io::Error::other(source.to_string()),
+                    })?;
             let dest = to.join(relative);
 
             if let Some(parent) = dest.parent() {
@@ -439,7 +616,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{HeaderNamespace, generate_modulemap};
+    use super::StaticFrameworkBundlePlan;
 
     struct TemporaryDirectory {
         path: PathBuf,
@@ -468,70 +645,62 @@ mod tests {
     }
 
     #[test]
-    fn namespaces_slice_headers() {
-        let temporary_directory = TemporaryDirectory::new("boltffi-xcframework-headers");
-        let xcframework_path = temporary_directory.path().join("Demo.xcframework");
-        let headers_path = xcframework_path.join("ios-arm64").join("Headers");
+    fn creates_static_framework_bundle() {
+        let temporary_directory = TemporaryDirectory::new("boltffi-static-framework");
+        let headers_path = temporary_directory.path().join("headers");
         let private_headers_path = headers_path.join("private");
+        let library_path = temporary_directory.path().join("libdemo.a");
+        let framework_path = temporary_directory.path().join("DemoFFI.framework");
+
         fs::create_dir_all(&private_headers_path).expect("create private headers");
         fs::write(headers_path.join("demo.h"), "").expect("write public header");
-        fs::write(
-            headers_path.join("module.modulemap"),
-            generate_modulemap("Demo", "demo.h"),
-        )
-        .expect("write module map");
         fs::write(private_headers_path.join("detail.h"), "").expect("write private header");
+        fs::write(&library_path, "archive").expect("write static library");
 
-        HeaderNamespace::new("demo", "Demo")
-            .apply_to_xcframework(&xcframework_path)
-            .expect("namespace headers");
+        let created_framework_path = StaticFrameworkBundlePlan::new(
+            framework_path.clone(),
+            "DemoFFI".to_string(),
+            "demo".to_string(),
+            headers_path.clone(),
+            library_path.clone(),
+        )
+        .execute()
+        .expect("create static framework bundle");
 
-        assert!(headers_path.join("demo").join("demo.h").is_file());
-        assert!(!headers_path.join("demo").join("module.modulemap").exists());
+        assert_eq!(created_framework_path, framework_path);
         assert_eq!(
-            fs::read_to_string(headers_path.join("module.modulemap"))
-                .expect("read root module map"),
-            r#"module DemoFFI {
-    header "demo/demo.h"
-    export *
-}
-"#
+            fs::read_to_string(framework_path.join("DemoFFI")).expect("read framework binary"),
+            "archive"
         );
         assert!(
-            headers_path
+            framework_path
+                .join("Headers")
+                .join("demo")
+                .join("demo.h")
+                .is_file()
+        );
+        assert_eq!(
+            fs::read_to_string(framework_path.join("Modules").join("module.modulemap"))
+                .expect("read framework module map"),
+            r#"framework module DemoFFI {
+    header "demo/demo.h"
+    export *
+}"#
+        );
+        assert!(
+            framework_path
+                .join("Headers")
                 .join("demo")
                 .join("private")
                 .join("detail.h")
                 .is_file()
         );
-        assert!(!headers_path.join("demo.h").exists());
-        assert!(!headers_path.join("private").exists());
-    }
-
-    #[test]
-    fn keeps_namespaced_headers_stable() {
-        let temporary_directory = TemporaryDirectory::new("boltffi-xcframework-namespaced-headers");
-        let xcframework_path = temporary_directory.path().join("Demo.xcframework");
-        let headers_path = xcframework_path.join("ios-arm64").join("Headers");
-        let namespaced_headers_path = headers_path.join("demo");
-
-        fs::create_dir_all(&namespaced_headers_path).expect("create namespaced headers");
-        fs::write(namespaced_headers_path.join("demo.h"), "").expect("write public header");
-        fs::write(namespaced_headers_path.join("module.modulemap"), "").expect("write module map");
-
-        HeaderNamespace::new("demo", "Demo")
-            .apply_to_xcframework(&xcframework_path)
-            .expect("namespace headers");
-
-        assert!(namespaced_headers_path.join("demo.h").is_file());
-        assert!(namespaced_headers_path.join("module.modulemap").is_file());
-        assert_eq!(
-            fs::read_dir(&headers_path)
-                .expect("read headers directory")
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .expect("read header entry")
-                .len(),
-            1
+        assert!(framework_path.join("Info.plist").is_file());
+        assert!(
+            !framework_path
+                .join("Headers")
+                .join("module.modulemap")
+                .exists()
         );
     }
 }
