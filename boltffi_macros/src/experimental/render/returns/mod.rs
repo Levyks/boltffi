@@ -160,13 +160,7 @@ where
         if !matches!(input.error, ErrorDecl::None(_)) {
             return <fallible::Rule as RenderRule<S, _>>::apply(
                 fallible::Rule,
-                fallible::Input::new(
-                    input.returns,
-                    input.error,
-                    input.source,
-                    input.rust_type,
-                    input.invocation,
-                ),
+                fallible::Input::new(input.returns, input.error, input.source, input.invocation),
             );
         }
 

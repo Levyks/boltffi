@@ -1,11 +1,11 @@
-use boltffi_ast::{ClosureKind, ClosureType, ReturnDef, RustType, TypeExpr};
+use boltffi_ast::{FnSig, ReturnDef, TypeExpr};
 use boltffi_binding::{
     ClosureForm, ClosureReturn, ErrorDecl, HandlePresence, IncomingParam, Native, OutOfRust,
     ParamPlan, ReadPlan, Receive, ReturnPlan, TypeRef, Wasm32, WritePlan, native, wasm32,
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericArgument, Ident, PathArguments, Type};
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -20,14 +20,14 @@ pub struct Write;
 
 pub struct Input<'a, S: Target> {
     closure: &'a ClosureReturn<S, OutOfRust>,
-    source: &'a ClosureType,
+    source: &'a FnSig,
     rust_type: Option<Type>,
     invocation: RustInvocation,
 }
 
 pub struct WriteInput<'a, S: Target> {
     closure: &'a ClosureReturn<S, OutOfRust>,
-    source: &'a ClosureType,
+    source: &'a FnSig,
     rust_type: Type,
     value: Ident,
     owner: Ident,
@@ -50,7 +50,7 @@ pub struct WriteTokens {
 impl<'a, S: Target> Input<'a, S> {
     pub fn new(
         closure: &'a ClosureReturn<S, OutOfRust>,
-        source: &'a ClosureType,
+        source: &'a FnSig,
         rust_type: Option<Type>,
         invocation: RustInvocation,
     ) -> Self {
@@ -66,7 +66,7 @@ impl<'a, S: Target> Input<'a, S> {
 impl<'a, S: Target> WriteInput<'a, S> {
     pub fn returned(
         closure: &'a ClosureReturn<S, OutOfRust>,
-        source: &'a ClosureType,
+        source: &'a FnSig,
         rust_type: Type,
         value: Ident,
         owner: Ident,
@@ -76,7 +76,7 @@ impl<'a, S: Target> WriteInput<'a, S> {
 
     pub fn success(
         closure: &'a ClosureReturn<S, OutOfRust>,
-        source: &'a ClosureType,
+        source: &'a FnSig,
         rust_type: Type,
         value: Ident,
         owner: Ident,
@@ -93,7 +93,7 @@ impl<'a, S: Target> WriteInput<'a, S> {
 
     fn new(
         closure: &'a ClosureReturn<S, OutOfRust>,
-        source: &'a ClosureType,
+        source: &'a FnSig,
         rust_type: Type,
         value: Ident,
         owner: Ident,
@@ -203,9 +203,16 @@ impl<'a> NativeClosure<'a> {
     }
 
     fn tokens(self) -> Result<WriteTokens, Error> {
-        let syntax = ClosureSyntax::new(self.input.source, self.input.closure)?;
-        let invoke =
-            ClosureInvoke::<Native>::new(self.input.closure.invoke(), self.input.source, &syntax)?;
+        let returned_closure = ReturnedClosure::new(
+            self.input.source,
+            self.input.closure,
+            Some(&self.input.rust_type),
+        )?;
+        let invoke = ClosureInvoke::<Native>::new(
+            self.input.closure.invoke(),
+            self.input.source,
+            &returned_closure,
+        )?;
         let return_tokens = invoke.return_tokens()?;
         let failure = return_tokens.failure();
         let invoke_parameters = invoke.parameters(&failure)?;
@@ -232,13 +239,13 @@ impl<'a> NativeClosure<'a> {
         let conversions = invoke_parameters.conversions;
         let arguments = invoke_parameters.arguments;
         let return_type = return_tokens.return_type();
-        let invocation = syntax.invocation();
+        let invocation = returned_closure.invocation();
         let call_body = return_tokens.body(quote! { #invocation(#(#arguments),*) });
-        let context_type = syntax.context_type();
-        let context_binding = syntax.context_binding(quote! {
+        let context_type = returned_closure.context_type();
+        let context_binding = returned_closure.context_binding(quote! {
             __boltffi_context as *mut #context_type
         });
-        let context_value = syntax.context_value(&self.input.value)?;
+        let context_value = returned_closure.context_value(&self.input.value)?;
         let write_present = quote! {
             let #context = Box::into_raw(Box::new(#context_value)) as *mut ::core::ffi::c_void;
             unsafe {
@@ -249,7 +256,7 @@ impl<'a> NativeClosure<'a> {
                 };
             }
         };
-        let write_body = syntax.write_body(
+        let write_body = returned_closure.write_body(
             &self.input.value,
             write_present,
             quote! {
@@ -319,9 +326,16 @@ impl<'a> WasmClosure<'a> {
     }
 
     fn tokens(self) -> Result<WriteTokens, Error> {
-        let syntax = ClosureSyntax::new(self.input.source, self.input.closure)?;
-        let invoke =
-            ClosureInvoke::<Wasm32>::new(self.input.closure.invoke(), self.input.source, &syntax)?;
+        let returned_closure = ReturnedClosure::new(
+            self.input.source,
+            self.input.closure,
+            Some(&self.input.rust_type),
+        )?;
+        let invoke = ClosureInvoke::<Wasm32>::new(
+            self.input.closure.invoke(),
+            self.input.source,
+            &returned_closure,
+        )?;
         let return_tokens = invoke.return_tokens()?;
         let failure = return_tokens.failure();
         let invoke_parameters = invoke.parameters(&failure)?;
@@ -339,19 +353,19 @@ impl<'a> WasmClosure<'a> {
         let conversions = invoke_parameters.conversions;
         let arguments = invoke_parameters.arguments;
         let return_type = return_tokens.return_type();
-        let invocation = syntax.invocation();
+        let invocation = returned_closure.invocation();
         let call_body = return_tokens.body(quote! { #invocation(#(#arguments),*) });
-        let context_type = syntax.context_type();
-        let context_binding = syntax.context_binding(quote! {
+        let context_type = returned_closure.context_type();
+        let context_binding = returned_closure.context_binding(quote! {
             __boltffi_context as usize as *mut #context_type
         });
-        let context_value = syntax.context_value(&self.input.value)?;
+        let context_value = returned_closure.context_value(&self.input.value)?;
         let write_present = quote! {
             unsafe {
                 *#output = Box::into_raw(Box::new(#context_value)) as usize as u32;
             }
         };
-        let write_body = syntax.write_body(
+        let write_body = returned_closure.write_body(
             &self.input.value,
             write_present,
             quote! {
@@ -403,30 +417,25 @@ impl<'a> WasmClosure<'a> {
 
 struct ClosureInvoke<'a, S: Target> {
     callable: &'a boltffi_binding::ExportedCallable<S>,
-    source: &'a ClosureType,
-    syntax: &'a ClosureSyntax,
+    source: &'a FnSig,
+    returned_closure: &'a ReturnedClosure,
 }
 
 impl<'a, S: Target> ClosureInvoke<'a, S> {
     fn new(
         callable: &'a boltffi_binding::ExportedCallable<S>,
-        source: &'a ClosureType,
-        syntax: &'a ClosureSyntax,
+        source: &'a FnSig,
+        returned_closure: &'a ReturnedClosure,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
                 "source closure parameter count does not match binding invoke parameter count",
             ));
         }
-        if source.parameters.len() != syntax.signature.parameters.len() {
-            return Err(Error::SourceSyntaxMismatch(
-                "closure syntax parameter count does not match source closure parameter count",
-            ));
-        }
         Ok(Self {
             callable,
             source,
-            syntax,
+            returned_closure,
         })
     }
 
@@ -439,7 +448,7 @@ impl<'a, S: Target> ClosureInvoke<'a, S> {
             .params()
             .iter()
             .zip(self.source.parameters.iter())
-            .zip(self.syntax.signature.parameters.iter())
+            .zip(self.returned_closure.signature.parameters.iter())
             .enumerate()
             .map(|(index, ((param, source), rust_type))| {
                 <InvokeParameterRule as RenderRule<S, _>>::apply(
@@ -468,7 +477,7 @@ impl<'a, S: Target> ClosureInvoke<'a, S> {
                 self.callable.returns().plan(),
                 self.callable.error(),
                 &self.source.returns,
-                self.syntax.signature.return_type.as_ref(),
+                self.returned_closure.signature.return_type.as_ref(),
             ),
         )
     }
@@ -479,7 +488,7 @@ struct InvokeParameterRule;
 struct InvokeParameterInput<'a, S: Target> {
     index: usize,
     payload: &'a IncomingParam<S>,
-    source: &'a RustType,
+    source: &'a TypeExpr,
     rust_type: &'a Type,
     failure: TokenStream,
 }
@@ -488,9 +497,9 @@ impl<'a, S: Target> InvokeParameterInput<'a, S> {
     fn direct_tokens(&self) -> Result<Option<InvokeParameterTokens>, Error>
     where
         for<'ty> render::type_ref::Rule: RenderRule<S, &'ty TypeRef, Output = TokenStream>,
-        for<'binding, 'syntax> render::param::closure::Rule: RenderRule<
+        for<'binding> render::param::closure::Rule: RenderRule<
                 S,
-                render::param::closure::Input<'binding, 'syntax, S>,
+                render::param::closure::Input<'binding, S>,
                 Output = render::param::Tokens,
             >,
     {
@@ -534,18 +543,14 @@ impl<'a, S: Target> InvokeParameterInput<'a, S> {
                 "closure return invoke parameter shape",
             )),
             IncomingParam::Closure(closure) => {
-                let TypeExpr::Closure { signature, .. } = self.source.expr() else {
-                    return Err(Error::SourceSyntaxMismatch(
-                        "source closure invoke parameter is not an inline closure",
-                    ));
-                };
+                let signature = signature::closure_signature(self.source, closure.presence())?;
                 let tokens = <render::param::closure::Rule as RenderRule<S, _>>::apply(
                     render::param::closure::Rule,
                     render::param::closure::Input::new(
                         closure,
-                        signature.as_ref(),
-                        self.rust_type,
-                        &argument,
+                        signature,
+                        self.rust_type.clone(),
+                        argument.clone(),
                         self.failure.clone(),
                     ),
                 )?;
@@ -774,13 +779,10 @@ impl<'a, S: Target> RustClosureReturn<'a, S> {
     }
 
     fn rust_fallible_return(&self) -> Result<RustFallibleReturn, Error> {
-        signature::Return::new(self.source).fallible()?;
-        let rust_type = self.rust_type.ok_or(Error::SourceSyntaxMismatch(
-            "fallible closure return invoke requires a source Result type",
-        ))?;
-        RustFallibleReturn::parse(rust_type).ok_or(Error::SourceSyntaxMismatch(
-            "fallible closure return invoke requires a source Result type",
-        ))
+        let ok = signature::Return::new(self.source)
+            .fallible()?
+            .ok_written_type()?;
+        Ok(RustFallibleReturn { ok })
     }
 
     fn encoded_error<T: Target>(
@@ -1202,49 +1204,40 @@ struct RustFallibleReturn {
     ok: Type,
 }
 
-impl RustFallibleReturn {
-    fn parse(ty: &Type) -> Option<Self> {
-        let Type::Path(path) = ty else {
-            return None;
-        };
-        let segment = path.path.segments.last()?;
-        (segment.ident == "Result").then_some(())?;
-        let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-            return None;
-        };
-        let ok = arguments.args.iter().find_map(|argument| match argument {
-            GenericArgument::Type(ty) => Some(ty.clone()),
-            _ => None,
-        })?;
-        Some(Self { ok })
-    }
-}
-
-struct ClosureSyntax {
-    kind: ClosureSyntaxKind,
+struct ReturnedClosure {
+    kind: ReturnedClosureKind,
     form: ClosureForm,
     signature: ClosureSignature,
 }
 
-impl ClosureSyntax {
+impl ReturnedClosure {
     fn new<S: Target>(
-        source: &ClosureType,
+        source: &FnSig,
         closure: &ClosureReturn<S, OutOfRust>,
+        rust_type: Option<&Type>,
     ) -> Result<Self, Error> {
-        let kind = match (closure.presence(), source.kind) {
-            (HandlePresence::Required, ClosureKind::ImplTrait(_)) => ClosureSyntaxKind::ImplTrait,
-            (HandlePresence::Required, ClosureKind::BoxedTraitObject(_)) => {
-                ClosureSyntaxKind::Boxed
+        let kind = match (closure.presence(), closure.form(), rust_type) {
+            (HandlePresence::Required, ClosureForm::FunctionPointer, _) => {
+                ReturnedClosureKind::FunctionPointer
             }
-            (HandlePresence::Nullable, ClosureKind::BoxedTraitObject(_)) => {
-                ClosureSyntaxKind::NullableBoxed
-            }
-            (HandlePresence::Required, ClosureKind::FunctionPointer) => {
-                ClosureSyntaxKind::FunctionPointer
-            }
+            (
+                HandlePresence::Required,
+                ClosureForm::Fn | ClosureForm::FnMut | ClosureForm::FnOnce,
+                Some(ty),
+            ) if is_boxed_return_type(ty) => ReturnedClosureKind::Boxed,
+            (
+                HandlePresence::Required,
+                ClosureForm::Fn | ClosureForm::FnMut | ClosureForm::FnOnce,
+                _,
+            ) => ReturnedClosureKind::ImplTrait,
+            (
+                HandlePresence::Nullable,
+                ClosureForm::Fn | ClosureForm::FnMut | ClosureForm::FnOnce,
+                _,
+            ) => ReturnedClosureKind::NullableBoxed,
             _ => {
                 return Err(Error::SourceSyntaxMismatch(
-                    "closure return syntax does not match binding closure",
+                    "source closure return form does not match binding closure",
                 ));
             }
         };
@@ -1277,18 +1270,20 @@ impl ClosureSyntax {
     fn context_value(&self, value: &Ident) -> Result<TokenStream, Error> {
         let trait_object = self.trait_object();
         Ok(match (self.kind, self.form) {
-            (ClosureSyntaxKind::ImplTrait, ClosureForm::Fn | ClosureForm::FnMut) => {
+            (ReturnedClosureKind::ImplTrait, ClosureForm::Fn | ClosureForm::FnMut) => {
                 quote! { Box::new(#value) as #trait_object }
             }
-            (ClosureSyntaxKind::ImplTrait, ClosureForm::FnOnce) => {
+            (ReturnedClosureKind::ImplTrait, ClosureForm::FnOnce) => {
                 quote! { Some(Box::new(#value) as #trait_object) }
             }
-            (ClosureSyntaxKind::FunctionPointer, ClosureForm::FunctionPointer) => {
+            (ReturnedClosureKind::FunctionPointer, ClosureForm::FunctionPointer) => {
                 quote! { Box::new(#value) as #trait_object }
             }
-            (ClosureSyntaxKind::Boxed, ClosureForm::Fn | ClosureForm::FnMut) => quote! { #value },
-            (ClosureSyntaxKind::Boxed, ClosureForm::FnOnce) => quote! { Some(#value) },
-            (ClosureSyntaxKind::NullableBoxed, _) => quote! { #value },
+            (ReturnedClosureKind::Boxed, ClosureForm::Fn | ClosureForm::FnMut) => {
+                quote! { #value }
+            }
+            (ReturnedClosureKind::Boxed, ClosureForm::FnOnce) => quote! { Some(#value) },
+            (ReturnedClosureKind::NullableBoxed, _) => quote! { #value },
             (_, _) => return Err(Error::UnsupportedExpansion("closure return form")),
         })
     }
@@ -1300,10 +1295,10 @@ impl ClosureSyntax {
         absent: TokenStream,
     ) -> Result<TokenStream, Error> {
         match self.kind {
-            ClosureSyntaxKind::ImplTrait
-            | ClosureSyntaxKind::FunctionPointer
-            | ClosureSyntaxKind::Boxed => Ok(present),
-            ClosureSyntaxKind::NullableBoxed => {
+            ReturnedClosureKind::ImplTrait
+            | ReturnedClosureKind::FunctionPointer
+            | ReturnedClosureKind::Boxed => Ok(present),
+            ReturnedClosureKind::NullableBoxed => {
                 let context_type = self.context_type();
                 let present_value = match self.form {
                     ClosureForm::Fn | ClosureForm::FnMut => quote! { #value },
@@ -1345,11 +1340,22 @@ impl ClosureSyntax {
 }
 
 #[derive(Clone, Copy)]
-enum ClosureSyntaxKind {
+enum ReturnedClosureKind {
     ImplTrait,
     FunctionPointer,
     Boxed,
     NullableBoxed,
+}
+
+fn is_boxed_return_type(rust_type: &Type) -> bool {
+    let Type::Path(type_path) = rust_type else {
+        return false;
+    };
+    type_path
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Box")
 }
 
 trait ClosureFormTokens {
@@ -1374,31 +1380,20 @@ struct ClosureSignature {
 }
 
 impl ClosureSignature {
-    fn from_source(source: &ClosureType, form: ClosureForm) -> Result<Self, Error> {
-        if ClosureForm::from(source.kind) != form {
-            return Err(Error::SourceSyntaxMismatch(
-                "closure return form does not match source closure form",
-            ));
-        }
+    fn from_source(source: &FnSig, form: ClosureForm) -> Result<Self, Error> {
         let parameters = source
             .parameters
             .iter()
-            .map(Self::rust_type)
+            .map(signature::rust_type)
             .collect::<Result<Vec<_>, _>>()?;
         let return_type = match &source.returns {
             ReturnDef::Void => None,
-            ReturnDef::Value(rust_type) => Some(Self::rust_type(rust_type)?),
+            ReturnDef::Value(type_expr) => Some(signature::rust_type(type_expr)?),
         };
         Ok(Self {
             form,
             parameters,
             return_type,
-        })
-    }
-
-    fn rust_type(rust_type: &RustType) -> Result<Type, Error> {
-        syn::parse_str(rust_type.spelling()).map_err(|_| {
-            Error::SourceSyntaxMismatch("closure source type spelling does not parse as Rust")
         })
     }
 

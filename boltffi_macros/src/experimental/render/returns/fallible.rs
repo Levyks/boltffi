@@ -1,7 +1,7 @@
 use boltffi_binding::{ErrorDecl, OutOfRust, ReadPlan, ReturnDecl, ReturnPlan, TypeRef};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{Ident, Type};
+use syn::Ident;
 
 use crate::experimental::{
     error::Error,
@@ -18,14 +18,12 @@ pub struct Input<'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
     error: &'a ErrorDecl<S, OutOfRust>,
     source: signature::Return<'a>,
-    rust_type: Option<Type>,
     invocation: RustInvocation,
 }
 
 pub struct SuccessInput<'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
     source: signature::Fallible<'a>,
-    rust_type: Option<Type>,
     owner: Ident,
     span: Span,
 }
@@ -34,14 +32,12 @@ impl<'a, S: Target> SuccessInput<'a, S> {
     pub fn new(
         returns: &'a ReturnDecl<S, OutOfRust>,
         source: signature::Fallible<'a>,
-        rust_type: Option<Type>,
         owner: Ident,
     ) -> Self {
         let span = owner.span();
         Self {
             returns,
             source,
-            rust_type,
             owner,
             span,
         }
@@ -53,14 +49,12 @@ impl<'a, S: Target> Input<'a, S> {
         returns: &'a ReturnDecl<S, OutOfRust>,
         error: &'a ErrorDecl<S, OutOfRust>,
         source: signature::Return<'a>,
-        rust_type: Option<Type>,
         invocation: RustInvocation,
     ) -> Self {
         Self {
             returns,
             error,
             source,
-            rust_type,
             invocation,
         }
     }
@@ -84,7 +78,6 @@ where
                 codec,
                 *shape,
                 input.source.fallible()?,
-                input.rust_type,
                 input.invocation,
             )
             .tokens(),
@@ -108,7 +101,6 @@ struct EncodedError<'a, S: Target> {
     error_codec: &'a ReadPlan,
     error_shape: S::BufferShape,
     source: signature::Fallible<'a>,
-    rust_type: Option<Type>,
     invocation: RustInvocation,
 }
 
@@ -118,7 +110,6 @@ impl<'a, S: Target> EncodedError<'a, S> {
         error_codec: &'a ReadPlan,
         error_shape: S::BufferShape,
         source: signature::Fallible<'a>,
-        rust_type: Option<Type>,
         invocation: RustInvocation,
     ) -> Self {
         Self {
@@ -126,7 +117,6 @@ impl<'a, S: Target> EncodedError<'a, S> {
             error_codec,
             error_shape,
             source,
-            rust_type,
             invocation,
         }
     }
@@ -154,12 +144,7 @@ impl<'a, S: Target> EncodedError<'a, S> {
         let empty_error_value = empty_error.value();
         let success = <Success as RenderRule<S, _>>::apply(
             Success,
-            SuccessInput::new(
-                self.returns,
-                self.source,
-                self.rust_type,
-                self.invocation.function.clone(),
-            ),
+            SuccessInput::new(self.returns, self.source, self.invocation.function.clone()),
         )?;
         let (success_items, success_ffi_parameters, success_pattern, success_body) =
             success.into_parts();
@@ -213,9 +198,6 @@ where
     type Output = SuccessTokens;
 
     fn apply(self, input: SuccessInput<'a, S>) -> Result<Self::Output, Error> {
-        let result_type = input.rust_type.as_ref().and_then(RustResult::parse).ok_or(
-            Error::SourceSyntaxMismatch("fallible binding return requires a source Result type"),
-        )?;
         let locals = local::Wrapper::new(input.span);
         let success_ident = locals.success();
         match input.returns.plan() {
@@ -249,7 +231,7 @@ where
             }
             ReturnPlan::DirectViaOutPointer { .. } => {
                 let out = locals.return_out();
-                let ok = result_type.ok();
+                let ok = input.source.ok_written_type()?;
                 Ok(SuccessTokens {
                     items: Vec::new(),
                     ffi_parameters: vec![quote! {
@@ -313,7 +295,7 @@ where
                 })
             }
             ReturnPlan::ClosureViaOutPointer(closure) => {
-                let ok = result_type.ok().clone();
+                let ok = input.source.ok_written_type()?;
                 let source_closure = input.source.ok_closure(closure.presence())?;
                 let writer = <closure::Write as RenderRule<S, _>>::apply(
                     closure::Write,
@@ -348,31 +330,5 @@ pub struct SuccessTokens {
 impl SuccessTokens {
     pub fn into_parts(self) -> (Vec<TokenStream>, Vec<TokenStream>, TokenStream, TokenStream) {
         (self.items, self.ffi_parameters, self.pattern, self.body)
-    }
-}
-
-struct RustResult {
-    ok: Type,
-}
-
-impl RustResult {
-    fn parse(ty: &Type) -> Option<Self> {
-        let Type::Path(path) = ty else {
-            return None;
-        };
-        let segment = path.path.segments.last()?;
-        (segment.ident == "Result").then_some(())?;
-        let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-            return None;
-        };
-        let ok = arguments.args.iter().find_map(|argument| match argument {
-            syn::GenericArgument::Type(ty) => Some(ty.clone()),
-            _ => None,
-        })?;
-        Some(Self { ok })
-    }
-
-    fn ok(&self) -> &Type {
-        &self.ok
     }
 }

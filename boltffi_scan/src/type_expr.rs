@@ -1,11 +1,14 @@
+use std::num::NonZeroUsize;
+
 use boltffi_ast::{
-    ClosureKind, ClosureTrait, ClosureType, HandlePresence, Primitive, ReturnDef, RustType,
-    TraitId, TraitUseForm, TypeExpr,
+    ConstExpr, CustomTypeId, FnSig, FnTrait, FnTraitKind, GenericArgument, MapKind, NamePart, Path,
+    PathRoot, PathSegment, Primitive, ReturnDef, TraitBound, TypeExpr,
 };
+use quote::ToTokens;
 
 use crate::declared_types::{DeclaredType, DeclaredTypes, SourceType};
 use crate::unsupported::UnsupportedFeature;
-use crate::{ModuleScope, ScanError, spelling};
+use crate::{ModuleScope, ScanError};
 
 pub struct Scanner<'a> {
     declared_types: &'a DeclaredTypes,
@@ -26,92 +29,20 @@ impl<'a> Scanner<'a> {
 
     pub fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
         let unwrapped = unwrapped(ty);
-        if let syn::Type::Path(type_path) = unwrapped {
-            if let Some(named) = self.exact_named(type_path, ty)? {
-                return Ok(named);
-            }
-            self.reject_source_path(type_path, ty)?;
-        }
-        if let Some(custom) = self
-            .declared_types
-            .resolve_custom_remote(self.scope, unwrapped)?
-        {
-            return Ok(TypeExpr::Custom(custom.clone()));
+        if let Some(custom) = self.custom_remote(unwrapped)? {
+            return Ok(TypeExpr::custom(
+                custom.clone(),
+                self.path_for_custom_remote(unwrapped, custom.as_str()),
+            ));
         }
         match unwrapped {
-            syn::Type::BareFn(bare_fn) => self.bare_fn(bare_fn, HandlePresence::Required),
+            syn::Type::BareFn(bare_fn) => self.bare_fn(bare_fn),
             syn::Type::ImplTrait(impl_trait) => self.impl_trait(impl_trait, ty),
-            syn::Type::Slice(slice) => self.slice(slice, ty),
-            syn::Type::Tuple(tuple) => self.tuple(tuple),
+            syn::Type::Slice(slice) => self.slice(slice),
             syn::Type::Path(type_path) => self.path(type_path, ty),
+            syn::Type::TraitObject(trait_object) => self.dyn_trait(trait_object, ty),
+            syn::Type::Tuple(tuple) => self.tuple(tuple),
             _ => Err(ScanError::unsupported_type(ty)),
-        }
-    }
-
-    pub fn rust_type(&self, ty: &syn::Type) -> Result<RustType, ScanError> {
-        self.scan(ty)
-            .map(|expr| RustType::new(spelling::ty(ty), expr))
-    }
-
-    fn exact_named(
-        &self,
-        type_path: &syn::TypePath,
-        source: &syn::Type,
-    ) -> Result<Option<TypeExpr>, ScanError> {
-        if type_path.qself.is_some()
-            || type_path
-                .path
-                .segments
-                .iter()
-                .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
-        {
-            return Ok(None);
-        }
-        let Some(segment) = type_path.path.segments.last() else {
-            return Ok(None);
-        };
-        let name = segment.ident.to_string();
-        if let Some(primitive) = Primitive::from_rust_name(&name) {
-            return Ok(Some(TypeExpr::Primitive(primitive)));
-        }
-        match self
-            .declared_types
-            .resolve_type_in_scope(self.scope, &type_path.path)?
-        {
-            SourceType::Declared(DeclaredType::Record(id)) => {
-                Ok(Some(TypeExpr::Record(id.clone())))
-            }
-            SourceType::Declared(DeclaredType::Enum(id)) => Ok(Some(TypeExpr::Enum(id.clone()))),
-            SourceType::Declared(DeclaredType::Class(id)) => {
-                Ok(Some(TypeExpr::class(id.clone(), HandlePresence::Required)))
-            }
-            SourceType::Declared(DeclaredType::Custom(_) | DeclaredType::Trait(_))
-            | SourceType::External(_)
-            | SourceType::Unknown => Ok(None),
-            SourceType::Unregistered => Err(ScanError::unsupported_type(source)),
-        }
-    }
-
-    fn reject_source_path(
-        &self,
-        type_path: &syn::TypePath,
-        source: &syn::Type,
-    ) -> Result<(), ScanError> {
-        if type_path.qself.is_some() {
-            return Ok(());
-        }
-        match self
-            .declared_types
-            .resolve_type_in_scope(self.scope, &type_path.path)?
-        {
-            SourceType::Declared(DeclaredType::Record(_))
-            | SourceType::Declared(DeclaredType::Enum(_))
-            | SourceType::Declared(DeclaredType::Trait(_))
-            | SourceType::Declared(DeclaredType::Class(_))
-            | SourceType::Unregistered => Err(ScanError::unsupported_type(source)),
-            SourceType::Declared(DeclaredType::Custom(_))
-            | SourceType::External(_)
-            | SourceType::Unknown => Ok(()),
         }
     }
 
@@ -119,7 +50,7 @@ impl<'a> Scanner<'a> {
         match output {
             syn::ReturnType::Default => Ok(ReturnDef::Void),
             syn::ReturnType::Type(_, ty) if is_unit(ty) => Ok(ReturnDef::Void),
-            syn::ReturnType::Type(_, ty) => Ok(ReturnDef::Value(self.rust_type(ty)?)),
+            syn::ReturnType::Type(_, ty) => Ok(ReturnDef::Value(self.scan(ty)?)),
         }
     }
 
@@ -127,46 +58,61 @@ impl<'a> Scanner<'a> {
         if type_path.qself.is_some() {
             return Err(ScanError::unsupported_type(source));
         }
+        if let Some(standard_type) = self.standard_type(type_path, source)? {
+            return self.standard_path(standard_type, type_path, source);
+        }
+        self.named(type_path, source)
+    }
+
+    fn standard_path(
+        &self,
+        standard_type: StandardType,
+        type_path: &syn::TypePath,
+        source: &syn::Type,
+    ) -> Result<TypeExpr, ScanError> {
         let segment = type_path
             .path
             .segments
             .last()
             .ok_or_else(|| ScanError::unsupported_type(source))?;
-        match self.standard_type(type_path, source)? {
-            Some(StandardType::String) => return Ok(TypeExpr::String),
-            Some(StandardType::Vec) => {
-                return self.vec(segment, source);
+        match standard_type {
+            StandardType::String => Ok(TypeExpr::String),
+            StandardType::Vec => self
+                .single_type_argument(segment, source)
+                .and_then(|argument| self.scan(argument))
+                .map(TypeExpr::vec),
+            StandardType::Option => self
+                .single_type_argument(segment, source)
+                .and_then(|argument| self.scan(argument))
+                .map(TypeExpr::option),
+            StandardType::Result => {
+                let (ok, err) = self.two_type_arguments(segment, source)?;
+                Ok(TypeExpr::result(self.scan(ok)?, self.scan(err)?))
             }
-            Some(StandardType::Option) => return self.option(segment, source),
-            Some(StandardType::Result) => {
-                let (ok, err) = self.two_arguments(segment, source)?;
-                return Ok(TypeExpr::result(ok, err));
+            StandardType::HashMap => {
+                let (key, value) = self.two_type_arguments(segment, source)?;
+                Ok(TypeExpr::map(
+                    MapKind::Hash,
+                    self.scan(key)?,
+                    self.scan(value)?,
+                ))
             }
-            Some(StandardType::HashMap | StandardType::BTreeMap) => {
-                let (key, value) = self.two_arguments(segment, source)?;
-                return Ok(TypeExpr::map(key, value));
+            StandardType::BTreeMap => {
+                let (key, value) = self.two_type_arguments(segment, source)?;
+                Ok(TypeExpr::map(
+                    MapKind::BTree,
+                    self.scan(key)?,
+                    self.scan(value)?,
+                ))
             }
-            Some(StandardType::Box) => {
-                return self.trait_object_argument(
-                    segment,
-                    source,
-                    TraitUseForm::BoxedDyn,
-                    HandlePresence::Required,
-                );
-            }
-            Some(StandardType::Arc) => {
-                return self.trait_object_argument(
-                    segment,
-                    source,
-                    TraitUseForm::ArcDyn,
-                    HandlePresence::Required,
-                );
-            }
-            None => {}
-        }
-        match segment.ident.to_string().as_str() {
-            "Self" => Ok(TypeExpr::SelfType),
-            _ => self.named(type_path, source),
+            StandardType::Box => self
+                .single_type_argument(segment, source)
+                .and_then(|argument| self.scan(argument))
+                .map(TypeExpr::boxed),
+            StandardType::Arc => self
+                .single_type_argument(segment, source)
+                .and_then(|argument| self.scan(argument))
+                .map(TypeExpr::arc),
         }
     }
 
@@ -201,11 +147,6 @@ impl<'a> Scanner<'a> {
     }
 
     fn named(&self, type_path: &syn::TypePath, source: &syn::Type) -> Result<TypeExpr, ScanError> {
-        let segment = type_path
-            .path
-            .segments
-            .last()
-            .ok_or_else(|| ScanError::unsupported_type(source))?;
         if type_path
             .path
             .segments
@@ -214,159 +155,48 @@ impl<'a> Scanner<'a> {
         {
             return Err(ScanError::unsupported_type(source));
         }
+        let Some(segment) = type_path.path.segments.last() else {
+            return Err(ScanError::unsupported_type(source));
+        };
         let name = segment.ident.to_string();
+        if name == "Self" {
+            return Ok(TypeExpr::SelfType);
+        }
+        if name == "str" {
+            return Ok(TypeExpr::Str);
+        }
         if let Some(primitive) = Primitive::from_rust_name(&name) {
             return Ok(TypeExpr::Primitive(primitive));
         }
+        let path = ast_path(&type_path.path, self)?;
         match self
             .declared_types
             .resolve_type_in_scope(self.scope, &type_path.path)?
         {
-            SourceType::Declared(DeclaredType::Record(id)) => Ok(TypeExpr::Record(id.clone())),
-            SourceType::Declared(DeclaredType::Enum(id)) => Ok(TypeExpr::Enum(id.clone())),
-            SourceType::Declared(DeclaredType::Class(id)) => {
-                Ok(TypeExpr::class(id.clone(), HandlePresence::Required))
+            SourceType::Declared(DeclaredType::Record(id)) => {
+                Ok(TypeExpr::record(id.clone(), path))
             }
-            SourceType::Declared(DeclaredType::Custom(_))
-            | SourceType::Declared(DeclaredType::Trait(_))
+            SourceType::Declared(DeclaredType::Enum(id)) => {
+                Ok(TypeExpr::enumeration(id.clone(), path))
+            }
+            SourceType::Declared(DeclaredType::Class(id)) => Ok(TypeExpr::class(id.clone(), path)),
+            SourceType::Declared(DeclaredType::Custom(id)) => {
+                Ok(TypeExpr::custom(id.clone(), path))
+            }
+            SourceType::Declared(DeclaredType::Trait(_))
             | SourceType::Unregistered
             | SourceType::External(_)
             | SourceType::Unknown => Err(ScanError::unsupported_type(source)),
         }
     }
 
-    fn tuple(&self, tuple: &syn::TypeTuple) -> Result<TypeExpr, ScanError> {
-        if tuple.elems.is_empty() {
-            return Ok(TypeExpr::Unit);
-        }
-        let elements = tuple
-            .elems
-            .iter()
-            .map(|element| self.scan(element))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(TypeExpr::tuple(elements))
-    }
-
-    fn single_argument(
+    fn dyn_trait(
         &self,
-        segment: &syn::PathSegment,
+        trait_object: &syn::TypeTraitObject,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
-        self.single_type_argument(segment, source)
-            .and_then(|argument| self.scan(argument))
-    }
-
-    fn single_type_argument<'segment>(
-        &self,
-        segment: &'segment syn::PathSegment,
-        source: &syn::Type,
-    ) -> Result<&'segment syn::Type, ScanError> {
-        match type_arguments(segment).as_slice() {
-            [argument] => Ok(argument),
-            _ => Err(ScanError::unsupported_type(source)),
-        }
-    }
-
-    fn two_arguments(
-        &self,
-        segment: &syn::PathSegment,
-        source: &syn::Type,
-    ) -> Result<(TypeExpr, TypeExpr), ScanError> {
-        match type_arguments(segment).as_slice() {
-            [first, second] => Ok((self.scan(first)?, self.scan(second)?)),
-            _ => Err(ScanError::unsupported_type(source)),
-        }
-    }
-
-    fn vec(&self, segment: &syn::PathSegment, source: &syn::Type) -> Result<TypeExpr, ScanError> {
-        match self.single_argument(segment, source)? {
-            TypeExpr::Primitive(Primitive::U8) => Ok(TypeExpr::Bytes),
-            element => Ok(TypeExpr::vec(element)),
-        }
-    }
-
-    fn option(
-        &self,
-        segment: &syn::PathSegment,
-        source: &syn::Type,
-    ) -> Result<TypeExpr, ScanError> {
-        let inner = self.single_type_argument(segment, source)?;
-        if let Some(closure) = self.nullable_closure(inner) {
-            return closure;
-        }
-        self.nullable_handle(inner)
-            .unwrap_or_else(|| self.scan(inner).map(TypeExpr::option))
-    }
-
-    fn nullable_closure(&self, ty: &syn::Type) -> Option<Result<TypeExpr, ScanError>> {
-        match unwrapped(ty) {
-            syn::Type::BareFn(bare_fn) => Some(self.bare_fn(bare_fn, HandlePresence::Nullable)),
-            syn::Type::Path(type_path) => {
-                let segment = type_path.path.segments.last()?;
-                match self.standard_type(type_path, ty) {
-                    Ok(Some(StandardType::Box)) => {
-                        self.closure_trait_object_argument(segment, ty, HandlePresence::Nullable)
-                    }
-                    Ok(_) => None,
-                    Err(error) => Some(Err(error)),
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn nullable_handle(&self, ty: &syn::Type) -> Option<Result<TypeExpr, ScanError>> {
-        let syn::Type::Path(type_path) = unwrapped(ty) else {
-            return None;
-        };
-        let segment = type_path.path.segments.last()?;
-        match self.standard_type(type_path, ty) {
-            Ok(Some(StandardType::Box)) => Some(self.trait_object_argument(
-                segment,
-                ty,
-                TraitUseForm::BoxedDyn,
-                HandlePresence::Nullable,
-            )),
-            Ok(Some(StandardType::Arc)) => Some(self.trait_object_argument(
-                segment,
-                ty,
-                TraitUseForm::ArcDyn,
-                HandlePresence::Nullable,
-            )),
-            Ok(_) => self.nullable_class(type_path),
-            Err(error) => Some(Err(error)),
-        }
-    }
-
-    fn nullable_class(&self, type_path: &syn::TypePath) -> Option<Result<TypeExpr, ScanError>> {
-        if type_path
-            .path
-            .segments
-            .iter()
-            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
-        {
-            return None;
-        }
-        match self
-            .declared_types
-            .resolve_type_in_scope(self.scope, &type_path.path)
-        {
-            Ok(SourceType::Declared(DeclaredType::Class(id))) => {
-                Some(Ok(TypeExpr::class(id.clone(), HandlePresence::Nullable)))
-            }
-            Ok(_) => None,
-            Err(error) => Some(Err(error)),
-        }
-    }
-
-    fn declared_trait(&self, path: &syn::Path, source: &syn::Type) -> Result<TraitId, ScanError> {
-        match self
-            .declared_types
-            .resolve_type_in_scope(self.scope, path)?
-        {
-            SourceType::Declared(DeclaredType::Trait(id)) => Ok(id.clone()),
-            _ => Err(ScanError::unsupported_type(source)),
-        }
+        self.single_trait_bound(&trait_object.bounds, source)
+            .map(TypeExpr::Dyn)
     }
 
     fn impl_trait(
@@ -374,31 +204,103 @@ impl<'a> Scanner<'a> {
         impl_trait: &syn::TypeImplTrait,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
-        if let Some((trait_kind, arguments)) =
-            impl_trait.bounds.iter().find_map(|bound| match bound {
-                syn::TypeParamBound::Trait(trait_bound) => closure_bound(trait_bound),
-                _ => None,
-            })
-        {
-            return self.closure(ClosureKind::ImplTrait(trait_kind), arguments);
-        }
+        self.single_trait_bound(&impl_trait.bounds, source)
+            .map(TypeExpr::ImplTrait)
+    }
 
-        match impl_trait.bounds.iter().collect::<Vec<_>>().as_slice() {
-            [syn::TypeParamBound::Trait(bound)] => self.trait_bound(
-                bound,
-                source,
-                TraitUseForm::ImplTrait,
-                HandlePresence::Required,
-            ),
+    fn single_trait_bound(
+        &self,
+        bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+        source: &syn::Type,
+    ) -> Result<TraitBound, ScanError> {
+        let recognized = bounds
+            .iter()
+            .map(|bound| self.ffi_trait_bound(bound, source))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        match recognized.as_slice() {
+            [bound] => Ok(bound.clone()),
             _ => Err(ScanError::unsupported_type(source)),
         }
     }
 
-    fn bare_fn(
+    fn ffi_trait_bound(
         &self,
-        bare_fn: &syn::TypeBareFn,
-        presence: HandlePresence,
-    ) -> Result<TypeExpr, ScanError> {
+        bound: &syn::TypeParamBound,
+        source: &syn::Type,
+    ) -> Result<Option<TraitBound>, ScanError> {
+        let syn::TypeParamBound::Trait(bound) = bound else {
+            return Err(ScanError::unsupported_type(source));
+        };
+        match self.trait_bound(bound, source) {
+            Ok(bound) => Ok(Some(bound)),
+            Err(error) => {
+                if self.marker_bound(bound)? {
+                    Ok(None)
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    fn marker_bound(&self, bound: &syn::TraitBound) -> Result<bool, ScanError> {
+        if !matches!(bound.modifier, syn::TraitBoundModifier::None)
+            || bound.lifetimes.is_some()
+            || closure_bound(bound).is_some()
+            || bound
+                .path
+                .segments
+                .iter()
+                .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+        {
+            return Ok(false);
+        }
+        Ok(!matches!(
+            self.declared_types
+                .resolve_type_in_scope(self.scope, &bound.path)?,
+            SourceType::Declared(DeclaredType::Trait(_))
+        ))
+    }
+
+    fn trait_bound(
+        &self,
+        bound: &syn::TraitBound,
+        source: &syn::Type,
+    ) -> Result<TraitBound, ScanError> {
+        if !matches!(bound.modifier, syn::TraitBoundModifier::None) || bound.lifetimes.is_some() {
+            return Err(ScanError::unsupported_type(source));
+        }
+        if let Some((kind, arguments)) = closure_bound(bound) {
+            return self
+                .fn_trait(kind, arguments)
+                .map(Box::new)
+                .map(TraitBound::Fn);
+        }
+        if bound
+            .path
+            .segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+        {
+            return Err(ScanError::unsupported_type(source));
+        }
+        let path = ast_path(&bound.path, self)?;
+        match self
+            .declared_types
+            .resolve_type_in_scope(self.scope, &bound.path)?
+        {
+            SourceType::Declared(DeclaredType::Trait(id)) => Ok(TraitBound::Trait {
+                id: id.clone(),
+                path,
+            }),
+            _ => Err(ScanError::unsupported_type(source)),
+        }
+    }
+
+    fn bare_fn(&self, bare_fn: &syn::TypeBareFn) -> Result<TypeExpr, ScanError> {
         if bare_fn.lifetimes.is_some() {
             return Err(crate::unsupported::feature(
                 UnsupportedFeature::HigherRankedFunctionPointer,
@@ -422,144 +324,92 @@ impl<'a> Scanner<'a> {
         let parameters = bare_fn
             .inputs
             .iter()
-            .map(|argument| self.rust_type(&argument.ty))
+            .map(|argument| self.scan(&argument.ty))
             .collect::<Result<Vec<_>, _>>()?;
         let returns = self.scan_return(&bare_fn.output)?;
-        Ok(TypeExpr::closure_with_presence(
-            ClosureType::new(ClosureKind::FunctionPointer, parameters, returns),
-            presence,
-        ))
+        Ok(TypeExpr::fn_ptr(FnSig::new(parameters, returns)))
     }
 
-    fn slice(&self, slice: &syn::TypeSlice, source: &syn::Type) -> Result<TypeExpr, ScanError> {
-        match self.scan(&slice.elem)? {
-            TypeExpr::Primitive(Primitive::U8) => Ok(TypeExpr::Bytes),
+    fn fn_trait(
+        &self,
+        kind: FnTraitKind,
+        arguments: &syn::ParenthesizedGenericArguments,
+    ) -> Result<FnTrait, ScanError> {
+        let parameters = arguments
+            .inputs
+            .iter()
+            .map(|input| self.scan(input))
+            .collect::<Result<Vec<_>, _>>()?;
+        let returns = self.scan_return(&arguments.output)?;
+        Ok(FnTrait::new(kind, FnSig::new(parameters, returns)))
+    }
+
+    fn slice(&self, slice: &syn::TypeSlice) -> Result<TypeExpr, ScanError> {
+        self.scan(&slice.elem).map(TypeExpr::slice)
+    }
+
+    fn tuple(&self, tuple: &syn::TypeTuple) -> Result<TypeExpr, ScanError> {
+        match tuple.elems.len() {
+            0 => Ok(TypeExpr::Unit),
+            _ => tuple
+                .elems
+                .iter()
+                .map(|element| self.scan(element))
+                .collect::<Result<Vec<_>, _>>()
+                .map(TypeExpr::tuple),
+        }
+    }
+
+    fn single_type_argument<'segment>(
+        &self,
+        segment: &'segment syn::PathSegment,
+        source: &syn::Type,
+    ) -> Result<&'segment syn::Type, ScanError> {
+        match type_arguments(segment).as_slice() {
+            [argument] => Ok(argument),
             _ => Err(ScanError::unsupported_type(source)),
         }
     }
 
-    fn closure(
+    fn two_type_arguments<'segment>(
         &self,
-        kind: ClosureKind,
-        arguments: &syn::ParenthesizedGenericArguments,
-    ) -> Result<TypeExpr, ScanError> {
-        let parameters = arguments
-            .inputs
-            .iter()
-            .map(|input| self.rust_type(input))
-            .collect::<Result<Vec<_>, _>>()?;
-        let returns = self.scan_return(&arguments.output)?;
-        Ok(TypeExpr::closure(ClosureType::new(
-            kind, parameters, returns,
-        )))
-    }
-
-    fn closure_with_presence(
-        &self,
-        kind: ClosureKind,
-        arguments: &syn::ParenthesizedGenericArguments,
-        presence: HandlePresence,
-    ) -> Result<TypeExpr, ScanError> {
-        let parameters = arguments
-            .inputs
-            .iter()
-            .map(|input| self.rust_type(input))
-            .collect::<Result<Vec<_>, _>>()?;
-        let returns = self.scan_return(&arguments.output)?;
-        Ok(TypeExpr::closure_with_presence(
-            ClosureType::new(kind, parameters, returns),
-            presence,
-        ))
-    }
-
-    fn trait_object_argument(
-        &self,
-        segment: &syn::PathSegment,
+        segment: &'segment syn::PathSegment,
         source: &syn::Type,
-        form: TraitUseForm,
-        presence: HandlePresence,
-    ) -> Result<TypeExpr, ScanError> {
-        let argument = self.single_type_argument(segment, source)?;
-        let syn::Type::TraitObject(trait_object) = unwrapped(argument) else {
-            return Err(ScanError::unsupported_type(source));
-        };
-        match trait_object.bounds.iter().collect::<Vec<_>>().as_slice() {
-            [syn::TypeParamBound::Trait(bound)]
-                if closure_bound(bound).is_some() && form == TraitUseForm::BoxedDyn =>
-            {
-                self.closure_trait_bound(bound, source, presence)
-            }
-            [syn::TypeParamBound::Trait(bound)] => self.trait_bound(bound, source, form, presence),
+    ) -> Result<(&'segment syn::Type, &'segment syn::Type), ScanError> {
+        match type_arguments(segment).as_slice() {
+            [first, second] => Ok((first, second)),
             _ => Err(ScanError::unsupported_type(source)),
         }
     }
 
-    fn closure_trait_object_argument(
-        &self,
-        segment: &syn::PathSegment,
-        source: &syn::Type,
-        presence: HandlePresence,
-    ) -> Option<Result<TypeExpr, ScanError>> {
-        let argument = match self.single_type_argument(segment, source) {
-            Ok(argument) => argument,
-            Err(error) => return Some(Err(error)),
-        };
-        let syn::Type::TraitObject(trait_object) = unwrapped(argument) else {
-            return Some(Err(ScanError::unsupported_type(source)));
-        };
-        match trait_object.bounds.iter().collect::<Vec<_>>().as_slice() {
-            [syn::TypeParamBound::Trait(bound)] if closure_bound(bound).is_some() => {
-                Some(self.closure_trait_bound(bound, source, presence))
-            }
-            [syn::TypeParamBound::Trait(_)] => None,
-            _ => Some(Err(ScanError::unsupported_type(source))),
+    fn path_for_custom_remote(&self, ty: &syn::Type, fallback: &str) -> Path {
+        match unwrapped(ty) {
+            syn::Type::Path(type_path) => ast_path(&type_path.path, self)
+                .unwrap_or_else(|_| ast_path_without_arguments(&type_path.path)),
+            _ => Path::single(fallback),
         }
     }
 
-    fn closure_trait_bound(
-        &self,
-        bound: &syn::TraitBound,
-        source: &syn::Type,
-        presence: HandlePresence,
-    ) -> Result<TypeExpr, ScanError> {
-        if !matches!(bound.modifier, syn::TraitBoundModifier::None) || bound.lifetimes.is_some() {
-            return Err(ScanError::unsupported_type(source));
-        }
-        match closure_bound(bound) {
-            Some((trait_kind, arguments)) => self.closure_with_presence(
-                ClosureKind::BoxedTraitObject(trait_kind),
-                arguments,
-                presence,
-            ),
-            None => Err(ScanError::unsupported_type(source)),
-        }
-    }
-
-    fn trait_bound(
-        &self,
-        bound: &syn::TraitBound,
-        source: &syn::Type,
-        form: TraitUseForm,
-        presence: HandlePresence,
-    ) -> Result<TypeExpr, ScanError> {
-        if !matches!(bound.modifier, syn::TraitBoundModifier::None) || bound.lifetimes.is_some() {
-            return Err(ScanError::unsupported_type(source));
-        }
-        if bound
-            .path
-            .segments
-            .iter()
-            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+    fn can_resolve_custom_remote(&self, ty: &syn::Type) -> Result<bool, ScanError> {
+        let syn::Type::Path(type_path) = ty else {
+            return Ok(true);
+        };
+        match self
+            .declared_types
+            .resolve_type_in_scope(self.scope, &type_path.path)?
         {
-            return Err(ScanError::unsupported_type(source));
+            SourceType::Declared(_) | SourceType::Unregistered => Ok(false),
+            SourceType::External(_) | SourceType::Unknown => Ok(true),
         }
-        self.declared_trait(&bound.path, source)
-            .map(|id| TypeExpr::r#trait(id, form, presence))
     }
-}
 
-fn is_unit(ty: &syn::Type) -> bool {
-    matches!(unwrapped(ty), syn::Type::Tuple(tuple) if tuple.elems.is_empty())
+    fn custom_remote(&self, ty: &syn::Type) -> Result<Option<&CustomTypeId>, ScanError> {
+        if self.can_resolve_custom_remote(ty)? {
+            self.declared_types.resolve_custom_remote(self.scope, ty)
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 pub fn unwrapped(ty: &syn::Type) -> &syn::Type {
@@ -567,6 +417,117 @@ pub fn unwrapped(ty: &syn::Type) -> &syn::Type {
         syn::Type::Paren(paren) => unwrapped(&paren.elem),
         syn::Type::Group(group) => unwrapped(&group.elem),
         _ => ty,
+    }
+}
+
+fn is_unit(ty: &syn::Type) -> bool {
+    matches!(unwrapped(ty), syn::Type::Tuple(tuple) if tuple.elems.is_empty())
+}
+
+fn ast_path(path: &syn::Path, scanner: &Scanner<'_>) -> Result<Path, ScanError> {
+    Ok(Path::new(
+        path_root(path),
+        path_segments(path, scanner)?.collect(),
+    ))
+}
+
+fn ast_path_without_arguments(path: &syn::Path) -> Path {
+    Path::new(
+        path_root(path),
+        path_segments_without_arguments(path).collect(),
+    )
+}
+
+fn path_root(path: &syn::Path) -> PathRoot {
+    if path.leading_colon.is_some() {
+        return PathRoot::Absolute;
+    }
+    let leading_supers = path
+        .segments
+        .iter()
+        .take_while(|segment| segment.ident == "super")
+        .count();
+    match path
+        .segments
+        .first()
+        .map(|segment| segment.ident.to_string())
+    {
+        Some(first) if first == "crate" => PathRoot::Crate,
+        Some(first) if first == "self" => PathRoot::Self_,
+        Some(_) | None if leading_supers == 0 => PathRoot::Relative,
+        _ => NonZeroUsize::new(leading_supers)
+            .map(PathRoot::Super)
+            .unwrap_or(PathRoot::Relative),
+    }
+}
+
+fn path_segments<'path>(
+    path: &'path syn::Path,
+    scanner: &'path Scanner<'_>,
+) -> Result<impl Iterator<Item = PathSegment> + 'path, ScanError> {
+    let skipped_root_segments = match path_root(path) {
+        PathRoot::Relative | PathRoot::Absolute => 0,
+        PathRoot::Crate | PathRoot::Self_ => 1,
+        PathRoot::Super(count) => count.get(),
+    };
+    path.segments
+        .iter()
+        .skip(skipped_root_segments)
+        .map(|segment| ast_segment(segment, scanner))
+        .collect::<Result<Vec<_>, _>>()
+        .map(IntoIterator::into_iter)
+}
+
+fn path_segments_without_arguments(path: &syn::Path) -> impl Iterator<Item = PathSegment> + '_ {
+    let skipped_root_segments = match path_root(path) {
+        PathRoot::Relative | PathRoot::Absolute => 0,
+        PathRoot::Crate | PathRoot::Self_ => 1,
+        PathRoot::Super(count) => count.get(),
+    };
+    path.segments
+        .iter()
+        .skip(skipped_root_segments)
+        .map(|segment| PathSegment::new(NamePart::new(segment.ident.to_string())))
+}
+
+fn ast_segment(
+    segment: &syn::PathSegment,
+    scanner: &Scanner<'_>,
+) -> Result<PathSegment, ScanError> {
+    let arguments = match &segment.arguments {
+        syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => Vec::new(),
+        syn::PathArguments::AngleBracketed(arguments) => arguments
+            .args
+            .iter()
+            .map(|argument| ast_generic_argument(argument, scanner))
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    Ok(PathSegment::with_arguments(
+        NamePart::new(segment.ident.to_string()),
+        arguments,
+    ))
+}
+
+fn ast_generic_argument(
+    argument: &syn::GenericArgument,
+    scanner: &Scanner<'_>,
+) -> Result<GenericArgument, ScanError> {
+    match argument {
+        syn::GenericArgument::Type(ty) => scanner.scan(ty).map(GenericArgument::Type),
+        syn::GenericArgument::Const(expr) => Ok(GenericArgument::Const(ConstExpr::Raw(
+            expr.to_token_stream().to_string(),
+        ))),
+        syn::GenericArgument::AssocType(associated) => {
+            scanner
+                .scan(&associated.ty)
+                .map(|type_expr| GenericArgument::AssociatedType {
+                    name: NamePart::new(associated.ident.to_string()),
+                    type_expr,
+                })
+        }
+        _ => Ok(GenericArgument::Const(ConstExpr::Raw(
+            argument.to_token_stream().to_string(),
+        ))),
     }
 }
 
@@ -643,7 +604,7 @@ fn type_arguments(segment: &syn::PathSegment) -> Vec<&syn::Type> {
 
 fn closure_bound(
     bound: &syn::TraitBound,
-) -> Option<(ClosureTrait, &syn::ParenthesizedGenericArguments)> {
+) -> Option<(FnTraitKind, &syn::ParenthesizedGenericArguments)> {
     let segment = bound.path.segments.last()?;
     let kind = closure_kind(&segment.ident.to_string())?;
     let syn::PathArguments::Parenthesized(arguments) = &segment.arguments else {
@@ -652,26 +613,22 @@ fn closure_bound(
     Some((kind, arguments))
 }
 
-fn closure_kind(name: &str) -> Option<ClosureTrait> {
+fn closure_kind(name: &str) -> Option<FnTraitKind> {
     Some(match name {
-        "Fn" => ClosureTrait::Fn,
-        "FnMut" => ClosureTrait::FnMut,
-        "FnOnce" => ClosureTrait::FnOnce,
+        "Fn" => FnTraitKind::Fn,
+        "FnMut" => FnTraitKind::FnMut,
+        "FnOnce" => FnTraitKind::FnOnce,
         _ => return None,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::ModulePath;
-    use crate::marked::MarkedItems;
-    use crate::source_tree::SourceTree;
-    use boltffi_ast::{ClassId, CustomTypeId, EnumId, RecordId, TraitId};
+    use boltffi_ast::{ClassId, Primitive, RecordId, TraitId};
 
-    fn file(source: &str) -> syn::File {
-        syn::parse_str(source).expect("valid file")
-    }
+    use super::*;
+    use crate::ModuleScope;
+    use crate::declared_types::DeclaredTypes;
 
     fn ty(source: &str) -> syn::Type {
         syn::parse_str(source).expect("valid type")
@@ -681,67 +638,40 @@ mod tests {
         Scanner::new(&DeclaredTypes::new(), &ModuleScope::root("demo")).scan(&ty(source))
     }
 
-    fn scope(source: &str) -> ModuleScope {
-        ModuleScope::new(ModulePath::root("demo"), &file(source).items)
-    }
-
-    fn declared_types(source: &str) -> DeclaredTypes {
-        let source_tree = SourceTree::in_memory("demo", file(source).items).expect("source tree");
-        let marked = MarkedItems::collect(&source_tree).expect("marked items");
-        DeclaredTypes::index(&source_tree, &marked).expect("declared types")
-    }
-
     #[test]
-    fn scans_every_primitive_type_exactly() {
-        [
-            ("bool", Primitive::Bool),
-            ("i8", Primitive::I8),
-            ("u8", Primitive::U8),
-            ("i16", Primitive::I16),
-            ("u16", Primitive::U16),
-            ("i32", Primitive::I32),
-            ("u32", Primitive::U32),
-            ("i64", Primitive::I64),
-            ("u64", Primitive::U64),
-            ("isize", Primitive::ISize),
-            ("usize", Primitive::USize),
-            ("f32", Primitive::F32),
-            ("f64", Primitive::F64),
-        ]
-        .into_iter()
-        .for_each(|(source, primitive)| {
-            assert_eq!(scan(source), Ok(TypeExpr::Primitive(primitive)));
-        });
-    }
-
-    #[test]
-    fn scans_string_and_sequence_containers() {
+    fn scans_primitives_and_standard_containers_without_binding_folding() {
+        assert_eq!(scan("i32"), Ok(TypeExpr::Primitive(Primitive::I32)));
         assert_eq!(scan("String"), Ok(TypeExpr::String));
-        assert_eq!(scan("[u8]"), Ok(TypeExpr::Bytes));
+        assert_eq!(scan("str"), Ok(TypeExpr::Str));
         assert_eq!(
-            scan("Vec<i32>"),
-            Ok(TypeExpr::vec(TypeExpr::Primitive(Primitive::I32)))
+            scan("Vec<u8>"),
+            Ok(TypeExpr::vec(TypeExpr::Primitive(Primitive::U8)))
         );
-        assert_eq!(scan("Vec<u8>"), Ok(TypeExpr::Bytes));
-        assert_eq!(scan("std::vec::Vec<u8>"), Ok(TypeExpr::Bytes));
         assert_eq!(
-            scan("Option<String>"),
-            Ok(TypeExpr::option(TypeExpr::String))
+            scan("[u8]"),
+            Ok(TypeExpr::slice(TypeExpr::Primitive(Primitive::U8)))
+        );
+        assert_eq!(
+            scan("Option<Vec<u8>>"),
+            Ok(TypeExpr::option(TypeExpr::vec(TypeExpr::Primitive(
+                Primitive::U8
+            ))))
         );
     }
 
     #[test]
-    fn scans_result_and_map_containers() {
+    fn scans_result_tuple_and_maps_as_source_shapes() {
         assert_eq!(
-            scan("Result<i32, String>"),
+            scan("Result<(u32,), String>"),
             Ok(TypeExpr::result(
-                TypeExpr::Primitive(Primitive::I32),
+                TypeExpr::tuple(vec![TypeExpr::Primitive(Primitive::U32)]),
                 TypeExpr::String
             ))
         );
         assert_eq!(
             scan("HashMap<String, i32>"),
             Ok(TypeExpr::map(
+                MapKind::Hash,
                 TypeExpr::String,
                 TypeExpr::Primitive(Primitive::I32)
             ))
@@ -749,716 +679,81 @@ mod tests {
     }
 
     #[test]
-    fn scans_tuples_and_unit() {
-        assert_eq!(
-            scan("(i32, String)"),
-            Ok(TypeExpr::tuple(vec![
-                TypeExpr::Primitive(Primitive::I32),
-                TypeExpr::String
-            ]))
-        );
-        assert_eq!(scan("()"), Ok(TypeExpr::Unit));
-    }
-
-    #[test]
-    fn scans_nested_containers() {
-        assert_eq!(
-            scan("Option<Vec<i32>>"),
-            Ok(TypeExpr::option(TypeExpr::vec(TypeExpr::Primitive(
-                Primitive::I32
-            ))))
-        );
-    }
-
-    #[test]
-    fn unwraps_parenthesized_types_before_scanning() {
-        assert_eq!(scan("(i32)"), Ok(TypeExpr::Primitive(Primitive::I32)));
-        assert_eq!(
-            scan("Vec<(i32)>"),
-            Ok(TypeExpr::vec(TypeExpr::Primitive(Primitive::I32)))
-        );
-        assert_eq!(scan("(())"), Ok(TypeExpr::Unit));
-    }
-
-    #[test]
-    fn resolves_qualified_std_paths_by_last_segment() {
-        assert_eq!(scan("std::string::String"), Ok(TypeExpr::String));
-        assert_eq!(scan("std::vec::Vec<u8>"), Ok(TypeExpr::Bytes));
-    }
-
-    #[test]
-    fn resolves_registered_record_reference_including_nested() {
+    fn scans_declared_types_with_source_paths() {
         let mut declared_types = DeclaredTypes::new();
-        declared_types.register_record(RecordId::new("demo::geometry::Point"));
-        let module = ModuleScope::new(ModulePath::root("demo").child("geometry"), &[]);
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Point")),
-            Ok(TypeExpr::Record(RecordId::new("demo::geometry::Point")))
-        );
-        assert_eq!(
-            scanner.scan(&ty("Vec<Point>")),
-            Ok(TypeExpr::vec(TypeExpr::Record(RecordId::new(
-                "demo::geometry::Point"
-            ))))
-        );
-    }
-
-    #[test]
-    fn resolves_registered_class_references_and_nullable_handles() {
-        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::Point"));
         declared_types.register_class(ClassId::new("demo::Engine"));
         let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
         assert_eq!(
-            scanner.scan(&ty("Engine")),
-            Ok(TypeExpr::class(
-                ClassId::new("demo::Engine"),
-                HandlePresence::Required
+            scanner.scan(&ty("Point")),
+            Ok(TypeExpr::record(
+                RecordId::new("demo::Point"),
+                Path::single("Point")
             ))
         );
         assert_eq!(
             scanner.scan(&ty("Option<Engine>")),
-            Ok(TypeExpr::class(
+            Ok(TypeExpr::option(TypeExpr::class(
                 ClassId::new("demo::Engine"),
-                HandlePresence::Nullable
-            ))
-        );
-    }
-
-    #[test]
-    fn resolves_registered_custom_remote_type() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(
-            CustomTypeId::new("demo::UtcDateTime"),
-            &ty("chrono::DateTime<chrono::Utc>"),
-        );
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("chrono::DateTime<chrono::Utc>")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::UtcDateTime")))
-        );
-        assert_eq!(
-            scanner.scan(&ty("DateTime<Utc>")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::UtcDateTime")))
-        );
-    }
-
-    #[test]
-    fn qualified_custom_remote_use_does_not_resolve_by_shape() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(
-            CustomTypeId::new("demo::UtcDateTime"),
-            &ty("chrono::DateTime<chrono::Utc>"),
-        );
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
-            scanner.scan(&ty("other::DateTime<other::Utc>")),
-            Err(ScanError::UnsupportedType { spelling })
-                if spelling == "other::DateTime<other::Utc>"
-        ));
-    }
-
-    #[test]
-    fn resolves_imported_single_segment_custom_remote() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(CustomTypeId::new("demo::Uuid"), &ty("uuid::Uuid"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Uuid")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::Uuid")))
-        );
-    }
-
-    #[test]
-    fn custom_remote_shape_preserves_const_generic_arguments() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(CustomTypeId::new("demo::Array4"), &ty("fixed::Array<4>"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Array<4>")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::Array4")))
-        );
-        assert_eq!(
-            scanner.scan(&ty("Array<8>")),
-            Err(ScanError::UnsupportedType {
-                spelling: "Array<8>".to_owned()
-            })
-        );
-    }
-
-    #[test]
-    fn custom_remote_shape_preserves_associated_type_arguments() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(
-            CustomTypeId::new("demo::DateIter"),
-            &ty("iter::Iter<Item = chrono::DateTime<chrono::Utc>>"),
-        );
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Iter<Item = DateTime<Utc>>")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::DateIter")))
-        );
-        assert!(matches!(
-            scanner.scan(&ty("Iter<Item = String>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Iter<Item = String>"
-        ));
-    }
-
-    #[test]
-    fn ambiguous_custom_remote_shape_does_not_resolve_by_leaf_name() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(CustomTypeId::new("demo::FooId"), &ty("foo::Id"));
-        declared_types.register_custom(CustomTypeId::new("demo::BarId"), &ty("bar::Id"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("foo::Id")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::FooId")))
-        );
-        assert_eq!(
-            scanner.scan(&ty("bar::Id")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::BarId")))
-        );
-        assert!(matches!(
-            scanner.scan(&ty("Id")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Id"
-        ));
-    }
-
-    #[test]
-    fn repeated_super_segments_resolve_custom_remotes() {
-        let mut declared_types = DeclaredTypes::new();
-        let custom_module = ModulePath::root("demo").child("api").child("v1");
-        let call_module = ModulePath::root("demo").child("domain");
-        let call_scope = ModuleScope::new(call_module, &[]);
-        declared_types.register_custom_in(
-            &custom_module,
-            CustomTypeId::new("demo::api::v1::MoneyWire"),
-            &ty("super::super::domain::Money"),
-        );
-        let scanner = Scanner::new(&declared_types, &call_scope);
-
-        assert_eq!(
-            scanner.scan(&ty("Money")),
-            Ok(TypeExpr::Custom(CustomTypeId::new(
-                "demo::api::v1::MoneyWire"
+                Path::single("Engine")
             )))
         );
     }
 
     #[test]
-    fn resolves_custom_type_inside_containers_by_exact_remote() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types
-            .register_custom(CustomTypeId::new("demo::UtcDateTime"), &ty("DateTime<Utc>"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Vec<DateTime<Utc>>")),
-            Ok(TypeExpr::vec(TypeExpr::Custom(CustomTypeId::new(
-                "demo::UtcDateTime"
-            ))))
-        );
-        assert!(matches!(
-            scanner.scan(&ty("DateTime")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "DateTime"
-        ));
-    }
-
-    #[test]
-    fn resolves_custom_remote_through_harmless_parentheses() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_custom(
-            CustomTypeId::new("demo::UtcDateTime"),
-            &ty("(DateTime<Utc>)"),
-        );
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("DateTime<Utc>")),
-            Ok(TypeExpr::Custom(CustomTypeId::new("demo::UtcDateTime")))
-        );
-    }
-
-    #[test]
-    fn declared_value_type_wins_over_matching_custom_remote() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_record(RecordId::new("demo::Timestamp"));
-        declared_types.register_custom(CustomTypeId::new("demo::TimestampWire"), &ty("Timestamp"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Timestamp")),
-            Ok(TypeExpr::Record(RecordId::new("demo::Timestamp")))
-        );
-    }
-
-    #[test]
-    fn unregistered_source_type_blocks_custom_remote_fallback() {
-        let mut declared_types = declared_types("pub struct Timestamp;");
-        declared_types.register_custom(CustomTypeId::new("demo::TimestampWire"), &ty("Timestamp"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
-            scanner.scan(&ty("Timestamp")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Timestamp"
-        ));
-    }
-
-    #[test]
-    fn relative_custom_remote_resolution_uses_module_context() {
-        let mut declared_types = DeclaredTypes::new();
-        let custom_module = ModulePath::root("demo").child("custom");
-        let data_module = ModulePath::root("demo").child("data");
-        declared_types.register_custom_in(
-            &custom_module,
-            CustomTypeId::new("demo::custom::TimestampWire"),
-            &ty("Timestamp"),
-        );
-        let custom_scope = ModuleScope::new(custom_module, &[]);
-        let data_scope = ModuleScope::new(data_module, &[]);
-        let custom_scanner = Scanner::new(&declared_types, &custom_scope);
-        let data_scanner = Scanner::new(&declared_types, &data_scope);
-
-        assert_eq!(
-            custom_scanner.scan(&ty("Timestamp")),
-            Ok(TypeExpr::Custom(CustomTypeId::new(
-                "demo::custom::TimestampWire"
-            )))
-        );
-        assert!(matches!(
-            data_scanner.scan(&ty("Timestamp")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Timestamp"
-        ));
-    }
-
-    #[test]
-    fn qualified_custom_remote_resolution_crosses_module_context() {
-        let mut declared_types = DeclaredTypes::new();
-        let custom_module = ModulePath::root("demo").child("custom");
-        let api_module = ModulePath::root("demo").child("api");
-        declared_types.register_custom_in(
-            &custom_module,
-            CustomTypeId::new("demo::custom::UtcDateTime"),
-            &ty("chrono::DateTime<chrono::Utc>"),
-        );
-        let api_scope = ModuleScope::new(api_module, &[]);
-        let scanner = Scanner::new(&declared_types, &api_scope);
-
-        assert_eq!(
-            scanner.scan(&ty("chrono::DateTime<chrono::Utc>")),
-            Ok(TypeExpr::Custom(CustomTypeId::new(
-                "demo::custom::UtcDateTime"
-            )))
-        );
-    }
-
-    #[test]
-    fn does_not_resolve_custom_binding_name_as_source_type() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types
-            .register_custom(CustomTypeId::new("demo::UtcDateTime"), &ty("DateTime<Utc>"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
-            scanner.scan(&ty("UtcDateTime")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "UtcDateTime"
-        ));
-    }
-
-    #[test]
-    fn resolves_qualified_records_without_leaf_name_guessing() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_record(RecordId::new("demo::geometry::Point"));
-        declared_types.register_record(RecordId::new("demo::Point"));
-        declared_types.register_enum(EnumId::new("demo::geometry::Mode"));
-        let module = ModuleScope::new(ModulePath::root("demo").child("shape"), &[]);
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("crate::geometry::Point")),
-            Ok(TypeExpr::Record(RecordId::new("demo::geometry::Point")))
-        );
-        assert_eq!(
-            scanner.scan(&ty("crate::geometry::Mode")),
-            Ok(TypeExpr::Enum(EnumId::new("demo::geometry::Mode")))
-        );
-        assert!(matches!(
-            scanner.scan(&ty("Point")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Point"
-        ));
-    }
-
-    #[test]
-    fn unregistered_named_type_rejects_with_spelling() {
-        assert!(matches!(
-            scan("Point"),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Point"
-        ));
-    }
-
-    #[test]
-    fn rejects_named_type_arguments_before_erasing_them() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_record(RecordId::new("demo::Point"));
-        declared_types.register_class(ClassId::new("demo::Engine"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
-            scanner.scan(&ty("Point<u32>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Point<u32>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("Option<Engine<u32>>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Engine<u32>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("i32<u32>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "i32<u32>"
-        ));
-    }
-
-    #[test]
-    fn self_type_is_captured_verbatim() {
-        assert_eq!(scan("Self"), Ok(TypeExpr::SelfType));
-    }
-
-    #[test]
-    fn resolves_callback_trait_use_forms() {
+    fn scans_callback_traits_only_behind_dyn_or_impl_trait() {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_trait(TraitId::new("demo::Listener"));
         let module = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &module);
 
+        assert_eq!(
+            scanner.scan(&ty("Box<dyn Listener>")),
+            Ok(TypeExpr::boxed(TypeExpr::dyn_trait(
+                TraitId::new("demo::Listener"),
+                Path::single("Listener")
+            )))
+        );
         assert_eq!(
             scanner.scan(&ty("impl Listener")),
-            Ok(TypeExpr::r#trait(
+            Ok(TypeExpr::impl_trait(
                 TraitId::new("demo::Listener"),
-                TraitUseForm::ImplTrait,
-                HandlePresence::Required,
+                Path::single("Listener")
             ))
         );
         assert_eq!(
-            scanner.scan(&ty("Box<dyn Listener>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::BoxedDyn,
-                HandlePresence::Required,
-            ))
-        );
-        assert_eq!(
-            scanner.scan(&ty("std::boxed::Box<dyn Listener>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::BoxedDyn,
-                HandlePresence::Required,
-            ))
-        );
-        assert_eq!(
-            scanner.scan(&ty("std::sync::Arc<dyn Listener>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::ArcDyn,
-                HandlePresence::Required,
-            ))
-        );
-    }
-
-    #[test]
-    fn scans_function_pointer_closure_type() {
-        let TypeExpr::Closure {
-            signature,
-            presence,
-        } = scan("fn(u32, bool) -> i64").expect("scan")
-        else {
-            panic!("expected closure");
-        };
-
-        assert_eq!(presence, HandlePresence::Required);
-        assert_eq!(signature.kind, ClosureKind::FunctionPointer);
-        assert_eq!(
-            signature
-                .parameters
-                .iter()
-                .map(|rust_type| rust_type.expr())
-                .collect::<Vec<_>>(),
-            vec![
-                &TypeExpr::Primitive(Primitive::U32),
-                &TypeExpr::Primitive(Primitive::Bool)
-            ]
-        );
-        assert_eq!(
-            signature.returns,
-            ReturnDef::value(TypeExpr::Primitive(Primitive::I64))
-        );
-    }
-
-    #[test]
-    fn rejects_function_pointer_shapes_erased_by_closure_type() {
-        assert_eq!(
-            scan("unsafe fn(u32)"),
-            Err(crate::unsupported::feature(
-                UnsupportedFeature::UnsafeFunctionPointer
-            ))
-        );
-        assert_eq!(
-            scan("extern \"C\" fn(u32)"),
-            Err(crate::unsupported::feature(
-                UnsupportedFeature::ExternFunctionPointer
-            ))
-        );
-        assert_eq!(
-            scan("fn(u32, ...)"),
-            Err(crate::unsupported::feature(
-                UnsupportedFeature::VariadicFunctionPointer
-            ))
-        );
-        assert_eq!(
-            scan("for<'a> fn(&'a str)"),
-            Err(crate::unsupported::feature(
-                UnsupportedFeature::HigherRankedFunctionPointer
-            ))
-        );
-    }
-
-    #[test]
-    fn scans_boxed_closure_trait_objects() {
-        let TypeExpr::Closure {
-            signature,
-            presence,
-        } = scan("Box<dyn FnMut(u32) -> bool>").expect("scan")
-        else {
-            panic!("expected closure");
-        };
-
-        assert_eq!(presence, HandlePresence::Required);
-        assert_eq!(
-            signature.kind,
-            ClosureKind::BoxedTraitObject(ClosureTrait::FnMut)
-        );
-        assert_eq!(
-            signature
-                .parameters
-                .iter()
-                .map(|rust_type| rust_type.expr())
-                .collect::<Vec<_>>(),
-            vec![&TypeExpr::Primitive(Primitive::U32)]
-        );
-        assert_eq!(
-            signature.returns,
-            ReturnDef::value(TypeExpr::Primitive(Primitive::Bool))
-        );
-    }
-
-    #[test]
-    fn folds_optional_inline_closures_into_presence() {
-        let TypeExpr::Closure {
-            signature,
-            presence,
-        } = scan("Option<fn(u32)>").expect("scan")
-        else {
-            panic!("expected closure");
-        };
-        assert_eq!(presence, HandlePresence::Nullable);
-        assert_eq!(signature.kind, ClosureKind::FunctionPointer);
-
-        let TypeExpr::Closure {
-            signature,
-            presence,
-        } = scan("Option<Box<dyn FnOnce(u32) -> i64>>").expect("scan")
-        else {
-            panic!("expected closure");
-        };
-        assert_eq!(presence, HandlePresence::Nullable);
-        assert_eq!(
-            signature.kind,
-            ClosureKind::BoxedTraitObject(ClosureTrait::FnOnce)
-        );
-        assert_eq!(
-            signature.returns,
-            ReturnDef::value(TypeExpr::Primitive(Primitive::I64))
-        );
-    }
-
-    #[test]
-    fn resolves_callback_trait_containers_through_valid_imports_only() {
-        let declared_types = declared_types("#[export] trait Listener { fn call(&self); }");
-        let box_scope = scope("use std::boxed::Box;");
-        let arc_scope = scope("use std::sync::Arc;");
-        let box_scanner = Scanner::new(&declared_types, &box_scope);
-        let arc_scanner = Scanner::new(&declared_types, &arc_scope);
-
-        assert_eq!(
-            box_scanner.scan(&ty("Box<dyn Listener>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::BoxedDyn,
-                HandlePresence::Required,
-            ))
-        );
-        assert_eq!(
-            arc_scanner.scan(&ty("Arc<dyn Listener>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::ArcDyn,
-                HandlePresence::Required,
-            ))
-        );
-    }
-
-    #[test]
-    fn rejects_callback_trait_containers_shadowed_by_source_types() {
-        let declared_types = declared_types(
-            "struct Box<T: ?Sized>(std::marker::PhantomData<T>); \
-             pub mod other { pub struct Box<T: ?Sized>(std::marker::PhantomData<T>); } \
-             #[export] trait Listener { fn call(&self); }",
-        );
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
-            scanner.scan(&ty("Box<dyn Listener>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Box<dyn Listener>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("other::Box<dyn Listener>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "other::Box<dyn Listener>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("Option<other::Box<dyn Listener>>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "other::Box<dyn Listener>"
-        ));
-    }
-
-    #[test]
-    fn rejects_callback_trait_containers_imported_from_nonstandard_paths() {
-        let declared_types = declared_types("#[export] trait Listener { fn call(&self); }");
-        let module = scope("use other::Box; use other::Arc;");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
-            scanner.scan(&ty("Box<dyn Listener>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Box<dyn Listener>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("Arc<dyn Listener>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Arc<dyn Listener>"
-        ));
-    }
-
-    #[test]
-    fn folds_optional_callback_trait_handles_into_presence() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_trait(TraitId::new("demo::Listener"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert_eq!(
-            scanner.scan(&ty("Option<Box<dyn Listener>>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::BoxedDyn,
-                HandlePresence::Nullable,
-            ))
-        );
-        assert_eq!(
-            scanner.scan(&ty("Option<std::sync::Arc<dyn Listener>>")),
-            Ok(TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::ArcDyn,
-                HandlePresence::Nullable,
-            ))
-        );
-    }
-
-    #[test]
-    fn rejects_trait_references_that_would_erase_bounds_or_form() {
-        let mut declared_types = DeclaredTypes::new();
-        declared_types.register_trait(TraitId::new("demo::Listener"));
-        let module = ModuleScope::root("demo");
-        let scanner = Scanner::new(&declared_types, &module);
-
-        assert!(matches!(
             scanner.scan(&ty("Listener")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Listener"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("impl Send + Listener")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "impl Send + Listener"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("Box<dyn Listener + Send>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Box<dyn Listener + Send>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("impl Listener<i32>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "impl Listener<i32>"
-        ));
-        assert!(matches!(
-            scanner.scan(&ty("Box<dyn Listener<Item = i32>>")),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Box<dyn Listener<Item = i32>>"
-        ));
-    }
-
-    #[test]
-    fn impl_trait_closure_can_follow_marker_bounds() {
-        let TypeExpr::Closure {
-            signature,
-            presence,
-        } = scan("impl Send + Fn(u32) -> u32").expect("scan")
-        else {
-            panic!("expected closure");
-        };
-
-        assert_eq!(presence, boltffi_ast::HandlePresence::Required);
-        assert_eq!(signature.kind, ClosureKind::ImplTrait(ClosureTrait::Fn));
-        assert_eq!(
-            signature
-                .parameters
-                .iter()
-                .map(|rust_type| rust_type.expr())
-                .collect::<Vec<_>>(),
-            vec![&TypeExpr::Primitive(Primitive::U32)]
-        );
-        assert_eq!(
-            signature.returns,
-            ReturnDef::value(TypeExpr::Primitive(Primitive::U32))
+            Err(ScanError::unsupported_type(&ty("Listener")))
         );
     }
 
     #[test]
-    fn impl_trait_without_fn_bound_is_rejected() {
-        assert!(matches!(
-            scan("impl Iterator<Item = u32>"),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "impl Iterator<Item = u32>"
-        ));
-    }
-
-    #[test]
-    fn closure_with_unsupported_argument_reports_that_argument() {
-        assert!(matches!(
-            scan("impl Fn(Point)"),
-            Err(ScanError::UnsupportedType { spelling }) if spelling == "Point"
-        ));
+    fn scans_closure_source_forms() {
+        assert_eq!(
+            scan("fn(u32) -> String"),
+            Ok(TypeExpr::fn_ptr(FnSig::new(
+                vec![TypeExpr::Primitive(Primitive::U32)],
+                ReturnDef::Value(TypeExpr::String)
+            )))
+        );
+        assert_eq!(
+            scan("impl FnMut(u32) -> String"),
+            Ok(TypeExpr::impl_fn(FnTrait::new(
+                FnTraitKind::FnMut,
+                FnSig::new(
+                    vec![TypeExpr::Primitive(Primitive::U32)],
+                    ReturnDef::Value(TypeExpr::String)
+                )
+            )))
+        );
+        assert_eq!(
+            scan("Box<dyn FnOnce(u32)>"),
+            Ok(TypeExpr::boxed(TypeExpr::dyn_fn(FnTrait::new(
+                FnTraitKind::FnOnce,
+                FnSig::new(vec![TypeExpr::Primitive(Primitive::U32)], ReturnDef::Void)
+            ))))
+        );
     }
 }

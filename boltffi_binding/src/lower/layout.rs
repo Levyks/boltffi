@@ -15,7 +15,7 @@ pub(super) fn compute(record: &SourceRecord) -> Result<RecordLayout, LowerError>
     let (offset, alignment, fields) = record.fields.iter().try_fold(
         (0_u64, 1_u64, Vec::new()),
         |(offset, alignment, mut fields), field| {
-            let primitive = primitive::fixed_primitive(field.rust_type.expr())
+            let primitive = primitive::fixed_primitive(&field.type_expr)
                 .ok_or_else(|| LowerError::unsupported_type(UnsupportedType::RecordField))?;
             let field_offset = align_up(offset, primitive.alignment);
             fields.push(FieldLayout::new(

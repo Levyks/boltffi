@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClassId, DeprecationInfo, DocComment, RustType, Source, SourceName, SourceSpan, StreamId,
+    ClassId, DeprecationInfo, DocComment, Source, SourceName, SourceSpan, StreamId, TypeExpr,
     UserAttr,
 };
 
@@ -19,7 +19,7 @@ pub struct StreamDef {
     /// Class owner when the stream is attached to a class.
     pub owner: Option<ClassId>,
     /// Rust source item type yielded by the stream.
-    pub item_type: RustType,
+    pub item_type: TypeExpr,
     /// Source stream mode requested by the author.
     pub mode: StreamMode,
     /// User attributes preserved from the stream declaration.
@@ -43,12 +43,12 @@ impl StreamDef {
     /// type.
     ///
     /// Returns an async stream with no owner, attributes, or documentation.
-    pub fn new(id: StreamId, name: impl Into<SourceName>, item_type: impl Into<RustType>) -> Self {
+    pub fn new(id: StreamId, name: impl Into<SourceName>, item_type: TypeExpr) -> Self {
         Self {
             id,
             name: name.into(),
             owner: None,
-            item_type: item_type.into(),
+            item_type,
             mode: StreamMode::Async,
             user_attrs: Vec::new(),
             doc: None,

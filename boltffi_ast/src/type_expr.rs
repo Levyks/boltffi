@@ -1,210 +1,179 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ClassId, CustomTypeId, EnumId, Primitive, RecordId, ReturnDef, TraitId};
+use crate::{ClassId, CustomTypeId, EnumId, Path, Primitive, RecordId, ReturnDef, TraitId};
 
-/// A Rust source type and its scanned semantic expression.
+/// A Rust type exactly as written at an exported BoltFFI use site.
 ///
-/// `spelling` preserves the type text written by the Rust author, such as
-/// `crate::models::Point` or `Vec<u8>`. `expr` stores the resolved BoltFFI type
-/// expression used by lowering and validation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct RustType {
-    spelling: String,
-    expr: TypeExpr,
-}
-
-impl RustType {
-    /// Builds a Rust source type.
-    pub fn new(spelling: impl Into<String>, expr: TypeExpr) -> Self {
-        Self {
-            spelling: spelling.into(),
-            expr,
-        }
-    }
-
-    /// Builds a Rust type from a semantic expression when source spelling is unavailable.
-    pub fn from_expr(expr: TypeExpr) -> Self {
-        Self {
-            spelling: expr.fallback_spelling(),
-            expr,
-        }
-    }
-
-    /// Returns the Rust type spelling.
-    pub fn spelling(&self) -> &str {
-        &self.spelling
-    }
-
-    /// Returns the scanned semantic type expression.
-    pub const fn expr(&self) -> &TypeExpr {
-        &self.expr
-    }
-
-    /// Consumes the source type and returns its semantic expression.
-    pub fn into_expr(self) -> TypeExpr {
-        self.expr
-    }
-}
-
-impl From<TypeExpr> for RustType {
-    fn from(expr: TypeExpr) -> Self {
-        Self::from_expr(expr)
-    }
-}
-
-/// Form in which a Rust trait appears as a source value.
+/// Every variant mirrors a Rust type form and nests like the source, so
+/// `Option<Arc<dyn Listener>>` is `Option(Arc(Dyn(Trait)))` rather than one
+/// folded nullable-callback shape. Faithfulness is the contract: the
+/// expression records what the source says, not what the FFI boundary needs.
+/// Whether a representable type is supported in the position where it appears
+/// is decided by later stages.
 ///
-/// Names the supported Rust spellings for trait-typed values: a
-/// monomorphized `impl Trait`, an owned `Box<dyn Trait>`, or a shared
-/// `Arc<dyn Trait>`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum TraitUseForm {
-    /// `impl Trait`.
-    ImplTrait,
-    /// `Box<dyn Trait>`.
-    BoxedDyn,
-    /// `Arc<dyn Trait>`.
-    ArcDyn,
-}
-
-/// Whether a handle-typed source value is required or optional.
+/// Invalid Rust stays unrepresentable. `dyn` and `impl Trait` accept only a
+/// [`TraitBound`], so `dyn Vec<u8>` cannot be constructed.
 ///
-/// The scanner folds source shapes such as `Option<Engine>` and
-/// `Option<Box<dyn Listener>>` into the handle-bearing type expression
-/// instead of keeping an outer [`TypeExpr::Option`].
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum HandlePresence {
-    /// Caller must supply a live handle.
-    Required,
-    /// Caller may omit the handle; a zero/null sentinel encodes absence.
-    Nullable,
-}
-
-/// A type expression in the exported Rust surface.
+/// Named leaves keep both a stable `id` and the `path` as written, because the
+/// canonical identity (`demo::Point`) and the source spelling
+/// (`crate::geometry::Point`) can differ and regenerated Rust must reproduce
+/// the spelling.
 ///
-/// This is the shape produced after scanning a Rust type from a field,
-/// parameter, or return. Known exported names have been turned into IDs, and
-/// ordinary Rust containers remain as a tree. For example,
-/// `Option<Vec<Point>>` becomes `Option(Vec(Record(point_id)))`, `(u32,
-/// String)` becomes `Tuple([Primitive(U32), String])`, inline closure
-/// signatures become `Closure`, and `Self` stays explicit when it appears
-/// inside an impl block.
+/// # Example
+///
+/// The parameter of `fn open(engine: Option<Engine>)` is
+/// `Option(Class { id, path })`, and `fn bytes(data: Vec<u8>)` is
+/// `Vec(Primitive(U8))`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum TypeExpr {
-    /// A primitive Rust scalar.
+    /// A scalar such as `u32` or `bool`.
     Primitive(Primitive),
-    /// The Rust unit type `()`.
-    ///
-    /// A callable that returns nothing uses
-    /// [`ReturnDef::Void`](crate::ReturnDef::Void). This variant records
-    /// unit when it appears as a written value type, such as
-    /// `Result<(), E>`.
+    /// The unit type `()`.
     Unit,
-    /// A record declaration by ID.
-    Record(RecordId),
-    /// An enum declaration by ID.
-    Enum(EnumId),
-    /// A class-style object reference.
-    ///
-    /// Source `Option<Engine>` is represented as `Class { id, presence:
-    /// Nullable }`; required class values use `presence: Required`.
+    /// The owned `String` type.
+    String,
+    /// The borrowed `str` type.
+    Str,
+    /// A struct exported as a BoltFFI record.
+    Record {
+        /// Declaration this reference resolves to.
+        id: RecordId,
+        /// Path as written at this use site.
+        path: Path,
+    },
+    /// An enum exported as a BoltFFI enum.
+    Enum {
+        /// Declaration this reference resolves to.
+        id: EnumId,
+        /// Path as written at this use site.
+        path: Path,
+    },
+    /// A type exported as a BoltFFI class handle.
     Class {
-        /// The class declaration this reference resolves to.
+        /// Declaration this reference resolves to.
         id: ClassId,
-        /// Whether the source value is nullable.
-        presence: HandlePresence,
+        /// Path as written at this use site.
+        path: Path,
     },
-    /// A reference to a Rust trait the user wrote.
-    ///
-    /// The source entity is a trait, such as `trait Listener { ... }`,
-    /// and this variant references it. Source `Option<Box<dyn T>>`
-    /// collapses to `Trait { form: BoxedDyn, presence: Nullable }`.
-    Trait {
-        /// The trait declaration this reference resolves to.
-        id: TraitId,
-        /// Rust form used at this trait-typed source value.
-        form: TraitUseForm,
-        /// Whether the source value is nullable.
-        presence: HandlePresence,
+    /// A type bridged through a custom converter.
+    Custom {
+        /// Declaration this reference resolves to.
+        id: CustomTypeId,
+        /// Path as written at this use site.
+        path: Path,
     },
-    /// An inline closure value such as `impl Fn(u32) -> String`.
-    Closure {
-        /// Closure signature written by the source.
-        signature: Box<ClosureType>,
-        /// Whether the closure value is nullable.
-        presence: HandlePresence,
-    },
-    /// A custom type declaration by ID.
-    Custom(CustomTypeId),
-    /// The Rust `Self` type inside an impl, trait, or callback context.
-    SelfType,
-    /// A `Vec<T>` source type.
+    /// A `dyn Trait` object.
+    Dyn(TraitBound),
+    /// An `impl Trait`.
+    ImplTrait(TraitBound),
+    /// A `Box<T>`.
+    Boxed(Box<TypeExpr>),
+    /// An `Arc<T>`.
+    Arc(Box<TypeExpr>),
+    /// A function pointer such as `fn(u32) -> bool`.
+    FnPtr(Box<FnSig>),
+    /// A `Vec<T>`.
     Vec(Box<TypeExpr>),
-    /// An `Option<T>` source type.
-    ///
-    /// Used for ordinary optional values, such as `Option<i32>` and
-    /// `Option<String>`. Source `Option<...>` wrapping a supported
-    /// trait-typed value lands in [`TypeExpr::Trait`] with
-    /// `presence: Nullable`.
+    /// A slice `[T]`.
+    Slice(Box<TypeExpr>),
+    /// An `Option<T>`.
     Option(Box<TypeExpr>),
-    /// A `Result<T, E>` source type.
-    ///
-    /// Preserves both source type arguments in order. The same expression
-    /// can appear in returns, fields, parameters, or nested containers.
+    /// A `Result<T, E>`.
     Result {
-        /// Success type written as the first `Result` argument.
+        /// Success type, the first `Result` argument.
         ok: Box<TypeExpr>,
-        /// Error type written as the second `Result` argument.
+        /// Error type, the second `Result` argument.
         err: Box<TypeExpr>,
     },
-    /// A tuple type such as `(u32, String)`.
-    ///
-    /// Tuples are ordinary value types in the AST. A function returning
-    /// `(u32, String)` is represented as `ReturnDef::Value(TypeExpr::Tuple(_))`,
-    /// while a function returning `Result<(u32, String), Error>` is represented
-    /// as `ReturnDef::Value(TypeExpr::Result { ok: TypeExpr::Tuple(_), err: ... })`.
-    /// The empty tuple is *not* represented here; use [`TypeExpr::Unit`].
+    /// A tuple such as `(u32, String)`.
     Tuple(Vec<TypeExpr>),
-    /// A map-like source type.
+    /// A `HashMap` or `BTreeMap`.
     Map {
-        /// Key type written by the source map.
+        /// Which map constructor was written.
+        kind: MapKind,
+        /// Key type written between the angle brackets.
         key: Box<TypeExpr>,
-        /// Value type written by the source map.
+        /// Value type written between the angle brackets.
         value: Box<TypeExpr>,
     },
-    /// A UTF-8 string source type.
-    String,
-    /// A byte buffer source type.
-    Bytes,
-    /// A type parameter used by a generic declaration the scanner chose to keep.
+    /// The `Self` type.
+    SelfType,
+    /// A named type parameter such as `T`.
     Parameter(TypeParameter),
 }
 
 impl TypeExpr {
-    /// Builds a `Vec<T>` type expression.
-    ///
-    /// The `element` parameter is the source type written inside the vector.
-    ///
-    /// Returns a vector type expression.
+    /// Builds a resolved record type.
+    pub fn record(id: RecordId, path: Path) -> Self {
+        Self::Record { id, path }
+    }
+
+    /// Builds a resolved enum type.
+    pub fn enumeration(id: EnumId, path: Path) -> Self {
+        Self::Enum { id, path }
+    }
+
+    /// Builds a resolved class type.
+    pub fn class(id: ClassId, path: Path) -> Self {
+        Self::Class { id, path }
+    }
+
+    /// Builds a resolved custom type.
+    pub fn custom(id: CustomTypeId, path: Path) -> Self {
+        Self::Custom { id, path }
+    }
+
+    /// Builds a `dyn Trait` expression for a declared callback trait.
+    pub fn dyn_trait(id: TraitId, path: Path) -> Self {
+        Self::Dyn(TraitBound::Trait { id, path })
+    }
+
+    /// Builds an `impl Trait` expression for a declared callback trait.
+    pub fn impl_trait(id: TraitId, path: Path) -> Self {
+        Self::ImplTrait(TraitBound::Trait { id, path })
+    }
+
+    /// Builds a `dyn Fn*` expression.
+    pub fn dyn_fn(function_trait: FnTrait) -> Self {
+        Self::Dyn(TraitBound::Fn(Box::new(function_trait)))
+    }
+
+    /// Builds an `impl Fn*` expression.
+    pub fn impl_fn(function_trait: FnTrait) -> Self {
+        Self::ImplTrait(TraitBound::Fn(Box::new(function_trait)))
+    }
+
+    /// Builds a `Box<T>` expression.
+    pub fn boxed(inner: TypeExpr) -> Self {
+        Self::Boxed(Box::new(inner))
+    }
+
+    /// Builds an `Arc<T>` expression.
+    pub fn arc(inner: TypeExpr) -> Self {
+        Self::Arc(Box::new(inner))
+    }
+
+    /// Builds a bare Rust function pointer expression.
+    pub fn fn_ptr(signature: FnSig) -> Self {
+        Self::FnPtr(Box::new(signature))
+    }
+
+    /// Builds a `Vec<T>` expression.
     pub fn vec(element: TypeExpr) -> Self {
         Self::Vec(Box::new(element))
     }
 
-    /// Builds an `Option<T>` type expression.
-    ///
-    /// The `inner` parameter is the source type written inside the option.
-    ///
-    /// Returns an optional type expression.
+    /// Builds a slice expression.
+    pub fn slice(element: TypeExpr) -> Self {
+        Self::Slice(Box::new(element))
+    }
+
+    /// Builds an `Option<T>` expression.
     pub fn option(inner: TypeExpr) -> Self {
         Self::Option(Box::new(inner))
     }
 
-    /// Builds a `Result<T, E>` type expression.
-    ///
-    /// The `ok` parameter is the success type. The `err` parameter is the error
-    /// type.
-    ///
-    /// Returns a result type expression for nested or non-callable positions.
+    /// Builds a `Result<T, E>` expression.
     pub fn result(ok: TypeExpr, err: TypeExpr) -> Self {
         Self::Result {
             ok: Box::new(ok),
@@ -212,191 +181,100 @@ impl TypeExpr {
         }
     }
 
-    /// Builds an inline closure type expression.
-    ///
-    /// The `closure` parameter contains the callable signature written inside a
-    /// closure-like parameter type.
-    ///
-    /// Returns a closure type expression.
-    pub fn closure(closure: ClosureType) -> Self {
-        Self::closure_with_presence(closure, HandlePresence::Required)
-    }
-
-    /// Builds an inline closure type expression with explicit nullability.
-    ///
-    /// The `closure` parameter contains the source signature. The `presence`
-    /// parameter records whether the closure value may be absent.
-    ///
-    /// Returns a closure type expression.
-    pub fn closure_with_presence(closure: ClosureType, presence: HandlePresence) -> Self {
-        Self::Closure {
-            signature: Box::new(closure),
-            presence,
-        }
-    }
-
-    /// Builds a trait-reference type expression.
-    ///
-    /// The `id` parameter is the trait declaration. The `form` parameter is
-    /// the Rust form used in source. The `presence` parameter is the
-    /// source nullability.
-    pub fn r#trait(id: TraitId, form: TraitUseForm, presence: HandlePresence) -> Self {
-        Self::Trait { id, form, presence }
-    }
-
-    /// Builds a class-reference type expression.
-    ///
-    /// The `id` parameter is the class declaration. The `presence`
-    /// parameter is the source nullability.
-    pub fn class(id: ClassId, presence: HandlePresence) -> Self {
-        Self::Class { id, presence }
-    }
-
-    /// Builds a tuple type expression.
-    ///
-    /// The `elements` parameter preserves the tuple element types in source
-    /// order. A one-element tuple still has one element here; the scanner does
-    /// not need a special case for Rust's trailing-comma syntax once parsing is
-    /// finished.
-    ///
-    /// Returns a tuple value type, suitable for fields, parameters, nested
-    /// containers, and `ReturnDef::Value`.
+    /// Builds a tuple expression.
     pub fn tuple(elements: Vec<TypeExpr>) -> Self {
         Self::Tuple(elements)
     }
 
-    /// Builds a map type expression.
-    ///
-    /// The `key` parameter is the source key type. The `value` parameter is the
-    /// source value type.
-    ///
-    /// Returns a map type expression.
-    pub fn map(key: TypeExpr, value: TypeExpr) -> Self {
+    /// Builds a `HashMap<K, V>` expression.
+    pub fn hash_map(key: TypeExpr, value: TypeExpr) -> Self {
+        Self::map(MapKind::Hash, key, value)
+    }
+
+    /// Builds a `BTreeMap<K, V>` expression.
+    pub fn btree_map(key: TypeExpr, value: TypeExpr) -> Self {
+        Self::map(MapKind::BTree, key, value)
+    }
+
+    /// Builds a map-like expression.
+    pub fn map(kind: MapKind, key: TypeExpr, value: TypeExpr) -> Self {
         Self::Map {
+            kind,
             key: Box::new(key),
             value: Box::new(value),
         }
     }
+}
 
-    fn fallback_spelling(&self) -> String {
-        match self {
-            Self::Primitive(primitive) => primitive.rust_name().to_owned(),
-            Self::Unit => "()".to_owned(),
-            Self::Record(id) => id.as_str().to_owned(),
-            Self::Enum(id) => id.as_str().to_owned(),
-            Self::Class { id, .. } => id.as_str().to_owned(),
-            Self::Trait { id, .. } => id.as_str().to_owned(),
-            Self::Closure { signature, .. } => signature.fallback_spelling(),
-            Self::Custom(id) => id.as_str().to_owned(),
-            Self::SelfType => "Self".to_owned(),
-            Self::Vec(element) => format!("Vec<{}>", element.fallback_spelling()),
-            Self::Option(inner) => format!("Option<{}>", inner.fallback_spelling()),
-            Self::Result { ok, err } => {
-                format!(
-                    "Result<{}, {}>",
-                    ok.fallback_spelling(),
-                    err.fallback_spelling()
-                )
-            }
-            Self::Tuple(elements) => {
-                let rendered = elements
-                    .iter()
-                    .map(Self::fallback_spelling)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("({rendered})")
-            }
-            Self::Map { key, value } => {
-                format!(
-                    "std::collections::HashMap<{}, {}>",
-                    key.fallback_spelling(),
-                    value.fallback_spelling()
-                )
-            }
-            Self::String => "String".to_owned(),
-            Self::Bytes => "Vec<u8>".to_owned(),
-            Self::Parameter(parameter) => parameter.name.as_str().to_owned(),
-        }
+/// A trait that can sit behind `dyn` or `impl Trait`.
+///
+/// Only a trait is legal in those positions, so restricting [`TypeExpr::Dyn`]
+/// and [`TypeExpr::ImplTrait`] to this type keeps `dyn Vec<u8>` and
+/// `impl Point` unrepresentable.
+///
+/// # Example
+///
+/// `Box<dyn Listener>` carries `Trait { id, path }`, while
+/// `Box<dyn Fn(u32)>` carries `Fn(_)`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum TraitBound {
+    /// A trait exported as a BoltFFI callback.
+    Trait {
+        /// Declaration this reference resolves to.
+        id: TraitId,
+        /// Path as written at this use site.
+        path: Path,
+    },
+    /// An `Fn`, `FnMut`, or `FnOnce` bound.
+    Fn(Box<FnTrait>),
+}
+
+/// Which map constructor was written.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum MapKind {
+    /// `HashMap<K, V>`.
+    Hash,
+    /// `BTreeMap<K, V>`.
+    BTree,
+}
+
+/// An `Fn`, `FnMut`, or `FnOnce` bound carrying its call signature.
+///
+/// The bound kind and the signature together fix how a closure value is
+/// called, so a borrowing `Fn` is distinct from a consuming `FnOnce` even when
+/// their parameters and result match.
+///
+/// # Example
+///
+/// `FnMut(u32) -> bool` is `FnTrait { kind: FnMut, signature }` whose signature
+/// has `parameters` `[Primitive(U32)]` and `returns` `Value(Primitive(Bool))`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct FnTrait {
+    /// Which of `Fn`, `FnMut`, or `FnOnce` was written.
+    pub kind: FnTraitKind,
+    /// Parameter and return types between the parentheses.
+    pub signature: FnSig,
+}
+
+impl FnTrait {
+    /// Builds an `Fn`-family bound.
+    pub fn new(kind: FnTraitKind, signature: FnSig) -> Self {
+        Self { kind, signature }
     }
 }
 
-/// Callable trait used by a closure-shaped Rust type.
+/// One of the `Fn`, `FnMut`, or `FnOnce` traits.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum ClosureTrait {
-    /// `Fn(...)`.
+pub enum FnTraitKind {
+    /// `Fn`.
     Fn,
-    /// `FnMut(...)`.
+    /// `FnMut`.
     FnMut,
-    /// `FnOnce(...)`.
+    /// `FnOnce`.
     FnOnce,
 }
 
-/// Rust source form used for an inline closure type.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum ClosureKind {
-    /// Bare `fn(...)` function pointer.
-    FunctionPointer,
-    /// `impl Fn*(...)` opaque closure type.
-    ImplTrait(ClosureTrait),
-    /// `Box<dyn Fn*(...)>` owned closure trait object.
-    BoxedTraitObject(ClosureTrait),
-}
-
-/// An inline closure signature used as a type expression.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct ClosureType {
-    /// Rust source form that carried the closure signature.
-    pub kind: ClosureKind,
-    /// Types accepted by the closure in source order.
-    pub parameters: Vec<RustType>,
-    /// Return type written by the closure signature.
-    pub returns: ReturnDef,
-}
-
-impl ClosureType {
-    /// Builds an inline closure signature.
-    ///
-    /// The `kind` parameter records the source spelling the parser saw.
-    /// The `parameters` parameter preserves closure parameter types in source order.
-    /// The `returns` parameter is the closure return type.
-    ///
-    /// Returns a closure signature suitable for [`TypeExpr::Closure`].
-    pub fn new<I>(kind: ClosureKind, parameters: I, returns: ReturnDef) -> Self
-    where
-        I: IntoIterator,
-        I::Item: Into<RustType>,
-    {
-        Self {
-            kind,
-            parameters: parameters.into_iter().map(Into::into).collect(),
-            returns,
-        }
-    }
-
-    fn fallback_spelling(&self) -> String {
-        let parameters = self
-            .parameters
-            .iter()
-            .map(|parameter| parameter.spelling())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let signature = match &self.returns {
-            ReturnDef::Void => format!("({parameters})"),
-            ReturnDef::Value(rust_type) => format!("({parameters}) -> {}", rust_type.spelling()),
-        };
-        match self.kind {
-            ClosureKind::FunctionPointer => format!("fn{signature}"),
-            ClosureKind::ImplTrait(trait_kind) => {
-                format!("impl {}{signature}", trait_kind.as_ref())
-            }
-            ClosureKind::BoxedTraitObject(trait_kind) => {
-                format!("Box<dyn {}{signature}>", trait_kind.as_ref())
-            }
-        }
-    }
-}
-
-impl AsRef<str> for ClosureTrait {
+impl AsRef<str> for FnTraitKind {
     fn as_ref(&self) -> &str {
         match self {
             Self::Fn => "Fn",
@@ -406,22 +284,53 @@ impl AsRef<str> for ClosureTrait {
     }
 }
 
-/// A named type parameter referenced by a source type expression.
+/// The call shape shared by function pointers and `Fn`-family bounds.
 ///
-/// Generic exports may be rejected or specialized after scanning. Preserving
-/// the parameter name gives those errors the original source shape.
+/// A signature is the parameter list and result of anything callable, so the
+/// same value describes `fn(u32) -> bool` under [`TypeExpr::FnPtr`] and
+/// `Fn(u32) -> bool` under [`FnTrait`]. A signature with no written return
+/// uses [`ReturnDef::Void`](crate::ReturnDef::Void) rather than a unit type.
+///
+/// # Example
+///
+/// `Fn(u32, &str) -> bool` is a signature whose `parameters` are
+/// `[Primitive(U32), Str]` and whose `returns` is `Value(Primitive(Bool))`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct FnSig {
+    /// Parameter types in source order.
+    pub parameters: Vec<TypeExpr>,
+    /// The result, void when the signature writes no return.
+    pub returns: ReturnDef,
+}
+
+impl FnSig {
+    /// Builds a call signature.
+    pub fn new(parameters: Vec<TypeExpr>, returns: ReturnDef) -> Self {
+        Self {
+            parameters,
+            returns,
+        }
+    }
+}
+
+/// A generic type parameter such as `T`, kept by its source name.
+///
+/// A parameter resolves to no concrete type, so later stages reject it where a
+/// value type is required. Retaining the written name lets that rejection name
+/// the parameter the source used.
+///
+/// # Example
+///
+/// The `T` in an exported `fn first<T>(items: Vec<T>) -> T` is
+/// `Parameter(TypeParameter { name: "T" })`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct TypeParameter {
-    /// Parameter name as written in Rust source.
+    /// Parameter name as written in source.
     pub name: String,
 }
 
 impl TypeParameter {
-    /// Builds a type parameter reference.
-    ///
-    /// The `name` parameter is stored exactly as the scanner reported it.
-    ///
-    /// Returns a type parameter expression for generic source syntax.
+    /// Builds a type parameter from its source name.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }

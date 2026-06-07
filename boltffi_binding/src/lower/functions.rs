@@ -62,8 +62,8 @@ mod tests {
         CallableForm, CanonicalName as SourceName, DeprecationInfo as SourceDeprecationInfo,
         DocComment as SourceDocComment, ExecutionKind, FieldDef, FunctionDef,
         FunctionId as SourceFunctionId, MethodDef, MethodId as SourceMethodId,
-        PackageInfo as SourcePackage, ParameterDef, Primitive, Receiver, RecordDef, ReturnDef,
-        SourceContract, TypeExpr,
+        PackageInfo as SourcePackage, ParameterDef, Path as SourcePath, Primitive, Receiver,
+        RecordDef, ReturnDef, SourceContract, TypeExpr,
     };
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
@@ -121,6 +121,10 @@ mod tests {
 
     fn value_param(param_name: &str, type_expr: TypeExpr) -> ParameterDef {
         ParameterDef::value(name(param_name), type_expr)
+    }
+
+    fn record_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::record(id.into(), SourcePath::single(path))
     }
 
     fn point_record() -> RecordDef {
@@ -615,7 +619,7 @@ mod tests {
     #[test]
     fn function_taking_record_param_lowers_through_record_decl() {
         let mut translate = function("demo::translate", "translate");
-        translate.parameters = vec![value_param("point", TypeExpr::Record("demo::Point".into()))];
+        translate.parameters = vec![value_param("point", record_type("demo::Point", "Point"))];
         translate.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::F64));
 
         let bindings = TestContract::new()
@@ -780,7 +784,7 @@ mod tests {
             .with_function(returning(
                 "demo::points",
                 "points",
-                TypeExpr::vec(TypeExpr::Record("demo::Point".into())),
+                TypeExpr::vec(record_type("demo::Point", "Point")),
             ))
             .lower_ok::<Native>();
 
@@ -967,7 +971,7 @@ mod tests {
                 "demo::set_points",
                 "set_points",
                 "points",
-                TypeExpr::vec(TypeExpr::Record("demo::Point".into())),
+                TypeExpr::vec(record_type("demo::Point", "Point")),
             ))
             .lower_ok::<Native>();
 
@@ -1018,7 +1022,7 @@ mod tests {
         let mut decl = function("demo::peek", "peek");
         decl.parameters = vec![ParameterDef {
             name: name("values").into(),
-            rust_type: TypeExpr::vec(TypeExpr::Primitive(Primitive::U32)).into(),
+            type_expr: TypeExpr::vec(TypeExpr::Primitive(Primitive::U32)),
             passing: boltffi_ast::ParameterPassing::Ref,
             doc: None,
             default: None,

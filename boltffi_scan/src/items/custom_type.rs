@@ -28,7 +28,7 @@ pub fn scan(
         custom_id,
         custom_name,
         spec.remote_type().clone(),
-        scanner.rust_type(spec.repr())?,
+        scanner.scan(spec.repr())?,
         spec.error().cloned(),
         spec.converters().clone(),
     );
@@ -1038,7 +1038,7 @@ mod tests {
             &CanonicalName::new(vec!["utc".into(), "date".into(), "time".into()])
         );
         assert_eq!(custom.remote, date_time_utc());
-        assert_eq!(custom.repr.expr(), &TypeExpr::Primitive(Primitive::I64));
+        assert_eq!(custom.repr, TypeExpr::Primitive(Primitive::I64));
         assert_eq!(custom.error, None);
         assert_eq!(
             custom.converters.into_ffi,

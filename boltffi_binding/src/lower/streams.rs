@@ -52,7 +52,7 @@ fn lower_one<S: SurfaceLower>(
         .as_ref()
         .map(|owner| ids.class(owner))
         .transpose()?;
-    let item = lower_item::<S>(idx, ids, stream.item_type.expr())?;
+    let item = lower_item::<S>(idx, ids, &stream.item_type)?;
     let protocol = build_protocol(allocator, stream.id.as_str())?;
     Ok(StreamDecl::new(StreamDeclParts {
         id: stream_id,
@@ -77,7 +77,7 @@ fn lower_item<S: SurfaceLower>(
             let size = BindingPrimitive::from(*primitive).byte_size::<S>();
             direct_item(ids, type_expr, size)
         }
-        TypeExpr::Enum(id) => match idx.enumeration(id) {
+        TypeExpr::Enum { id, .. } => match idx.enumeration(id) {
             Some(enumeration) if enums::is_c_style(enumeration) => {
                 let repr = enums::c_style_repr(enumeration)
                     .ok_or_else(|| LowerError::unsupported_type(UnsupportedType::EnumRepr))?;
@@ -85,7 +85,7 @@ fn lower_item<S: SurfaceLower>(
             }
             _ => encoded_item::<S>(idx, ids, type_expr),
         },
-        TypeExpr::Record(id) => match idx.record(id) {
+        TypeExpr::Record { id, .. } => match idx.record(id) {
             Some(record) if records::is_direct(record) => {
                 direct_item(ids, type_expr, layout::compute(record)?.size())
             }
@@ -123,27 +123,32 @@ fn encoded_item<S: SurfaceLower>(
 fn validate_item_type(type_expr: &TypeExpr) -> Result<(), LowerError> {
     match type_expr {
         TypeExpr::Class { .. }
-        | TypeExpr::Trait { .. }
-        | TypeExpr::Closure { .. }
+        | TypeExpr::Dyn(_)
+        | TypeExpr::ImplTrait(_)
+        | TypeExpr::FnPtr(_)
+        | TypeExpr::Boxed(_)
+        | TypeExpr::Arc(_)
         | TypeExpr::Unit
         | TypeExpr::SelfType
         | TypeExpr::Parameter(_) => Err(LowerError::unsupported_type(UnsupportedType::StreamItem)),
-        TypeExpr::Vec(inner) | TypeExpr::Option(inner) => validate_item_type(inner),
+        TypeExpr::Vec(inner) | TypeExpr::Slice(inner) | TypeExpr::Option(inner) => {
+            validate_item_type(inner)
+        }
         TypeExpr::Tuple(elements) => elements.iter().try_for_each(validate_item_type),
         TypeExpr::Result { ok, err } => {
             validate_item_type(ok)?;
             validate_item_type(err)
         }
-        TypeExpr::Map { key, value } => {
+        TypeExpr::Map { key, value, .. } => {
             validate_item_type(key)?;
             validate_item_type(value)
         }
         TypeExpr::Primitive(_)
         | TypeExpr::String
-        | TypeExpr::Bytes
-        | TypeExpr::Record(_)
-        | TypeExpr::Enum(_)
-        | TypeExpr::Custom(_) => Ok(()),
+        | TypeExpr::Str
+        | TypeExpr::Record { .. }
+        | TypeExpr::Enum { .. }
+        | TypeExpr::Custom { .. } => Ok(()),
     }
 }
 
@@ -189,9 +194,9 @@ mod tests {
     use boltffi_ast::{
         CanonicalName as SourceName, ClassDef, ClassId as SourceClassId,
         DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, FieldDef,
-        HandlePresence as SourceHandlePresence, PackageInfo as SourcePackage, Primitive, RecordDef,
+        PackageInfo as SourcePackage, Path as SourcePath, Primitive, RecordDef,
         RecordId as SourceRecordId, SourceContract, StreamDef, StreamId as SourceStreamId,
-        StreamMode, TraitDef, TraitId as SourceTraitId, TraitUseForm, TypeExpr,
+        StreamMode, TraitDef, TraitId as SourceTraitId, TypeExpr,
     };
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
@@ -468,7 +473,10 @@ mod tests {
         contract.streams.push(stream(
             "demo::points",
             "points",
-            TypeExpr::Record(SourceRecordId::new("demo::Point")),
+            TypeExpr::record(
+                SourceRecordId::new("demo::Point"),
+                SourcePath::single("Point"),
+            ),
         ));
 
         let bindings = lower::<Native>(&contract).expect("direct record stream should lower");
@@ -491,10 +499,10 @@ mod tests {
         contract.streams.push(stream(
             "demo::engines",
             "engines",
-            TypeExpr::Class {
-                id: SourceClassId::new("demo::Engine"),
-                presence: SourceHandlePresence::Required,
-            },
+            TypeExpr::class(
+                SourceClassId::new("demo::Engine"),
+                SourcePath::single("Engine"),
+            ),
         ));
 
         let error = lower::<Native>(&contract).expect_err("handle item must reject");
@@ -515,11 +523,10 @@ mod tests {
         contract.streams.push(stream(
             "demo::listeners",
             "listeners",
-            TypeExpr::Option(Box::new(TypeExpr::Trait {
-                id: SourceTraitId::new("demo::Listener"),
-                form: TraitUseForm::BoxedDyn,
-                presence: SourceHandlePresence::Required,
-            })),
+            TypeExpr::option(TypeExpr::boxed(TypeExpr::dyn_trait(
+                SourceTraitId::new("demo::Listener"),
+                SourcePath::single("Listener"),
+            ))),
         ));
 
         let error = lower::<Native>(&contract).expect_err("nested callback item must reject");

@@ -166,7 +166,8 @@ mod tests {
     use crate::ModuleScope;
     use crate::declared_types::DeclaredTypes;
     use boltffi_ast::{
-        CanonicalName, MethodDef, MethodId, NamePart, Primitive, Receiver, ReturnDef, TypeExpr,
+        CanonicalName, MethodDef, MethodId, NamePart, Path, Primitive, Receiver, RecordId,
+        ReturnDef, TypeExpr,
     };
 
     fn parse(source: &str) -> syn::ItemImpl {
@@ -219,8 +220,8 @@ mod tests {
         assert_eq!(methods[0].name.canonical(), &name(&["distance"]));
         assert_eq!(methods[0].receiver, Receiver::Shared);
         assert_eq!(
-            methods[0].parameters[0].rust_type.expr(),
-            &TypeExpr::Record(boltffi_ast::RecordId::new("demo::Point"))
+            methods[0].parameters[0].type_expr,
+            TypeExpr::record(RecordId::new("demo::Point"), Path::single("Point"))
         );
         assert_eq!(
             methods[0].returns,

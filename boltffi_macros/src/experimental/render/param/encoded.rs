@@ -1,7 +1,7 @@
 use boltffi_binding::{Native, Receive, Wasm32, WritePlan, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::PatType;
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -13,39 +13,39 @@ use super::Tokens;
 
 pub struct Rule;
 
-pub struct Input<'binding, 'syntax, S: Target> {
+pub struct Input<'binding, S: Target> {
     codec: &'binding WritePlan,
     shape: S::BufferShape,
     receive: Receive,
-    syntax: &'syntax PatType,
-    ident: &'syntax syn::Ident,
+    rust_type: Type,
+    ident: Ident,
     failure: TokenStream,
 }
 
-impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
+impl<'binding, S: Target> Input<'binding, S> {
     pub fn new(
         codec: &'binding WritePlan,
         shape: S::BufferShape,
         receive: Receive,
-        syntax: &'syntax PatType,
-        ident: &'syntax syn::Ident,
+        rust_type: Type,
+        ident: Ident,
         failure: TokenStream,
     ) -> Self {
         Self {
             codec,
             shape,
             receive,
-            syntax,
+            rust_type,
             ident,
             failure,
         }
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Native, Input<'binding, 'syntax, Native>> for Rule {
+impl<'binding> RenderRule<Native, Input<'binding, Native>> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'syntax, Native>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, Native>) -> Result<Self::Output, Error> {
         match input.shape {
             native::BufferShape::Slice => Slice::new(input).tokens(),
             native::BufferShape::Buffer | native::BufferShape::BufferPointer => Err(
@@ -58,10 +58,10 @@ impl<'binding, 'syntax> RenderRule<Native, Input<'binding, 'syntax, Native>> for
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Wasm32, Input<'binding, 'syntax, Wasm32>> for Rule {
+impl<'binding> RenderRule<Wasm32, Input<'binding, Wasm32>> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'syntax, Wasm32>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, Wasm32>) -> Result<Self::Output, Error> {
         match input.shape {
             wasm32::BufferShape::Slice => Slice::new(input).tokens(),
             wasm32::BufferShape::Packed => {
@@ -74,33 +74,35 @@ impl<'binding, 'syntax> RenderRule<Wasm32, Input<'binding, 'syntax, Wasm32>> for
     }
 }
 
-struct Slice<'binding, 'syntax> {
+struct Slice<'binding> {
     codec: &'binding WritePlan,
     receive: Receive,
-    syntax: &'syntax PatType,
-    ident: &'syntax syn::Ident,
-    pointer: syn::Ident,
-    length: syn::Ident,
+    rust_type: Type,
+    ident: Ident,
+    pointer: Ident,
+    length: Ident,
     failure: TokenStream,
 }
 
-impl<'binding, 'syntax, S: Target> From<Input<'binding, 'syntax, S>> for Slice<'binding, 'syntax> {
-    fn from(input: Input<'binding, 'syntax, S>) -> Self {
+impl<'binding, S: Target> From<Input<'binding, S>> for Slice<'binding> {
+    fn from(input: Input<'binding, S>) -> Self {
         Self::new(input)
     }
 }
 
-impl<'binding, 'syntax> Slice<'binding, 'syntax> {
-    fn new<S: Target>(input: Input<'binding, 'syntax, S>) -> Self {
+impl<'binding> Slice<'binding> {
+    fn new<S: Target>(input: Input<'binding, S>) -> Self {
         let ident = input.ident;
-        let locals = local::Parameter::new(ident);
+        let locals = local::Parameter::new(&ident);
+        let pointer = locals.pointer();
+        let length = locals.length();
         Self {
             codec: input.codec,
             receive: input.receive,
-            syntax: input.syntax,
+            rust_type: input.rust_type,
             ident,
-            pointer: locals.pointer(),
-            length: locals.length(),
+            pointer,
+            length,
             failure: input.failure,
         }
     }
@@ -108,12 +110,12 @@ impl<'binding, 'syntax> Slice<'binding, 'syntax> {
     fn tokens(self) -> Result<Tokens, Error> {
         let pointer = &self.pointer;
         let length = &self.length;
-        let ident = self.ident;
+        let ident = &self.ident;
         let pointer_type = self.pointer_type();
         let conversion =
             codec::EncodedValue::new(self.codec.root()).conversion(codec::DecodeInput::new(
                 self.receive,
-                self.syntax.ty.as_ref(),
+                &self.rust_type,
                 ident,
                 pointer,
                 length,

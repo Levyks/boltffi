@@ -39,10 +39,10 @@ impl<'a, S: Surface> Expansion<'a, S> {
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName, ClassDef, ClassId, ClosureKind, ClosureTrait, ClosureType, ExecutionKind,
-        FieldDef, FunctionDef, FunctionId, HandlePresence, PackageInfo, ParameterDef,
-        ParameterPassing, Primitive, RecordDef, ReturnDef, SourceContract, TraitDef, TraitId,
-        TraitUseForm, TypeExpr,
+        CanonicalName, ClassDef, ClassId, ExecutionKind, FieldDef, FnSig, FnTrait, FnTraitKind,
+        FunctionDef, FunctionId, PackageInfo, ParameterDef, ParameterPassing, Path, Primitive,
+        RecordDef, RecordId, ReturnDef, Source, SourceContract, SourceName, TraitDef, TraitId,
+        TypeExpr, Visibility,
     };
     use boltffi_binding::{Native, Wasm32, lower_with_declarations};
     use proc_macro2::TokenStream;
@@ -82,6 +82,113 @@ mod tests {
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
         source
+    }
+
+    fn source_name_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::http_request"),
+            SourceName::new("HTTPRequest", CanonicalName::single("http_request")),
+        );
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
+    fn source_parameter_name_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::syntax_payload"),
+            CanonicalName::single("syntax_payload"),
+        );
+        function.parameters = vec![ParameterDef::value(
+            SourceName::new("HTTPCode", CanonicalName::single("http_code")),
+            TypeExpr::Primitive(Primitive::U32),
+        )];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
+    fn source_visibility_contract(visibility: Visibility) -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::answer"),
+            CanonicalName::single("answer"),
+        );
+        function.source = Source::new(visibility, None);
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
+    fn path(name: &str) -> Path {
+        Path::single(name)
+    }
+
+    fn record(name: &str) -> TypeExpr {
+        TypeExpr::record(RecordId::new(format!("demo::{name}")), path(name))
+    }
+
+    fn class(name: &str) -> TypeExpr {
+        TypeExpr::class(ClassId::new(format!("demo::{name}")), path(name))
+    }
+
+    fn byte_slice() -> TypeExpr {
+        TypeExpr::slice(TypeExpr::Primitive(Primitive::U8))
+    }
+
+    fn byte_vec() -> TypeExpr {
+        TypeExpr::vec(TypeExpr::Primitive(Primitive::U8))
+    }
+
+    fn parameter(name: &str, expr: TypeExpr) -> ParameterDef {
+        ParameterDef::value(CanonicalName::single(name), expr)
+    }
+
+    fn vector_parameter(name: &str, element: TypeExpr) -> ParameterDef {
+        parameter(name, TypeExpr::vec(element))
+    }
+
+    fn result_return(ok: TypeExpr, error: TypeExpr) -> ReturnDef {
+        ReturnDef::value(TypeExpr::result(ok, error))
+    }
+
+    fn fn_signature(parameters: Vec<TypeExpr>, returns: ReturnDef) -> FnSig {
+        FnSig::new(parameters, returns)
+    }
+
+    fn fn_trait(parameters: Vec<TypeExpr>, returns: ReturnDef) -> FnTrait {
+        FnTrait::new(FnTraitKind::Fn, fn_signature(parameters, returns))
+    }
+
+    fn impl_closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
+        TypeExpr::impl_fn(fn_trait(parameters, returns))
+    }
+
+    fn boxed_closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
+        TypeExpr::boxed(TypeExpr::dyn_fn(fn_trait(parameters, returns)))
+    }
+
+    fn function_pointer(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
+        TypeExpr::fn_ptr(fn_signature(parameters, returns))
+    }
+
+    fn boxed_listener() -> TypeExpr {
+        TypeExpr::boxed(TypeExpr::dyn_trait(
+            TraitId::new("demo::Listener"),
+            path("Listener"),
+        ))
+    }
+
+    fn nullable_arc_listener() -> TypeExpr {
+        TypeExpr::option(TypeExpr::arc(TypeExpr::dyn_trait(
+            TraitId::new("demo::Listener"),
+            path("Listener"),
+        )))
     }
 
     fn void_source_contract() -> SourceContract {
@@ -168,10 +275,7 @@ mod tests {
             CanonicalName::single("try_count"),
         );
         function.execution = ExecutionKind::Async;
-        function.returns = ReturnDef::value(TypeExpr::result(
-            TypeExpr::Primitive(Primitive::I32),
-            TypeExpr::String,
-        ));
+        function.returns = result_return(TypeExpr::Primitive(Primitive::I32), TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -214,11 +318,10 @@ mod tests {
         );
         function.parameters = vec![ParameterDef::value(
             CanonicalName::single("callback"),
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
+            impl_closure(
                 vec![TypeExpr::Primitive(Primitive::U32)],
                 ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-            )),
+            ),
         )];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
@@ -234,11 +337,7 @@ mod tests {
         );
         function.parameters = vec![ParameterDef::value(
             CanonicalName::single("callback"),
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
-                vec![TypeExpr::String],
-                ReturnDef::value(TypeExpr::String),
-            )),
+            impl_closure(vec![TypeExpr::String], ReturnDef::value(TypeExpr::String)),
         )];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
@@ -254,11 +353,10 @@ mod tests {
         );
         function.parameters = vec![ParameterDef::value(
             CanonicalName::single("callback"),
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
+            impl_closure(
                 Vec::<TypeExpr>::new(),
-                ReturnDef::value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String)),
-            )),
+                result_return(TypeExpr::Unit, TypeExpr::String),
+            ),
         )];
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -273,14 +371,10 @@ mod tests {
         );
         function.parameters = vec![ParameterDef::value(
             CanonicalName::single("callback"),
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
+            impl_closure(
                 Vec::<TypeExpr>::new(),
-                ReturnDef::value(TypeExpr::result(
-                    TypeExpr::Primitive(Primitive::I32),
-                    TypeExpr::String,
-                )),
-            )),
+                result_return(TypeExpr::Primitive(Primitive::I32), TypeExpr::String),
+            ),
         )];
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -295,11 +389,10 @@ mod tests {
         );
         function.parameters = vec![ParameterDef::value(
             CanonicalName::single("callback"),
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
+            impl_closure(
                 Vec::<TypeExpr>::new(),
-                ReturnDef::value(TypeExpr::result(TypeExpr::String, TypeExpr::String)),
-            )),
+                result_return(TypeExpr::String, TypeExpr::String),
+            ),
         )];
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -312,11 +405,10 @@ mod tests {
             FunctionId::new("demo::make_callback"),
             CanonicalName::single("make_callback"),
         );
-        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        function.returns = ReturnDef::value(impl_closure(
             vec![TypeExpr::Primitive(Primitive::U32)],
             ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-        )));
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -328,16 +420,14 @@ mod tests {
             FunctionId::new("demo::make_runner"),
             CanonicalName::single("make_runner"),
         );
-        let callback = TypeExpr::closure(ClosureType::new(
-            ClosureKind::BoxedTraitObject(ClosureTrait::Fn),
+        let callback = boxed_closure(
             vec![TypeExpr::Primitive(Primitive::U32)],
             ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-        ));
-        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        );
+        function.returns = ReturnDef::value(impl_closure(
             vec![callback],
             ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-        )));
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -349,11 +439,10 @@ mod tests {
             FunctionId::new("demo::make_callback"),
             CanonicalName::single("make_callback"),
         );
-        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::FunctionPointer,
+        function.returns = ReturnDef::value(function_pointer(
             vec![TypeExpr::Primitive(Primitive::U32)],
             ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-        )));
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -365,11 +454,10 @@ mod tests {
             FunctionId::new("demo::make_mapper"),
             CanonicalName::single("make_mapper"),
         );
-        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        function.returns = ReturnDef::value(impl_closure(
             vec![TypeExpr::String],
             ReturnDef::value(TypeExpr::String),
-        )));
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -381,14 +469,10 @@ mod tests {
             FunctionId::new("demo::make_callback"),
             CanonicalName::single("make_callback"),
         );
-        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        function.returns = ReturnDef::value(impl_closure(
             Vec::<TypeExpr>::new(),
-            ReturnDef::value(TypeExpr::result(
-                TypeExpr::Primitive(Primitive::I32),
-                TypeExpr::String,
-            )),
-        )));
+            result_return(TypeExpr::Primitive(Primitive::I32), TypeExpr::String),
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -400,11 +484,10 @@ mod tests {
             FunctionId::new("demo::make_mapper"),
             CanonicalName::single("make_mapper"),
         );
-        function.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        function.returns = ReturnDef::value(impl_closure(
             Vec::<TypeExpr>::new(),
-            ReturnDef::value(TypeExpr::result(TypeExpr::String, TypeExpr::String)),
-        )));
+            result_return(TypeExpr::String, TypeExpr::String),
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -416,12 +499,11 @@ mod tests {
             FunctionId::new("demo::try_make_callback"),
             CanonicalName::single("try_make_callback"),
         );
-        let closure = TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        let closure = impl_closure(
             vec![TypeExpr::Primitive(Primitive::U32)],
             ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-        ));
-        function.returns = ReturnDef::value(TypeExpr::result(closure, TypeExpr::String));
+        );
+        function.returns = result_return(closure, TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -431,10 +513,7 @@ mod tests {
     fn direct_record_param_contract() -> SourceContract {
         let mut function =
             FunctionDef::new(FunctionId::new("demo::norm"), CanonicalName::single("norm"));
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("point"),
-            TypeExpr::Record("demo::Point".into()),
-        )];
+        function.parameters = vec![parameter("point", record("Point"))];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::F64));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -448,10 +527,7 @@ mod tests {
             FunctionId::new("demo::shift"),
             CanonicalName::single("shift"),
         );
-        let mut parameter = ParameterDef::value(
-            CanonicalName::single("point"),
-            TypeExpr::Record("demo::Point".into()),
-        );
+        let mut parameter = parameter("point", record("Point"));
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::F64));
@@ -465,10 +541,7 @@ mod tests {
     fn mutable_direct_primitive_param_contract() -> SourceContract {
         let mut function =
             FunctionDef::new(FunctionId::new("demo::bump"), CanonicalName::single("bump"));
-        let mut parameter = ParameterDef::value(
-            CanonicalName::single("count"),
-            TypeExpr::Primitive(Primitive::I32),
-        );
+        let mut parameter = parameter("count", TypeExpr::Primitive(Primitive::I32));
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
 
@@ -482,7 +555,7 @@ mod tests {
             FunctionId::new("demo::origin"),
             CanonicalName::single("origin"),
         );
-        function.returns = ReturnDef::value(TypeExpr::Record("demo::Point".into()));
+        function.returns = ReturnDef::value(record("Point"));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(point_record());
@@ -507,7 +580,7 @@ mod tests {
             FunctionId::new("demo::payload"),
             CanonicalName::single("payload"),
         );
-        function.returns = ReturnDef::value(TypeExpr::Bytes);
+        function.returns = ReturnDef::value(byte_vec());
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -535,7 +608,7 @@ mod tests {
             FunctionId::new("demo::name_len"),
             CanonicalName::single("name_len"),
         );
-        let mut parameter = ParameterDef::value(CanonicalName::single("name"), TypeExpr::String);
+        let mut parameter = parameter("name", TypeExpr::Str);
         parameter.passing = ParameterPassing::Ref;
         function.parameters = vec![parameter];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
@@ -550,7 +623,7 @@ mod tests {
             FunctionId::new("demo::rewrite"),
             CanonicalName::single("rewrite"),
         );
-        let mut parameter = ParameterDef::value(CanonicalName::single("name"), TypeExpr::String);
+        let mut parameter = parameter("name", TypeExpr::Str);
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
@@ -567,7 +640,7 @@ mod tests {
         );
         function.parameters = vec![ParameterDef::value(
             CanonicalName::single("bytes"),
-            TypeExpr::Bytes,
+            byte_vec(),
         )];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
@@ -579,7 +652,7 @@ mod tests {
     fn mutable_bytes_param_contract() -> SourceContract {
         let mut function =
             FunctionDef::new(FunctionId::new("demo::fill"), CanonicalName::single("fill"));
-        let mut parameter = ParameterDef::value(CanonicalName::single("bytes"), TypeExpr::Bytes);
+        let mut parameter = parameter("bytes", byte_slice());
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
@@ -594,10 +667,7 @@ mod tests {
             FunctionId::new("demo::name_score"),
             CanonicalName::single("name_score"),
         );
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("profile"),
-            TypeExpr::Record("demo::Profile".into()),
-        )];
+        function.parameters = vec![parameter("profile", record("Profile"))];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -611,10 +681,7 @@ mod tests {
             FunctionId::new("demo::rename"),
             CanonicalName::single("rename"),
         );
-        let mut parameter = ParameterDef::value(
-            CanonicalName::single("profile"),
-            TypeExpr::Record("demo::Profile".into()),
-        );
+        let mut parameter = parameter("profile", record("Profile"));
         parameter.passing = ParameterPassing::RefMut;
         function.parameters = vec![parameter];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
@@ -643,9 +710,9 @@ mod tests {
     fn vec_u32_param_contract() -> SourceContract {
         let mut function =
             FunctionDef::new(FunctionId::new("demo::sum"), CanonicalName::single("sum"));
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("values"),
-            TypeExpr::vec(TypeExpr::Primitive(Primitive::U32)),
+        function.parameters = vec![vector_parameter(
+            "values",
+            TypeExpr::Primitive(Primitive::U32),
         )];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
@@ -659,10 +726,7 @@ mod tests {
             FunctionId::new("demo::count_points"),
             CanonicalName::single("count_points"),
         );
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("points"),
-            TypeExpr::vec(TypeExpr::Record("demo::Point".into())),
-        )];
+        function.parameters = vec![vector_parameter("points", record("Point"))];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -676,10 +740,7 @@ mod tests {
             FunctionId::new("demo::try_count"),
             CanonicalName::single("try_count"),
         );
-        function.returns = ReturnDef::value(TypeExpr::result(
-            TypeExpr::Primitive(Primitive::I32),
-            TypeExpr::String,
-        ));
+        function.returns = result_return(TypeExpr::Primitive(Primitive::I32), TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -691,7 +752,7 @@ mod tests {
             FunctionId::new("demo::try_ping"),
             CanonicalName::single("try_ping"),
         );
-        function.returns = ReturnDef::value(TypeExpr::result(TypeExpr::Unit, TypeExpr::String));
+        function.returns = result_return(TypeExpr::Unit, TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -703,7 +764,7 @@ mod tests {
             FunctionId::new("demo::try_greet"),
             CanonicalName::single("try_greet"),
         );
-        function.returns = ReturnDef::value(TypeExpr::result(TypeExpr::String, TypeExpr::String));
+        function.returns = result_return(TypeExpr::String, TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.functions.push(function);
@@ -713,14 +774,8 @@ mod tests {
     fn class_param_nullable_return_contract() -> SourceContract {
         let mut function =
             FunctionDef::new(FunctionId::new("demo::open"), CanonicalName::single("open"));
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("engine"),
-            TypeExpr::class(ClassId::new("demo::Engine"), HandlePresence::Required),
-        )];
-        function.returns = ReturnDef::value(TypeExpr::class(
-            ClassId::new("demo::Engine"),
-            HandlePresence::Nullable,
-        ));
+        function.parameters = vec![parameter("engine", class("Engine"))];
+        function.returns = ReturnDef::value(TypeExpr::option(class("Engine")));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.classes.push(engine_class());
@@ -733,14 +788,7 @@ mod tests {
             FunctionId::new("demo::listen"),
             CanonicalName::single("listen"),
         );
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("listener"),
-            TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::BoxedDyn,
-                HandlePresence::Required,
-            ),
-        )];
+        function.parameters = vec![parameter("listener", boxed_listener())];
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.traits.push(listener_trait());
@@ -753,14 +801,7 @@ mod tests {
             FunctionId::new("demo::maybe"),
             CanonicalName::single("maybe"),
         );
-        function.parameters = vec![ParameterDef::value(
-            CanonicalName::single("listener"),
-            TypeExpr::r#trait(
-                TraitId::new("demo::Listener"),
-                TraitUseForm::ArcDyn,
-                HandlePresence::Nullable,
-            ),
-        )];
+        function.parameters = vec![parameter("listener", nullable_arc_listener())];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
@@ -774,10 +815,7 @@ mod tests {
             FunctionId::new("demo::engine_id"),
             CanonicalName::single("engine_id"),
         );
-        let mut parameter = ParameterDef::value(
-            CanonicalName::single("engine"),
-            TypeExpr::class(ClassId::new("demo::Engine"), HandlePresence::Required),
-        );
+        let mut parameter = parameter("engine", class("Engine"));
         parameter.passing = ParameterPassing::Ref;
         function.parameters = vec![parameter];
         function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
@@ -793,10 +831,7 @@ mod tests {
             FunctionId::new("demo::try_open"),
             CanonicalName::single("try_open"),
         );
-        function.returns = ReturnDef::value(TypeExpr::result(
-            TypeExpr::class(ClassId::new("demo::Engine"), HandlePresence::Required),
-            TypeExpr::String,
-        ));
+        function.returns = result_return(class("Engine"), TypeExpr::String);
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.classes.push(engine_class());
@@ -851,6 +886,128 @@ mod tests {
                 #[cfg(not(target_arch = "wasm32"))]
                 #[unsafe(no_mangle)]
                 pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                    answer()
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn function_expansion_invokes_source_name_spelling() {
+        let source = source_name_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn syntax_payload() -> u32 {
+                42
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn syntax_payload() -> u32 {
+                    42
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_http_request() -> u32 {
+                    HTTPRequest()
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn function_expansion_uses_source_parameter_name_spelling() {
+        let source = source_parameter_name_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn syntax_payload(value: u32) -> u32 {
+                value
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn syntax_payload(value: u32) -> u32 {
+                    value
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn boltffi_function_demo_syntax_payload(
+                    HTTPCode: u32
+                ) -> u32 {
+                    syntax_payload(HTTPCode)
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn function_expansion_uses_private_source_visibility() {
+        let source = source_visibility_contract(Visibility::Private);
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn answer() -> u32 {
+                42
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn answer() -> u32 {
+                    42
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                extern "C" fn boltffi_function_demo_answer() -> u32 {
+                    answer()
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn function_expansion_uses_restricted_source_visibility() {
+        let source = source_visibility_contract(Visibility::Restricted("crate".to_owned()));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn answer() -> u32 {
+                42
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn answer() -> u32 {
+                    42
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub(in crate) extern "C" fn boltffi_function_demo_answer() -> u32 {
                     answer()
                 }
             }
@@ -2305,7 +2462,7 @@ mod tests {
                 ) -> u32 {
                     let __boltffi_listener_handle =
                         ::boltffi::__private::CallbackHandle::from_wasm_handle(listener);
-                    let listener: Option<std::sync::Arc<dyn Listener> > =
+                    let listener: Option<::std::sync::Arc<dyn Listener> > =
                         if __boltffi_listener_handle.is_null() {
                             None
                         } else {
@@ -2785,6 +2942,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded nested closure return parses");
         let rendered = tokens.to_string();
+        println!("{rendered}");
 
         assert!(rendered.contains(
             "unsafe extern \"C\" fn __boltffi_make_runner_closure_call (__boltffi_context : * mut :: core :: ffi :: c_void , __boltffi_arg0_call : extern \"C\" fn (* mut :: core :: ffi :: c_void , u32) -> u32 , __boltffi_arg0_context : * mut :: core :: ffi :: c_void , __boltffi_arg0_release : unsafe extern \"C\" fn (* mut :: core :: ffi :: c_void)) -> u32"
@@ -2816,7 +2974,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_closure_1____closure__closure_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
+            "pub unsafe extern \"C\" fn boltffi_closure_1____closure__box_closure_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
         ));
         assert!(rendered.contains(
             "unsafe extern \"C\" { fn __boltffi_callback_closure____closure__u32_to_u32_call (handle : u32 , __boltffi_ffi_arg0 : u32) -> u32 ; fn __boltffi_callback_closure____closure__u32_to_u32_free (handle : u32) ; }"

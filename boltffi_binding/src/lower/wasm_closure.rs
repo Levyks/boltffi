@@ -1,6 +1,6 @@
 use std::fmt;
 
-use boltffi_ast::{ClosureType, Primitive as AstPrimitive, ReturnDef, RustType, TypeExpr};
+use boltffi_ast::{FnSig, Primitive as AstPrimitive, ReturnDef, TypeExpr};
 
 use crate::{ImportModule, ImportSymbol, NativeSymbol, SymbolName, wasm32};
 
@@ -10,7 +10,7 @@ use super::{
 };
 
 pub(super) fn incoming_registration(
-    closure: &ClosureType,
+    closure: &FnSig,
 ) -> Result<wasm32::IncomingClosureRegistration, LowerError> {
     let module = ImportModule::parse(symbol::WASM_CALLBACK_IMPORT_MODULE.to_owned())?;
     let signature = ClosureSignature::from_closure(closure).symbol_part();
@@ -21,7 +21,7 @@ pub(super) fn incoming_registration(
 
 pub(super) fn outgoing_registration(
     allocator: &mut SymbolAllocator,
-    closure: &ClosureType,
+    closure: &FnSig,
 ) -> Result<wasm32::OutgoingClosureRegistration, LowerError> {
     let signature = ClosureSignature::from_closure(closure).symbol_part();
     let group_id = allocator.next_group_id();
@@ -51,12 +51,12 @@ fn export_symbol(
 }
 
 struct ClosureSignature<'a> {
-    params: &'a [RustType],
+    params: &'a [TypeExpr],
     returns: &'a ReturnDef,
 }
 
 impl<'a> ClosureSignature<'a> {
-    fn from_closure(closure: &'a ClosureType) -> Self {
+    fn from_closure(closure: &'a FnSig) -> Self {
         Self {
             params: &closure.parameters,
             returns: &closure.returns,
@@ -91,14 +91,14 @@ impl fmt::Display for ClosureSignature<'_> {
 
 fn return_signature_is_void(returns: &ReturnDef) -> bool {
     matches!(returns, ReturnDef::Void)
-        || matches!(returns, ReturnDef::Value(rust_type) if matches!(rust_type.expr(), TypeExpr::Unit))
+        || matches!(returns, ReturnDef::Value(type_expr) if matches!(type_expr, TypeExpr::Unit))
 }
 
 fn write_return_signature(formatter: &mut fmt::Formatter<'_>, returns: &ReturnDef) -> fmt::Result {
     match returns {
         ReturnDef::Void => formatter.write_str("Void"),
-        ReturnDef::Value(rust_type) => {
-            write!(formatter, "{}", ClosureTypeSignature(rust_type.expr()))
+        ReturnDef::Value(type_expr) => {
+            write!(formatter, "{}", ClosureTypeSignature(type_expr))
         }
     }
 }
@@ -110,14 +110,22 @@ impl fmt::Display for ClosureTypeSignature<'_> {
         match self.0 {
             TypeExpr::Primitive(primitive) => formatter.write_str(&primitive_signature(*primitive)),
             TypeExpr::Unit => formatter.write_str("Void"),
-            TypeExpr::Record(id) => formatter.write_str(&source_type_signature(id.as_str())),
-            TypeExpr::Enum(id) => formatter.write_str(&source_type_signature(id.as_str())),
+            TypeExpr::Record { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
+            TypeExpr::Enum { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::Class { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
-            TypeExpr::Trait { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
-            TypeExpr::Closure { .. } => formatter.write_str("Closure"),
-            TypeExpr::Custom(id) => formatter.write_str(&source_type_signature(id.as_str())),
+            TypeExpr::ImplTrait(boltffi_ast::TraitBound::Trait { id, .. })
+            | TypeExpr::Dyn(boltffi_ast::TraitBound::Trait { id, .. }) => {
+                formatter.write_str(&source_type_signature(id.as_str()))
+            }
+            TypeExpr::ImplTrait(boltffi_ast::TraitBound::Fn(_))
+            | TypeExpr::Dyn(boltffi_ast::TraitBound::Fn(_))
+            | TypeExpr::FnPtr(_) => formatter.write_str("Closure"),
+            TypeExpr::Custom { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::SelfType => formatter.write_str("Self"),
             TypeExpr::Vec(inner) => write!(formatter, "Vec{}", ClosureTypeSignature(inner)),
+            TypeExpr::Slice(inner) => write!(formatter, "Slice{}", ClosureTypeSignature(inner)),
+            TypeExpr::Boxed(inner) => write!(formatter, "Box{}", ClosureTypeSignature(inner)),
+            TypeExpr::Arc(inner) => write!(formatter, "Arc{}", ClosureTypeSignature(inner)),
             TypeExpr::Option(inner) => write!(formatter, "Opt{}", ClosureTypeSignature(inner)),
             TypeExpr::Result { ok, err } => write!(
                 formatter,
@@ -129,14 +137,14 @@ impl fmt::Display for ClosureTypeSignature<'_> {
                 formatter.write_str("Tuple")?;
                 write_signature_types(formatter, elements)
             }
-            TypeExpr::Map { key, value } => write!(
+            TypeExpr::Map { key, value, .. } => write!(
                 formatter,
                 "Map{}To{}",
                 ClosureTypeSignature(key),
                 ClosureTypeSignature(value)
             ),
             TypeExpr::String => formatter.write_str("String"),
-            TypeExpr::Bytes => formatter.write_str("Bytes"),
+            TypeExpr::Str => formatter.write_str("Str"),
             TypeExpr::Parameter(parameter) => formatter.write_str(&parameter.name),
         }
     }
@@ -153,13 +161,13 @@ fn write_signature_types(formatter: &mut fmt::Formatter<'_>, types: &[TypeExpr])
 
 fn write_parameter_signature_types(
     formatter: &mut fmt::Formatter<'_>,
-    types: &[RustType],
+    types: &[TypeExpr],
 ) -> fmt::Result {
-    types.iter().enumerate().try_for_each(|(index, rust_type)| {
+    types.iter().enumerate().try_for_each(|(index, type_expr)| {
         if index > 0 {
             formatter.write_str("_")?;
         }
-        write!(formatter, "{}", ClosureTypeSignature(rust_type.expr()))
+        write!(formatter, "{}", ClosureTypeSignature(type_expr))
     })
 }
 
@@ -208,14 +216,21 @@ fn closure_symbol_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use boltffi_ast::{ClosureKind, ClosureTrait, RecordId};
+    use boltffi_ast::{Path, RecordId};
 
     use super::*;
 
+    fn closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> FnSig {
+        FnSig::new(parameters, returns)
+    }
+
+    fn record(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::record(RecordId::new(id), Path::single(path))
+    }
+
     #[test]
     fn registration_uses_closure_signature_import_names() {
-        let closure = ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        let closure = closure(
             vec![TypeExpr::Primitive(AstPrimitive::F64)],
             ReturnDef::Void,
         );
@@ -237,8 +252,7 @@ mod tests {
 
     #[test]
     fn outgoing_registration_uses_closure_signature_export_names() {
-        let closure = ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
+        let closure = closure(
             vec![TypeExpr::Primitive(AstPrimitive::F64)],
             ReturnDef::Void,
         );
@@ -258,14 +272,11 @@ mod tests {
 
     #[test]
     fn signature_keeps_nested_source_shape() {
-        let closure = ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            vec![TypeExpr::option(TypeExpr::Record(RecordId::new(
-                "demo::Point",
-            )))],
+        let closure = closure(
+            vec![TypeExpr::option(record("demo::Point", "Point"))],
             ReturnDef::value(TypeExpr::result(
                 TypeExpr::Primitive(AstPrimitive::I32),
-                TypeExpr::Record(RecordId::new("demo::MathError")),
+                record("demo::MathError", "MathError"),
             )),
         );
 
@@ -277,16 +288,8 @@ mod tests {
 
     #[test]
     fn signature_includes_named_type_namespace() {
-        let first = ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            vec![TypeExpr::Record(RecordId::new("a::Point"))],
-            ReturnDef::Void,
-        );
-        let second = ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            vec![TypeExpr::Record(RecordId::new("b::Point"))],
-            ReturnDef::Void,
-        );
+        let first = closure(vec![record("a::Point", "Point")], ReturnDef::Void);
+        let second = closure(vec![record("b::Point", "Point")], ReturnDef::Void);
 
         assert_eq!(
             ClosureSignature::from_closure(&first).symbol_part(),

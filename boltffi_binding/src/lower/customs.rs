@@ -38,7 +38,7 @@ pub(super) fn lower(
 
 fn lower_one(ids: &DeclarationIds, custom: &SourceCustom) -> Result<CustomTypeDecl, LowerError> {
     let custom_id = ids.custom(&custom.id)?;
-    let representation = types::lower(ids, custom.repr.expr())?;
+    let representation = types::lower(ids, &custom.repr)?;
     Ok(CustomTypeDecl::new(
         custom_id,
         CanonicalName::from(&custom.name),
@@ -88,6 +88,14 @@ mod tests {
             None,
             converters(),
         )
+    }
+
+    fn record_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::record(id.into(), SourcePath::single(path))
+    }
+
+    fn custom_ref(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::custom(id.into(), SourcePath::single(path))
     }
 
     fn lower_customs<S: SurfaceLower>(
@@ -164,7 +172,7 @@ mod tests {
         contract.customs.push(custom_type(
             "demo::PointAlias",
             "PointAlias",
-            TypeExpr::Record("demo::Point".into()),
+            record_type("demo::Point", "Point"),
         ));
 
         let bindings = lower::<Native>(&contract).expect("contract should lower");
@@ -255,9 +263,9 @@ mod tests {
             boltffi_ast::FunctionDef::new(boltffi_ast::FunctionId::new("demo::open"), name("open"));
         function.parameters = vec![ParameterDef::value(
             name("handle"),
-            TypeExpr::Custom("demo::Handle".into()),
+            custom_ref("demo::Handle", "Handle"),
         )];
-        function.returns = ReturnDef::value(TypeExpr::Custom("demo::Handle".into()));
+        function.returns = ReturnDef::value(custom_ref("demo::Handle", "Handle"));
         contract.functions.push(function);
 
         let bindings = lower::<Native>(&contract).expect("contract should lower");

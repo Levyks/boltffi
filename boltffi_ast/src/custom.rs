@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::TypeExpr;
 use crate::{
-    ConstExpr, CustomTypeId, DeprecationInfo, DocComment, NamePart, Path, PathRoot, RustType,
-    Source, SourceName, SourceSpan, UserAttr,
+    ConstExpr, CustomTypeId, DeprecationInfo, DocComment, NamePart, Path, PathRoot, Source,
+    SourceName, SourceSpan, UserAttr,
 };
 
 /// A user-declared custom type.
@@ -19,7 +20,7 @@ pub struct CustomTypeDef {
     /// Remote Rust type being represented.
     pub remote: CustomRemoteType,
     /// Rust source representation type used at the FFI surface.
-    pub repr: RustType,
+    pub repr: TypeExpr,
     /// Error type returned by the fallible representation-to-remote converter.
     pub error: Option<CustomRemoteType>,
     /// Converter functions supplied by the source declaration.
@@ -49,7 +50,7 @@ impl CustomTypeDef {
         id: CustomTypeId,
         name: impl Into<SourceName>,
         remote: CustomRemoteType,
-        repr: impl Into<RustType>,
+        repr: TypeExpr,
         error: Option<CustomRemoteType>,
         converters: CustomTypeConverters,
     ) -> Self {
@@ -57,7 +58,7 @@ impl CustomTypeDef {
             id,
             name: name.into(),
             remote,
-            repr: repr.into(),
+            repr,
             error,
             converters,
             user_attrs: Vec::new(),

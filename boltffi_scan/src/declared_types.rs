@@ -5,8 +5,6 @@ use boltffi_ast::{ClassId, CustomRemoteType, CustomTypeId, EnumId, RecordId, Tra
 use crate::impl_target;
 use crate::items;
 use crate::marked::MarkedItems;
-#[cfg(test)]
-use crate::path::ModulePath;
 use crate::path::{ModuleScope, PathExpansion};
 use crate::source_tree::{SourceModule, SourceTree};
 use crate::{ScanError, spelling};
@@ -110,23 +108,6 @@ impl DeclaredTypes {
             .expect("test declaration registration must not conflict");
     }
 
-    #[cfg(test)]
-    pub(super) fn register_custom(&mut self, id: CustomTypeId, remote: &syn::Type) {
-        self.register_custom_syn_type(&ModulePath::root("demo"), id, remote)
-            .expect("test declaration registration must not conflict");
-    }
-
-    #[cfg(test)]
-    pub(super) fn register_custom_in(
-        &mut self,
-        module: &ModulePath,
-        id: CustomTypeId,
-        remote: &syn::Type,
-    ) {
-        self.register_custom_syn_type(module, id, remote)
-            .expect("test declaration registration must not conflict");
-    }
-
     pub(super) fn resolve(&self, path: &str) -> Option<&DeclaredType> {
         self.by_path.get(path)
     }
@@ -192,18 +173,6 @@ impl DeclaredTypes {
                 path: spelling::ty(ty),
             }),
         }
-    }
-
-    #[cfg(test)]
-    fn register_custom_syn_type(
-        &mut self,
-        module: &ModulePath,
-        id: CustomTypeId,
-        remote: &syn::Type,
-    ) -> Result<(), ScanError> {
-        let remote = items::custom_type::RemoteType::scan(remote)?;
-        let scope = ModuleScope::new(module.clone(), &[]);
-        self.register_custom_type(&scope, id, &remote)
     }
 
     fn resolve_source_path(

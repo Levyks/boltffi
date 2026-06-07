@@ -111,8 +111,8 @@ mod tests {
         assert_eq!(class.methods[0].id, MethodId::new("demo::Engine::new"));
         assert_eq!(class.methods[0].receiver, Receiver::None);
         assert_eq!(
-            class.methods[0].parameters[0].rust_type.expr(),
-            &TypeExpr::Primitive(Primitive::U64)
+            class.methods[0].parameters[0].type_expr,
+            TypeExpr::Primitive(Primitive::U64)
         );
         assert_eq!(
             class.methods[0].returns,

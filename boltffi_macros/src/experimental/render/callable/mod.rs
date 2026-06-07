@@ -1,6 +1,5 @@
 use boltffi_binding::{ExecutionDecl, ExportedCallable};
 use proc_macro2::TokenStream;
-use syn::PatType;
 
 use crate::experimental::{
     error::Error,
@@ -13,24 +12,21 @@ pub mod signature;
 pub struct Rule;
 pub struct Parameters;
 
-pub struct Input<'binding, 'params, 'syntax, S: Target> {
+pub struct Input<'binding, S: Target> {
     callable: &'binding ExportedCallable<S>,
     source: signature::Callable<'binding>,
-    params: &'params [&'syntax PatType],
     failure: TokenStream,
 }
 
-impl<'binding, 'params, 'syntax, S: Target> Input<'binding, 'params, 'syntax, S> {
+impl<'binding, S: Target> Input<'binding, S> {
     pub fn new(
         callable: &'binding ExportedCallable<S>,
         source: signature::Callable<'binding>,
-        params: &'params [&'syntax PatType],
         failure: TokenStream,
     ) -> Self {
         Self {
             callable,
             source,
-            params,
             failure,
         }
     }
@@ -66,22 +62,16 @@ impl Tokens {
     }
 }
 
-impl<'binding, 'params, 'syntax, S> RenderRule<S, Input<'binding, 'params, 'syntax, S>>
-    for Parameters
+impl<'binding, S> RenderRule<S, Input<'binding, S>> for Parameters
 where
     S: Target,
     render::param::Rule:
-        RenderRule<S, render::param::Input<'binding, 'syntax, S>, Output = render::param::Tokens>,
+        RenderRule<S, render::param::Input<'binding, S>, Output = render::param::Tokens>,
 {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'params, 'syntax, S>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, S>) -> Result<Self::Output, Error> {
         let callable = input.callable;
-        if callable.params().len() != input.params.len() {
-            return Err(Error::SourceSyntaxMismatch(
-                "function syntax parameter count does not match binding parameter count",
-            ));
-        }
         if callable.params().len() != input.source.parameters().len() {
             return Err(Error::SourceSyntaxMismatch(
                 "source parameter count does not match binding parameter count",
@@ -92,14 +82,12 @@ where
             .params()
             .iter()
             .zip(input.source.parameters())
-            .zip(input.params.iter().copied())
-            .map(|((param, source), syntax)| {
+            .map(|(param, source)| {
                 <render::param::Rule as RenderRule<S, _>>::apply(
                     render::param::Rule,
                     render::param::Input::new(
                         param,
                         signature::Parameter::new(source),
-                        syntax,
                         input.failure.clone(),
                     ),
                 )
@@ -136,14 +124,14 @@ where
     }
 }
 
-impl<'binding, 'params, 'syntax, S> RenderRule<S, Input<'binding, 'params, 'syntax, S>> for Rule
+impl<'binding, S> RenderRule<S, Input<'binding, S>> for Rule
 where
     S: Target,
-    Parameters: RenderRule<S, Input<'binding, 'params, 'syntax, S>, Output = Tokens>,
+    Parameters: RenderRule<S, Input<'binding, S>, Output = Tokens>,
 {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'params, 'syntax, S>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, S>) -> Result<Self::Output, Error> {
         match input.callable.execution() {
             ExecutionDecl::Synchronous(_) => {}
             ExecutionDecl::Asynchronous(_) => {

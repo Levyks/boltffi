@@ -1,8 +1,8 @@
 use boltffi_ast::{ReturnDef, TypeExpr};
 
 use crate::{
-    Direction, ElementMeta, ErrorDecl, HandlePresence, HandleTarget, ParamDirection, Primitive,
-    ReturnDecl, ReturnPlan, TypeRef, ValueRef,
+    Direction, ElementMeta, ErrorDecl, HandleTarget, ParamDirection, Primitive, ReturnDecl,
+    ReturnPlan, TypeRef, ValueRef,
 };
 
 use super::super::{
@@ -10,7 +10,10 @@ use super::super::{
     surface::SurfaceLower, symbol::SymbolAllocator, types,
 };
 
-use super::{CallableOwner, params::LowerClosure, substitute_self_type};
+use super::{
+    CallableOwner, CallbackHandleSource, ClassHandleSource, ClosureSource, params::LowerClosure,
+    substitute_self_type,
+};
 
 /// The return and error pair produced by [`lower`] for one source
 /// [`ReturnDef`].
@@ -47,8 +50,7 @@ where
             ReturnDecl::new(ElementMeta::new(None, None, None), ReturnPlan::Void),
             ErrorDecl::none(),
         )),
-        ReturnDef::Value(rust_type) => {
-            let type_expr = rust_type.expr();
+        ReturnDef::Value(type_expr) => {
             if let TypeExpr::Result { ok, err } = type_expr {
                 let ok_type_expr = substitute_self_type(owner, ok)?;
                 let err_type_expr = substitute_self_type(owner, err)?;
@@ -122,8 +124,10 @@ fn direct_vec_element(
     type_expr: &TypeExpr,
 ) -> Result<Option<TypeRef>, LowerError> {
     match type_expr {
-        TypeExpr::Primitive(_) => Ok(Some(types::lower(ids, type_expr)?)),
-        TypeExpr::Record(id) if idx.record(id).is_some_and(records::is_direct) => {
+        TypeExpr::Primitive(_) if !types::is_byte_primitive(type_expr) => {
+            Ok(Some(types::lower(ids, type_expr)?))
+        }
+        TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
             Ok(Some(types::lower(ids, type_expr)?))
         }
         _ => Ok(None),
@@ -156,31 +160,50 @@ fn lower_return_plan<S: SurfaceLower, D: Direction + LowerClosure<S>>(
 where
     D::Opposite: ParamDirection<S>,
 {
+    if let Some(handle) = ClassHandleSource::from_type_expr(type_expr) {
+        return Ok(ReturnPlan::HandleViaReturnSlot {
+            target: HandleTarget::Class(ids.class(handle.id)?),
+            carrier: S::class_handle_carrier(),
+            presence: handle.presence,
+        });
+    }
+    if let Some(handle) = CallbackHandleSource::from_type_expr(type_expr) {
+        return Ok(ReturnPlan::HandleViaReturnSlot {
+            target: HandleTarget::Callback(ids.callback(handle.id)?),
+            carrier: S::callback_handle_carrier(),
+            presence: handle.presence,
+        });
+    }
+    if let Some(closure) = ClosureSource::from_type_expr(type_expr) {
+        let closure_return = D::lower_closure_return(idx, ids, allocator, closure)?;
+        return Ok(ReturnPlan::ClosureViaOutPointer(closure_return));
+    }
     match type_expr {
         TypeExpr::Unit => Ok(ReturnPlan::Void),
         TypeExpr::Primitive(_) => Ok(ReturnPlan::DirectViaReturnSlot {
             ty: types::lower(ids, type_expr)?,
         }),
-        TypeExpr::Record(id) if idx.record(id).is_some_and(records::is_direct) => {
+        TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
             Ok(ReturnPlan::DirectViaReturnSlot {
                 ty: types::lower(ids, type_expr)?,
             })
         }
-        TypeExpr::Enum(id) if idx.enumeration(id).is_some_and(enums::is_c_style) => {
+        TypeExpr::Enum { id, .. } if idx.enumeration(id).is_some_and(enums::is_c_style) => {
             Ok(ReturnPlan::DirectViaReturnSlot {
                 ty: types::lower(ids, type_expr)?,
             })
         }
         TypeExpr::String
-        | TypeExpr::Bytes
-        | TypeExpr::Record(_)
-        | TypeExpr::Enum(_)
+        | TypeExpr::Str
+        | TypeExpr::Slice(_)
+        | TypeExpr::Record { .. }
+        | TypeExpr::Enum { .. }
         | TypeExpr::Vec(_)
         | TypeExpr::Option(_)
         | TypeExpr::Tuple(_)
         | TypeExpr::Result { .. }
         | TypeExpr::Map { .. }
-        | TypeExpr::Custom(_) => {
+        | TypeExpr::Custom { .. } => {
             let ty = types::lower(ids, type_expr)?;
             let codec_node = codecs::node(idx, ids, type_expr, ValueRef::self_value())?;
             Ok(ReturnPlan::EncodedViaReturnSlot {
@@ -189,37 +212,17 @@ where
                 shape: S::encoded_return_shape(),
             })
         }
-        TypeExpr::Closure {
-            signature,
-            presence,
-        } => {
-            let closure_return =
-                D::lower_closure_return(idx, ids, allocator, signature, *presence)?;
-            Ok(ReturnPlan::ClosureViaOutPointer(closure_return))
+        TypeExpr::SelfType
+        | TypeExpr::Parameter(_)
+        | TypeExpr::Class { .. }
+        | TypeExpr::FnPtr(_)
+        | TypeExpr::ImplTrait(_)
+        | TypeExpr::Dyn(_)
+        | TypeExpr::Boxed(_)
+        | TypeExpr::Arc(_) => {
+            Err(types::lower(ids, type_expr).expect_err(
+                "return value-plan lowering reached a source type reserved for handle, closure, owner-substitution, or generic rejection before the direct/encoded fallback",
+            ))
         }
-        TypeExpr::Class { id, presence } => Ok(ReturnPlan::HandleViaReturnSlot {
-            target: HandleTarget::Class(ids.class(id)?),
-            carrier: S::class_handle_carrier(),
-            presence: lower_presence(*presence),
-        }),
-        TypeExpr::Trait {
-            id,
-            form: _,
-            presence,
-        } => Ok(ReturnPlan::HandleViaReturnSlot {
-            target: HandleTarget::Callback(ids.callback(id)?),
-            carrier: S::callback_handle_carrier(),
-            presence: lower_presence(*presence),
-        }),
-        TypeExpr::SelfType | TypeExpr::Parameter(_) => {
-            Err(types::lower(ids, type_expr).expect_err("unsupported value-position type expr"))
-        }
-    }
-}
-
-fn lower_presence(presence: boltffi_ast::HandlePresence) -> HandlePresence {
-    match presence {
-        boltffi_ast::HandlePresence::Required => HandlePresence::Required,
-        boltffi_ast::HandlePresence::Nullable => HandlePresence::Nullable,
     }
 }

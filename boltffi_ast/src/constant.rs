@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ConstExpr, ConstantId, DeprecationInfo, DocComment, RustType, Source, SourceName, SourceSpan,
+    ConstExpr, ConstantId, DeprecationInfo, DocComment, Source, SourceName, SourceSpan, TypeExpr,
     UserAttr,
 };
 
@@ -17,7 +17,7 @@ pub struct ConstantDef {
     /// Source constant name.
     pub name: SourceName,
     /// Declared Rust source type.
-    pub rust_type: RustType,
+    pub type_expr: TypeExpr,
     /// Source expression used as the constant value.
     pub value: ConstExpr,
     /// User attributes preserved from the constant.
@@ -44,13 +44,13 @@ impl ConstantDef {
     pub fn new(
         id: ConstantId,
         name: impl Into<SourceName>,
-        rust_type: impl Into<RustType>,
+        type_expr: TypeExpr,
         value: ConstExpr,
     ) -> Self {
         Self {
             id,
             name: name.into(),
-            rust_type: rust_type.into(),
+            type_expr,
             value,
             user_attrs: Vec::new(),
             doc: None,

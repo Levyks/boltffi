@@ -180,7 +180,7 @@ pub(super) fn lower_class_methods<S: SurfaceLower>(
 fn is_initializer(owner: callable::CallableOwner<'_>, method: &MethodDef) -> bool {
     matches!(method.receiver, Receiver::None)
         && match &method.returns {
-            ReturnDef::Value(rust_type) => returns_owner(owner, rust_type.expr()),
+            ReturnDef::Value(type_expr) => returns_owner(owner, type_expr),
             ReturnDef::Void => false,
         }
 }

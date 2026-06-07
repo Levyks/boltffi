@@ -57,9 +57,9 @@ fn lower_one<S: SurfaceLower>(
 mod tests {
     use boltffi_ast::{
         CanonicalName as SourceName, ClassDef, DeprecationInfo as SourceDeprecationInfo,
-        DocComment as SourceDocComment, EnumDef, FieldDef, HandlePresence as SourcePresence,
-        MethodDef, MethodId as SourceMethodId, PackageInfo as SourcePackage, ParameterDef,
-        Primitive, Receiver, RecordDef, ReturnDef, SourceContract, TypeExpr, VariantDef,
+        DocComment as SourceDocComment, EnumDef, FieldDef, MethodDef, MethodId as SourceMethodId,
+        PackageInfo as SourcePackage, ParameterDef, Path as SourcePath, Primitive, Receiver,
+        RecordDef, ReturnDef, SourceContract, TypeExpr, VariantDef,
     };
 
     use crate::lower::lower;
@@ -101,6 +101,14 @@ mod tests {
 
     fn field(field_name: &str, type_expr: TypeExpr) -> FieldDef {
         FieldDef::new(name(field_name), type_expr)
+    }
+
+    fn class_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::class(id.into(), SourcePath::single(path))
+    }
+
+    fn nullable_class_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::option(class_type(id, path))
     }
 
     fn record(id: &str, record_name: &str, fields: Vec<FieldDef>) -> RecordDef {
@@ -319,10 +327,9 @@ mod tests {
             ReturnDef::value(TypeExpr::SelfType),
         );
         merge.parameters.push(param("other", TypeExpr::SelfType));
-        merge.parameters.push(param(
-            "driver",
-            TypeExpr::class("demo::Driver".into(), SourcePresence::Required),
-        ));
+        merge
+            .parameters
+            .push(param("driver", class_type("demo::Driver", "Driver")));
         let engine = class("demo::Engine", "Engine", vec![merge]);
         let mut contract = package();
         contract.classes = vec![driver, engine];
@@ -526,12 +533,18 @@ mod tests {
         let locate = method(
             "locate",
             Receiver::Shared,
-            ReturnDef::value(TypeExpr::Record("demo::Point".into())),
+            ReturnDef::value(TypeExpr::record(
+                "demo::Point".into(),
+                SourcePath::single("Point"),
+            )),
         );
         let direction_method = method(
             "direction",
             Receiver::Shared,
-            ReturnDef::value(TypeExpr::Enum("demo::Direction".into())),
+            ReturnDef::value(TypeExpr::enumeration(
+                "demo::Direction".into(),
+                SourcePath::single("Direction"),
+            )),
         );
         let mut contract = package();
         contract.records.push(point);
@@ -569,10 +582,9 @@ mod tests {
     fn class_param_with_required_presence_lowers_to_required_handle() {
         let driver = class("demo::Driver", "Driver", Vec::new());
         let mut method = method("install", Receiver::Mutable, ReturnDef::Void);
-        method.parameters.push(param(
-            "driver",
-            TypeExpr::class("demo::Driver".into(), SourcePresence::Required),
-        ));
+        method
+            .parameters
+            .push(param("driver", class_type("demo::Driver", "Driver")));
         let engine = class("demo::Engine", "Engine", vec![method]);
         let mut contract = package();
         contract.classes = vec![driver, engine];
@@ -605,7 +617,7 @@ mod tests {
         let mut method = method("attach", Receiver::Mutable, ReturnDef::Void);
         method.parameters.push(param(
             "driver",
-            TypeExpr::class("demo::Driver".into(), SourcePresence::Nullable),
+            nullable_class_type("demo::Driver", "Driver"),
         ));
         let engine = class("demo::Engine", "Engine", vec![method]);
         let mut contract = package();
@@ -638,10 +650,7 @@ mod tests {
         let mut method = method(
             "maybe_driver",
             Receiver::Shared,
-            ReturnDef::value(TypeExpr::class(
-                "demo::Driver".into(),
-                SourcePresence::Nullable,
-            )),
+            ReturnDef::value(nullable_class_type("demo::Driver", "Driver")),
         );
         let driver = class("demo::Driver", "Driver", Vec::new());
         let _ = &mut method;
@@ -671,10 +680,7 @@ mod tests {
         let method = method(
             "maybe_new",
             Receiver::None,
-            ReturnDef::value(TypeExpr::class(
-                "demo::Engine".into(),
-                SourcePresence::Nullable,
-            )),
+            ReturnDef::value(nullable_class_type("demo::Engine", "Engine")),
         );
         let bindings = lower_class::<Native>(class("demo::Engine", "Engine", vec![method]));
         let class = class_by_id(&bindings, ClassId::from_raw(0));
@@ -719,14 +725,13 @@ mod tests {
     fn nullable_class_param_uses_same_carrier_as_required() {
         let driver = class("demo::Driver", "Driver", Vec::new());
         let mut required_method = method("install", Receiver::Mutable, ReturnDef::Void);
-        required_method.parameters.push(param(
-            "driver",
-            TypeExpr::class("demo::Driver".into(), SourcePresence::Required),
-        ));
+        required_method
+            .parameters
+            .push(param("driver", class_type("demo::Driver", "Driver")));
         let mut nullable_method = method("attach", Receiver::Mutable, ReturnDef::Void);
         nullable_method.parameters.push(param(
             "driver",
-            TypeExpr::class("demo::Driver".into(), SourcePresence::Nullable),
+            nullable_class_type("demo::Driver", "Driver"),
         ));
         let engine = class(
             "demo::Engine",
@@ -756,7 +761,7 @@ mod tests {
         let mut method = method("attach", Receiver::Mutable, ReturnDef::Void);
         method.parameters.push(param(
             "driver",
-            TypeExpr::class("demo::Driver".into(), SourcePresence::Nullable),
+            nullable_class_type("demo::Driver", "Driver"),
         ));
         let engine = class("demo::Engine", "Engine", vec![method]);
         let mut contract = package();
@@ -835,10 +840,7 @@ mod tests {
         let mut new_engine = method(
             "new",
             Receiver::None,
-            ReturnDef::value(TypeExpr::class(
-                "demo::Engine".into(),
-                SourcePresence::Required,
-            )),
+            ReturnDef::value(class_type("demo::Engine", "Engine")),
         );
         new_engine.execution = boltffi_ast::ExecutionKind::Async;
         let bindings = lower_class::<Wasm32>(class("demo::Engine", "Engine", vec![new_engine]));

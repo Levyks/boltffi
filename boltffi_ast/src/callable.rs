@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::TypeExpr;
 use crate::{
-    DefaultValue, DeprecationInfo, DocComment, FunctionId, MethodId, RustType, Source, SourceName,
+    DefaultValue, DeprecationInfo, DocComment, FunctionId, MethodId, Source, SourceName,
     SourceSpan, UserAttr,
 };
 
@@ -41,7 +42,7 @@ pub struct ParameterDef {
     /// Source parameter name.
     pub name: SourceName,
     /// Rust source type after known FFI names have been identified.
-    pub rust_type: RustType,
+    pub type_expr: TypeExpr,
     /// How the parameter was accepted by the Rust callable.
     pub passing: ParameterPassing,
     /// Documentation attached to the parameter when the source provides it.
@@ -61,10 +62,10 @@ impl ParameterDef {
     /// parameter is the scanned Rust source type.
     ///
     /// Returns a parameter that was passed by value in Rust source.
-    pub fn value(name: impl Into<SourceName>, rust_type: impl Into<RustType>) -> Self {
+    pub fn value(name: impl Into<SourceName>, type_expr: TypeExpr) -> Self {
         Self {
             name: name.into(),
-            rust_type: rust_type.into(),
+            type_expr,
             passing: ParameterPassing::Value,
             doc: None,
             default: None,
@@ -79,8 +80,7 @@ impl ParameterDef {
 /// Records only the reference flavor (`T`, `&T`, `&mut T`). The trait use
 /// form (`impl Trait`, `Box<dyn Trait>`, `Arc<dyn Trait>`) is a fact of the
 /// type, not of the parameter slot, so it lives on
-/// [`TypeExpr::Trait`](crate::TypeExpr::Trait) instead. See
-/// [`TraitUseForm`](crate::TraitUseForm).
+/// the type expression instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum ParameterPassing {
     /// A value parameter such as `value: T`.
@@ -93,7 +93,7 @@ pub enum ParameterPassing {
 
 /// The outermost return type of a callable.
 ///
-/// Every non-void return is represented as `Value(RustType)`, including
+/// Every non-void return is represented as `Value(TypeExpr)`, including
 /// `Result<T, E>`. Fallibility is part of the type expression so the lowering
 /// layer can decide how the success value and error channel cross the boundary
 /// from one source shape.
@@ -104,26 +104,25 @@ pub enum ReturnDef {
     /// The callable returns one value.
     ///
     /// This includes tuples, options, and results. For example,
-    /// `fn pair() -> (u32, String)` is `Value(RustType { expr: TypeExpr::Tuple(_), .. })`, and
-    /// `fn try_open() -> Result<File, Error>` is
-    /// `Value(RustType { expr: TypeExpr::Result { .. }, .. })`.
-    Value(RustType),
+    /// `fn pair() -> (u32, String)` is `Value(TypeExpr::Tuple(_))`, and
+    /// `fn try_open() -> Result<File, Error>` is `Value(TypeExpr::Result { .. })`.
+    Value(TypeExpr),
 }
 
 impl ReturnDef {
     /// Builds a value return.
-    pub fn value(rust_type: impl Into<RustType>) -> Self {
-        Self::Value(rust_type.into())
+    pub fn value(type_expr: TypeExpr) -> Self {
+        Self::Value(type_expr)
     }
 
     /// Builds a return definition from an optional value type.
     ///
-    /// The `rust_type` parameter is `None` for `()` and `Some` for a returned value.
+    /// The `type_expr` parameter is `None` for `()` and `Some` for a returned value.
     ///
     /// Returns `Void` for no value and `Value` for a present Rust type.
-    pub fn from_value(rust_type: Option<impl Into<RustType>>) -> Self {
-        match rust_type {
-            Some(rust_type) => Self::Value(rust_type.into()),
+    pub fn from_value(type_expr: Option<TypeExpr>) -> Self {
+        match type_expr {
+            Some(type_expr) => Self::Value(type_expr),
             None => Self::Void,
         }
     }

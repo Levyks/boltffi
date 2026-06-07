@@ -1,6 +1,6 @@
 use boltffi_binding::{Native, Primitive, Wasm32};
 use quote::quote;
-use syn::PatType;
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -11,38 +11,38 @@ use super::Tokens;
 
 pub struct Rule;
 
-pub struct Input<'syntax> {
+pub struct Input {
     primitive: Primitive,
-    syntax: &'syntax PatType,
-    ident: &'syntax syn::Ident,
+    rust_type: Type,
+    ident: Ident,
     failure: proc_macro2::TokenStream,
 }
 
-impl<'syntax> Input<'syntax> {
+impl Input {
     pub fn new(
         primitive: Primitive,
-        syntax: &'syntax PatType,
-        ident: &'syntax syn::Ident,
+        rust_type: Type,
+        ident: Ident,
         failure: proc_macro2::TokenStream,
     ) -> Self {
         Self {
             primitive,
-            syntax,
+            rust_type,
             ident,
             failure,
         }
     }
 }
 
-impl<'syntax> RenderRule<Native, Input<'syntax>> for Rule {
+impl RenderRule<Native, Input> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'syntax>) -> Result<Self::Output, Error> {
-        let ident = input.ident;
+    fn apply(self, input: Input) -> Result<Self::Output, Error> {
+        let ident = &input.ident;
         let locals = local::Parameter::new(ident);
         let pointer = locals.pointer();
         let length = locals.length();
-        let rust_type = input.syntax.ty.as_ref();
+        let rust_type = &input.rust_type;
         let failure = input.failure;
         Ok(Tokens {
             items: Vec::new(),
@@ -74,12 +74,12 @@ impl<'syntax> RenderRule<Native, Input<'syntax>> for Rule {
     }
 }
 
-impl<'syntax> RenderRule<Wasm32, Input<'syntax>> for Rule {
+impl RenderRule<Wasm32, Input> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'syntax>) -> Result<Self::Output, Error> {
-        let ident = input.ident;
-        let rust_type = input.syntax.ty.as_ref();
+    fn apply(self, input: Input) -> Result<Self::Output, Error> {
+        let ident = &input.ident;
+        let rust_type = &input.rust_type;
         let value = Scalar::new(input.primitive, ident).some_value()?;
         Ok(Tokens {
             items: Vec::new(),
@@ -100,11 +100,11 @@ impl<'syntax> RenderRule<Wasm32, Input<'syntax>> for Rule {
 
 struct Scalar<'a> {
     primitive: Primitive,
-    value: &'a syn::Ident,
+    value: &'a Ident,
 }
 
 impl<'a> Scalar<'a> {
-    fn new(primitive: Primitive, value: &'a syn::Ident) -> Self {
+    fn new(primitive: Primitive, value: &'a Ident) -> Self {
         Self { primitive, value }
     }
 

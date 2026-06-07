@@ -1,9 +1,8 @@
-use boltffi_ast::{ClosureType, ParameterDef, ParameterPassing, TypeExpr};
+use boltffi_ast::{ParameterDef, ParameterPassing, TypeExpr};
 
 use crate::{
-    CanonicalName, ClosureParameter, ClosureReturn, Direction, ElementMeta, HandlePresence,
-    HandleTarget, IntoRust, OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive, Receive,
-    TypeRef, ValueRef,
+    CanonicalName, ClosureParameter, ClosureReturn, Direction, ElementMeta, HandleTarget, IntoRust,
+    OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive, Receive, TypeRef, ValueRef,
 };
 
 use super::super::{
@@ -11,7 +10,9 @@ use super::super::{
     records, surface::SurfaceLower, symbol::SymbolAllocator, types,
 };
 
-use super::{CallableOwner, substitute_self_type};
+use super::{
+    CallableOwner, CallbackHandleSource, ClassHandleSource, ClosureSource, substitute_self_type,
+};
 
 /// Lowers the parameter list of a callable in direction `D`.
 ///
@@ -56,29 +57,17 @@ fn lower_one<S: SurfaceLower, D: Direction + LowerClosure<S>>(
 where
     D::Opposite: ParamDirection<S>,
 {
-    let type_expr = substitute_self_type(owner, parameter.rust_type.expr())?;
+    let type_expr = substitute_self_type(owner, &parameter.type_expr)?;
     let receive = receive_for_passing(parameter.passing);
     let canonical_name = CanonicalName::from(&parameter.name);
     let meta = metadata::element_meta(parameter.doc.as_ref(), None, parameter.default.as_ref())?;
-    if let TypeExpr::Closure {
-        signature,
-        presence,
-    } = &type_expr
-    {
+    if let Some(closure) = ClosureSource::from_type_expr(&type_expr) {
         if !matches!(receive, Receive::ByValue) {
             return Err(LowerError::unsupported_type(
                 UnsupportedType::BorrowedCallbackParameter,
             ));
         }
-        return D::lower_closure_param(
-            idx,
-            ids,
-            allocator,
-            canonical_name,
-            meta,
-            signature,
-            *presence,
-        );
+        return D::lower_closure_param(idx, ids, allocator, canonical_name, meta, closure);
     }
     let value = ValueRef::named(canonical_name.clone());
     let plan = lower_plain_plan::<S, D>(idx, ids, &type_expr, value, receive)?;
@@ -132,8 +121,10 @@ fn direct_vec_element(
     type_expr: &TypeExpr,
 ) -> Result<Option<TypeRef>, LowerError> {
     match type_expr {
-        TypeExpr::Primitive(_) => Ok(Some(types::lower(ids, type_expr)?)),
-        TypeExpr::Record(id) if idx.record(id).is_some_and(records::is_direct) => {
+        TypeExpr::Primitive(_) if !types::is_byte_primitive(type_expr) => {
+            Ok(Some(types::lower(ids, type_expr)?))
+        }
+        TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
             Ok(Some(types::lower(ids, type_expr)?))
         }
         _ => Ok(None),
@@ -155,33 +146,55 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
     value: ValueRef,
     receive: Receive,
 ) -> Result<ParamPlan<S, D>, LowerError> {
+    if let Some(handle) = ClassHandleSource::from_type_expr(type_expr) {
+        return Ok(ParamPlan::Handle {
+            target: HandleTarget::Class(ids.class(handle.id)?),
+            carrier: S::class_handle_carrier(),
+            presence: handle.presence,
+            receive: D::receive_from(receive),
+        });
+    }
+    if let Some(handle) = CallbackHandleSource::from_type_expr(type_expr) {
+        if !matches!(receive, Receive::ByValue) {
+            return Err(LowerError::unsupported_type(
+                UnsupportedType::BorrowedCallbackParameter,
+            ));
+        }
+        return Ok(ParamPlan::Handle {
+            target: HandleTarget::Callback(ids.callback(handle.id)?),
+            carrier: S::callback_handle_carrier(),
+            presence: handle.presence,
+            receive: D::receive_from(receive),
+        });
+    }
     match type_expr {
         TypeExpr::Primitive(_) => Ok(ParamPlan::Direct {
             ty: types::lower(ids, type_expr)?,
             receive: D::receive_from(receive),
         }),
-        TypeExpr::Record(id) if idx.record(id).is_some_and(records::is_direct) => {
+        TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
             Ok(ParamPlan::Direct {
                 ty: types::lower(ids, type_expr)?,
                 receive: D::receive_from(receive),
             })
         }
-        TypeExpr::Enum(id) if idx.enumeration(id).is_some_and(enums::is_c_style) => {
+        TypeExpr::Enum { id, .. } if idx.enumeration(id).is_some_and(enums::is_c_style) => {
             Ok(ParamPlan::Direct {
                 ty: types::lower(ids, type_expr)?,
                 receive: D::receive_from(receive),
             })
         }
         TypeExpr::String
-        | TypeExpr::Bytes
-        | TypeExpr::Record(_)
-        | TypeExpr::Enum(_)
+        | TypeExpr::Str
+        | TypeExpr::Slice(_)
+        | TypeExpr::Record { .. }
+        | TypeExpr::Enum { .. }
         | TypeExpr::Vec(_)
         | TypeExpr::Option(_)
         | TypeExpr::Tuple(_)
         | TypeExpr::Result { .. }
         | TypeExpr::Map { .. }
-        | TypeExpr::Custom(_) => {
+        | TypeExpr::Custom { .. } => {
             let ty = types::lower(ids, type_expr)?;
             let codec_node = codecs::node(idx, ids, type_expr, value.clone())?;
             Ok(ParamPlan::Encoded {
@@ -191,40 +204,24 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
                 receive: D::receive_from(receive),
             })
         }
-        TypeExpr::Closure { .. } => unreachable!("closures are handled before lower_plan"),
-        TypeExpr::Class { id, presence } => Ok(ParamPlan::Handle {
-            target: HandleTarget::Class(ids.class(id)?),
-            carrier: S::class_handle_carrier(),
-            presence: lower_presence(*presence),
-            receive: D::receive_from(receive),
-        }),
-        TypeExpr::Trait {
-            id,
-            form: _,
-            presence,
-        } => {
-            if !matches!(receive, Receive::ByValue) {
-                return Err(LowerError::unsupported_type(
-                    UnsupportedType::BorrowedCallbackParameter,
-                ));
-            }
-            Ok(ParamPlan::Handle {
-                target: HandleTarget::Callback(ids.callback(id)?),
-                carrier: S::callback_handle_carrier(),
-                presence: lower_presence(*presence),
-                receive: D::receive_from(receive),
-            })
+        _ if ClosureSource::from_type_expr(type_expr).is_some() => {
+            unreachable!(
+                "closure source type reached parameter value-plan lowering after the closure classifier should have built a closure parameter plan"
+            )
         }
-        TypeExpr::Unit | TypeExpr::SelfType | TypeExpr::Parameter(_) => {
-            Err(types::lower(ids, type_expr).expect_err("unsupported value-position type expr"))
+        TypeExpr::Unit
+        | TypeExpr::SelfType
+        | TypeExpr::Parameter(_)
+        | TypeExpr::Class { .. }
+        | TypeExpr::FnPtr(_)
+        | TypeExpr::ImplTrait(_)
+        | TypeExpr::Dyn(_)
+        | TypeExpr::Boxed(_)
+        | TypeExpr::Arc(_) => {
+            Err(types::lower(ids, type_expr).expect_err(
+                "parameter value-plan lowering reached a source type reserved for handle, closure, owner-substitution, or generic rejection before the direct/encoded fallback",
+            ))
         }
-    }
-}
-
-fn lower_presence(presence: boltffi_ast::HandlePresence) -> HandlePresence {
-    match presence {
-        boltffi_ast::HandlePresence::Required => HandlePresence::Required,
-        boltffi_ast::HandlePresence::Nullable => HandlePresence::Nullable,
     }
 }
 
@@ -249,16 +246,14 @@ where
         idx: &Index<'_>,
         ids: &DeclarationIds,
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ClosureParameter<S, Self>, LowerError>;
 
     fn lower_closure_return(
         idx: &Index<'_>,
         ids: &DeclarationIds,
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ClosureReturn<S, Self>, LowerError>;
 
     fn lower_closure_param(
@@ -267,8 +262,7 @@ where
         allocator: &mut SymbolAllocator,
         name: CanonicalName,
         meta: ElementMeta,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ParamDecl<S, Self>, LowerError>;
 }
 
@@ -277,20 +271,18 @@ impl<S: SurfaceLower> LowerClosure<S> for IntoRust {
         idx: &Index<'_>,
         ids: &DeclarationIds,
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ClosureParameter<S, IntoRust>, LowerError> {
-        super::lower_closure_param_into_rust::<S>(idx, ids, allocator, closure, presence)
+        super::lower_closure_param_into_rust::<S>(idx, ids, allocator, closure)
     }
 
     fn lower_closure_return(
         idx: &Index<'_>,
         ids: &DeclarationIds,
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ClosureReturn<S, IntoRust>, LowerError> {
-        super::lower_closure_return_into_rust::<S>(idx, ids, allocator, closure, presence)
+        super::lower_closure_return_into_rust::<S>(idx, ids, allocator, closure)
     }
 
     fn lower_closure_param(
@@ -299,10 +291,9 @@ impl<S: SurfaceLower> LowerClosure<S> for IntoRust {
         allocator: &mut SymbolAllocator,
         name: CanonicalName,
         meta: ElementMeta,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ParamDecl<S, IntoRust>, LowerError> {
-        let param = Self::lower_closure_parameter(idx, ids, allocator, closure, presence)?;
+        let param = Self::lower_closure_parameter(idx, ids, allocator, closure)?;
         Ok(<ParamDecl<S, IntoRust>>::closure(name, meta, param))
     }
 }
@@ -312,20 +303,18 @@ impl<S: SurfaceLower> LowerClosure<S> for OutOfRust {
         idx: &Index<'_>,
         ids: &DeclarationIds,
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ClosureParameter<S, OutOfRust>, LowerError> {
-        super::lower_closure_param_out_of_rust::<S>(idx, ids, allocator, closure, presence)
+        super::lower_closure_param_out_of_rust::<S>(idx, ids, allocator, closure)
     }
 
     fn lower_closure_return(
         idx: &Index<'_>,
         ids: &DeclarationIds,
         allocator: &mut SymbolAllocator,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ClosureReturn<S, OutOfRust>, LowerError> {
-        super::lower_closure_return_out_of_rust::<S>(idx, ids, allocator, closure, presence)
+        super::lower_closure_return_out_of_rust::<S>(idx, ids, allocator, closure)
     }
 
     fn lower_closure_param(
@@ -334,10 +323,9 @@ impl<S: SurfaceLower> LowerClosure<S> for OutOfRust {
         allocator: &mut SymbolAllocator,
         name: CanonicalName,
         meta: ElementMeta,
-        closure: &ClosureType,
-        presence: boltffi_ast::HandlePresence,
+        closure: ClosureSource<'_>,
     ) -> Result<ParamDecl<S, OutOfRust>, LowerError> {
-        let param = Self::lower_closure_parameter(idx, ids, allocator, closure, presence)?;
+        let param = Self::lower_closure_parameter(idx, ids, allocator, closure)?;
         Ok(<ParamDecl<S, OutOfRust>>::closure(name, meta, param))
     }
 }

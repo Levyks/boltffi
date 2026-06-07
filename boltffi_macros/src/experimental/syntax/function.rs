@@ -46,22 +46,19 @@ impl RenderableItem for ExpandableFunction {
 impl<'a, S> ItemRenderer<'a, S, ExpandableFunction> for render::function::Rule<'a, S>
 where
     S: Target,
-    for<'params, 'syntax> render::callable::Rule: RenderRule<
-            S,
-            render::callable::Input<'a, 'params, 'syntax, S>,
-            Output = render::callable::Tokens,
-        >,
+    render::callable::Rule:
+        RenderRule<S, render::callable::Input<'a, S>, Output = render::callable::Tokens>,
     render::returns::Failure:
         RenderRule<S, render::returns::FailureInput<'a, S>, Output = TokenStream>,
     render::returns::Rule:
         RenderRule<S, render::returns::Input<'a, S>, Output = render::returns::Tokens>,
-    for<'syntax> render::asynchronous::Rule:
-        RenderRule<S, render::asynchronous::Input<'a, 'syntax, S>, Output = TokenStream>,
+    render::asynchronous::Rule:
+        RenderRule<S, render::asynchronous::Input<'a, S>, Output = TokenStream>,
 {
     fn render(
         binding: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
-        syntax: &ItemFn,
+        _: &ItemFn,
     ) -> Result<TokenStream, Error> {
-        Self::new(binding).render(syntax)
+        Self::new(binding).render()
     }
 }

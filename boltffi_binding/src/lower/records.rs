@@ -41,7 +41,7 @@ pub(super) fn is_direct(record: &SourceRecord) -> bool {
         && record
             .fields
             .iter()
-            .all(|field| primitive::fixed_primitive(field.rust_type.expr()).is_some())
+            .all(|field| primitive::fixed_primitive(&field.type_expr).is_some())
 }
 
 fn lower_one<S: SurfaceLower>(
@@ -71,7 +71,7 @@ fn lower_direct<S: SurfaceLower>(
         .map(|field| {
             Ok(DirectFieldDecl::new(
                 FieldKey::from(field),
-                types::lower(ids, field.rust_type.expr())?,
+                types::lower(ids, &field.type_expr)?,
                 metadata::element_meta(field.doc.as_ref(), None, field.default.as_ref())?,
             ))
         })
@@ -101,8 +101,8 @@ fn lower_encoded<S: SurfaceLower>(
         .map(|field| {
             let key = FieldKey::from(field);
             let value = ValueRef::self_value().field(key.clone());
-            let ty = types::lower(ids, field.rust_type.expr())?;
-            let codec = codecs::plan(idx, ids, field.rust_type.expr(), value)?;
+            let ty = types::lower(ids, &field.type_expr)?;
+            let codec = codecs::plan(idx, ids, &field.type_expr, value)?;
             Ok(EncodedFieldDecl::new(
                 key,
                 ty,
@@ -122,7 +122,10 @@ fn lower_encoded<S: SurfaceLower>(
         codecs::plan(
             idx,
             ids,
-            &TypeExpr::Record(record.id.clone()),
+            &TypeExpr::record(
+                record.id.clone(),
+                boltffi_ast::Path::single(record.name.spelling()),
+            ),
             ValueRef::self_value(),
         )?,
     ))
@@ -131,13 +134,12 @@ fn lower_encoded<S: SurfaceLower>(
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName as SourceName, ClosureKind, ClosureTrait, ClosureType,
-        DefaultValue as SourceDefaultValue, DeprecationInfo as SourceDeprecationInfo,
-        DocComment as SourceDocComment, EnumDef, ExecutionKind, FieldDef,
-        HandlePresence as SourcePresence, IntegerLiteral, MethodDef, MethodId as SourceMethodId,
-        PackageInfo as SourcePackage, ParameterDef, ParameterPassing, Path as SourcePath,
-        Primitive, Receiver, RecordDef, ReprAttr, ReprItem, ReturnDef, Source, SourceContract,
-        TypeExpr, VariantDef, VariantPayload,
+        CanonicalName as SourceName, DefaultValue as SourceDefaultValue,
+        DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, EnumDef,
+        ExecutionKind, FieldDef, FnSig, FnTrait, FnTraitKind, IntegerLiteral, MethodDef,
+        MethodId as SourceMethodId, PackageInfo as SourcePackage, ParameterDef, ParameterPassing,
+        Path as SourcePath, Primitive, Receiver, RecordDef, ReprAttr, ReprItem, ReturnDef, Source,
+        SourceContract, TypeExpr, VariantDef, VariantPayload,
     };
 
     use crate::lower::lower;
@@ -845,30 +847,38 @@ mod tests {
     }
 
     fn closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
-        closure_kind(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            parameters,
-            returns,
-        )
+        closure_with_trait(FnTraitKind::Fn, parameters, returns)
     }
 
-    fn closure_kind(kind: ClosureKind, parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
-        TypeExpr::closure(ClosureType::new(kind, parameters, returns))
-    }
-
-    fn closure_with_presence(
+    fn closure_with_trait(
+        kind: FnTraitKind,
         parameters: Vec<TypeExpr>,
         returns: ReturnDef,
-        presence: SourcePresence,
     ) -> TypeExpr {
-        TypeExpr::closure_with_presence(
-            ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
-                parameters,
-                returns,
-            ),
-            presence,
-        )
+        TypeExpr::impl_fn(FnTrait::new(kind, FnSig::new(parameters, returns)))
+    }
+
+    fn boxed_closure(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
+        TypeExpr::boxed(TypeExpr::dyn_fn(FnTrait::new(
+            FnTraitKind::Fn,
+            FnSig::new(parameters, returns),
+        )))
+    }
+
+    fn function_pointer(parameters: Vec<TypeExpr>, returns: ReturnDef) -> TypeExpr {
+        TypeExpr::fn_ptr(FnSig::new(parameters, returns))
+    }
+
+    fn nullable(type_expr: TypeExpr) -> TypeExpr {
+        TypeExpr::option(type_expr)
+    }
+
+    fn record_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::record(id.into(), SourcePath::single(path))
+    }
+
+    fn enum_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::enumeration(id.into(), SourcePath::single(path))
     }
 
     fn data_enum(id: &str, enum_name: &str) -> EnumDef {
@@ -1106,7 +1116,7 @@ mod tests {
             Receiver::Shared,
             vec![value_param(
                 "labels",
-                TypeExpr::map(TypeExpr::String, TypeExpr::Primitive(Primitive::I32)),
+                TypeExpr::hash_map(TypeExpr::String, TypeExpr::Primitive(Primitive::I32)),
             )],
             ReturnDef::Void,
         ));
@@ -1148,7 +1158,7 @@ mod tests {
         other.methods.push(method_with(
             "contains",
             Receiver::Shared,
-            vec![value_param("point", TypeExpr::Record("demo::Point".into()))],
+            vec![value_param("point", record_type("demo::Point", "Point"))],
             ReturnDef::Void,
         ));
 
@@ -1174,7 +1184,7 @@ mod tests {
         other.methods.push(method_with(
             "greet_user",
             Receiver::Shared,
-            vec![value_param("user", TypeExpr::Record("demo::User".into()))],
+            vec![value_param("user", record_type("demo::User", "User"))],
             ReturnDef::Void,
         ));
 
@@ -1215,7 +1225,7 @@ mod tests {
                 Receiver::Mutable,
                 vec![value_param(
                     "heading",
-                    TypeExpr::Enum("demo::Direction".into()),
+                    enum_type("demo::Direction", "Direction"),
                 )],
                 ReturnDef::Void,
             )])],
@@ -1252,7 +1262,7 @@ mod tests {
             vec![point_record_with_methods(vec![method_with(
                 "dispatch",
                 Receiver::Shared,
-                vec![value_param("event", TypeExpr::Enum("demo::Event".into()))],
+                vec![value_param("event", enum_type("demo::Event", "Event"))],
                 ReturnDef::Void,
             )])],
             vec![event],
@@ -1314,11 +1324,10 @@ mod tests {
             Receiver::Shared,
             vec![value_param(
                 "callback",
-                closure_with_presence(
+                nullable(closure(
                     vec![TypeExpr::Primitive(Primitive::F64)],
                     ReturnDef::Void,
-                    SourcePresence::Nullable,
-                ),
+                )),
             )],
             ReturnDef::Void,
         ));
@@ -1436,11 +1445,10 @@ mod tests {
             "maybe_project",
             Receiver::Shared,
             Vec::new(),
-            ReturnDef::value(closure_with_presence(
+            ReturnDef::value(nullable(closure(
                 vec![TypeExpr::Primitive(Primitive::F64)],
                 ReturnDef::value(TypeExpr::Primitive(Primitive::F64)),
-                SourcePresence::Nullable,
-            )),
+            ))),
         ));
 
         let bindings =
@@ -1588,7 +1596,7 @@ mod tests {
                         vec![TypeExpr::Primitive(Primitive::I32)],
                         ReturnDef::value(TypeExpr::Result {
                             ok: Box::new(TypeExpr::Primitive(Primitive::I32)),
-                            err: Box::new(TypeExpr::Enum("demo::ParseError".into())),
+                            err: Box::new(enum_type("demo::ParseError", "ParseError")),
                         }),
                     ),
                 )],
@@ -1629,7 +1637,7 @@ mod tests {
                         Vec::new(),
                         ReturnDef::value(TypeExpr::Result {
                             ok: Box::new(TypeExpr::Unit),
-                            err: Box::new(TypeExpr::Enum("demo::ParseError".into())),
+                            err: Box::new(enum_type("demo::ParseError", "ParseError")),
                         }),
                     ),
                 )],
@@ -1655,36 +1663,43 @@ mod tests {
 
     #[test]
     fn closure_with_fn_mut_kind_lowers_to_closure_plan() {
-        assert_closure_kind_lowers(ClosureKind::ImplTrait(ClosureTrait::FnMut));
+        assert_closure_type_lowers(closure_with_trait(
+            FnTraitKind::FnMut,
+            vec![TypeExpr::Primitive(Primitive::F64)],
+            ReturnDef::Void,
+        ));
     }
 
     #[test]
     fn closure_with_fn_once_kind_lowers_to_closure_plan() {
-        assert_closure_kind_lowers(ClosureKind::ImplTrait(ClosureTrait::FnOnce));
+        assert_closure_type_lowers(closure_with_trait(
+            FnTraitKind::FnOnce,
+            vec![TypeExpr::Primitive(Primitive::F64)],
+            ReturnDef::Void,
+        ));
     }
 
     #[test]
     fn closure_with_boxed_fn_kind_lowers_to_closure_plan() {
-        assert_closure_kind_lowers(ClosureKind::BoxedTraitObject(ClosureTrait::Fn));
+        assert_closure_type_lowers(boxed_closure(
+            vec![TypeExpr::Primitive(Primitive::F64)],
+            ReturnDef::Void,
+        ));
     }
 
     #[test]
     fn closure_with_function_pointer_kind_lowers_to_closure_plan() {
-        assert_closure_kind_lowers(ClosureKind::FunctionPointer);
+        assert_closure_type_lowers(function_pointer(
+            vec![TypeExpr::Primitive(Primitive::F64)],
+            ReturnDef::Void,
+        ));
     }
 
-    fn assert_closure_kind_lowers(kind: ClosureKind) {
+    fn assert_closure_type_lowers(closure: TypeExpr) {
         let bindings = lower_point_method::<Native>(method_with(
             "on_each",
             Receiver::Shared,
-            vec![value_param(
-                "callback",
-                closure_kind(
-                    kind,
-                    vec![TypeExpr::Primitive(Primitive::F64)],
-                    ReturnDef::Void,
-                ),
-            )],
+            vec![value_param("callback", closure)],
             ReturnDef::Void,
         ));
         let methods = first_record_methods(&bindings);
@@ -1716,31 +1731,6 @@ mod tests {
 
         let error =
             lower_record_result::<Native>(record).expect_err("closure inside Vec is not supported");
-
-        assert!(matches!(
-            error.kind(),
-            LowerErrorKind::UnsupportedType(UnsupportedType::ClosureInValuePosition)
-        ));
-    }
-
-    #[test]
-    fn closure_inside_option_parameter_is_rejected() {
-        let mut record = point_record();
-        record.methods.push(method_with(
-            "maybe_register",
-            Receiver::Shared,
-            vec![value_param(
-                "callback",
-                TypeExpr::Option(Box::new(closure(
-                    vec![TypeExpr::Primitive(Primitive::I32)],
-                    ReturnDef::Void,
-                ))),
-            )],
-            ReturnDef::Void,
-        ));
-
-        let error = lower_record_result::<Native>(record)
-            .expect_err("closure inside Option is not supported");
 
         assert!(matches!(
             error.kind(),
@@ -2022,11 +2012,10 @@ mod tests {
             Receiver::Shared,
             vec![value_param(
                 "callback",
-                closure_with_presence(
+                nullable(closure(
                     vec![TypeExpr::Primitive(Primitive::F64)],
                     ReturnDef::Void,
-                    SourcePresence::Nullable,
-                ),
+                )),
             )],
             ReturnDef::Void,
         ));
@@ -2155,7 +2144,7 @@ mod tests {
             "find_point",
             Receiver::Shared,
             vec![value_param("key", TypeExpr::Primitive(Primitive::U32))],
-            ReturnDef::value(TypeExpr::Record("demo::Point".into())),
+            ReturnDef::value(record_type("demo::Point", "Point")),
         ));
 
         let bindings = lower_records::<Native>(vec![point_record(), path]);
@@ -2182,7 +2171,7 @@ mod tests {
                 "heading",
                 Receiver::Shared,
                 Vec::new(),
-                ReturnDef::value(TypeExpr::Enum("demo::Direction".into())),
+                ReturnDef::value(enum_type("demo::Direction", "Direction")),
             )])],
             vec![direction],
         );

@@ -88,17 +88,13 @@ fn lower_value_decl<S: SurfaceLower>(
     // any constant whose declared type is not an inline scalar type.
     match inline_default::<S>(idx, constant)? {
         Some(value) => {
-            let ty = types::lower(ids, constant.rust_type.expr())?;
+            let ty = types::lower(ids, &constant.type_expr)?;
             Ok(ConstantValueDecl::inline(ty, value))
         }
         None => {
             let symbol = allocator.mint(constant_accessor_symbol_name(constant.id.as_str()))?;
-            let callable = callable::lower_constant_accessor::<S>(
-                idx,
-                ids,
-                allocator,
-                constant.rust_type.expr(),
-            )?;
+            let callable =
+                callable::lower_constant_accessor::<S>(idx, ids, allocator, &constant.type_expr)?;
             Ok(ConstantValueDecl::accessor(symbol, Box::new(callable)))
         }
     }
@@ -111,8 +107,7 @@ fn inline_default<S: SurfaceLower>(
     // Returns the inline literal for a constant, `None` when the value
     // must be delivered through an accessor, or an error when the value
     // cannot inhabit its declared type.
-    let Some(expected) = InlineConstantType::from_type_expr::<S>(idx, constant.rust_type.expr())
-    else {
+    let Some(expected) = InlineConstantType::from_type_expr::<S>(idx, &constant.type_expr) else {
         return Ok(None);
     };
     expected.lower_value(constant)
@@ -135,8 +130,8 @@ impl<'src> InlineConstantType<'src> {
             TypeExpr::Primitive(primitive) => {
                 IntegerBounds::for_primitive::<S>(*primitive).map(Self::Integer)
             }
-            TypeExpr::String => Some(Self::String),
-            TypeExpr::Enum(id) => idx.enumeration(id).map(Self::Enum),
+            TypeExpr::String | TypeExpr::Str => Some(Self::String),
+            TypeExpr::Enum { id, .. } => idx.enumeration(id).map(Self::Enum),
             _ => None,
         }
     }
@@ -361,6 +356,14 @@ mod tests {
             type_expr,
             value,
         )
+    }
+
+    fn bytes_type() -> TypeExpr {
+        TypeExpr::slice(TypeExpr::Primitive(Primitive::U8))
+    }
+
+    fn enum_type(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::enumeration(id.into(), SourcePath::single(path))
     }
 
     fn lower_constants<S: SurfaceLower>(
@@ -594,7 +597,7 @@ mod tests {
         let bindings = lower_constants_ok::<Native>(vec![constant(
             "demo::MAGIC",
             "MAGIC",
-            TypeExpr::Bytes,
+            bytes_type(),
             ConstExpr::Literal(Literal::Bytes(vec![0xCA, 0xFE])),
         )]);
         let decl = only_constant(&bindings);
@@ -641,7 +644,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 PathRoot::Relative,
                 vec![PathSegment::new("Mode"), PathSegment::new("Fast")],
@@ -683,7 +686,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 PathRoot::Relative,
                 vec![PathSegment::new("Mode"), PathSegment::new("VeryFast")],
@@ -719,7 +722,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 PathRoot::Crate,
                 vec![
@@ -760,7 +763,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 PathRoot::Relative,
                 vec![
@@ -793,7 +796,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 boltffi_ast::PathRoot::Relative,
                 vec![PathSegment::new("Other"), PathSegment::new("Fast")],
@@ -822,7 +825,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 boltffi_ast::PathRoot::Relative,
                 vec![PathSegment::new("Mode"), PathSegment::new("Slow")],
@@ -870,7 +873,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::new(
                 boltffi_ast::PathRoot::Relative,
                 vec![PathSegment::new("Mode"), PathSegment::new("Fast")],
@@ -897,7 +900,7 @@ mod tests {
         contract.constants.push(constant(
             "demo::DEFAULT_MODE",
             "DEFAULT_MODE",
-            TypeExpr::Enum(SourceEnumId::new("demo::Mode")),
+            enum_type("demo::Mode", "Mode"),
             ConstExpr::Path(SourcePath::single("Fast")),
         ));
 
@@ -956,7 +959,7 @@ mod tests {
         let bindings = lower_constants_ok::<Native>(vec![constant(
             "demo::MAGIC",
             "MAGIC",
-            TypeExpr::Bytes,
+            bytes_type(),
             ConstExpr::Literal(Literal::Bytes(vec![0xCA, 0xFE])),
         )]);
         let names: Vec<&str> = bindings

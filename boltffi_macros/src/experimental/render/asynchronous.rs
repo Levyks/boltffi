@@ -4,7 +4,7 @@ use boltffi_binding::{
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, ItemFn, PatType, ReturnType, Type};
+use syn::{Ident, Type, parse_quote};
 
 use crate::experimental::{
     error::Error,
@@ -19,48 +19,51 @@ use crate::experimental::{
 
 pub struct Rule;
 
-pub struct Input<'binding, 'syntax, S: Target> {
+pub struct Input<'binding, S: Target> {
     function: &'binding FunctionDecl<S>,
     source: signature::Callable<'binding>,
-    syntax: &'syntax ItemFn,
+    function_ident: Ident,
+    visibility: TokenStream,
 }
 
-impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
+impl<'binding, S: Target> Input<'binding, S> {
     pub fn new(
         function: &'binding FunctionDecl<S>,
         source: signature::Callable<'binding>,
-        syntax: &'syntax ItemFn,
+        function_ident: Ident,
+        visibility: TokenStream,
     ) -> Self {
         Self {
             function,
             source,
-            syntax,
+            function_ident,
+            visibility,
         }
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Native, Input<'binding, 'syntax, Native>> for Rule {
+impl<'binding> RenderRule<Native, Input<'binding, Native>> for Rule {
     type Output = TokenStream;
 
-    fn apply(self, input: Input<'binding, 'syntax, Native>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, Native>) -> Result<Self::Output, Error> {
         NativeAsync::new(input).tokens()
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Wasm32, Input<'binding, 'syntax, Wasm32>> for Rule {
+impl<'binding> RenderRule<Wasm32, Input<'binding, Wasm32>> for Rule {
     type Output = TokenStream;
 
-    fn apply(self, input: Input<'binding, 'syntax, Wasm32>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, Wasm32>) -> Result<Self::Output, Error> {
         WasmAsync::new(input).tokens()
     }
 }
 
-struct NativeAsync<'binding, 'syntax> {
-    input: Input<'binding, 'syntax, Native>,
+struct NativeAsync<'binding> {
+    input: Input<'binding, Native>,
 }
 
-impl<'binding, 'syntax> NativeAsync<'binding, 'syntax> {
-    fn new(input: Input<'binding, 'syntax, Native>) -> Self {
+impl<'binding> NativeAsync<'binding> {
+    fn new(input: Input<'binding, Native>) -> Self {
         Self { input }
     }
 
@@ -77,24 +80,28 @@ impl<'binding, 'syntax> NativeAsync<'binding, 'syntax> {
             return Err(Error::UnsupportedExpansion("native async protocol"));
         };
 
-        AsyncExports::new(self.input.function, self.input.source, self.input.syntax)?.tokens(
-            NativeProtocol {
-                poll,
-                complete,
-                cancel,
-                free,
-                panic_message,
-            },
-        )
+        AsyncExports::new(
+            self.input.function,
+            self.input.source,
+            self.input.function_ident,
+            self.input.visibility,
+        )?
+        .tokens(NativeProtocol {
+            poll,
+            complete,
+            cancel,
+            free,
+            panic_message,
+        })
     }
 }
 
-struct WasmAsync<'binding, 'syntax> {
-    input: Input<'binding, 'syntax, Wasm32>,
+struct WasmAsync<'binding> {
+    input: Input<'binding, Wasm32>,
 }
 
-impl<'binding, 'syntax> WasmAsync<'binding, 'syntax> {
-    fn new(input: Input<'binding, 'syntax, Wasm32>) -> Self {
+impl<'binding> WasmAsync<'binding> {
+    fn new(input: Input<'binding, Wasm32>) -> Self {
         Self { input }
     }
 
@@ -111,27 +118,32 @@ impl<'binding, 'syntax> WasmAsync<'binding, 'syntax> {
             return Err(Error::UnsupportedExpansion("wasm async protocol"));
         };
 
-        AsyncExports::new(self.input.function, self.input.source, self.input.syntax)?.tokens(
-            WasmProtocol {
-                poll_sync,
-                complete,
-                cancel,
-                free,
-                panic_message,
-            },
-        )
+        AsyncExports::new(
+            self.input.function,
+            self.input.source,
+            self.input.function_ident,
+            self.input.visibility,
+        )?
+        .tokens(WasmProtocol {
+            poll_sync,
+            complete,
+            cancel,
+            free,
+            panic_message,
+        })
     }
 }
 
-struct AsyncExports<'binding, 'syntax, S: Target> {
+struct AsyncExports<'binding, S: Target> {
     function: &'binding FunctionDecl<S>,
     source: signature::Callable<'binding>,
-    syntax: &'syntax ItemFn,
+    function_ident: Ident,
+    visibility: TokenStream,
     rust_return_type: Type,
     complete: Complete,
 }
 
-impl<'binding, 'syntax, S> AsyncExports<'binding, 'syntax, S>
+impl<'binding, S> AsyncExports<'binding, S>
 where
     S: Target,
     for<'plan> encoded::Rule: RenderRule<S, encoded::Input<'plan, S>, Output = encoded::Tokens>,
@@ -152,14 +164,19 @@ where
     fn new(
         function: &'binding FunctionDecl<S>,
         source: signature::Callable<'binding>,
-        syntax: &'syntax ItemFn,
+        function_ident: Ident,
+        visibility: TokenStream,
     ) -> Result<Self, Error> {
-        let rust_return_type = syntax_return_type(syntax);
+        let rust_return_type = source
+            .returns()
+            .written_type()?
+            .unwrap_or_else(|| parse_quote! { () });
         let complete = Complete::new(function, source.returns(), &rust_return_type)?;
         Ok(Self {
             function,
             source,
-            syntax,
+            function_ident,
+            visibility,
             rust_return_type,
             complete,
         })
@@ -168,30 +185,21 @@ where
     fn tokens<P>(self, protocol: P) -> Result<TokenStream, Error>
     where
         P: AsyncProtocol,
-        for<'params> render::callable::Parameters: RenderRule<
-                S,
-                render::callable::Input<'binding, 'params, 'syntax, S>,
-                Output = render::callable::Tokens,
-            >,
+        render::callable::Parameters:
+            RenderRule<S, render::callable::Input<'binding, S>, Output = render::callable::Tokens>,
     {
         let cfg = S::cfg_attr();
-        let visibility = &self.syntax.vis;
+        let visibility = &self.visibility;
         let start_ident = format_ident!("{}", self.function.symbol().name().as_str());
-        let function_ident = &self.syntax.sig.ident;
+        let function_ident = &self.function_ident;
         let rust_return_type = &self.rust_return_type;
-        let syntax_params = syntax_params(self.syntax)?;
         AsyncParameters::new(self.function.callable().params()).validate()?;
         let failure = quote! {
             return ::boltffi::__private::rustfuture::rust_future_invalid_arg::<#rust_return_type>();
         };
         let params = <render::callable::Parameters as RenderRule<S, _>>::apply(
             render::callable::Parameters,
-            render::callable::Input::new(
-                self.function.callable(),
-                self.source,
-                &syntax_params,
-                failure,
-            ),
+            render::callable::Input::new(self.function.callable(), self.source, failure),
         )?;
         let ffi_parameters = params.ffi_parameters();
         let conversions = params.conversions();
@@ -278,26 +286,20 @@ impl<'binding, S: Target> AsyncParameters<'binding, S> {
 }
 
 trait AsyncProtocol {
-    fn poll<S: Target>(&self, visibility: &syn::Visibility, rust_return_type: &Type)
-    -> TokenStream;
+    fn poll<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
     fn complete<S: Target>(
         &self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         rust_return_type: &Type,
         complete: Complete,
     ) -> TokenStream;
     fn panic_message<S: Target>(
         &self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream;
-    fn cancel<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream;
-    fn free<S: Target>(&self, visibility: &syn::Visibility, rust_return_type: &Type)
-    -> TokenStream;
+    fn cancel<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
+    fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
 }
 
 struct NativeProtocol<'a> {
@@ -309,11 +311,7 @@ struct NativeProtocol<'a> {
 }
 
 impl AsyncProtocol for NativeProtocol<'_> {
-    fn poll<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream {
+    fn poll<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
         let cfg = S::cfg_attr();
         let ident = symbol_ident(self.poll);
         quote! {
@@ -335,7 +333,7 @@ impl AsyncProtocol for NativeProtocol<'_> {
 
     fn complete<S: Target>(
         &self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         rust_return_type: &Type,
         complete: Complete,
     ) -> TokenStream {
@@ -344,7 +342,7 @@ impl AsyncProtocol for NativeProtocol<'_> {
 
     fn panic_message<S: Target>(
         &self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
         panic_message::<S>(
@@ -354,19 +352,11 @@ impl AsyncProtocol for NativeProtocol<'_> {
         )
     }
 
-    fn cancel<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream {
+    fn cancel<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
         cancel::<S>(visibility, symbol_ident(self.cancel), rust_return_type)
     }
 
-    fn free<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream {
+    fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
         free::<S>(visibility, symbol_ident(self.free), rust_return_type)
     }
 }
@@ -380,11 +370,7 @@ struct WasmProtocol<'a> {
 }
 
 impl AsyncProtocol for WasmProtocol<'_> {
-    fn poll<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream {
+    fn poll<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
         let cfg = S::cfg_attr();
         let ident = symbol_ident(self.poll_sync);
         quote! {
@@ -400,7 +386,7 @@ impl AsyncProtocol for WasmProtocol<'_> {
 
     fn complete<S: Target>(
         &self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         rust_return_type: &Type,
         complete: Complete,
     ) -> TokenStream {
@@ -409,7 +395,7 @@ impl AsyncProtocol for WasmProtocol<'_> {
 
     fn panic_message<S: Target>(
         &self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
         panic_message::<S>(
@@ -419,19 +405,11 @@ impl AsyncProtocol for WasmProtocol<'_> {
         )
     }
 
-    fn cancel<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream {
+    fn cancel<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
         cancel::<S>(visibility, symbol_ident(self.cancel), rust_return_type)
     }
 
-    fn free<S: Target>(
-        &self,
-        visibility: &syn::Visibility,
-        rust_return_type: &Type,
-    ) -> TokenStream {
+    fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
         free::<S>(visibility, symbol_ident(self.free), rust_return_type)
     }
 }
@@ -482,7 +460,7 @@ impl Complete {
 
     fn tokens<S: Target>(
         self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         ident: syn::Ident,
         rust_return_type: &Type,
     ) -> TokenStream {
@@ -627,7 +605,7 @@ impl PlainComplete {
 
     fn tokens<S: Target>(
         self,
-        visibility: &syn::Visibility,
+        visibility: &TokenStream,
         ident: syn::Ident,
         rust_return_type: &Type,
     ) -> TokenStream {
@@ -702,7 +680,6 @@ impl FallibleComplete {
             fallible::SuccessInput::new(
                 function.callable().returns(),
                 source,
-                Some(rust_return_type.clone()),
                 format_ident!("{}", function.symbol().name().as_str()),
             ),
         )?;
@@ -740,7 +717,7 @@ impl FallibleComplete {
         })
     }
 
-    fn tokens<S: Target>(self, visibility: &syn::Visibility, ident: syn::Ident) -> TokenStream {
+    fn tokens<S: Target>(self, visibility: &TokenStream, ident: syn::Ident) -> TokenStream {
         let cfg = S::cfg_attr();
         let Self {
             ffi_parameters,
@@ -762,7 +739,7 @@ impl FallibleComplete {
 }
 
 fn panic_message<S: Target>(
-    visibility: &syn::Visibility,
+    visibility: &TokenStream,
     ident: syn::Ident,
     rust_return_type: &Type,
 ) -> TokenStream {
@@ -782,7 +759,7 @@ fn panic_message<S: Target>(
 }
 
 fn cancel<S: Target>(
-    visibility: &syn::Visibility,
+    visibility: &TokenStream,
     ident: syn::Ident,
     rust_return_type: &Type,
 ) -> TokenStream {
@@ -797,7 +774,7 @@ fn cancel<S: Target>(
 }
 
 fn free<S: Target>(
-    visibility: &syn::Visibility,
+    visibility: &TokenStream,
     ident: syn::Ident,
     rust_return_type: &Type,
 ) -> TokenStream {
@@ -813,25 +790,4 @@ fn free<S: Target>(
 
 fn symbol_ident(symbol: &NativeSymbol) -> syn::Ident {
     format_ident!("{}", symbol.name().as_str())
-}
-
-fn syntax_return_type(syntax: &ItemFn) -> Type {
-    match &syntax.sig.output {
-        ReturnType::Default => syn::parse_quote! { () },
-        ReturnType::Type(_, ty) => ty.as_ref().clone(),
-    }
-}
-
-fn syntax_params(syntax: &ItemFn) -> Result<Vec<&PatType>, Error> {
-    syntax
-        .sig
-        .inputs
-        .iter()
-        .map(|arg| match arg {
-            FnArg::Typed(typed) => Ok(typed),
-            FnArg::Receiver(_) => Err(Error::SourceSyntaxMismatch(
-                "function syntax unexpectedly contains a receiver",
-            )),
-        })
-        .collect()
 }

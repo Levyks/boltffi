@@ -1,7 +1,7 @@
 use boltffi_binding::{Native, Primitive, Receive, TypeRef, Wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{PatType, Type};
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -14,130 +14,90 @@ use super::Tokens;
 pub struct Rule;
 pub struct Record;
 
-pub struct Input<'binding, 'syntax> {
+pub struct Input<'binding> {
     ty: &'binding TypeRef,
     receive: Receive,
-    syntax: &'syntax PatType,
-    ident: &'syntax syn::Ident,
+    rust_type: Type,
+    ident: Ident,
     failure: TokenStream,
 }
 
-impl<'binding, 'syntax> Input<'binding, 'syntax> {
+impl<'binding> Input<'binding> {
     pub fn new(
         ty: &'binding TypeRef,
         receive: Receive,
-        syntax: &'syntax PatType,
-        ident: &'syntax syn::Ident,
+        rust_type: Type,
+        ident: Ident,
         failure: TokenStream,
     ) -> Self {
         Self {
             ty,
             receive,
-            syntax,
+            rust_type,
             ident,
             failure,
         }
     }
 }
 
-pub struct RecordInput<'syntax> {
+pub struct RecordInput {
     receive: Receive,
-    syntax: &'syntax PatType,
-    ident: &'syntax syn::Ident,
+    rust_type: Type,
+    ident: Ident,
     failure: TokenStream,
 }
 
-impl<'syntax> RecordInput<'syntax> {
-    fn new(
-        receive: Receive,
-        syntax: &'syntax PatType,
-        ident: &'syntax syn::Ident,
-        failure: TokenStream,
-    ) -> Self {
+impl RecordInput {
+    fn new(receive: Receive, rust_type: Type, ident: Ident, failure: TokenStream) -> Self {
         Self {
             receive,
-            syntax,
+            rust_type,
             ident,
             failure,
         }
     }
 }
 
-impl<'binding, 'syntax, S> RenderRule<S, Input<'binding, 'syntax>> for Rule
+impl<'binding, S> RenderRule<S, Input<'binding>> for Rule
 where
     S: Target,
     for<'ty> render::type_ref::Rule: RenderRule<S, &'ty TypeRef, Output = TokenStream>,
-    Record: RenderRule<S, RecordInput<'syntax>, Output = Tokens>,
+    Record: RenderRule<S, RecordInput, Output = Tokens>,
 {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'syntax>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding>) -> Result<Self::Output, Error> {
         match input.ty {
             TypeRef::Primitive(primitive) => {
                 PrimitiveParam::new(*primitive, input.receive, input.ident).tokens::<S>()
             }
             TypeRef::Record(_) => <Record as RenderRule<S, _>>::apply(
                 Record,
-                RecordInput::new(input.receive, input.syntax, input.ident, input.failure),
+                RecordInput::new(input.receive, input.rust_type, input.ident, input.failure),
             ),
-            _ => PassableParam::new(input.receive, input.ident, Self::rust_type(&input)?).tokens(),
+            _ => PassableParam::new(input.receive, input.ident, input.rust_type).tokens(),
         }
     }
 }
 
-impl<'syntax> RenderRule<Native, RecordInput<'syntax>> for Record {
+impl RenderRule<Native, RecordInput> for Record {
     type Output = Tokens;
 
-    fn apply(self, input: RecordInput<'syntax>) -> Result<Self::Output, Error> {
-        PassableParam::new(input.receive, input.ident, Rule::record_type(&input)?).tokens()
+    fn apply(self, input: RecordInput) -> Result<Self::Output, Error> {
+        PassableParam::new(input.receive, input.ident, input.rust_type).tokens()
     }
 }
 
-impl<'syntax> RenderRule<Wasm32, RecordInput<'syntax>> for Record {
+impl RenderRule<Wasm32, RecordInput> for Record {
     type Output = Tokens;
 
-    fn apply(self, input: RecordInput<'syntax>) -> Result<Self::Output, Error> {
-        WasmRecordParam::new(
-            input.receive,
-            input.ident,
-            Rule::record_type(&input)?,
-            input.failure,
-        )
-        .tokens()
+    fn apply(self, input: RecordInput) -> Result<Self::Output, Error> {
+        WasmRecordParam::new(input.receive, input.ident, input.rust_type, input.failure).tokens()
     }
 }
 
 impl Rule {
-    fn rust_type<'syntax>(input: &Input<'_, 'syntax>) -> Result<&'syntax Type, Error> {
-        Self::syntax_type(input.syntax, input.receive)
-    }
-
-    fn record_type<'syntax>(input: &RecordInput<'syntax>) -> Result<&'syntax Type, Error> {
-        Self::syntax_type(input.syntax, input.receive)
-    }
-
-    fn syntax_type(syntax: &PatType, receive: Receive) -> Result<&Type, Error> {
-        match (receive, syntax.ty.as_ref()) {
-            (Receive::ByValue, ty) => Ok(ty),
-            (Receive::ByRef, Type::Reference(reference)) if reference.mutability.is_none() => {
-                Ok(reference.elem.as_ref())
-            }
-            (Receive::ByRef, _) => Err(Error::SourceSyntaxMismatch(
-                "shared-reference parameter syntax does not match binding receive mode",
-            )),
-            (Receive::ByMutRef, Type::Reference(reference)) if reference.mutability.is_some() => {
-                Ok(reference.elem.as_ref())
-            }
-            (Receive::ByMutRef, _) => Err(Error::SourceSyntaxMismatch(
-                "mutable-reference direct parameter syntax does not match binding receive mode",
-            )),
-            _ => Err(Error::UnsupportedExpansion(
-                "unknown direct parameter receive mode",
-            )),
-        }
-    }
-
-    fn argument(receive: Receive, ident: &syn::Ident) -> Result<TokenStream, Error> {
+    fn argument(receive: Receive, ident: &Ident) -> Result<TokenStream, Error> {
         match receive {
             Receive::ByValue => Ok(quote! { #ident }),
             Receive::ByRef => Ok(quote! { &#ident }),
@@ -149,14 +109,14 @@ impl Rule {
     }
 }
 
-struct PrimitiveParam<'a> {
+struct PrimitiveParam {
     primitive: Primitive,
     receive: Receive,
-    ident: &'a syn::Ident,
+    ident: Ident,
 }
 
-impl<'a> PrimitiveParam<'a> {
-    fn new(primitive: Primitive, receive: Receive, ident: &'a syn::Ident) -> Self {
+impl PrimitiveParam {
+    fn new(primitive: Primitive, receive: Receive, ident: Ident) -> Self {
         Self {
             primitive,
             receive,
@@ -170,7 +130,7 @@ impl<'a> PrimitiveParam<'a> {
         for<'ty> render::type_ref::Rule: RenderRule<S, &'ty TypeRef, Output = TokenStream>,
     {
         let ty = TypeRef::Primitive(self.primitive);
-        let ident = self.ident;
+        let ident = &self.ident;
         let ffi_type = <render::type_ref::Rule as RenderRule<S, &TypeRef>>::apply(
             render::type_ref::Rule,
             &ty,
@@ -186,7 +146,7 @@ impl<'a> PrimitiveParam<'a> {
     }
 
     fn conversions(&self) -> Vec<TokenStream> {
-        let ident = self.ident;
+        let ident = &self.ident;
         match self.receive {
             Receive::ByMutRef => vec![quote! { let mut #ident = #ident; }],
             _ => Vec::new(),
@@ -194,14 +154,14 @@ impl<'a> PrimitiveParam<'a> {
     }
 }
 
-struct PassableParam<'a> {
+struct PassableParam {
     receive: Receive,
-    ident: &'a syn::Ident,
-    rust_type: &'a Type,
+    ident: Ident,
+    rust_type: Type,
 }
 
-impl<'a> PassableParam<'a> {
-    fn new(receive: Receive, ident: &'a syn::Ident, rust_type: &'a Type) -> Self {
+impl PassableParam {
+    fn new(receive: Receive, ident: Ident, rust_type: Type) -> Self {
         Self {
             receive,
             ident,
@@ -210,8 +170,8 @@ impl<'a> PassableParam<'a> {
     }
 
     fn tokens(self) -> Result<Tokens, Error> {
-        let ident = self.ident;
-        let rust_type = self.rust_type;
+        let ident = &self.ident;
+        let rust_type = &self.rust_type;
         let ffi_type = quote! { <#rust_type as ::boltffi::__private::Passable>::In };
         Ok(Tokens {
             items: Vec::new(),
@@ -224,8 +184,8 @@ impl<'a> PassableParam<'a> {
     }
 
     fn conversions(&self) -> Vec<TokenStream> {
-        let ident = self.ident;
-        let rust_type = self.rust_type;
+        let ident = &self.ident;
+        let rust_type = &self.rust_type;
         match self.receive {
             Receive::ByMutRef => vec![quote! {
                 let mut #ident: #rust_type = unsafe {
@@ -241,20 +201,15 @@ impl<'a> PassableParam<'a> {
     }
 }
 
-struct WasmRecordParam<'a> {
+struct WasmRecordParam {
     receive: Receive,
-    ident: &'a syn::Ident,
-    rust_type: &'a Type,
+    ident: Ident,
+    rust_type: Type,
     failure: TokenStream,
 }
 
-impl<'a> WasmRecordParam<'a> {
-    fn new(
-        receive: Receive,
-        ident: &'a syn::Ident,
-        rust_type: &'a Type,
-        failure: TokenStream,
-    ) -> Self {
+impl WasmRecordParam {
+    fn new(receive: Receive, ident: Ident, rust_type: Type, failure: TokenStream) -> Self {
         Self {
             receive,
             ident,
@@ -264,7 +219,7 @@ impl<'a> WasmRecordParam<'a> {
     }
 
     fn tokens(self) -> Result<Tokens, Error> {
-        let ident = self.ident;
+        let ident = &self.ident;
         let ffi_type = self.ffi_type()?;
         let out = local::Parameter::new(ident).writeback();
         Ok(Tokens {
@@ -287,9 +242,9 @@ impl<'a> WasmRecordParam<'a> {
         }
     }
 
-    fn conversion(&self, out: &syn::Ident) -> Result<TokenStream, Error> {
-        let ident = self.ident;
-        let rust_type = self.rust_type;
+    fn conversion(&self, out: &Ident) -> Result<TokenStream, Error> {
+        let ident = &self.ident;
+        let rust_type = &self.rust_type;
         let failure = &self.failure;
         match self.receive {
             Receive::ByMutRef => Ok(quote! {
@@ -327,9 +282,9 @@ impl<'a> WasmRecordParam<'a> {
         }
     }
 
-    fn writebacks(&self, out: &syn::Ident) -> Result<Vec<TokenStream>, Error> {
-        let ident = self.ident;
-        let rust_type = self.rust_type;
+    fn writebacks(&self, out: &Ident) -> Result<Vec<TokenStream>, Error> {
+        let ident = &self.ident;
+        let rust_type = &self.rust_type;
         match self.receive {
             Receive::ByMutRef => Ok(vec![quote! {
                 unsafe {

@@ -11,8 +11,8 @@ use crate::{
 /// provides the impl, Rust calls into it). The source entity is a trait,
 /// so the type is named for the entity, not for the boundary role.
 ///
-/// Inline closure parameters use [`TypeExpr::Closure`](crate::TypeExpr::Closure)
-/// instead of pretending to be trait declarations.
+/// Inline closure parameters carry an [`FnTrait`](crate::FnTrait) bound
+/// instead of resolving to a trait declaration.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct TraitDef {
     /// Stable trait identity derived from the canonical Rust path.

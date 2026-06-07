@@ -1,11 +1,11 @@
-use boltffi_ast::{ClosureKind, ClosureType, ReturnDef, RustType};
+use boltffi_ast::{FnSig, ReturnDef};
 use boltffi_binding::{
     ClosureForm, ClosureParameter, ErrorDecl, HandlePresence, ImportedCallable, IntoRust, Native,
     OutgoingParam, ParamPlan, ReturnPlan, TypeRef, Wasm32, native, wasm32,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{GenericArgument, Ident, PathArguments, Type};
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -17,20 +17,20 @@ use super::Tokens;
 
 pub struct Rule;
 
-pub struct Input<'binding, 'syntax, S: Target> {
+pub struct Input<'binding, S: Target> {
     closure: &'binding ClosureParameter<S, IntoRust>,
-    source: &'binding ClosureType,
-    rust_type: &'syntax Type,
-    ident: &'syntax Ident,
+    source: &'binding FnSig,
+    rust_type: Type,
+    ident: Ident,
     failure: TokenStream,
 }
 
-impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
+impl<'binding, S: Target> Input<'binding, S> {
     pub fn new(
         closure: &'binding ClosureParameter<S, IntoRust>,
-        source: &'binding ClosureType,
-        rust_type: &'syntax Type,
-        ident: &'syntax Ident,
+        source: &'binding FnSig,
+        rust_type: Type,
+        ident: Ident,
         failure: TokenStream,
     ) -> Self {
         Self {
@@ -43,28 +43,28 @@ impl<'binding, 'syntax, S: Target> Input<'binding, 'syntax, S> {
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Native, Input<'binding, 'syntax, Native>> for Rule {
+impl<'binding> RenderRule<Native, Input<'binding, Native>> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'syntax, Native>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, Native>) -> Result<Self::Output, Error> {
         NativeClosure::new(input).tokens()
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Wasm32, Input<'binding, 'syntax, Wasm32>> for Rule {
+impl<'binding> RenderRule<Wasm32, Input<'binding, Wasm32>> for Rule {
     type Output = Tokens;
 
-    fn apply(self, input: Input<'binding, 'syntax, Wasm32>) -> Result<Self::Output, Error> {
+    fn apply(self, input: Input<'binding, Wasm32>) -> Result<Self::Output, Error> {
         WasmClosure::new(input).tokens()
     }
 }
 
-struct NativeClosure<'binding, 'syntax> {
-    input: Input<'binding, 'syntax, Native>,
+struct NativeClosure<'binding> {
+    input: Input<'binding, Native>,
 }
 
-impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
-    fn new(input: Input<'binding, 'syntax, Native>) -> Self {
+impl<'binding> NativeClosure<'binding> {
+    fn new(input: Input<'binding, Native>) -> Self {
         Self { input }
     }
 
@@ -78,11 +78,14 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
     }
 
     fn invoke_context(self) -> Result<Tokens, Error> {
-        let ident = self.input.ident;
-        let syntax =
-            ClosureSyntax::new(self.input.rust_type, self.input.source, self.input.closure)?;
-        let invoke =
-            ClosureInvoke::<Native>::new(self.input.closure.invoke(), self.input.source, &syntax)?;
+        let ident = &self.input.ident;
+        let rust_closure =
+            RustClosure::new(&self.input.rust_type, self.input.source, self.input.closure)?;
+        let invoke = ClosureInvoke::<Native>::new(
+            self.input.closure.invoke(),
+            self.input.source,
+            &rust_closure,
+        )?;
         let invoke_parameters = invoke.parameters()?;
         let names = RegistrationNames::new(ident);
         let callback = &names.call;
@@ -100,7 +103,7 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
             #callback(#owner.context() #(, #call_arguments)* #(, #return_call_arguments)*)
         };
         let body = return_tokens.body(call);
-        let closure = syntax.native_binding(NativeBinding {
+        let closure = rust_closure.native_binding(NativeBinding {
             ident,
             callback,
             context,
@@ -110,7 +113,7 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
             body,
             failure: &self.input.failure,
         })?;
-        let function_pointer_type = syntax.native_function_pointer_type(
+        let function_pointer_type = rust_closure.native_function_pointer_type(
             &invoke_parameters
                 .ffi_parameter_types
                 .iter()
@@ -119,7 +122,7 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
                 .collect::<Vec<_>>(),
             return_type.clone(),
         )?;
-        let release_type = syntax.native_release_function_type();
+        let release_type = rust_closure.native_release_function_type();
 
         Ok(Tokens {
             items: Vec::new(),
@@ -140,7 +143,7 @@ impl<'binding, 'syntax> NativeClosure<'binding, 'syntax> {
     }
 }
 
-impl ClosureSyntax<'_> {
+impl RustClosure<'_> {
     fn native_release_function_type(&self) -> TokenStream {
         match self {
             Self::NullableBoxed(_, _) => quote! {
@@ -153,7 +156,7 @@ impl ClosureSyntax<'_> {
     }
 }
 
-impl ClosureSyntax<'_> {
+impl RustClosure<'_> {
     fn native_function_pointer_type(
         &self,
         ffi_parameter_types: &[TokenStream],
@@ -170,21 +173,24 @@ impl ClosureSyntax<'_> {
     }
 }
 
-struct WasmClosure<'binding, 'syntax> {
-    input: Input<'binding, 'syntax, Wasm32>,
+struct WasmClosure<'binding> {
+    input: Input<'binding, Wasm32>,
 }
 
-impl<'binding, 'syntax> WasmClosure<'binding, 'syntax> {
-    fn new(input: Input<'binding, 'syntax, Wasm32>) -> Self {
+impl<'binding> WasmClosure<'binding> {
+    fn new(input: Input<'binding, Wasm32>) -> Self {
         Self { input }
     }
 
     fn tokens(self) -> Result<Tokens, Error> {
-        let ident = self.input.ident;
-        let syntax =
-            ClosureSyntax::new(self.input.rust_type, self.input.source, self.input.closure)?;
-        let invoke =
-            ClosureInvoke::<Wasm32>::new(self.input.closure.invoke(), self.input.source, &syntax)?;
+        let ident = &self.input.ident;
+        let rust_closure =
+            RustClosure::new(&self.input.rust_type, self.input.source, self.input.closure)?;
+        let invoke = ClosureInvoke::<Wasm32>::new(
+            self.input.closure.invoke(),
+            self.input.source,
+            &rust_closure,
+        )?;
         let invoke_parameters = invoke.parameters()?;
         let return_tokens = invoke.return_tokens()?;
         let registration = self.input.closure.registration().shape();
@@ -202,7 +208,7 @@ impl<'binding, 'syntax> WasmClosure<'binding, 'syntax> {
             #call(#owner.handle() #(, #call_arguments)* #(, #return_call_arguments)*)
         };
         let body = return_tokens.body(call_body);
-        let closure = syntax.wasm_binding(
+        let closure = rust_closure.wasm_binding(
             ident,
             owner,
             &free,
@@ -263,32 +269,27 @@ impl RegistrationNames {
     }
 }
 
-struct ClosureInvoke<'binding, 'syntax, S: Target> {
+struct ClosureInvoke<'binding, 'rust, S: Target> {
     callable: &'binding ImportedCallable<S>,
-    source: &'binding ClosureType,
-    syntax: &'syntax ClosureSyntax<'syntax>,
+    source: &'binding FnSig,
+    rust_closure: &'rust RustClosure<'rust>,
 }
 
-impl<'binding, 'syntax, S: Target> ClosureInvoke<'binding, 'syntax, S> {
+impl<'binding, 'rust, S: Target> ClosureInvoke<'binding, 'rust, S> {
     fn new(
         callable: &'binding ImportedCallable<S>,
-        source: &'binding ClosureType,
-        syntax: &'syntax ClosureSyntax<'syntax>,
+        source: &'binding FnSig,
+        rust_closure: &'rust RustClosure<'rust>,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
                 "source closure parameter count does not match binding invoke parameter count",
             ));
         }
-        if source.parameters.len() != syntax.parameters().len() {
-            return Err(Error::SourceSyntaxMismatch(
-                "closure syntax parameter count does not match source closure parameter count",
-            ));
-        }
         Ok(Self {
             callable,
             source,
-            syntax,
+            rust_closure,
         })
     }
 
@@ -297,7 +298,7 @@ impl<'binding, 'syntax, S: Target> ClosureInvoke<'binding, 'syntax, S> {
             .callable
             .params()
             .iter()
-            .zip(self.syntax.parameters().iter())
+            .zip(self.rust_closure.parameters().iter())
             .enumerate()
             .map(|(index, (param, rust_type))| {
                 InvokeParameterInput::new(index, param.payload(), rust_type).tokens()
@@ -306,34 +307,34 @@ impl<'binding, 'syntax, S: Target> ClosureInvoke<'binding, 'syntax, S> {
         Ok(InvokeParameters::from(tokens))
     }
 
-    fn return_tokens(&self) -> Result<ForeignClosureReturnTokens<'syntax>, Error>
+    fn return_tokens(&self) -> Result<ForeignClosureReturnTokens<'rust>, Error>
     where
         ForeignClosureReturnRule: RenderRule<
                 S,
-                ForeignClosureReturn<'binding, 'syntax, S>,
-                Output = ForeignClosureReturnTokens<'syntax>,
+                ForeignClosureReturn<'binding, 'rust, S>,
+                Output = ForeignClosureReturnTokens<'rust>,
             >,
     {
-        <ForeignClosureReturnRule as RenderRule<S, ForeignClosureReturn<'binding, 'syntax, S>>>::apply(
+        <ForeignClosureReturnRule as RenderRule<S, ForeignClosureReturn<'binding, 'rust, S>>>::apply(
             ForeignClosureReturnRule,
             ForeignClosureReturn::new(
                 self.callable.returns().plan(),
                 self.callable.error(),
                 &self.source.returns,
-                self.syntax.return_type(),
+                self.rust_closure.return_type(),
             ),
         )
     }
 }
 
-struct InvokeParameterInput<'binding, 'syntax, S: Target> {
+struct InvokeParameterInput<'binding, 'rust, S: Target> {
     index: usize,
     payload: &'binding OutgoingParam<S>,
-    rust_type: &'syntax Type,
+    rust_type: &'rust Type,
 }
 
-impl<'binding, 'syntax, S: Target> InvokeParameterInput<'binding, 'syntax, S> {
-    fn new(index: usize, payload: &'binding OutgoingParam<S>, rust_type: &'syntax Type) -> Self {
+impl<'binding, 'rust, S: Target> InvokeParameterInput<'binding, 'rust, S> {
+    fn new(index: usize, payload: &'binding OutgoingParam<S>, rust_type: &'rust Type) -> Self {
         Self {
             index,
             payload,
@@ -435,19 +436,19 @@ impl From<Vec<InvokeParameterTokens>> for InvokeParameters {
     }
 }
 
-struct ForeignClosureReturn<'binding, 'syntax, S: Target> {
+struct ForeignClosureReturn<'binding, 'rust, S: Target> {
     plan: &'binding ReturnPlan<S, IntoRust>,
     error: &'binding ErrorDecl<S, IntoRust>,
     source: &'binding ReturnDef,
-    rust_type: Option<&'syntax Type>,
+    rust_type: Option<&'rust Type>,
 }
 
-impl<'binding, 'syntax, S: Target> ForeignClosureReturn<'binding, 'syntax, S> {
+impl<'binding, 'rust, S: Target> ForeignClosureReturn<'binding, 'rust, S> {
     fn new(
         plan: &'binding ReturnPlan<S, IntoRust>,
         error: &'binding ErrorDecl<S, IntoRust>,
         source: &'binding ReturnDef,
-        rust_type: Option<&'syntax Type>,
+        rust_type: Option<&'rust Type>,
     ) -> Self {
         Self {
             plan,
@@ -457,7 +458,7 @@ impl<'binding, 'syntax, S: Target> ForeignClosureReturn<'binding, 'syntax, S> {
         }
     }
 
-    fn direct_tokens(&self) -> Result<Option<ForeignClosureReturnTokens<'syntax>>, Error> {
+    fn direct_tokens(&self) -> Result<Option<ForeignClosureReturnTokens<'rust>>, Error> {
         if !matches!(self.error, ErrorDecl::None(_)) {
             return Ok(None);
         }
@@ -506,27 +507,25 @@ impl<'binding, 'syntax, S: Target> ForeignClosureReturn<'binding, 'syntax, S> {
         }
     }
 
-    fn rust_fallible_return(&self) -> Result<RustFallibleReturn<'syntax>, Error> {
-        signature::Return::new(self.source).fallible()?;
-        let rust_type = self.rust_type.ok_or(Error::SourceSyntaxMismatch(
-            "fallible closure invoke requires source Result return type",
-        ))?;
-        RustFallibleReturn::parse(rust_type).ok_or(Error::SourceSyntaxMismatch(
-            "fallible closure invoke requires source Result return type",
-        ))
+    fn rust_fallible_return(&self) -> Result<RustFallibleReturn, Error> {
+        let fallible = signature::Return::new(self.source).fallible()?;
+        Ok(RustFallibleReturn {
+            ok: fallible.ok_written_type()?,
+            err: fallible.error_written_type()?,
+        })
     }
 }
 
 struct ForeignClosureReturnRule;
 
-impl<'binding, 'syntax> RenderRule<Native, ForeignClosureReturn<'binding, 'syntax, Native>>
+impl<'binding, 'rust> RenderRule<Native, ForeignClosureReturn<'binding, 'rust, Native>>
     for ForeignClosureReturnRule
 {
-    type Output = ForeignClosureReturnTokens<'syntax>;
+    type Output = ForeignClosureReturnTokens<'rust>;
 
     fn apply(
         self,
-        input: ForeignClosureReturn<'binding, 'syntax, Native>,
+        input: ForeignClosureReturn<'binding, 'rust, Native>,
     ) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
@@ -610,14 +609,14 @@ impl<'binding, 'syntax> RenderRule<Native, ForeignClosureReturn<'binding, 'synta
     }
 }
 
-impl<'binding, 'syntax> RenderRule<Wasm32, ForeignClosureReturn<'binding, 'syntax, Wasm32>>
+impl<'binding, 'rust> RenderRule<Wasm32, ForeignClosureReturn<'binding, 'rust, Wasm32>>
     for ForeignClosureReturnRule
 {
-    type Output = ForeignClosureReturnTokens<'syntax>;
+    type Output = ForeignClosureReturnTokens<'rust>;
 
     fn apply(
         self,
-        input: ForeignClosureReturn<'binding, 'syntax, Wasm32>,
+        input: ForeignClosureReturn<'binding, 'rust, Wasm32>,
     ) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
@@ -698,42 +697,42 @@ impl<'binding, 'syntax> RenderRule<Wasm32, ForeignClosureReturn<'binding, 'synta
     }
 }
 
-enum ForeignClosureReturnTokens<'syntax> {
+enum ForeignClosureReturnTokens<'rust> {
     Void,
     DirectPrimitive {
         ffi_type: TokenStream,
     },
     DirectPassable {
-        rust_type: &'syntax Type,
+        rust_type: &'rust Type,
     },
     NativeEncoded {
-        rust_type: &'syntax Type,
+        rust_type: &'rust Type,
     },
     WasmPackedString,
     NativeFallibleVoid {
-        error_type: &'syntax Type,
+        error_type: Type,
     },
     NativeFallibleDirectPrimitive {
         ffi_type: TokenStream,
-        error_type: &'syntax Type,
+        error_type: Type,
     },
     NativeFallibleDirectPassable {
-        ok_type: &'syntax Type,
-        error_type: &'syntax Type,
+        ok_type: Type,
+        error_type: Type,
     },
     NativeFallibleEncoded {
-        ok_type: &'syntax Type,
-        error_type: &'syntax Type,
+        ok_type: Type,
+        error_type: Type,
     },
     WasmFallibleVoidString,
     WasmFallibleDirectPrimitive {
         ffi_type: TokenStream,
     },
     WasmFallibleDirectPassable {
-        ok_type: &'syntax Type,
+        ok_type: Type,
     },
     WasmFalliblePackedString {
-        ok_type: &'syntax Type,
+        ok_type: Type,
     },
 }
 
@@ -988,60 +987,45 @@ impl ForeignClosureReturnTokens<'_> {
     }
 }
 
-struct RustFallibleReturn<'syntax> {
-    ok: &'syntax Type,
-    err: &'syntax Type,
+struct RustFallibleReturn {
+    ok: Type,
+    err: Type,
 }
 
-impl<'syntax> RustFallibleReturn<'syntax> {
-    fn parse(ty: &'syntax Type) -> Option<Self> {
-        let Type::Path(path) = ty else {
-            return None;
-        };
-        let segment = path.path.segments.last()?;
-        (segment.ident == "Result").then_some(())?;
-        let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-            return None;
-        };
-        let mut types = arguments.args.iter().filter_map(|argument| match argument {
-            GenericArgument::Type(ty) => Some(ty),
-            _ => None,
-        });
-        let ok = types.next()?;
-        let err = types.next()?;
-        Some(Self { ok, err })
-    }
-}
-
-enum ClosureSyntax<'a> {
+enum RustClosure<'a> {
     ImplTrait(ClosureSignature),
     Boxed(ClosureSignature, &'a Type),
     NullableBoxed(ClosureSignature, &'a Type),
 }
 
-impl<'a> ClosureSyntax<'a> {
+impl<'a> RustClosure<'a> {
     fn new<S: Target>(
         ty: &'a Type,
-        source: &ClosureType,
+        source: &FnSig,
         closure: &ClosureParameter<S, IntoRust>,
     ) -> Result<Self, Error> {
         let signature = ClosureSignature::from_source(source, closure.form())?;
-        let syntax = match (closure.presence(), source.kind) {
-            (HandlePresence::Required, ClosureKind::ImplTrait(_)) => Ok(Self::ImplTrait(signature)),
-            (HandlePresence::Required, ClosureKind::BoxedTraitObject(_)) => {
-                Ok(Self::Boxed(signature, ty))
-            }
-            (HandlePresence::Nullable, ClosureKind::BoxedTraitObject(_)) => {
-                Ok(Self::NullableBoxed(signature, ty))
-            }
-            (HandlePresence::Required, ClosureKind::FunctionPointer) => Err(
+        let rust_closure = match (closure.presence(), closure.form()) {
+            (
+                HandlePresence::Required,
+                ClosureForm::Fn | ClosureForm::FnMut | ClosureForm::FnOnce,
+            ) if is_boxed_closure_type(ty) => Ok(Self::Boxed(signature, ty)),
+            (
+                HandlePresence::Required,
+                ClosureForm::Fn | ClosureForm::FnMut | ClosureForm::FnOnce,
+            ) => Ok(Self::ImplTrait(signature)),
+            (
+                HandlePresence::Nullable,
+                ClosureForm::Fn | ClosureForm::FnMut | ClosureForm::FnOnce,
+            ) => Ok(Self::NullableBoxed(signature, ty)),
+            (HandlePresence::Required, ClosureForm::FunctionPointer) => Err(
                 Error::UnsupportedExpansion("function-pointer closure parameter"),
             ),
             _ => Err(Error::SourceSyntaxMismatch(
-                "closure parameter syntax does not match binding closure",
+                "source closure parameter form does not match binding closure",
             )),
         }?;
-        Ok(syntax)
+        Ok(rust_closure)
     }
 
     fn parameters(&self) -> &[Type] {
@@ -1155,6 +1139,17 @@ impl<'a> ClosureSyntax<'a> {
     }
 }
 
+fn is_boxed_closure_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => type_path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "Box"),
+        _ => false,
+    }
+}
+
 struct NativeBinding<'a> {
     ident: &'a Ident,
     callback: &'a Ident,
@@ -1173,31 +1168,20 @@ struct ClosureSignature {
 }
 
 impl ClosureSignature {
-    fn from_source(source: &ClosureType, form: ClosureForm) -> Result<Self, Error> {
-        if ClosureForm::from(source.kind) != form {
-            return Err(Error::SourceSyntaxMismatch(
-                "closure syntax form does not match source closure form",
-            ));
-        }
+    fn from_source(source: &FnSig, form: ClosureForm) -> Result<Self, Error> {
         let parameters = source
             .parameters
             .iter()
-            .map(Self::rust_type)
+            .map(signature::rust_type)
             .collect::<Result<Vec<_>, _>>()?;
         let return_type = match &source.returns {
             ReturnDef::Void => None,
-            ReturnDef::Value(rust_type) => Some(Self::rust_type(rust_type)?),
+            ReturnDef::Value(type_expr) => Some(signature::rust_type(type_expr)?),
         };
         Ok(Self {
             form,
             parameters,
             return_type,
-        })
-    }
-
-    fn rust_type(rust_type: &RustType) -> Result<Type, Error> {
-        syn::parse_str(rust_type.spelling()).map_err(|_| {
-            Error::SourceSyntaxMismatch("closure source type spelling does not parse as Rust")
         })
     }
 }

@@ -147,7 +147,7 @@ fn method_stream(
         return Err(Attribute::invalid_placement("stream method"));
     }
     validate(method, owner.as_str(), scope, scanner, &attribute)?;
-    let item_type = scanner.rust_type(attribute.item())?;
+    let item_type = scanner.scan(attribute.item())?;
     let stream_name = method.sig.ident.to_string();
     let mut stream = StreamDef::new(
         StreamId::new(format!("{}::{stream_name}", owner.as_str())),
@@ -185,13 +185,13 @@ fn validate(
         )));
     }
     let returned = subscription_item(&method.sig.output, scope, &item)?;
-    let declared_item = scanner.rust_type(attribute.item())?;
-    let returned_item = scanner.rust_type(returned)?;
-    if declared_item.expr() != returned_item.expr() {
+    let declared_item = scanner.scan(attribute.item())?;
+    let returned_item = scanner.scan(returned)?;
+    if declared_item != returned_item {
         return Err(Attribute::invalid(format!(
             "`{item}` declares item `{}` but returns `{}`",
-            declared_item.spelling(),
-            returned_item.spelling()
+            spelling::ty(attribute.item()),
+            spelling::ty(returned)
         )));
     }
     Ok(())
@@ -291,6 +291,7 @@ fn raw_path(path: &syn::Path) -> Option<String> {
 mod tests {
     use super::*;
     use crate::ModuleScope;
+    use boltffi_ast::{Path, Primitive, RecordId, TypeExpr};
 
     fn attr(source: &str) -> syn::Attribute {
         syn::parse_str::<syn::ImplItemFn>(source)
@@ -467,8 +468,8 @@ mod tests {
         assert_eq!(streams[0].owner, Some(ClassId::new("demo::Engine")));
         assert_eq!(streams[0].mode, StreamMode::Batch);
         assert_eq!(
-            streams[0].item_type.expr(),
-            &boltffi_ast::TypeExpr::Record(boltffi_ast::RecordId::new("demo::Point"))
+            streams[0].item_type,
+            TypeExpr::record(RecordId::new("demo::Point"), Path::single("Point"))
         );
     }
 
@@ -492,10 +493,7 @@ mod tests {
         let streams = scan(marked.classes(), &declared_types).expect("streams");
 
         assert_eq!(streams.len(), 1);
-        assert_eq!(
-            streams[0].item_type.expr(),
-            &boltffi_ast::TypeExpr::Primitive(boltffi_ast::Primitive::I32)
-        );
+        assert_eq!(streams[0].item_type, TypeExpr::Primitive(Primitive::I32));
     }
 
     #[test]

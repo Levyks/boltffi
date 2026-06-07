@@ -227,11 +227,11 @@ fn wasm_callback_method_surface(
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName as SourceName, ClassDef, ClosureKind, ClosureTrait, ClosureType,
-        DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, FieldDef,
-        HandlePresence as SourcePresence, MethodDef, MethodId as SourceMethodId,
-        PackageInfo as SourcePackage, ParameterDef, ParameterPassing, Primitive, Receiver,
-        RecordDef, ReturnDef, SourceContract, TraitDef, TraitUseForm, TypeExpr,
+        CanonicalName as SourceName, ClassDef, DeprecationInfo as SourceDeprecationInfo,
+        DocComment as SourceDocComment, FieldDef, FnSig, FnTrait, FnTraitKind, MethodDef,
+        MethodId as SourceMethodId, PackageInfo as SourcePackage, ParameterDef, ParameterPassing,
+        Path, Primitive, Receiver, RecordDef, ReturnDef, SourceContract, TraitDef,
+        TraitId as SourceTraitId, TypeExpr,
     };
 
     use crate::lower::lower;
@@ -254,19 +254,47 @@ mod tests {
         TraitDef::new("demo::Listener".into(), name("Listener"))
     }
 
-    fn listener_type(form: TraitUseForm, presence: SourcePresence) -> TypeExpr {
-        TypeExpr::r#trait("demo::Listener".into(), form, presence)
+    fn impl_listener() -> TypeExpr {
+        TypeExpr::impl_trait(
+            SourceTraitId::new("demo::Listener"),
+            Path::single("Listener"),
+        )
     }
 
-    fn closure_type(presence: SourcePresence) -> TypeExpr {
-        TypeExpr::closure_with_presence(
-            ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
-                vec![TypeExpr::Primitive(Primitive::U32)],
-                ReturnDef::Void,
-            ),
-            presence,
-        )
+    fn boxed_listener() -> TypeExpr {
+        TypeExpr::boxed(TypeExpr::dyn_trait(
+            SourceTraitId::new("demo::Listener"),
+            Path::single("Listener"),
+        ))
+    }
+
+    fn arc_listener() -> TypeExpr {
+        TypeExpr::arc(TypeExpr::dyn_trait(
+            SourceTraitId::new("demo::Listener"),
+            Path::single("Listener"),
+        ))
+    }
+
+    fn closure() -> TypeExpr {
+        closure_returning(ReturnDef::Void)
+    }
+
+    fn closure_returning(returns: ReturnDef) -> TypeExpr {
+        TypeExpr::impl_fn(FnTrait::new(
+            FnTraitKind::Fn,
+            FnSig::new(vec![TypeExpr::Primitive(Primitive::U32)], returns),
+        ))
+    }
+
+    fn boxed_callback_trait(id: &str, path: &str) -> TypeExpr {
+        TypeExpr::boxed(TypeExpr::dyn_trait(
+            SourceTraitId::new(id),
+            Path::single(path),
+        ))
+    }
+
+    fn nullable(type_expr: TypeExpr) -> TypeExpr {
+        TypeExpr::option(type_expr)
     }
 
     fn method(method_name: &str, receiver: Receiver) -> MethodDef {
@@ -510,14 +538,7 @@ mod tests {
     fn callback_method_with_closure_param_lowers_to_outgoing_closure() {
         let mut callback = listener_callback();
         let mut handle = method("on_event", Receiver::Shared);
-        handle.parameters = vec![value_param(
-            "callback",
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
-                vec![TypeExpr::Primitive(Primitive::U32)],
-                ReturnDef::Void,
-            )),
-        )];
+        handle.parameters = vec![value_param("callback", closure())];
         callback.methods.push(handle);
 
         let bindings = lower_callback::<Native>(callback);
@@ -548,10 +569,7 @@ mod tests {
     fn callback_method_with_nullable_closure_param_lowers_to_nullable_outgoing_closure() {
         let mut callback = listener_callback();
         let mut handle = method("on_event", Receiver::Shared);
-        handle.parameters = vec![value_param(
-            "callback",
-            closure_type(SourcePresence::Nullable),
-        )];
+        handle.parameters = vec![value_param("callback", nullable(closure()))];
         callback.methods.push(handle);
 
         let bindings = lower_callback::<Native>(callback);
@@ -577,14 +595,7 @@ mod tests {
     fn wasm32_callback_method_with_closure_param_lowers_to_outgoing_closure() {
         let mut callback = listener_callback();
         let mut handle = method("on_event", Receiver::Shared);
-        handle.parameters = vec![value_param(
-            "callback",
-            TypeExpr::closure(ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
-                vec![TypeExpr::Primitive(Primitive::U32)],
-                ReturnDef::Void,
-            )),
-        )];
+        handle.parameters = vec![value_param("callback", closure())];
         callback.methods.push(handle);
 
         let bindings = lower_callback::<Wasm32>(callback);
@@ -631,10 +642,8 @@ mod tests {
     fn wasm32_callback_method_returning_closure_lowers_to_closure_via_out_pointer() {
         let mut callback = listener_callback();
         let mut handler_factory = method("handler", Receiver::Shared);
-        handler_factory.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            vec![TypeExpr::Primitive(Primitive::U32)],
-            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
+        handler_factory.returns = ReturnDef::value(closure_returning(ReturnDef::value(
+            TypeExpr::Primitive(Primitive::U32),
         )));
         callback.methods.push(handler_factory);
 
@@ -684,14 +693,9 @@ mod tests {
     fn callback_method_returning_nullable_closure_lowers_to_nullable_crossing() {
         let mut callback = listener_callback();
         let mut handler_factory = method("handler", Receiver::Shared);
-        handler_factory.returns = ReturnDef::value(TypeExpr::closure_with_presence(
-            ClosureType::new(
-                ClosureKind::ImplTrait(ClosureTrait::Fn),
-                vec![TypeExpr::Primitive(Primitive::U32)],
-                ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
-            ),
-            SourcePresence::Nullable,
-        ));
+        handler_factory.returns = ReturnDef::value(nullable(closure_returning(ReturnDef::value(
+            TypeExpr::Primitive(Primitive::U32),
+        ))));
         callback.methods.push(handler_factory);
 
         let bindings = lower_callback::<Wasm32>(callback);
@@ -714,10 +718,8 @@ mod tests {
     fn native_callback_method_returning_closure_lowers_to_closure_via_out_pointer() {
         let mut callback = listener_callback();
         let mut handler_factory = method("handler", Receiver::Shared);
-        handler_factory.returns = ReturnDef::value(TypeExpr::closure(ClosureType::new(
-            ClosureKind::ImplTrait(ClosureTrait::Fn),
-            vec![TypeExpr::Primitive(Primitive::U32)],
-            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
+        handler_factory.returns = ReturnDef::value(closure_returning(ReturnDef::value(
+            TypeExpr::Primitive(Primitive::U32),
         )));
         callback.methods.push(handler_factory);
 
@@ -781,11 +783,8 @@ mod tests {
 
     #[test]
     fn box_dyn_callback_param_lowers_to_required_callback_handle() {
-        let bindings = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Required,
-        ))
-        .expect("contract should lower");
+        let bindings = lower_record_with_listener_param::<Native>(boxed_listener())
+            .expect("contract should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -800,11 +799,8 @@ mod tests {
 
     #[test]
     fn impl_trait_callback_param_lowers_to_required_callback_handle() {
-        let bindings = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::ImplTrait,
-            SourcePresence::Required,
-        ))
-        .expect("impl Trait callback should lower");
+        let bindings = lower_record_with_listener_param::<Native>(impl_listener())
+            .expect("impl Trait callback should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -819,11 +815,8 @@ mod tests {
 
     #[test]
     fn arc_dyn_callback_param_lowers_to_required_callback_handle() {
-        let bindings = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::ArcDyn,
-            SourcePresence::Required,
-        ))
-        .expect("Arc<dyn> callback should lower");
+        let bindings = lower_record_with_listener_param::<Native>(arc_listener())
+            .expect("Arc<dyn> callback should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -838,11 +831,8 @@ mod tests {
 
     #[test]
     fn option_box_dyn_callback_param_lowers_to_nullable_callback_handle() {
-        let bindings = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Nullable,
-        ))
-        .expect("Option<Box<dyn Listener>> param must lower as a nullable callback handle");
+        let bindings = lower_record_with_listener_param::<Native>(nullable(boxed_listener()))
+            .expect("Option<Box<dyn Listener>> param must lower as a nullable callback handle");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -857,11 +847,8 @@ mod tests {
 
     #[test]
     fn option_arc_dyn_callback_param_lowers_to_nullable_callback_handle() {
-        let bindings = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::ArcDyn,
-            SourcePresence::Nullable,
-        ))
-        .expect("Option<Arc<dyn Listener>> should lower");
+        let bindings = lower_record_with_listener_param::<Native>(nullable(arc_listener()))
+            .expect("Option<Arc<dyn Listener>> should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -876,11 +863,8 @@ mod tests {
 
     #[test]
     fn option_impl_trait_callback_param_lowers_to_nullable_callback_handle() {
-        let bindings = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::ImplTrait,
-            SourcePresence::Nullable,
-        ))
-        .expect("Option<impl Listener> should lower");
+        let bindings = lower_record_with_listener_param::<Native>(nullable(impl_listener()))
+            .expect("Option<impl Listener> should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -896,7 +880,7 @@ mod tests {
     #[test]
     fn borrowed_impl_trait_callback_param_is_rejected() {
         let error = lower_record_with_listener_param_passing::<Native>(
-            listener_type(TraitUseForm::ImplTrait, SourcePresence::Required),
+            impl_listener(),
             ParameterPassing::Ref,
         )
         .expect_err("borrowed impl Trait callback param must reject");
@@ -910,7 +894,7 @@ mod tests {
     #[test]
     fn mutable_borrowed_box_dyn_callback_param_is_rejected() {
         let error = lower_record_with_listener_param_passing::<Native>(
-            listener_type(TraitUseForm::BoxedDyn, SourcePresence::Required),
+            boxed_listener(),
             ParameterPassing::RefMut,
         )
         .expect_err("borrowed Box<dyn Listener> callback param must reject");
@@ -923,16 +907,10 @@ mod tests {
 
     #[test]
     fn nullable_callback_param_uses_same_carrier_as_required() {
-        let required = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Required,
-        ))
-        .expect("required should lower");
-        let nullable = lower_record_with_listener_param::<Native>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Nullable,
-        ))
-        .expect("nullable should lower");
+        let required = lower_record_with_listener_param::<Native>(boxed_listener())
+            .expect("required should lower");
+        let nullable = lower_record_with_listener_param::<Native>(nullable(boxed_listener()))
+            .expect("nullable should lower");
 
         let required_carrier = match record_first_method_lower_plan(&required) {
             ParamPlan::Handle { carrier, .. } => *carrier,
@@ -951,11 +929,8 @@ mod tests {
 
     #[test]
     fn wasm32_nullable_callback_param_uses_u32_carrier() {
-        let bindings = lower_record_with_listener_param::<Wasm32>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Nullable,
-        ))
-        .expect("wasm32 Option<Box<dyn Listener>> should lower");
+        let bindings = lower_record_with_listener_param::<Wasm32>(nullable(boxed_listener()))
+            .expect("wasm32 Option<Box<dyn Listener>> should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -970,11 +945,8 @@ mod tests {
 
     #[test]
     fn class_method_returning_callback_lowers_to_required_lift_handle() {
-        let bindings = lower_class_returning_listener::<Native>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Required,
-        ))
-        .expect("contract should lower");
+        let bindings = lower_class_returning_listener::<Native>(boxed_listener())
+            .expect("contract should lower");
 
         match class_first_method_lift_plan(&bindings) {
             ReturnPlan::HandleViaReturnSlot {
@@ -988,11 +960,8 @@ mod tests {
 
     #[test]
     fn class_method_returning_arc_callback_lowers_to_required_lift_handle() {
-        let bindings = lower_class_returning_listener::<Native>(listener_type(
-            TraitUseForm::ArcDyn,
-            SourcePresence::Required,
-        ))
-        .expect("Arc<dyn Listener> return should lower");
+        let bindings = lower_class_returning_listener::<Native>(arc_listener())
+            .expect("Arc<dyn Listener> return should lower");
 
         match class_first_method_lift_plan(&bindings) {
             ReturnPlan::HandleViaReturnSlot {
@@ -1006,11 +975,8 @@ mod tests {
 
     #[test]
     fn class_method_returning_optional_arc_callback_lowers_to_nullable_lift_handle() {
-        let bindings = lower_class_returning_listener::<Native>(listener_type(
-            TraitUseForm::ArcDyn,
-            SourcePresence::Nullable,
-        ))
-        .expect("Option<Arc<dyn Listener>> return should lower");
+        let bindings = lower_class_returning_listener::<Native>(nullable(arc_listener()))
+            .expect("Option<Arc<dyn Listener>> return should lower");
 
         match class_first_method_lift_plan(&bindings) {
             ReturnPlan::HandleViaReturnSlot {
@@ -1024,11 +990,8 @@ mod tests {
 
     #[test]
     fn class_method_returning_optional_callback_lowers_to_nullable_lift_handle() {
-        let bindings = lower_class_returning_listener::<Native>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Nullable,
-        ))
-        .expect("Option<Box<dyn Listener>> return should lower");
+        let bindings = lower_class_returning_listener::<Native>(nullable(boxed_listener()))
+            .expect("Option<Box<dyn Listener>> return should lower");
 
         match class_first_method_lift_plan(&bindings) {
             ReturnPlan::HandleViaReturnSlot {
@@ -1042,11 +1005,8 @@ mod tests {
 
     #[test]
     fn wasm32_callback_handle_param_uses_u32_carrier() {
-        let bindings = lower_record_with_listener_param::<Wasm32>(listener_type(
-            TraitUseForm::BoxedDyn,
-            SourcePresence::Required,
-        ))
-        .expect("contract should lower");
+        let bindings = lower_record_with_listener_param::<Wasm32>(boxed_listener())
+            .expect("contract should lower");
 
         match record_first_method_lower_plan(&bindings) {
             ParamPlan::Handle {
@@ -1202,11 +1162,7 @@ mod tests {
         let mut install = method("install", Receiver::Mutable);
         install.parameters = vec![value_param(
             "observer",
-            TypeExpr::r#trait(
-                "demo::Observer".into(),
-                TraitUseForm::BoxedDyn,
-                SourcePresence::Required,
-            ),
+            boxed_callback_trait("demo::Observer", "Observer"),
         )];
         record.methods.push(install);
         contract.records.push(record);
@@ -1325,10 +1281,7 @@ mod tests {
         contract.traits.push(listener_callback());
         let mut class = ClassDef::new("demo::Engine".into(), name("Engine"));
         let mut maybe_listener = method("maybe_listener", Receiver::Shared);
-        maybe_listener.parameters = vec![value_param(
-            "listener",
-            listener_type(TraitUseForm::BoxedDyn, SourcePresence::Nullable),
-        )];
+        maybe_listener.parameters = vec![value_param("listener", nullable(boxed_listener()))];
         class.methods.push(maybe_listener);
         contract.classes.push(class);
 
