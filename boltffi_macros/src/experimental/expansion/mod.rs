@@ -2,7 +2,10 @@ mod index;
 mod pair;
 
 use boltffi_ast::FunctionDef;
-use boltffi_binding::{CustomTypeDecl, CustomTypeId, FunctionDecl, LoweredBindings, Surface};
+use boltffi_binding::{
+    CallbackDecl, CallbackId, CustomTypeDecl, CustomTypeId, EncodedRecordDecl, FunctionDecl,
+    LoweredBindings, RecordId, Surface,
+};
 
 use self::index::ExpansionIndex;
 use self::pair::{PairedDeclaration, SourceDeclaration};
@@ -33,11 +36,19 @@ impl<'a, S: Surface> Expansion<'a, S> {
         self.lowered.bindings()
     }
 
-    /// Returns custom declarations referenced by encoded codec trees.
-    pub fn custom_declarations<'context>(
-        &'context self,
-    ) -> CustomTypeDeclarations<'context, 'a, S> {
-        CustomTypeDeclarations { expansion: self }
+    /// Returns the custom declaration for a custom codec node.
+    pub fn custom_type(&self, id: CustomTypeId) -> Result<&'a CustomTypeDecl, Error> {
+        self.index.custom_type(self.lowered, id)
+    }
+
+    /// Returns the callback declaration for a callback handle target.
+    pub fn callback(&self, id: CallbackId) -> Result<&'a CallbackDecl<S>, Error> {
+        self.index.callback(self.lowered, id)
+    }
+
+    /// Returns the encoded record declaration for an encoded record codec node.
+    pub fn encoded_record(&self, id: RecordId) -> Result<&'a EncodedRecordDecl<S>, Error> {
+        self.index.encoded_record(self.lowered, id)
     }
 
     /// Returns the lowered function declaration paired with the scanned source function.
@@ -52,19 +63,6 @@ impl<'a, S: Surface> Expansion<'a, S> {
             PairedDeclaration::Function(pair) => Ok(pair),
             _ => Err(Error::WrongDeclaration),
         }
-    }
-}
-
-/// Custom declarations referenced by codec trees.
-#[derive(Clone, Copy)]
-pub struct CustomTypeDeclarations<'context, 'a, S: Surface> {
-    expansion: &'context Expansion<'a, S>,
-}
-
-impl<'context, 'a, S: Surface> CustomTypeDeclarations<'context, 'a, S> {
-    /// Returns the custom declaration for a custom codec node.
-    pub fn get(self, id: CustomTypeId) -> Result<&'a CustomTypeDecl, Error> {
-        self.expansion.index.custom_type(self.expansion.lowered, id)
     }
 }
 
@@ -111,11 +109,8 @@ mod tests {
         for<'context> wrapper::async_call::Renderer:
             wrapper::Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
     {
-        let wrapper = wrapper::function::Renderer::new(
-            expansion.function(source)?,
-            expansion.custom_declarations(),
-        )
-        .render()?;
+        let wrapper =
+            wrapper::function::Renderer::new(expansion.function(source)?, expansion).render()?;
 
         Ok(quote! {
             #syntax
@@ -251,6 +246,17 @@ mod tests {
             TraitId::new("demo::Listener"),
             path("Listener"),
         ))
+    }
+
+    fn arc_listener() -> TypeExpr {
+        TypeExpr::arc(TypeExpr::dyn_trait(
+            TraitId::new("demo::Listener"),
+            path("Listener"),
+        ))
+    }
+
+    fn nullable_boxed_listener() -> TypeExpr {
+        TypeExpr::option(boxed_listener())
     }
 
     fn nullable_arc_listener() -> TypeExpr {
@@ -415,6 +421,23 @@ mod tests {
         source
     }
 
+    fn custom_closure_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::apply"),
+            CanonicalName::single("apply"),
+        );
+        function.parameters = vec![ParameterDef::value(
+            CanonicalName::single("callback"),
+            impl_closure(Vec::<TypeExpr>::new(), ReturnDef::value(custom_timestamp())),
+        )];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
+        source.functions.push(function);
+        source
+    }
+
     fn fallible_closure_param_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::apply"),
@@ -529,6 +552,22 @@ mod tests {
         ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
+    fn custom_closure_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::make_clock"),
+            CanonicalName::single("make_clock"),
+        );
+        function.returns = ReturnDef::value(impl_closure(
+            Vec::<TypeExpr>::new(),
+            ReturnDef::value(custom_timestamp()),
+        ));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
         source.functions.push(function);
         source
     }
@@ -879,6 +918,71 @@ mod tests {
         source
     }
 
+    fn boxed_callback_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::make_listener"),
+            CanonicalName::single("make_listener"),
+        );
+        function.returns = ReturnDef::value(boxed_listener());
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait());
+        source.functions.push(function);
+        source
+    }
+
+    fn nullable_arc_callback_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::maybe_listener"),
+            CanonicalName::single("maybe_listener"),
+        );
+        function.returns = ReturnDef::value(nullable_arc_listener());
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait());
+        source.functions.push(function);
+        source
+    }
+
+    fn arc_callback_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::shared_listener"),
+            CanonicalName::single("shared_listener"),
+        );
+        function.returns = ReturnDef::value(arc_listener());
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait());
+        source.functions.push(function);
+        source
+    }
+
+    fn nullable_boxed_callback_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::maybe_boxed_listener"),
+            CanonicalName::single("maybe_boxed_listener"),
+        );
+        function.returns = ReturnDef::value(nullable_boxed_listener());
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait());
+        source.functions.push(function);
+        source
+    }
+
+    fn result_boxed_callback_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::try_make_listener"),
+            CanonicalName::single("try_make_listener"),
+        );
+        function.returns = result_return(boxed_listener(), TypeExpr::String);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait());
+        source.functions.push(function);
+        source
+    }
+
     fn borrowed_class_param_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::engine_id"),
@@ -1150,7 +1254,7 @@ mod tests {
                                 )
                             }
                         };
-                        let __boltffi_decoded = match ::boltffi::__private::wire::decode(__boltffi_bytes) {
+                        let __boltffi_decoded = match ::boltffi::__private::wire::decode::<i64>(__boltffi_bytes) {
                             Ok(value) => value,
                             Err(error) => {
                                 ::boltffi::__private::set_last_error(format!(
@@ -1347,13 +1451,13 @@ mod tests {
 
         let native_wrapper = wrapper::function::Renderer::new(
             native_expansion.function(&source.functions[0]).unwrap(),
-            native_expansion.custom_declarations(),
+            &native_expansion,
         )
         .render()
         .expect("native wrapper");
         let wasm_wrapper = wrapper::function::Renderer::new(
             wasm_expansion.function(&source.functions[0]).unwrap(),
-            wasm_expansion.custom_declarations(),
+            &wasm_expansion,
         )
         .render()
         .expect("wasm wrapper");
@@ -2771,6 +2875,192 @@ mod tests {
     }
 
     #[test]
+    fn native_boxed_callback_return_expansion_creates_callback_handle() {
+        let source = boxed_callback_return_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn make_listener() -> Box<dyn Listener> {
+                unimplemented!()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn make_listener() -> Box<dyn Listener> {
+                    unimplemented!()
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_make_listener()
+                    -> ::boltffi::__private::CallbackHandle
+                {
+                    let __boltffi_result: Box<dyn Listener> = make_listener();
+                    crate::__boltffi_local_listener_handle(::std::sync::Arc::from(__boltffi_result))
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn native_arc_callback_return_expansion_reuses_shared_callback_handle() {
+        let source = arc_callback_return_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn shared_listener() -> std::sync::Arc<dyn Listener> {
+                unimplemented!()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn shared_listener() -> std::sync::Arc<dyn Listener> {
+                    unimplemented!()
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_shared_listener()
+                    -> ::boltffi::__private::CallbackHandle
+                {
+                    let __boltffi_result: ::std::sync::Arc<dyn Listener> = shared_listener();
+                    crate::__boltffi_local_listener_handle(__boltffi_result)
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn wasm_nullable_arc_callback_return_expansion_creates_optional_callback_handle() {
+        let source = nullable_arc_callback_return_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn maybe_listener() -> Option<std::sync::Arc<dyn Listener>> {
+                None
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn maybe_listener() -> Option<std::sync::Arc<dyn Listener> > {
+                    None
+                }
+                #[cfg(target_arch = "wasm32")]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_maybe_listener() -> u32 {
+                    let __boltffi_result: Option<::std::sync::Arc<dyn Listener> > =
+                        maybe_listener();
+                    __boltffi_result
+                        .map(|__boltffi_callback|
+                            crate::__boltffi_local_listener_handle(__boltffi_callback).handle() as u32
+                        )
+                        .unwrap_or(0)
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn wasm_nullable_boxed_callback_return_expansion_creates_optional_callback_handle() {
+        let source = nullable_boxed_callback_return_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn maybe_boxed_listener() -> Option<Box<dyn Listener>> {
+                None
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn maybe_boxed_listener() -> Option<Box<dyn Listener> > {
+                    None
+                }
+                #[cfg(target_arch = "wasm32")]
+                #[unsafe(no_mangle)]
+                pub extern "C" fn boltffi_function_demo_maybe_boxed_listener() -> u32 {
+                    let __boltffi_result: Option<Box<dyn Listener> > = maybe_boxed_listener();
+                    __boltffi_result
+                        .map(|__boltffi_callback| {
+                            crate::__boltffi_local_listener_handle(
+                                ::std::sync::Arc::from(__boltffi_callback)
+                            ).handle() as u32
+                        })
+                        .unwrap_or(0)
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn native_result_boxed_callback_return_expansion_writes_callback_success_out_pointer() {
+        let source = result_boxed_callback_return_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn try_make_listener() -> Result<Box<dyn Listener>, String> {
+                unimplemented!()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn try_make_listener() -> Result<Box<dyn Listener>, String> {
+                    unimplemented!()
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn boltffi_function_demo_try_make_listener(
+                    __boltffi_return_out: *mut ::boltffi::__private::CallbackHandle
+                ) -> ::boltffi::__private::FfiBuf {
+                    match try_make_listener() {
+                        Ok(__boltffi_success) => {
+                            if !__boltffi_return_out.is_null() {
+                                unsafe {
+                                    *__boltffi_return_out =
+                                        crate::__boltffi_local_listener_handle(
+                                            ::std::sync::Arc::from(__boltffi_success)
+                                        );
+                                }
+                            }
+                            ::boltffi::__private::FfiBuf::default()
+                        }
+                        Err(__boltffi_error) => {
+                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error)
+                        }
+                    }
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
     fn native_closure_param_expansion_builds_invoke_context_closure() {
         let source = closure_param_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
@@ -2887,55 +3177,41 @@ mod tests {
 
         let tokens =
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded closure param parses");
 
-        assert_eq!(
-            tokens.to_string(),
-            quote! {
-                pub fn render(callback: impl Fn(String) -> String) -> u32 {
-                    callback("x".to_string()).len() as u32
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_apply(
-                    __boltffi_callback_call: extern "C" fn(
-                        *mut ::core::ffi::c_void,
-                        *const u8,
-                        usize
-                    ) -> ::boltffi::__private::FfiBuf,
-                    __boltffi_callback_context: *mut ::core::ffi::c_void,
-                    __boltffi_callback_release: unsafe extern "C" fn(*mut ::core::ffi::c_void)
-                ) -> u32 {
-                    let __boltffi_callback_owner =
-                        ::boltffi::__private::NativeCallbackOwner::new(
-                            __boltffi_callback_context,
-                            __boltffi_callback_release
-                        );
-                    let callback = move |__boltffi_arg0: String| {
-                        {
-                            let __boltffi_result_buf = unsafe {
-                                let __boltffi_arg0_wire =
-                                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_arg0);
-                                let __boltffi_arg0_ptr = __boltffi_arg0_wire.as_ptr();
-                                let __boltffi_arg0_len = __boltffi_arg0_wire.len();
-                                __boltffi_callback_call(
-                                    __boltffi_callback_owner.context(),
-                                    __boltffi_arg0_ptr,
-                                    __boltffi_arg0_len
-                                )
-                            };
-                            let __boltffi_result_bytes = unsafe {
-                                __boltffi_result_buf.as_byte_slice()
-                            };
-                            ::boltffi::__private::wire::decode::<String>(
-                                __boltffi_result_bytes
-                            ).expect("closure return: wire decode failed")
-                        }
-                    };
-                    apply(callback)
-                }
-            }
-            .to_string()
+        assert!(rendered.contains("extern \"C\" fn (* mut :: core :: ffi :: c_void , * const u8 , usize) -> :: boltffi :: __private :: FfiBuf"));
+        assert!(
+            rendered
+                .contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_arg0)")
         );
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: wire :: decode :: < String > (__boltffi_result_bytes)"
+        ));
+        assert!(rendered.contains("apply (callback)"));
+    }
+
+    #[test]
+    fn native_closure_param_expansion_decodes_custom_invoke_return_through_repr() {
+        let source = custom_closure_param_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn render(callback: impl Fn() -> Timestamp) -> u32 {
+                callback().year()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded custom closure param parses");
+
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: wire :: decode :: < i64 > (__boltffi_result_bytes)"
+        ));
+        assert!(rendered.contains("(timestamp_try_from_ffi) (__boltffi_decoded)"));
+        assert!(!rendered.contains("wire :: decode :: < Timestamp >"));
     }
 
     #[test]
@@ -3029,7 +3305,7 @@ mod tests {
         );
         assert!(rendered.contains("if __boltffi_error_buf . is_empty () { Ok (()) }"));
         assert!(rendered.contains(
-            "Err (:: boltffi :: __private :: wire :: decode :: < String > (__boltffi_error_bytes)"
+            ":: boltffi :: __private :: wire :: decode :: < String > (__boltffi_error_bytes)"
         ));
     }
 
@@ -3077,7 +3353,7 @@ mod tests {
         assert!(rendered.contains("extern \"C\" fn (* mut :: core :: ffi :: c_void , * mut i32) -> :: boltffi :: __private :: FfiBuf"));
         assert!(rendered.contains("MaybeUninit :: < i32 > :: uninit ()"));
         assert!(rendered.contains("Ok (unsafe { __boltffi_success . assume_init () })"));
-        assert!(rendered.contains("Err (:: boltffi :: __private :: wire :: decode :: < String >"));
+        assert!(rendered.contains(":: boltffi :: __private :: wire :: decode :: < String >"));
     }
 
     #[test]
@@ -3233,7 +3509,6 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded nested closure return parses");
         let rendered = tokens.to_string();
-        println!("{rendered}");
 
         assert!(rendered.contains(
             "unsafe extern \"C\" fn __boltffi_make_runner_closure_call (__boltffi_context : * mut :: core :: ffi :: c_void , __boltffi_arg0_call : extern \"C\" fn (* mut :: core :: ffi :: c_void , u32) -> u32 , __boltffi_arg0_context : * mut :: core :: ffi :: c_void , __boltffi_arg0_release : unsafe extern \"C\" fn (* mut :: core :: ffi :: c_void)) -> u32"
@@ -3304,6 +3579,32 @@ mod tests {
             rendered
                 .contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_result)")
         );
+    }
+
+    #[test]
+    fn native_closure_return_invoke_encodes_custom_return_through_repr() {
+        let source = custom_closure_return_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn make_clock() -> impl Fn() -> Timestamp {
+                || Timestamp::now()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded custom closure return parses");
+
+        assert!(
+            rendered.contains("let __boltffi_wire = (timestamp_into_ffi) (& __boltffi_result)")
+        );
+        assert!(
+            rendered
+                .contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_wire)")
+        );
+        assert!(!rendered.contains("FfiBuf :: wire_encode (& __boltffi_result)"));
     }
 
     #[test]

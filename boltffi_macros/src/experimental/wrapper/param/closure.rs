@@ -1,7 +1,7 @@
 use boltffi_ast::{FnSig, ReturnDef, TypeExpr};
 use boltffi_binding::{
     ClosureForm, ClosureParameter, ErrorDecl, HandlePresence, ImportedCallable, IntoRust, Native,
-    OutgoingParam, ParamPlan, ReturnPlan, TypeRef, Wasm32, native, wasm32,
+    OutgoingParam, ParamPlan, ReturnPlan, TypeRef, Wasm32, WritePlan, native, wasm32,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -9,7 +9,7 @@ use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{self, Render, encoded, names},
@@ -24,7 +24,7 @@ pub struct Input<'context, 'binding, S: Target> {
     source: rust_api::Closure<'binding>,
     ident: Ident,
     failure: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
@@ -33,14 +33,14 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         source: rust_api::Closure<'binding>,
         ident: Ident,
         failure: TokenStream,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             closure,
             source,
             ident,
             failure,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -86,7 +86,7 @@ impl<'context, 'binding> NativeClosure<'context, 'binding> {
             self.input.closure.invoke(),
             self.input.source.signature(),
             &rust_closure,
-            self.input.custom_declarations,
+            self.input.expansion,
         )?;
         let invoke_parameters = invoke.parameters()?;
         let names = RegistrationNames::new(ident);
@@ -191,7 +191,7 @@ impl<'context, 'binding> WasmClosure<'context, 'binding> {
             self.input.closure.invoke(),
             self.input.source.signature(),
             &rust_closure,
-            self.input.custom_declarations,
+            self.input.expansion,
         )?;
         let invoke_parameters = invoke.parameters()?;
         let return_tokens = invoke.return_tokens()?;
@@ -275,7 +275,7 @@ struct ClosureInvoke<'context, 'binding, 'rust, S: Target> {
     callable: &'binding ImportedCallable<S>,
     source: &'binding FnSig,
     rust_closure: &'rust RustClosure,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'rust, S> {
@@ -283,7 +283,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
         callable: &'binding ImportedCallable<S>,
         source: &'binding FnSig,
         rust_closure: &'rust RustClosure,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
@@ -294,7 +294,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
             callable,
             source,
             rust_closure,
-            custom_declarations,
+            expansion,
         })
     }
 
@@ -307,14 +307,8 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
             .zip(self.rust_closure.parameters().iter())
             .enumerate()
             .map(|(index, ((param, source), rust_type))| {
-                InvokeParameterInput::new(
-                    index,
-                    param.payload(),
-                    source,
-                    rust_type,
-                    self.custom_declarations,
-                )
-                .tokens()
+                InvokeParameterInput::new(index, param.payload(), source, rust_type, self.expansion)
+                    .tokens()
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(InvokeParameters::from(tokens))
@@ -338,7 +332,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
                 self.callable.error(),
                 &self.source.returns,
                 self.rust_closure.return_type(),
-                self.custom_declarations,
+                self.expansion,
             ),
         )
     }
@@ -349,7 +343,7 @@ struct InvokeParameterInput<'context, 'binding, 'rust, S: Target> {
     payload: &'binding OutgoingParam<S>,
     source: &'binding TypeExpr,
     rust_type: &'rust Type,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, 'rust, S: Target> InvokeParameterInput<'context, 'binding, 'rust, S> {
@@ -358,14 +352,14 @@ impl<'context, 'binding, 'rust, S: Target> InvokeParameterInput<'context, 'bindi
         payload: &'binding OutgoingParam<S>,
         source: &'binding TypeExpr,
         rust_type: &'rust Type,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             index,
             payload,
             source,
             rust_type,
-            custom_declarations,
+            expansion,
         }
     }
 
@@ -404,7 +398,7 @@ impl<'context, 'binding, 'rust, S: Target> InvokeParameterInput<'context, 'bindi
                 let wire = locals.wire();
                 let pointer = locals.pointer();
                 let length = locals.length();
-                let buffer = encoded::outgoing::Value::new(codec.root(), self.custom_declarations)
+                let buffer = encoded::outgoing::Value::new(codec.root(), self.expansion)
                     .buffer(quote! { #argument })?;
                 Ok(InvokeParameterTokens {
                     rust_parameter: quote! { #argument: #rust_type },
@@ -469,7 +463,7 @@ struct ForeignClosureReturn<'context, 'binding, 'rust, S: Target> {
     error: &'binding ErrorDecl<S, IntoRust>,
     source: &'binding ReturnDef,
     rust_type: Option<&'rust Type>,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, 'rust, S: Target> ForeignClosureReturn<'context, 'binding, 'rust, S> {
@@ -478,14 +472,14 @@ impl<'context, 'binding, 'rust, S: Target> ForeignClosureReturn<'context, 'bindi
         error: &'binding ErrorDecl<S, IntoRust>,
         source: &'binding ReturnDef,
         rust_type: Option<&'rust Type>,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             plan,
             error,
             source,
             rust_type,
-            custom_declarations,
+            expansion,
         }
     }
 
@@ -545,6 +539,21 @@ impl<'context, 'binding, 'rust, S: Target> ForeignClosureReturn<'context, 'bindi
             err: fallible.error_written_type()?,
         })
     }
+
+    fn encoded_expression(
+        &self,
+        codec: &'binding WritePlan,
+        rust_type: &Type,
+        bytes: TokenStream,
+    ) -> Result<TokenStream, Error> {
+        encoded::incoming::Value::new(codec.root(), self.expansion).expression(
+            encoded::incoming::Bytes::new(
+                rust_type,
+                bytes,
+                quote! { panic!("closure encoded return conversion failed: {}", error) },
+            ),
+        )
+    }
 }
 
 struct ForeignClosureReturnRenderer;
@@ -569,6 +578,7 @@ impl<'context, 'binding, 'rust>
                     ty: TypeRef::Primitive(primitive),
                 },
                 ErrorDecl::EncodedViaReturnSlot {
+                    codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
@@ -578,51 +588,81 @@ impl<'context, 'binding, 'rust>
                     wrapper::type_ref::Renderer,
                     &ty,
                 )?;
-                Ok(ForeignClosureReturnTokens::NativeFallibleDirectPrimitive {
-                    ffi_type,
-                    error_type: input.rust_fallible_return()?.err,
-                })
+                let error_type = input.rust_fallible_return()?.err;
+                let error = input.encoded_expression(
+                    codec,
+                    &error_type,
+                    quote! { __boltffi_error_bytes },
+                )?;
+                Ok(ForeignClosureReturnTokens::NativeFallibleDirectPrimitive { ffi_type, error })
             }
             (
                 ReturnPlan::DirectViaOutPointer { .. },
                 ErrorDecl::EncodedViaReturnSlot {
+                    codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
             ) => {
                 let result = input.rust_fallible_return()?;
+                let error = input.encoded_expression(
+                    codec,
+                    &result.err,
+                    quote! { __boltffi_error_bytes },
+                )?;
                 Ok(ForeignClosureReturnTokens::NativeFallibleDirectPassable {
                     ok_type: result.ok,
-                    error_type: result.err,
+                    error,
                 })
             }
             (
                 ReturnPlan::EncodedViaOutPointer {
+                    codec: ok_codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
                 ErrorDecl::EncodedViaReturnSlot {
+                    codec: error_codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
             ) => {
                 let result = input.rust_fallible_return()?;
+                let ok = input.encoded_expression(
+                    ok_codec,
+                    &result.ok,
+                    quote! { __boltffi_success_bytes },
+                )?;
+                let error = input.encoded_expression(
+                    error_codec,
+                    &result.err,
+                    quote! { __boltffi_error_bytes },
+                )?;
                 Ok(ForeignClosureReturnTokens::NativeFallibleEncoded {
                     ok_type: result.ok,
-                    error_type: result.err,
+                    ok,
+                    error,
                 })
             }
             (
                 ReturnPlan::Void,
                 ErrorDecl::EncodedViaReturnSlot {
+                    codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
-            ) => Ok(ForeignClosureReturnTokens::NativeFallibleVoid {
-                error_type: input.rust_fallible_return()?.err,
-            }),
+            ) => {
+                let error_type = input.rust_fallible_return()?.err;
+                let error = input.encoded_expression(
+                    codec,
+                    &error_type,
+                    quote! { __boltffi_error_bytes },
+                )?;
+                Ok(ForeignClosureReturnTokens::NativeFallibleVoid { error })
+            }
             (
                 ReturnPlan::EncodedViaReturnSlot {
+                    codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
@@ -631,7 +671,12 @@ impl<'context, 'binding, 'rust>
                 let rust_type = input.rust_type.ok_or(Error::SourceSyntaxMismatch(
                     "closure invoke encoded return requires source return type",
                 ))?;
-                Ok(ForeignClosureReturnTokens::NativeEncoded { rust_type })
+                let value = input.encoded_expression(
+                    codec,
+                    rust_type,
+                    quote! { __boltffi_result_bytes },
+                )?;
+                Ok(ForeignClosureReturnTokens::NativeEncoded { value })
             }
             (ReturnPlan::EncodedViaReturnSlot { .. }, _) => Err(Error::UnsupportedExpansion(
                 "native closure invoke encoded return shape",
@@ -739,23 +784,24 @@ enum ForeignClosureReturnTokens<'rust> {
         rust_type: &'rust Type,
     },
     NativeEncoded {
-        rust_type: &'rust Type,
+        value: TokenStream,
     },
     WasmPackedString,
     NativeFallibleVoid {
-        error_type: Type,
+        error: TokenStream,
     },
     NativeFallibleDirectPrimitive {
         ffi_type: TokenStream,
-        error_type: Type,
+        error: TokenStream,
     },
     NativeFallibleDirectPassable {
         ok_type: Type,
-        error_type: Type,
+        error: TokenStream,
     },
     NativeFallibleEncoded {
         ok_type: Type,
-        error_type: Type,
+        ok: TokenStream,
+        error: TokenStream,
     },
     WasmFallibleVoidString,
     WasmFallibleDirectPrimitive {
@@ -857,14 +903,13 @@ impl ForeignClosureReturnTokens<'_> {
                     <#rust_type as ::boltffi::__private::Passable>::unpack(#call)
                 }
             },
-            Self::NativeEncoded { rust_type } => quote! {
+            Self::NativeEncoded { value } => quote! {
                 {
                     let __boltffi_result_buf = unsafe { #call };
                     let __boltffi_result_bytes = unsafe {
                         __boltffi_result_buf.as_byte_slice()
                     };
-                    ::boltffi::__private::wire::decode::<#rust_type>(__boltffi_result_bytes)
-                        .expect("closure return: wire decode failed")
+                    #value
                 }
             },
             Self::WasmPackedString => quote! {
@@ -875,7 +920,7 @@ impl ForeignClosureReturnTokens<'_> {
                     }
                 }
             },
-            Self::NativeFallibleVoid { error_type } => quote! {
+            Self::NativeFallibleVoid { error } => quote! {
                 {
                     let __boltffi_error_buf = unsafe { #call };
                     if __boltffi_error_buf.is_empty() {
@@ -884,12 +929,11 @@ impl ForeignClosureReturnTokens<'_> {
                         let __boltffi_error_bytes = unsafe {
                             __boltffi_error_buf.as_byte_slice()
                         };
-                        Err(::boltffi::__private::wire::decode::<#error_type>(__boltffi_error_bytes)
-                            .expect("closure error: wire decode failed"))
+                        Err(#error)
                     }
                 }
             },
-            Self::NativeFallibleDirectPrimitive { error_type, .. } => {
+            Self::NativeFallibleDirectPrimitive { error, .. } => {
                 let setup = self.setup();
                 quote! {
                     #(#setup)*
@@ -900,15 +944,11 @@ impl ForeignClosureReturnTokens<'_> {
                         let __boltffi_error_bytes = unsafe {
                             __boltffi_error_buf.as_byte_slice()
                         };
-                        Err(::boltffi::__private::wire::decode::<#error_type>(__boltffi_error_bytes)
-                            .expect("closure error: wire decode failed"))
+                        Err(#error)
                     }
                 }
             }
-            Self::NativeFallibleDirectPassable {
-                ok_type,
-                error_type,
-            } => {
+            Self::NativeFallibleDirectPassable { ok_type, error } => {
                 let setup = self.setup();
                 quote! {
                     #(#setup)*
@@ -923,14 +963,14 @@ impl ForeignClosureReturnTokens<'_> {
                         let __boltffi_error_bytes = unsafe {
                             __boltffi_error_buf.as_byte_slice()
                         };
-                        Err(::boltffi::__private::wire::decode::<#error_type>(__boltffi_error_bytes)
-                            .expect("closure error: wire decode failed"))
+                        Err(#error)
                     }
                 }
             }
             Self::NativeFallibleEncoded {
-                ok_type,
-                error_type,
+                ok_type: _,
+                ok,
+                error,
             } => {
                 let setup = self.setup();
                 quote! {
@@ -943,14 +983,12 @@ impl ForeignClosureReturnTokens<'_> {
                         let __boltffi_success_bytes = unsafe {
                             __boltffi_success_buf.as_byte_slice()
                         };
-                        Ok(::boltffi::__private::wire::decode::<#ok_type>(__boltffi_success_bytes)
-                            .expect("closure return: wire decode failed"))
+                        Ok(#ok)
                     } else {
                         let __boltffi_error_bytes = unsafe {
                             __boltffi_error_buf.as_byte_slice()
                         };
-                        Err(::boltffi::__private::wire::decode::<#error_type>(__boltffi_error_bytes)
-                            .expect("closure error: wire decode failed"))
+                        Err(#error)
                     }
                 }
             }

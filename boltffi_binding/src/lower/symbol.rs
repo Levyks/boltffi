@@ -12,10 +12,10 @@ use crate::{NativeSymbol, SymbolId, SymbolName};
 use super::LowerError;
 
 /// Symbol prefix shared by every binding the contract exposes.
-pub(super) const FFI_PREFIX: &str = "boltffi";
+pub const FFI_PREFIX: &str = "boltffi";
 
 #[derive(Clone, Copy)]
-pub(super) enum SymbolOwner<'a> {
+pub enum SymbolOwner<'a> {
     Record(&'a str),
     Enum(&'a str),
     Class(&'a str),
@@ -23,19 +23,19 @@ pub(super) enum SymbolOwner<'a> {
 }
 
 impl<'a> SymbolOwner<'a> {
-    pub(super) const fn record(source_id: &'a str) -> Self {
+    pub const fn record(source_id: &'a str) -> Self {
         Self::Record(source_id)
     }
 
-    pub(super) const fn enumeration(source_id: &'a str) -> Self {
+    pub const fn enumeration(source_id: &'a str) -> Self {
         Self::Enum(source_id)
     }
 
-    pub(super) const fn class(source_id: &'a str) -> Self {
+    pub const fn class(source_id: &'a str) -> Self {
         Self::Class(source_id)
     }
 
-    pub(super) const fn callback(source_id: &'a str) -> Self {
+    pub const fn callback(source_id: &'a str) -> Self {
         Self::Callback(source_id)
     }
 
@@ -68,19 +68,19 @@ pub struct SymbolAllocator {
 }
 
 impl SymbolAllocator {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self { next: 0 }
     }
 
     /// Mints a [`NativeSymbol`] from a constructed FFI name, allocating
     /// a fresh [`SymbolId`].
-    pub(super) fn mint(&mut self, name: String) -> Result<NativeSymbol, LowerError> {
+    pub fn mint(&mut self, name: String) -> Result<NativeSymbol, LowerError> {
         let id = self.next_id();
         let parsed = SymbolName::parse(name)?;
         Ok(NativeSymbol::new(id, parsed))
     }
 
-    pub(super) const fn next_group_id(&self) -> u32 {
+    pub const fn next_group_id(&self) -> u32 {
         self.next
     }
 
@@ -92,7 +92,7 @@ impl SymbolAllocator {
 }
 
 /// Builds the symbol used for a named method owned by `owner`.
-pub(super) fn member_symbol_name(owner: SymbolOwner<'_>, member_name: &str) -> String {
+pub fn member_symbol_name(owner: SymbolOwner<'_>, member_name: &str) -> String {
     format!(
         "{}_method_{}_{}_{}",
         FFI_PREFIX,
@@ -103,7 +103,7 @@ pub(super) fn member_symbol_name(owner: SymbolOwner<'_>, member_name: &str) -> S
 }
 
 /// Builds the symbol used for an initializer owned by `owner`.
-pub(super) fn initializer_symbol_name(owner: SymbolOwner<'_>, initializer_name: &str) -> String {
+pub fn initializer_symbol_name(owner: SymbolOwner<'_>, initializer_name: &str) -> String {
     format!(
         "{}_init_{}_{}_{}",
         FFI_PREFIX,
@@ -114,7 +114,7 @@ pub(super) fn initializer_symbol_name(owner: SymbolOwner<'_>, initializer_name: 
 }
 
 /// Builds the symbol used to drop a class handle on the Rust side.
-pub(super) fn class_release_symbol_name(class_id: &str) -> String {
+pub fn class_release_symbol_name(class_id: &str) -> String {
     format!("{}_release_class_{}", FFI_PREFIX, symbol_path(class_id))
 }
 
@@ -123,7 +123,7 @@ pub(super) fn class_release_symbol_name(class_id: &str) -> String {
 /// Free functions have no owning type, so the symbol carries only the
 /// `function` lane and the path. The path is the source id snake-cased,
 /// matching the convention every other lane uses.
-pub(super) fn function_symbol_name(function_id: &str) -> String {
+pub fn function_symbol_name(function_id: &str) -> String {
     format!("{}_function_{}", FFI_PREFIX, symbol_path(function_id))
 }
 
@@ -133,12 +133,12 @@ pub(super) fn function_symbol_name(function_id: &str) -> String {
 /// Constants have no owning type, so the symbol carries only the `const`
 /// lane and the source id snake-cased, matching the convention the
 /// free-function lane uses.
-pub(super) fn constant_accessor_symbol_name(constant_id: &str) -> String {
+pub fn constant_accessor_symbol_name(constant_id: &str) -> String {
     format!("{}_const_{}", FFI_PREFIX, symbol_path(constant_id))
 }
 
 /// Builds the Rust-side symbol that installs a foreign-provided vtable.
-pub(super) fn callback_register_symbol_name(callback_id: &str) -> String {
+pub fn callback_register_symbol_name(callback_id: &str) -> String {
     format!(
         "{}_register_callback_{}",
         FFI_PREFIX,
@@ -148,11 +148,19 @@ pub(super) fn callback_register_symbol_name(callback_id: &str) -> String {
 
 /// Builds the Rust-side symbol that mints a callback handle bound to a
 /// foreign implementation.
-pub(super) fn callback_create_handle_symbol_name(callback_id: &str) -> String {
+pub fn callback_create_handle_symbol_name(callback_id: &str) -> String {
     format!(
         "{}_create_callback_{}",
         FFI_PREFIX,
         symbol_path(callback_id)
+    )
+}
+
+pub fn callback_local_handle_name(callback_name: &str) -> String {
+    format!(
+        "__{}_local_{}_handle",
+        FFI_PREFIX,
+        to_snake_case(callback_name)
     )
 }
 
@@ -163,15 +171,15 @@ pub(super) fn callback_create_handle_symbol_name(callback_id: &str) -> String {
 /// wasm import suffix for the same method are byte-equal by
 /// construction; there is no `&str` precondition for a caller to
 /// remember or violate.
-pub(super) fn callback_wasm_import_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
+pub fn callback_wasm_import_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
     wasm_callback_import_name("method", &symbol_path(callback_id), slot.as_str())
 }
 
-pub(super) fn callback_wasm_import_start_name(callback_id: &str, slot: &CallbackSlot) -> String {
+pub fn callback_wasm_import_start_name(callback_id: &str, slot: &CallbackSlot) -> String {
     wasm_callback_import_name("async_start", &symbol_path(callback_id), slot.as_str())
 }
 
-pub(super) fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &CallbackSlot) -> String {
+pub fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &CallbackSlot) -> String {
     format!(
         "{}_callback_{}_{}_complete",
         FFI_PREFIX,
@@ -181,12 +189,12 @@ pub(super) fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &Callb
 }
 
 /// Builds the wasm import name foreign code provides to drop a handle.
-pub(super) fn callback_wasm_import_free_name(callback_id: &str) -> String {
+pub fn callback_wasm_import_free_name(callback_id: &str) -> String {
     wasm_callback_import_name("lifecycle", &symbol_path(callback_id), "free")
 }
 
 /// Builds the wasm import name foreign code provides to duplicate a handle.
-pub(super) fn callback_wasm_import_clone_name(callback_id: &str) -> String {
+pub fn callback_wasm_import_clone_name(callback_id: &str) -> String {
     wasm_callback_import_name("lifecycle", &symbol_path(callback_id), "clone")
 }
 
@@ -198,7 +206,7 @@ pub(super) fn callback_wasm_import_clone_name(callback_id: &str) -> String {
 /// grepped: a stream `demo::events` mints
 /// `boltffi_stream_demo_events_subscribe`, `..._pop_batch`, and so on.
 #[derive(Clone, Copy)]
-pub(super) enum StreamLifecycle {
+pub enum StreamLifecycle {
     /// Opens a subscription and returns the session handle.
     Subscribe,
     /// Drains a batch of buffered items into the foreign side.
@@ -233,7 +241,7 @@ impl StreamLifecycle {
 /// Class-owned streams already carry the class path in their id, so the
 /// resulting symbol distinguishes them from standalone streams without
 /// a separate lane.
-pub(super) fn stream_symbol_name(stream_id: &str, action: StreamLifecycle) -> String {
+pub fn stream_symbol_name(stream_id: &str, action: StreamLifecycle) -> String {
     format!(
         "{}_stream_{}_{}",
         FFI_PREFIX,
@@ -251,7 +259,7 @@ pub(super) fn stream_symbol_name(stream_id: &str, action: StreamLifecycle) -> St
 /// `boltffi_async_method_record_demo_engine_compute_poll`,
 /// `..._complete`, and so on.
 #[derive(Clone, Copy)]
-pub(super) enum AsyncLifecycle {
+pub enum AsyncLifecycle {
     /// Foreign-side step that advances the async state without blocking.
     Poll,
     /// Wasm-side step that advances the async state synchronously.
@@ -281,10 +289,7 @@ impl AsyncLifecycle {
 }
 
 /// Builds a lifecycle symbol name from the start callable's symbol name.
-pub(super) fn async_lifecycle_symbol_name(
-    start_symbol_name: &str,
-    action: AsyncLifecycle,
-) -> String {
+pub fn async_lifecycle_symbol_name(start_symbol_name: &str, action: AsyncLifecycle) -> String {
     let start_without_prefix = start_symbol_name
         .strip_prefix(&format!("{FFI_PREFIX}_"))
         .unwrap_or(start_symbol_name);
@@ -306,28 +311,28 @@ pub(super) fn async_lifecycle_symbol_name(
 /// [`CallbackSlot::from_method_name`], which applies [`to_snake_case`]
 /// once.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct CallbackSlot(String);
+pub struct CallbackSlot(String);
 
 impl CallbackSlot {
     /// Normalizes a raw source method ident into the canonical slot name.
-    pub(super) fn from_method_name(method_name: &str) -> Self {
+    pub fn from_method_name(method_name: &str) -> Self {
         Self(to_snake_case(method_name))
     }
 
     /// Returns the canonical slot name.
-    pub(super) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// Wasm import module foreign callback implementations are linked from.
-pub(super) const WASM_CALLBACK_IMPORT_MODULE: &str = "env";
+pub const WASM_CALLBACK_IMPORT_MODULE: &str = "env";
 
 /// Vtable slot the runtime fills with the foreign-provided free fn.
-pub(super) const VTABLE_FREE_SLOT_NAME: &str = "free";
+pub const VTABLE_FREE_SLOT_NAME: &str = "free";
 
 /// Vtable slot the runtime fills with the foreign-provided clone fn.
-pub(super) const VTABLE_CLONE_SLOT_NAME: &str = "clone";
+pub const VTABLE_CLONE_SLOT_NAME: &str = "clone";
 
 fn symbol_path(source_id: &str) -> String {
     source_id
@@ -338,11 +343,11 @@ fn symbol_path(source_id: &str) -> String {
         .join("_")
 }
 
-pub(super) fn wasm_callback_import_name(lane: &str, owner: &str, action: &str) -> String {
+pub fn wasm_callback_import_name(lane: &str, owner: &str, action: &str) -> String {
     format!("__{}_callback_{}_{}_{}", FFI_PREFIX, lane, owner, action)
 }
 
-pub(super) fn wasm_closure_export_name(group_id: u32, signature: &str, action: &str) -> String {
+pub fn wasm_closure_export_name(group_id: u32, signature: &str, action: &str) -> String {
     format!(
         "{}_closure_{}_{}_{}",
         FFI_PREFIX, group_id, signature, action
@@ -362,7 +367,7 @@ pub(super) fn wasm_closure_export_name(group_id: u32, signature: &str, action: &
 /// Pure runs of uppercase characters (`HTTP`) collapse to lowercase
 /// without internal underscores. Strings that already use snake_case
 /// pass through unchanged.
-pub(super) fn to_snake_case(name: &str) -> String {
+pub fn to_snake_case(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let initial = String::with_capacity(name.len() + chars.len() / 2);
     chars
@@ -417,6 +422,14 @@ mod tests {
     fn snake_case_treats_digit_then_upper_as_word_break() {
         assert_eq!(to_snake_case("Point2D"), "point2_d");
         assert_eq!(to_snake_case("Vector3"), "vector3");
+    }
+
+    #[test]
+    fn callback_local_handle_name_uses_local_callback_namespace() {
+        assert_eq!(
+            callback_local_handle_name("ProgressListener"),
+            "__boltffi_local_progress_listener_handle"
+        );
     }
 
     #[test]

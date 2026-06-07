@@ -4,7 +4,7 @@ use quote::quote;
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     target::Target,
     wrapper::{Render, encoded},
 };
@@ -15,7 +15,7 @@ pub struct Input<'context, 'a, S: Target> {
     codec: &'a ReadPlan,
     shape: S::BufferShape,
     value: syn::Ident,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> Input<'context, 'a, S> {
@@ -23,13 +23,13 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
         codec: &'a ReadPlan,
         shape: S::BufferShape,
         value: syn::Ident,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             codec,
             shape,
             value,
-            custom_declarations,
+            expansion,
         }
     }
 
@@ -37,13 +37,13 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
         codec: &'a ReadPlan,
         shape: S::BufferShape,
         value: syn::Ident,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             codec,
             shape,
             value,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -85,9 +85,8 @@ impl<'context, 'a> Render<Native, Input<'context, 'a, Native>> for Renderer {
         let value = input.value;
         match input.shape {
             native::BufferShape::Buffer => {
-                let value =
-                    encoded::outgoing::Value::new(input.codec.root(), input.custom_declarations)
-                        .buffer(quote! { #value })?;
+                let value = encoded::outgoing::Value::new(input.codec.root(), input.expansion)
+                    .buffer(quote! { #value })?;
                 Ok(Tokens {
                     value_type: quote! { ::boltffi::__private::FfiBuf },
                     return_type: quote! { -> ::boltffi::__private::FfiBuf },
@@ -132,9 +131,8 @@ impl<'context, 'a> Render<Wasm32, Input<'context, 'a, Wasm32>> for Renderer {
 
         match input.shape {
             wasm32::BufferShape::Packed => {
-                let buffer =
-                    encoded::outgoing::Value::new(input.codec.root(), input.custom_declarations)
-                        .buffer(quote! { #value })?;
+                let buffer = encoded::outgoing::Value::new(input.codec.root(), input.expansion)
+                    .buffer(quote! { #value })?;
                 Ok(Tokens {
                     value_type: quote! { u64 },
                     return_type: quote! { -> u64 },

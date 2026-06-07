@@ -17,8 +17,8 @@
 use boltffi_ast::{ExecutionKind, MethodDef, TraitDef as SourceTrait};
 
 use crate::{
-    CallbackDecl, CanonicalName, ExecutionDecl, ImportModule, ImportSymbol, Native, Surface,
-    SymbolName, VTableSlot, Wasm32, native, wasm32,
+    CallbackDecl, CallbackLocalHandle, CanonicalName, ExecutionDecl, ImportModule, ImportSymbol,
+    NamePart, Native, Surface, SymbolName, VTableSlot, Wasm32, native, wasm32,
 };
 
 use super::{
@@ -66,7 +66,25 @@ fn lower_one<S: SurfaceLower>(
         metadata::decl_meta(callback.doc.as_ref(), callback.deprecated.as_ref()),
         S::callback_handle_carrier(),
         protocol,
+        local_handle(callback),
     ))
+}
+
+fn local_handle(callback: &SourceTrait) -> CallbackLocalHandle {
+    let path_segments = callback
+        .id
+        .as_str()
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let module_segments = path_segments
+        .iter()
+        .skip(1)
+        .take(path_segments.len().saturating_sub(2))
+        .copied()
+        .map(NamePart::new);
+    let helper = NamePart::new(symbol::callback_local_handle_name(callback.name.spelling()));
+    CallbackLocalHandle::new(module_segments.chain(std::iter::once(helper)).collect())
 }
 
 fn reject_slot_collisions(callback: &SourceTrait) -> Result<(), LowerError> {
@@ -421,6 +439,15 @@ mod tests {
         assert_eq!(
             callback.protocol().create_handle().name().as_str(),
             "boltffi_create_callback_demo_listener"
+        );
+        assert_eq!(
+            callback
+                .local_handle()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["__boltffi_local_listener_handle"]
         );
     }
 

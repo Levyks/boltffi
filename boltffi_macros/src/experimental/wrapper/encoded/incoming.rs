@@ -4,12 +4,12 @@ use quote::quote;
 use syn::{Ident, Type};
 
 use crate::experimental::{
-    error::Error, expansion::CustomTypeDeclarations, rust_api, target::Target, wrapper::names,
+    error::Error, expansion::Expansion, rust_api, target::Target, wrapper::names,
 };
 
 pub struct Value<'context, 'a, S: Target> {
     codec: &'a CodecNode,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 pub struct Input<'a> {
@@ -20,15 +20,15 @@ pub struct Input<'a> {
     failure: &'a TokenStream,
 }
 
+pub struct Bytes<'a> {
+    rust_type: &'a Type,
+    bytes: TokenStream,
+    failure: TokenStream,
+}
+
 impl<'context, 'a, S: Target> Value<'context, 'a, S> {
-    pub const fn new(
-        codec: &'a CodecNode,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
-    ) -> Self {
-        Self {
-            codec,
-            custom_declarations,
-        }
+    pub const fn new(codec: &'a CodecNode, expansion: &'context Expansion<'a, S>) -> Self {
+        Self { codec, expansion }
     }
 
     pub fn decode(&self, input: Input<'_>) -> Result<TokenStream, Error> {
@@ -39,9 +39,59 @@ impl<'context, 'a, S: Target> Value<'context, 'a, S> {
                 input.target.owned(),
                 input.binding,
                 false,
-                self.custom_declarations,
+                self.expansion,
             ),
-            borrow => input.reference(self.codec, borrow, self.custom_declarations),
+            borrow => input.reference(self.codec, borrow, self.expansion),
+        }
+    }
+
+    pub fn expression(&self, bytes: Bytes<'_>) -> Result<TokenStream, Error> {
+        super::require_runtime_wire(self.codec)?;
+        let incoming = super::custom::Incoming::new(self.codec, self.expansion);
+        let converted = incoming.convert(quote! { __boltffi_decoded })?;
+        let rust_type = bytes.rust_type;
+        let decode_type = incoming
+            .decoded_type()?
+            .unwrap_or_else(|| quote! { #rust_type });
+        let bytes_expr = bytes.bytes;
+        let failure = bytes.failure;
+        let decoded_value = if converted.changed() {
+            let converted_value = converted.tokens();
+            match converted.fallible() {
+                true => quote! {
+                    match #converted_value {
+                        Ok(value) => value,
+                        Err(error) => {
+                            #failure
+                        }
+                    }
+                },
+                false => quote! { #converted_value },
+            }
+        } else {
+            quote! { __boltffi_decoded }
+        };
+        Ok(quote! {
+            {
+                let __boltffi_decoded =
+                    match ::boltffi::__private::wire::decode::<#decode_type>(#bytes_expr) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            #failure
+                        }
+                    };
+                #decoded_value
+            }
+        })
+    }
+}
+
+impl<'a> Bytes<'a> {
+    pub fn new(rust_type: &'a Type, bytes: TokenStream, failure: TokenStream) -> Self {
+        Self {
+            rust_type,
+            bytes,
+            failure,
         }
     }
 }
@@ -67,7 +117,7 @@ impl<'a> Input<'a> {
         &self,
         codec: &CodecNode,
         borrow: rust_api::DecodeBorrow,
-        custom_declarations: CustomTypeDeclarations<'_, 'a, S>,
+        expansion: &Expansion<'a, S>,
     ) -> Result<TokenStream, Error> {
         let storage = names::Parameter::new(self.binding).storage();
         let owned = self.owned(
@@ -75,7 +125,7 @@ impl<'a> Input<'a> {
             self.target.owned(),
             &storage,
             borrow.mutable(),
-            custom_declarations,
+            expansion,
         )?;
         let binding = self.binding;
         let borrow = self.borrow(&storage, borrow)?;
@@ -91,13 +141,13 @@ impl<'a> Input<'a> {
         rust_type: &Type,
         binding: &Ident,
         mutable: bool,
-        custom_declarations: CustomTypeDeclarations<'_, 'a, S>,
+        expansion: &Expansion<'a, S>,
     ) -> Result<TokenStream, Error> {
         let pointer = self.pointer;
         let length = self.length;
         let failure = self.failure;
         let mutability = mutable.then(|| quote! { mut });
-        let incoming = super::custom::Incoming::new(codec, custom_declarations);
+        let incoming = super::custom::Incoming::new(codec, expansion);
         let converted = incoming.convert(quote! { __boltffi_decoded })?;
         if !converted.changed() {
             return Ok(quote! {
@@ -150,6 +200,9 @@ impl<'a> Input<'a> {
             let converted_value = converted.tokens();
             quote! { #converted_value }
         };
+        let decode_type = incoming.decoded_type()?.ok_or(Error::UnsupportedExpansion(
+            "custom codec representation type",
+        ))?;
         Ok(quote! {
             let #mutability #binding: #rust_type = {
                 if #pointer.is_null() && #length > 0 {
@@ -165,7 +218,7 @@ impl<'a> Input<'a> {
                 } else {
                     unsafe { ::core::slice::from_raw_parts(#pointer, #length) }
                 };
-                let __boltffi_decoded = match ::boltffi::__private::wire::decode(__boltffi_bytes) {
+                let __boltffi_decoded = match ::boltffi::__private::wire::decode::<#decode_type>(__boltffi_bytes) {
                     Ok(value) => value,
                     Err(error) => {
                         ::boltffi::__private::set_last_error(format!(

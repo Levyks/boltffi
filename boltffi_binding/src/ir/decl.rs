@@ -6,8 +6,9 @@ use crate::{
     BufferShapeRules, ByteSize, CallableScope, CallbackId, CallbackProtocolIntrospect,
     CanonicalName, ClassId, CodecPlan, ConstantId, CustomTypeConverters, CustomTypeId, DeclMeta,
     DeclarationId, DefaultValue, ElementMeta, EnumId, ExportedCallable, FunctionId,
-    ImportedCallable, InitializerId, IntegerRepr, IntegerValue, MethodId, NativeSymbol, ReadPlan,
-    RecordId, RecordLayout, ReturnTypeRef, RustBody, StreamId, Surface, TypeRef, WritePlan,
+    ImportedCallable, InitializerId, IntegerRepr, IntegerValue, MethodId, NamePart, NativeSymbol,
+    ReadPlan, RecordId, RecordLayout, ReturnTypeRef, RustBody, StreamId, Surface, TypeRef,
+    WritePlan,
 };
 
 /// One classified declaration in a binding contract.
@@ -992,6 +993,7 @@ pub struct CallbackDecl<S: Surface> {
     meta: DeclMeta,
     handle: S::HandleCarrier,
     protocol: S::CallbackProtocol,
+    local_handle: CallbackLocalHandle,
 }
 
 impl<S: Surface> CallbackDecl<S> {
@@ -1001,6 +1003,7 @@ impl<S: Surface> CallbackDecl<S> {
         meta: DeclMeta,
         handle: S::HandleCarrier,
         protocol: S::CallbackProtocol,
+        local_handle: CallbackLocalHandle,
     ) -> Self {
         Self {
             id,
@@ -1008,6 +1011,7 @@ impl<S: Surface> CallbackDecl<S> {
             meta,
             handle,
             protocol,
+            local_handle,
         }
     }
 
@@ -1034,6 +1038,37 @@ impl<S: Surface> CallbackDecl<S> {
     /// Returns the dispatch protocol foreign code uses.
     pub fn protocol(&self) -> &S::CallbackProtocol {
         &self.protocol
+    }
+
+    /// Returns the Rust helper that binds a Rust implementation to a callback handle.
+    pub fn local_handle(&self) -> &CallbackLocalHandle {
+        &self.local_handle
+    }
+}
+
+/// A crate-local Rust function that creates a callback handle from a Rust implementation.
+///
+/// The path is crate-rooted and points at the helper emitted beside the exported
+/// trait. It is separate from [`native::CallbackProtocol::create_handle`] and
+/// [`wasm32::CallbackProtocol::create_handle`], which bind foreign
+/// implementations.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct CallbackLocalHandle {
+    segments: Vec<NamePart>,
+}
+
+impl CallbackLocalHandle {
+    pub(crate) fn new(segments: Vec<NamePart>) -> Self {
+        Self { segments }
+    }
+
+    /// Returns the crate-rooted path segments after `crate`.
+    ///
+    /// A root trait named `Listener` yields
+    /// `["__boltffi_local_listener_handle"]`. A trait in `api::Listener`
+    /// yields `["api", "__boltffi_local_listener_handle"]`.
+    pub fn segments(&self) -> &[NamePart] {
+        &self.segments
     }
 }
 

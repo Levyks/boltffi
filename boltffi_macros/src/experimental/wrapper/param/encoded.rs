@@ -5,7 +5,7 @@ use syn::Ident;
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{Render, encoded, names},
@@ -21,7 +21,7 @@ pub struct Input<'context, 'binding, S: Target> {
     target: rust_api::DecodeTarget<'binding>,
     ident: Ident,
     failure: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
@@ -31,7 +31,7 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         target: rust_api::DecodeTarget<'binding>,
         ident: Ident,
         failure: TokenStream,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             codec,
@@ -39,7 +39,7 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
             target,
             ident,
             failure,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -83,7 +83,7 @@ struct Slice<'context, 'binding, S: Target> {
     pointer: Ident,
     length: Ident,
     failure: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S: Target> From<Input<'context, 'binding, S>>
@@ -107,7 +107,7 @@ impl<'context, 'binding, S: Target> Slice<'context, 'binding, S> {
             pointer,
             length,
             failure: input.failure,
-            custom_declarations: input.custom_declarations,
+            expansion: input.expansion,
         }
     }
 
@@ -116,10 +116,9 @@ impl<'context, 'binding, S: Target> Slice<'context, 'binding, S> {
         let length = &self.length;
         let ident = &self.ident;
         let pointer_type = self.pointer_type();
-        let conversion =
-            encoded::incoming::Value::new(self.codec.root(), self.custom_declarations).decode(
-                encoded::incoming::Input::new(&self.target, ident, pointer, length, &self.failure),
-            )?;
+        let conversion = encoded::incoming::Value::new(self.codec.root(), self.expansion).decode(
+            encoded::incoming::Input::new(&self.target, ident, pointer, length, &self.failure),
+        )?;
 
         Ok(Tokens {
             items: Vec::new(),

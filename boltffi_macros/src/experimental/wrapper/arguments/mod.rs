@@ -3,7 +3,7 @@ use proc_macro2::TokenStream;
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{self, Render},
@@ -16,7 +16,7 @@ pub struct Input<'context, 'binding, S: Target> {
     callable: &'binding ExportedCallable<S>,
     source: rust_api::Callable<'binding>,
     failure: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
@@ -24,13 +24,13 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         callable: &'binding ExportedCallable<S>,
         source: rust_api::Callable<'binding>,
         failure: TokenStream,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             callable,
             source,
             failure,
-            custom_declarations,
+            expansion,
         }
     }
 
@@ -56,7 +56,7 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
                         param,
                         rust_api::Parameter::new(source),
                         self.failure.clone(),
-                        self.custom_declarations,
+                        self.expansion,
                     ),
                 )
             })

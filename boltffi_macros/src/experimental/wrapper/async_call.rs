@@ -8,7 +8,7 @@ use syn::{Ident, Type, parse_quote};
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{
@@ -24,7 +24,7 @@ pub struct Input<'context, 'binding, S: Target> {
     source: rust_api::Callable<'binding>,
     function_ident: Ident,
     visibility: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
@@ -33,14 +33,14 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         source: rust_api::Callable<'binding>,
         function_ident: Ident,
         visibility: TokenStream,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             function,
             source,
             function_ident,
             visibility,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -88,7 +88,7 @@ impl<'context, 'binding> NativeAsync<'context, 'binding> {
             self.input.source,
             self.input.function_ident,
             self.input.visibility,
-            self.input.custom_declarations,
+            self.input.expansion,
         )?
         .tokens(NativeProtocol {
             poll,
@@ -127,7 +127,7 @@ impl<'context, 'binding> WasmAsync<'context, 'binding> {
             self.input.source,
             self.input.function_ident,
             self.input.visibility,
-            self.input.custom_declarations,
+            self.input.expansion,
         )?
         .tokens(WasmProtocol {
             poll_sync,
@@ -146,7 +146,7 @@ struct AsyncExports<'context, 'binding, S: Target> {
     visibility: TokenStream,
     rust_return_type: Type,
     complete: Complete,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S> AsyncExports<'context, 'binding, S>
@@ -161,8 +161,11 @@ where
         + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
     for<'plan> fallible::Success:
         Render<S, fallible::SuccessInput<'context, 'plan, S>, Output = fallible::SuccessTokens>,
-    for<'plan> handle::Value:
-        Render<S, handle::ValueInput<'plan, S::HandleCarrier>, Output = handle::ValueTokens>,
+    for<'plan> handle::Value: Render<
+            S,
+            handle::ValueInput<'context, 'plan, S, S::HandleCarrier>,
+            Output = handle::ValueTokens,
+        >,
     wrapper::handle::Carrier: Render<
             S,
             wrapper::handle::CarrierInput<S::HandleCarrier>,
@@ -176,18 +179,13 @@ where
         source: rust_api::Callable<'binding>,
         function_ident: Ident,
         visibility: TokenStream,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Result<Self, Error> {
         let rust_return_type = source
             .returns()
             .written_type()?
             .unwrap_or_else(|| parse_quote! { () });
-        let complete = Complete::new(
-            function,
-            source.returns(),
-            &rust_return_type,
-            custom_declarations,
-        )?;
+        let complete = Complete::new(function, source.returns(), &rust_return_type, expansion)?;
         Ok(Self {
             function,
             source,
@@ -195,7 +193,7 @@ where
             visibility,
             rust_return_type,
             complete,
-            custom_declarations,
+            expansion,
         })
     }
 
@@ -223,7 +221,7 @@ where
                 self.function.callable(),
                 self.source,
                 failure,
-                self.custom_declarations,
+                self.expansion,
             ),
         )?;
         let ffi_parameters = params.ffi_parameters();
@@ -456,7 +454,7 @@ impl Complete {
         function: &'plan FunctionDecl<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
-        custom_declarations: CustomTypeDeclarations<'context, 'plan, S>,
+        expansion: &'context Expansion<'plan, S>,
     ) -> Result<Self, Error>
     where
         encoded::Renderer: Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
@@ -467,8 +465,11 @@ impl Complete {
             + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
         fallible::Success:
             Render<S, fallible::SuccessInput<'context, 'plan, S>, Output = fallible::SuccessTokens>,
-        for<'handle> handle::Value:
-            Render<S, handle::ValueInput<'handle, S::HandleCarrier>, Output = handle::ValueTokens>,
+        for<'handle> handle::Value: Render<
+                S,
+                handle::ValueInput<'context, 'handle, S, S::HandleCarrier>,
+                Output = handle::ValueTokens,
+            >,
         wrapper::handle::Carrier: Render<
                 S,
                 wrapper::handle::CarrierInput<S::HandleCarrier>,
@@ -482,11 +483,11 @@ impl Complete {
                 function,
                 source.fallible()?,
                 rust_return_type,
-                custom_declarations,
+                expansion,
             )
             .map(Self::Fallible);
         }
-        PlainComplete::new(function, source, rust_return_type, custom_declarations).map(Self::Plain)
+        PlainComplete::new(function, source, rust_return_type, expansion).map(Self::Plain)
     }
 
     fn tokens<S: Target>(
@@ -507,15 +508,18 @@ impl PlainComplete {
         function: &'plan FunctionDecl<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
-        custom_declarations: CustomTypeDeclarations<'context, 'plan, S>,
+        expansion: &'context Expansion<'plan, S>,
     ) -> Result<Self, Error>
     where
         encoded::Renderer: Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         direct_vec::Renderer: Render<S, direct_vec::Input, Output = wrapper::returns::Tokens>
             + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
-        for<'handle> handle::Value:
-            Render<S, handle::ValueInput<'handle, S::HandleCarrier>, Output = handle::ValueTokens>,
+        for<'handle> handle::Value: Render<
+                S,
+                handle::ValueInput<'context, 'handle, S, S::HandleCarrier>,
+                Output = handle::ValueTokens,
+            >,
         wrapper::handle::Carrier: Render<
                 S,
                 wrapper::handle::CarrierInput<S::HandleCarrier>,
@@ -563,7 +567,7 @@ impl PlainComplete {
             ReturnPlan::EncodedViaReturnSlot { codec, shape, .. } => {
                 let encoded = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,
-                    encoded::Input::new(codec, *shape, result.clone(), custom_declarations),
+                    encoded::Input::new(codec, *shape, result.clone(), expansion),
                 )?;
                 let empty = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,
@@ -581,10 +585,17 @@ impl PlainComplete {
                 carrier,
                 presence,
             } => {
-                source.handle(target, *presence)?;
+                let handle_return = source.handle_return(target, *presence)?;
                 let handle = <handle::Value as Render<S, _>>::render(
                     handle::Value,
-                    handle::ValueInput::new(target, *carrier, *presence, result.clone()),
+                    handle::ValueInput::new(
+                        expansion,
+                        target,
+                        *carrier,
+                        *presence,
+                        result.clone(),
+                        handle_return,
+                    ),
                 )?;
                 let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
                     wrapper::handle::Carrier,
@@ -686,7 +697,7 @@ impl FallibleComplete {
         function: &'plan FunctionDecl<S>,
         source: rust_api::Fallible<'plan>,
         rust_return_type: &Type,
-        custom_declarations: CustomTypeDeclarations<'context, 'plan, S>,
+        expansion: &'context Expansion<'plan, S>,
     ) -> Result<Self, Error>
     where
         encoded::Renderer: Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
@@ -695,8 +706,11 @@ impl FallibleComplete {
             Render<S, closure::WriteInput<'context, 'plan, S>, Output = closure::WriteTokens>,
         fallible::Success:
             Render<S, fallible::SuccessInput<'context, 'plan, S>, Output = fallible::SuccessTokens>,
-        for<'handle> handle::Value:
-            Render<S, handle::ValueInput<'handle, S::HandleCarrier>, Output = handle::ValueTokens>,
+        for<'handle> handle::Value: Render<
+                S,
+                handle::ValueInput<'context, 'handle, S, S::HandleCarrier>,
+                Output = handle::ValueTokens,
+            >,
     {
         let ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } = function.callable().error()
         else {
@@ -705,7 +719,7 @@ impl FallibleComplete {
         let error = names::Wrapper::new(proc_macro2::Span::call_site()).error();
         let encoded_error = <encoded::Renderer as Render<S, _>>::render(
             encoded::Renderer,
-            encoded::Input::new(codec, *shape, error.clone(), custom_declarations),
+            encoded::Input::new(codec, *shape, error.clone(), expansion),
         )?;
         let empty_error = <encoded::Renderer as Render<S, _>>::render(
             encoded::Renderer,
@@ -717,7 +731,7 @@ impl FallibleComplete {
                 function.callable().returns(),
                 source,
                 format_ident!("{}", function.symbol().name().as_str()),
-                custom_declarations,
+                expansion,
             ),
         )?;
         let (_, ffi_parameters, success_pattern, success_body) = success.into_parts();

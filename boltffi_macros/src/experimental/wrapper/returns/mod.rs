@@ -5,7 +5,7 @@ use syn::Type;
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{self, Render, names},
@@ -89,7 +89,7 @@ pub struct Input<'context, 'a, S: Target> {
     source: rust_api::Return<'a>,
     rust_type: Option<Type>,
     invocation: RustInvocation,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> Input<'context, 'a, S> {
@@ -99,7 +99,7 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
         source: rust_api::Return<'a>,
         rust_type: Option<Type>,
         invocation: RustInvocation,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             returns,
@@ -107,7 +107,7 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
             source,
             rust_type,
             invocation,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -122,19 +122,19 @@ pub struct Tokens {
 pub struct FailureInput<'context, 'a, S: Target> {
     returns: &'a ReturnDecl<S, OutOfRust>,
     error: &'a ErrorDecl<S, OutOfRust>,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> FailureInput<'context, 'a, S> {
     pub fn new(
         returns: &'a ReturnDecl<S, OutOfRust>,
         error: &'a ErrorDecl<S, OutOfRust>,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             returns,
             error,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -164,8 +164,11 @@ where
     encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>,
     direct_vec::Renderer: Render<S, direct_vec::Input, Output = Tokens>,
     fallible::Renderer: Render<S, fallible::Input<'context, 'a, S>, Output = Tokens>,
-    handle::Value:
-        Render<S, handle::ValueInput<'a, S::HandleCarrier>, Output = handle::ValueTokens>,
+    handle::Value: Render<
+            S,
+            handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+            Output = handle::ValueTokens,
+        >,
     scalar_option::Renderer: Render<S, scalar_option::Input, Output = Tokens>,
 {
     type Output = Tokens;
@@ -179,7 +182,7 @@ where
                     input.error,
                     input.source,
                     input.invocation,
-                    input.custom_declarations,
+                    input.expansion,
                 ),
             );
         }
@@ -191,7 +194,7 @@ where
                     closure,
                     input.source.closure(closure.presence())?,
                     input.invocation,
-                    input.custom_declarations,
+                    input.expansion,
                 ),
             );
         }
@@ -276,7 +279,7 @@ where
                 let result = locals.result();
                 let encoded = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,
-                    encoded::Input::new(codec, *shape, result.clone(), input.custom_declarations),
+                    encoded::Input::new(codec, *shape, result.clone(), input.expansion),
                 )?;
                 let return_type = encoded.return_type().clone();
                 let value = encoded.value();
@@ -297,14 +300,21 @@ where
                 carrier,
                 presence,
             } => {
-                input.source.handle(target, *presence)?;
+                let handle_return = input.source.handle_return(target, *presence)?;
                 let rust_type = input.rust_type.as_ref().ok_or(Error::SourceSyntaxMismatch(
                     "binding handle return requires a source return type",
                 ))?;
                 let result = locals.result();
                 let handle = <handle::Value as Render<S, _>>::render(
                     handle::Value,
-                    handle::ValueInput::new(target, *carrier, *presence, result.clone()),
+                    handle::ValueInput::new(
+                        input.expansion,
+                        target,
+                        *carrier,
+                        *presence,
+                        result.clone(),
+                        handle_return,
+                    ),
                 )?;
                 let return_type = handle.ty();
                 let value = handle.value();
@@ -395,7 +405,7 @@ where
 
     fn render(self, input: FailureInput<'context, 'a, S>) -> Result<Self::Output, Error> {
         if !matches!(input.error, ErrorDecl::None(_)) {
-            return ErrorFailure::new(input.error, input.custom_declarations).tokens();
+            return ErrorFailure::new(input.error, input.expansion).tokens();
         }
 
         match input.returns.plan() {
@@ -450,18 +460,12 @@ where
 
 struct ErrorFailure<'context, 'a, S: Target> {
     error: &'a ErrorDecl<S, OutOfRust>,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> ErrorFailure<'context, 'a, S> {
-    fn new(
-        error: &'a ErrorDecl<S, OutOfRust>,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
-    ) -> Self {
-        Self {
-            error,
-            custom_declarations,
-        }
+    fn new(error: &'a ErrorDecl<S, OutOfRust>, expansion: &'context Expansion<'a, S>) -> Self {
+        Self { error, expansion }
     }
 
     fn tokens(self) -> Result<TokenStream, Error>
@@ -475,7 +479,7 @@ impl<'context, 'a, S: Target> ErrorFailure<'context, 'a, S> {
                 let error = names::Wrapper::new(proc_macro2::Span::call_site()).error();
                 let encoded = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,
-                    encoded::Input::string(codec, *shape, error.clone(), self.custom_declarations),
+                    encoded::Input::string(codec, *shape, error.clone(), self.expansion),
                 )?;
                 let value = encoded.value();
                 Ok(quote! {

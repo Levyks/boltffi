@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use boltffi_binding::{
-    CustomTypeDecl, CustomTypeId, Decl, DeclarationId, LoweredBindings, Surface,
+    CallbackDecl, CallbackId, CustomTypeDecl, CustomTypeId, Decl, DeclarationId, EncodedRecordDecl,
+    LoweredBindings, RecordDecl, RecordId, Surface,
 };
 
 use super::pair::{PairedDeclaration, SourceDeclaration};
@@ -59,6 +60,43 @@ impl ExpansionIndex {
             .ok_or(Error::MissingDeclaration(declaration_id))?;
         match lowered.bindings().decls().get(index) {
             Some(Decl::CustomType(custom)) => Ok(custom),
+            _ => Err(Error::WrongDeclaration),
+        }
+    }
+
+    pub fn callback<'a, S: Surface>(
+        &self,
+        lowered: &'a LoweredBindings<S>,
+        id: CallbackId,
+    ) -> Result<&'a CallbackDecl<S>, Error> {
+        let declaration_id = DeclarationId::Callback(id);
+        let index = self
+            .binding_by_id
+            .get(&declaration_id)
+            .copied()
+            .ok_or(Error::MissingDeclaration(declaration_id))?;
+        match lowered.bindings().decls().get(index) {
+            Some(Decl::Callback(callback)) => Ok(callback),
+            _ => Err(Error::WrongDeclaration),
+        }
+    }
+
+    pub fn encoded_record<'a, S: Surface>(
+        &self,
+        lowered: &'a LoweredBindings<S>,
+        id: RecordId,
+    ) -> Result<&'a EncodedRecordDecl<S>, Error> {
+        let declaration_id = DeclarationId::Record(id);
+        let index = self
+            .binding_by_id
+            .get(&declaration_id)
+            .copied()
+            .ok_or(Error::MissingDeclaration(declaration_id))?;
+        match lowered.bindings().decls().get(index) {
+            Some(Decl::Record(record)) => match record.as_ref() {
+                RecordDecl::Encoded(record) => Ok(record),
+                _ => Err(Error::WrongDeclaration),
+            },
             _ => Err(Error::WrongDeclaration),
         }
     }

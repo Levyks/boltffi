@@ -2,7 +2,7 @@ use boltffi_binding::{IncomingParam, IntoRust, ParamDecl, ParamPlan};
 use proc_macro2::TokenStream;
 
 use crate::experimental::{
-    error::Error, expansion::CustomTypeDeclarations, rust_api, target::Target, wrapper::Render,
+    error::Error, expansion::Expansion, rust_api, target::Target, wrapper::Render,
 };
 
 pub mod closure;
@@ -33,7 +33,7 @@ pub struct Input<'context, 'binding, S: Target> {
     param: &'binding ParamDecl<S, IntoRust>,
     source: rust_api::Parameter<'binding>,
     failure: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+    expansion: &'context Expansion<'binding, S>,
 }
 
 impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
@@ -41,13 +41,13 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         param: &'binding ParamDecl<S, IntoRust>,
         source: rust_api::Parameter<'binding>,
         failure: TokenStream,
-        custom_declarations: CustomTypeDeclarations<'context, 'binding, S>,
+        expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
             param,
             source,
             failure,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -127,7 +127,7 @@ where
                     input.source.decode_target(*receive)?,
                     ident,
                     input.failure,
-                    input.custom_declarations,
+                    input.expansion,
                 ),
             ),
             IncomingParam::Value(ParamPlan::ScalarOption { primitive }) => {
@@ -174,7 +174,7 @@ where
                     input.source.closure(closure.presence())?,
                     ident,
                     input.failure,
-                    input.custom_declarations,
+                    input.expansion,
                 ),
             ),
             IncomingParam::Value(_) => Err(Error::UnsupportedExpansion("unknown parameter plan")),

@@ -6,7 +6,7 @@ use syn::{Ident, Path, parse_str};
 
 use crate::experimental::{
     error::Error,
-    expansion::{CustomTypeDeclarations, DeclarationPair},
+    expansion::{DeclarationPair, Expansion},
     rust_api,
     target::Target,
     wrapper::{self, Render},
@@ -18,7 +18,7 @@ use crate::experimental::{
 /// generated extern wrapper. The original Rust function item remains owned by the caller.
 pub struct Renderer<'context, 'a, S: Target> {
     pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S> Renderer<'context, 'a, S>
@@ -36,12 +36,9 @@ where
     /// Creates a renderer for one paired function declaration.
     pub fn new(
         pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
-        Self {
-            pair,
-            custom_declarations,
-        }
+        Self { pair, expansion }
     }
 
     /// Renders the generated extern wrapper.
@@ -62,7 +59,7 @@ where
                     source_signature,
                     function_ident,
                     visibility,
-                    self.custom_declarations,
+                    self.expansion,
                 ),
             );
         }
@@ -79,7 +76,7 @@ where
                 wrapper::returns::FailureInput::new(
                     function.callable().returns(),
                     function.callable().error(),
-                    self.custom_declarations,
+                    self.expansion,
                 ),
             )?,
             false => TokenStream::new(),
@@ -90,7 +87,7 @@ where
                 function.callable(),
                 source_signature,
                 failure,
-                self.custom_declarations,
+                self.expansion,
             ),
         )?;
         let export_ident = format_ident!("{}", function.symbol().name().as_str());
@@ -111,7 +108,7 @@ where
                     writebacks.to_vec(),
                     rust_arguments.to_vec(),
                 ),
-                self.custom_declarations,
+                self.expansion,
             ),
         )?;
         let ffi_parameters = argument_ffi_parameters

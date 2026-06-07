@@ -12,7 +12,23 @@ impl<S: Target> Render<S, &TypeRef> for Renderer {
     fn render(self, ty: &TypeRef) -> Result<Self::Output, Error> {
         match ty {
             TypeRef::Primitive(primitive) => self.primitive(*primitive),
-            _ => Err(Error::UnsupportedExpansion("non-primitive type")),
+            TypeRef::String => Ok(quote! { String }),
+            TypeRef::Bytes => Ok(quote! { Vec<u8> }),
+            TypeRef::Optional(inner) => {
+                let inner = <Renderer as Render<S, &TypeRef>>::render(Renderer, inner.as_ref())?;
+                Ok(quote! { Option<#inner> })
+            }
+            TypeRef::Sequence(element) => {
+                let element =
+                    <Renderer as Render<S, &TypeRef>>::render(Renderer, element.as_ref())?;
+                Ok(quote! { Vec<#element> })
+            }
+            TypeRef::Result { ok, err } => {
+                let ok = <Renderer as Render<S, &TypeRef>>::render(Renderer, ok.as_ref())?;
+                let err = <Renderer as Render<S, &TypeRef>>::render(Renderer, err.as_ref())?;
+                Ok(quote! { Result<#ok, #err> })
+            }
+            _ => Err(Error::UnsupportedExpansion("type reference")),
         }
     }
 }

@@ -5,7 +5,7 @@ use syn::Ident;
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{self, Render, names},
@@ -21,7 +21,7 @@ pub struct Input<'context, 'a, S: Target> {
     error: &'a ErrorDecl<S, OutOfRust>,
     source: rust_api::Return<'a>,
     invocation: RustInvocation,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 pub struct SuccessInput<'context, 'a, S: Target> {
@@ -29,7 +29,7 @@ pub struct SuccessInput<'context, 'a, S: Target> {
     source: rust_api::Fallible<'a>,
     owner: Ident,
     span: Span,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> SuccessInput<'context, 'a, S> {
@@ -37,7 +37,7 @@ impl<'context, 'a, S: Target> SuccessInput<'context, 'a, S> {
         returns: &'a ReturnDecl<S, OutOfRust>,
         source: rust_api::Fallible<'a>,
         owner: Ident,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         let span = owner.span();
         Self {
@@ -45,7 +45,7 @@ impl<'context, 'a, S: Target> SuccessInput<'context, 'a, S> {
             source,
             owner,
             span,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -56,14 +56,14 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
         error: &'a ErrorDecl<S, OutOfRust>,
         source: rust_api::Return<'a>,
         invocation: RustInvocation,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             returns,
             error,
             source,
             invocation,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -74,8 +74,11 @@ where
     encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>
         + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
     Success: Render<S, SuccessInput<'context, 'a, S>, Output = SuccessTokens>,
-    handle::Value:
-        Render<S, handle::ValueInput<'a, S::HandleCarrier>, Output = handle::ValueTokens>,
+    handle::Value: Render<
+            S,
+            handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+            Output = handle::ValueTokens,
+        >,
 {
     type Output = Tokens;
 
@@ -87,7 +90,7 @@ where
                 *shape,
                 input.source.fallible()?,
                 input.invocation,
-                input.custom_declarations,
+                input.expansion,
             )
             .tokens(),
             ErrorDecl::StatusViaReturnSlot { .. } => {
@@ -111,7 +114,7 @@ struct EncodedError<'context, 'a, S: Target> {
     error_shape: S::BufferShape,
     source: rust_api::Fallible<'a>,
     invocation: RustInvocation,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
@@ -121,7 +124,7 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
         error_shape: S::BufferShape,
         source: rust_api::Fallible<'a>,
         invocation: RustInvocation,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             returns,
@@ -129,7 +132,7 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
             error_shape,
             source,
             invocation,
-            custom_declarations,
+            expansion,
         }
     }
 
@@ -138,8 +141,11 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
         encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>
             + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         Success: Render<S, SuccessInput<'context, 'a, S>, Output = SuccessTokens>,
-        handle::Value:
-            Render<S, handle::ValueInput<'a, S::HandleCarrier>, Output = handle::ValueTokens>,
+        handle::Value: Render<
+                S,
+                handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+                Output = handle::ValueTokens,
+            >,
     {
         let locals = names::Wrapper::new(self.invocation.function.span());
         let error_ident = locals.error();
@@ -149,7 +155,7 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
                 self.error_codec,
                 self.error_shape,
                 error_ident.clone(),
-                self.custom_declarations,
+                self.expansion,
             ),
         )?;
         let empty_error = <encoded::Renderer as Render<S, _>>::render(
@@ -165,7 +171,7 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
                 self.returns,
                 self.source,
                 self.invocation.function.clone(),
-                self.custom_declarations,
+                self.expansion,
             ),
         )?;
         let (success_items, success_ffi_parameters, success_pattern, success_body) =
@@ -214,8 +220,11 @@ where
     S: Target,
     encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>,
     closure::Write: Render<S, closure::WriteInput<'context, 'a, S>, Output = closure::WriteTokens>,
-    handle::Value:
-        Render<S, handle::ValueInput<'a, S::HandleCarrier>, Output = handle::ValueTokens>,
+    handle::Value: Render<
+            S,
+            handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+            Output = handle::ValueTokens,
+        >,
 {
     type Output = SuccessTokens;
 
@@ -273,12 +282,7 @@ where
                 let out = locals.return_out();
                 let encoded = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,
-                    encoded::Input::new(
-                        codec,
-                        *shape,
-                        success_ident.clone(),
-                        input.custom_declarations,
-                    ),
+                    encoded::Input::new(codec, *shape, success_ident.clone(), input.expansion),
                 )?;
                 let out_ty = encoded.return_type_without_arrow();
                 let encoded_value = encoded.value();
@@ -300,11 +304,18 @@ where
                 carrier,
                 presence,
             } => {
-                input.source.ok_handle(target, *presence)?;
+                let handle_return = input.source.ok_handle_return(target, *presence)?;
                 let out = locals.return_out();
                 let handle = <handle::Value as Render<S, _>>::render(
                     handle::Value,
-                    handle::ValueInput::new(target, *carrier, *presence, success_ident.clone()),
+                    handle::ValueInput::new(
+                        input.expansion,
+                        target,
+                        *carrier,
+                        *presence,
+                        success_ident.clone(),
+                        handle_return,
+                    ),
                 )?;
                 let out_ty = handle.ty();
                 let handle_value = handle.value();
@@ -330,7 +341,7 @@ where
                         source_closure,
                         success_ident.clone(),
                         input.owner,
-                        input.custom_declarations,
+                        input.expansion,
                     ),
                 )?;
                 let (items, ffi_parameters, body) = writer.into_parts();

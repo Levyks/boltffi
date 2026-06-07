@@ -9,7 +9,7 @@ use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
-    expansion::CustomTypeDeclarations,
+    expansion::Expansion,
     rust_api,
     target::Target,
     wrapper::{self, Render, names},
@@ -24,7 +24,7 @@ pub struct Input<'context, 'a, S: Target> {
     closure: &'a ClosureReturn<S, OutOfRust>,
     source: rust_api::Closure<'a>,
     invocation: RustInvocation,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 pub struct WriteInput<'context, 'a, S: Target> {
@@ -34,7 +34,7 @@ pub struct WriteInput<'context, 'a, S: Target> {
     owner: Ident,
     lane: ReturnLane,
     span: Span,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 #[derive(Clone, Copy)]
@@ -54,13 +54,13 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
         closure: &'a ClosureReturn<S, OutOfRust>,
         source: rust_api::Closure<'a>,
         invocation: RustInvocation,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             closure,
             source,
             invocation,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -71,16 +71,9 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
         source: rust_api::Closure<'a>,
         value: Ident,
         owner: Ident,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
-        Self::new(
-            closure,
-            source,
-            value,
-            owner,
-            ReturnLane::Return,
-            custom_declarations,
-        )
+        Self::new(closure, source, value, owner, ReturnLane::Return, expansion)
     }
 
     pub fn success(
@@ -88,7 +81,7 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
         source: rust_api::Closure<'a>,
         value: Ident,
         owner: Ident,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self::new(
             closure,
@@ -96,7 +89,7 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
             value,
             owner,
             ReturnLane::Success,
-            custom_declarations,
+            expansion,
         )
     }
 
@@ -106,7 +99,7 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
         value: Ident,
         owner: Ident,
         lane: ReturnLane,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         let span = owner.span();
         Self {
@@ -116,7 +109,7 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
             owner,
             lane,
             span,
-            custom_declarations,
+            expansion,
         }
     }
 }
@@ -158,7 +151,7 @@ where
                 input.source,
                 value.clone(),
                 function.clone(),
-                input.custom_declarations,
+                input.expansion,
             ),
         )?;
         let (items, ffi_parameters, body) = writer.into_parts();
@@ -214,7 +207,7 @@ impl<'context, 'a> NativeClosure<'context, 'a> {
             self.input.closure.invoke(),
             self.input.source.signature(),
             &returned_closure,
-            self.input.custom_declarations,
+            self.input.expansion,
         )?;
         let return_tokens = invoke.return_tokens()?;
         let failure = return_tokens.failure();
@@ -334,7 +327,7 @@ impl<'context, 'a> WasmClosure<'context, 'a> {
             self.input.closure.invoke(),
             self.input.source.signature(),
             &returned_closure,
-            self.input.custom_declarations,
+            self.input.expansion,
         )?;
         let return_tokens = invoke.return_tokens()?;
         let failure = return_tokens.failure();
@@ -419,7 +412,7 @@ struct ClosureInvoke<'context, 'a, S: Target> {
     callable: &'a boltffi_binding::ExportedCallable<S>,
     source: &'a FnSig,
     returned_closure: &'a ReturnedClosure,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> ClosureInvoke<'context, 'a, S> {
@@ -427,7 +420,7 @@ impl<'context, 'a, S: Target> ClosureInvoke<'context, 'a, S> {
         callable: &'a boltffi_binding::ExportedCallable<S>,
         source: &'a FnSig,
         returned_closure: &'a ReturnedClosure,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
@@ -438,7 +431,7 @@ impl<'context, 'a, S: Target> ClosureInvoke<'context, 'a, S> {
             callable,
             source,
             returned_closure,
-            custom_declarations,
+            expansion,
         })
     }
 
@@ -462,7 +455,7 @@ impl<'context, 'a, S: Target> ClosureInvoke<'context, 'a, S> {
                         source,
                         rust_type,
                         failure: failure.clone(),
-                        custom_declarations: self.custom_declarations,
+                        expansion: self.expansion,
                     },
                 )
             })
@@ -482,7 +475,7 @@ impl<'context, 'a, S: Target> ClosureInvoke<'context, 'a, S> {
                 self.callable.error(),
                 &self.source.returns,
                 self.returned_closure.signature.return_type.as_ref(),
-                self.custom_declarations,
+                self.expansion,
             ),
         )
     }
@@ -496,7 +489,7 @@ struct InvokeParameterInput<'context, 'a, S: Target> {
     source: &'a TypeExpr,
     rust_type: &'a Type,
     failure: TokenStream,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> InvokeParameterInput<'context, 'a, S> {
@@ -557,7 +550,7 @@ impl<'context, 'a, S: Target> InvokeParameterInput<'context, 'a, S> {
                         source_closure,
                         argument.clone(),
                         self.failure.clone(),
-                        self.custom_declarations,
+                        self.expansion,
                     ),
                 )?;
                 let conversions = tokens.conversions();
@@ -582,16 +575,14 @@ impl<'context, 'a, S: Target> InvokeParameterInput<'context, 'a, S> {
         let pointer = locals.pointer();
         let length = locals.length();
         let target = rust_api::DecodeTarget::received(receive, self.source)?;
-        let conversion =
-            wrapper::encoded::incoming::Value::new(codec.root(), self.custom_declarations).decode(
-                wrapper::encoded::incoming::Input::new(
-                    &target,
-                    &argument,
-                    &pointer,
-                    &length,
-                    &self.failure,
-                ),
-            )?;
+        let conversion = wrapper::encoded::incoming::Value::new(codec.root(), self.expansion)
+            .decode(wrapper::encoded::incoming::Input::new(
+                &target,
+                &argument,
+                &pointer,
+                &length,
+                &self.failure,
+            ))?;
 
         Ok(InvokeParameterTokens {
             items: Vec::new(),
@@ -727,7 +718,7 @@ struct RustClosureReturn<'context, 'a, S: Target> {
     error: &'a ErrorDecl<S, OutOfRust>,
     source: &'a ReturnDef,
     rust_type: Option<&'a Type>,
-    custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+    expansion: &'context Expansion<'a, S>,
 }
 
 impl<'context, 'a, S: Target> RustClosureReturn<'context, 'a, S> {
@@ -736,14 +727,14 @@ impl<'context, 'a, S: Target> RustClosureReturn<'context, 'a, S> {
         error: &'a ErrorDecl<S, OutOfRust>,
         source: &'a ReturnDef,
         rust_type: Option<&'a Type>,
-        custom_declarations: CustomTypeDeclarations<'context, 'a, S>,
+        expansion: &'context Expansion<'a, S>,
     ) -> Self {
         Self {
             plan,
             error,
             source,
             rust_type,
-            custom_declarations,
+            expansion,
         }
     }
 
@@ -828,12 +819,7 @@ impl<'context, 'a, S: Target> RustClosureReturn<'context, 'a, S> {
         let error_ident = names::Wrapper::new(Span::call_site()).error();
         let error = <encoded::Renderer as Render<S, _>>::render(
             encoded::Renderer,
-            encoded::Input::new(
-                error_codec,
-                error_shape,
-                error_ident,
-                self.custom_declarations,
-            ),
+            encoded::Input::new(error_codec, error_shape, error_ident, self.expansion),
         )?;
         let empty = <encoded::Renderer as Render<S, _>>::render(
             encoded::Renderer,
@@ -861,11 +847,16 @@ impl<'context, 'a> Render<Native, RustClosureReturn<'context, 'a, Native>>
         match (input.plan, input.error) {
             (
                 ReturnPlan::EncodedViaReturnSlot {
+                    codec,
                     shape: native::BufferShape::Buffer,
                     ..
                 },
                 ErrorDecl::None(_),
-            ) => Ok(RustClosureReturnTokens::NativeEncoded),
+            ) => {
+                let value = wrapper::encoded::outgoing::Value::new(codec.root(), input.expansion)
+                    .buffer(quote! { __boltffi_result })?;
+                Ok(RustClosureReturnTokens::NativeEncoded { value })
+            }
             (
                 ReturnPlan::Void,
                 ErrorDecl::EncodedViaReturnSlot {
@@ -928,7 +919,7 @@ impl<'context, 'a> Render<Native, RustClosureReturn<'context, 'a, Native>>
                         ok_codec,
                         native::BufferShape::Buffer,
                         success_ident,
-                        input.custom_declarations,
+                        input.expansion,
                     ),
                 )?;
                 Ok(RustClosureReturnTokens::fallible(
@@ -962,11 +953,16 @@ impl<'context, 'a> Render<Wasm32, RustClosureReturn<'context, 'a, Wasm32>>
         match (input.plan, input.error) {
             (
                 ReturnPlan::EncodedViaReturnSlot {
+                    codec,
                     shape: wasm32::BufferShape::Packed,
                     ..
                 },
                 ErrorDecl::None(_),
-            ) => Ok(RustClosureReturnTokens::WasmEncoded),
+            ) => {
+                let value = wrapper::encoded::outgoing::Value::new(codec.root(), input.expansion)
+                    .buffer(quote! { __boltffi_result })?;
+                Ok(RustClosureReturnTokens::WasmEncoded { value })
+            }
             (
                 ReturnPlan::Void,
                 ErrorDecl::EncodedViaReturnSlot {
@@ -1029,7 +1025,7 @@ impl<'context, 'a> Render<Wasm32, RustClosureReturn<'context, 'a, Wasm32>>
                         codec,
                         wasm32::BufferShape::Packed,
                         success_ident,
-                        input.custom_declarations,
+                        input.expansion,
                     ),
                 )?;
                 Ok(RustClosureReturnTokens::fallible(
@@ -1054,8 +1050,8 @@ enum RustClosureReturnTokens {
     Void,
     DirectPrimitive { ffi_type: TokenStream },
     DirectPassable { rust_type: Box<Type> },
-    NativeEncoded,
-    WasmEncoded,
+    NativeEncoded { value: TokenStream },
+    WasmEncoded { value: TokenStream },
     Fallible(Box<FallibleRustClosureReturn>),
 }
 
@@ -1071,8 +1067,8 @@ impl RustClosureReturnTokens {
             Self::DirectPassable { rust_type } => {
                 quote! { -> <#rust_type as ::boltffi::__private::Passable>::Out }
             }
-            Self::NativeEncoded => quote! { -> ::boltffi::__private::FfiBuf },
-            Self::WasmEncoded => quote! { -> u64 },
+            Self::NativeEncoded { .. } => quote! { -> ::boltffi::__private::FfiBuf },
+            Self::WasmEncoded { .. } => quote! { -> u64 },
             Self::Fallible(fallible) => fallible.error.return_type.clone(),
         }
     }
@@ -1100,16 +1096,16 @@ impl RustClosureReturnTokens {
             Self::DirectPassable { .. } => quote! {
                 ::boltffi::__private::Passable::pack(#call)
             },
-            Self::NativeEncoded => quote! {
+            Self::NativeEncoded { value } => quote! {
                 {
                     let __boltffi_result = #call;
-                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result)
+                    #value
                 }
             },
-            Self::WasmEncoded => quote! {
+            Self::WasmEncoded { value } => quote! {
                 {
                     let __boltffi_result = #call;
-                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result).into_packed()
+                    #value.into_packed()
                 }
             },
             Self::Fallible(fallible) => fallible.success.body(&fallible.error, call),
@@ -1125,10 +1121,10 @@ impl RustClosureReturnTokens {
             Self::DirectPassable { .. } => quote! {
                 return unsafe { ::core::mem::MaybeUninit::zeroed().assume_init() };
             },
-            Self::NativeEncoded => quote! {
+            Self::NativeEncoded { .. } => quote! {
                 return ::boltffi::__private::FfiBuf::default();
             },
-            Self::WasmEncoded => quote! {
+            Self::WasmEncoded { .. } => quote! {
                 return ::boltffi::__private::FfiBuf::default().into_packed();
             },
             Self::Fallible(fallible) => fallible.error.failure(),

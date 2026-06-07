@@ -169,6 +169,35 @@ pub enum CallbackCarrier {
     ArcDyn,
 }
 
+impl CallbackCarrier {
+    fn from_type_expr(type_expr: &TypeExpr) -> Result<Self, Error> {
+        match type_expr {
+            TypeExpr::Boxed(inner) => match inner.as_ref() {
+                TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => {
+                    Ok(Self::BoxedDyn)
+                }
+                _ => Err(Error::SourceSyntaxMismatch(
+                    "source callback handle is not a boxed trait object",
+                )),
+            },
+            TypeExpr::Arc(inner) => match inner.as_ref() {
+                TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => {
+                    Ok(Self::ArcDyn)
+                }
+                _ => Err(Error::SourceSyntaxMismatch(
+                    "source callback handle is not an Arc trait object",
+                )),
+            },
+            TypeExpr::ImplTrait(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => {
+                Err(Error::UnsupportedExpansion("impl-trait callback handles"))
+            }
+            _ => Err(Error::SourceSyntaxMismatch(
+                "source type is not a callback handle",
+            )),
+        }
+    }
+}
+
 pub struct CallbackObject {
     value: Type,
     object: Type,
@@ -178,40 +207,16 @@ pub struct CallbackObject {
 
 impl CallbackObject {
     fn new(presence: HandlePresence, type_expr: &TypeExpr) -> Result<Self, Error> {
-        match type_expr {
-            TypeExpr::Boxed(inner) => match inner.as_ref() {
-                TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => {
-                    Ok(Self {
-                        value: TypeTokens::new(type_expr)?.into_type(),
-                        object: TypeTokens::new(inner)?.into_type(),
-                        form: CallbackCarrier::BoxedDyn,
-                        presence,
-                    })
-                }
-                _ => Err(Error::SourceSyntaxMismatch(
-                    "source callback parameter is not a boxed trait object",
-                )),
-            },
-            TypeExpr::Arc(inner) => match inner.as_ref() {
-                TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => {
-                    Ok(Self {
-                        value: TypeTokens::new(type_expr)?.into_type(),
-                        object: TypeTokens::new(inner)?.into_type(),
-                        form: CallbackCarrier::ArcDyn,
-                        presence,
-                    })
-                }
-                _ => Err(Error::SourceSyntaxMismatch(
-                    "source callback parameter is not an Arc trait object",
-                )),
-            },
-            TypeExpr::ImplTrait(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => Err(
-                Error::UnsupportedExpansion("impl-trait callback handle parameters"),
-            ),
-            _ => Err(Error::SourceSyntaxMismatch(
-                "source parameter is not a callback handle",
-            )),
-        }
+        let form = CallbackCarrier::from_type_expr(type_expr)?;
+        let object = callback_object_inner(type_expr).ok_or(Error::SourceSyntaxMismatch(
+            "source callback handle is not a trait object container",
+        ))?;
+        Ok(Self {
+            value: TypeTokens::new(type_expr)?.into_type(),
+            object: TypeTokens::new(object)?.into_type(),
+            form,
+            presence,
+        })
     }
 
     pub fn value(&self) -> &Type {
@@ -220,6 +225,33 @@ impl CallbackObject {
 
     pub fn object(&self) -> &Type {
         &self.object
+    }
+
+    pub const fn form(&self) -> CallbackCarrier {
+        self.form
+    }
+
+    pub const fn presence(&self) -> HandlePresence {
+        self.presence
+    }
+}
+
+pub enum HandleReturn {
+    Class,
+    Callback(CallbackReturn),
+}
+
+pub struct CallbackReturn {
+    form: CallbackCarrier,
+    presence: HandlePresence,
+}
+
+impl CallbackReturn {
+    fn new(presence: HandlePresence, type_expr: &TypeExpr) -> Result<Self, Error> {
+        Ok(Self {
+            form: CallbackCarrier::from_type_expr(type_expr)?,
+            presence,
+        })
     }
 
     pub const fn form(&self) -> CallbackCarrier {
@@ -268,13 +300,17 @@ impl<'a> Return<'a> {
         Closure::new(type_expr, presence)
     }
 
-    pub fn handle(self, target: &HandleTarget, presence: HandlePresence) -> Result<(), Error> {
+    pub fn handle_return(
+        self,
+        target: &HandleTarget,
+        presence: HandlePresence,
+    ) -> Result<HandleReturn, Error> {
         let ReturnDef::Value(value) = self.definition else {
             return Err(Error::SourceSyntaxMismatch(
                 "source return is not a handle value",
             ));
         };
-        Handle::new(value).matches(target, presence)
+        Handle::new(value).return_shape(target, presence)
     }
 
     pub fn scalar_option(self, primitive: Primitive) -> Result<(), Error> {
@@ -339,8 +375,12 @@ impl<'a> Fallible<'a> {
         Closure::new(self.ok, presence)
     }
 
-    pub fn ok_handle(self, target: &HandleTarget, presence: HandlePresence) -> Result<(), Error> {
-        Handle::new(self.ok).matches(target, presence)
+    pub fn ok_handle_return(
+        self,
+        target: &HandleTarget,
+        presence: HandlePresence,
+    ) -> Result<HandleReturn, Error> {
+        Handle::new(self.ok).return_shape(target, presence)
     }
 }
 
@@ -360,6 +400,26 @@ impl<'a> Handle<'a> {
                 option_inner(self.source).and_then(|inner| required_handle_matches(inner, target))
             }
             _ => Err(Error::UnsupportedExpansion("unknown handle presence")),
+        }
+    }
+
+    fn return_shape(
+        self,
+        target: &HandleTarget,
+        presence: HandlePresence,
+    ) -> Result<HandleReturn, Error> {
+        match target {
+            HandleTarget::Class(_) => self.matches(target, presence).map(|()| HandleReturn::Class),
+            HandleTarget::Callback(_) => {
+                let type_expr = match presence {
+                    HandlePresence::Required => self.source,
+                    HandlePresence::Nullable => option_inner(self.source)?,
+                    _ => return Err(Error::UnsupportedExpansion("unknown handle presence")),
+                };
+                self.matches(target, presence)?;
+                CallbackReturn::new(presence, type_expr).map(HandleReturn::Callback)
+            }
+            _ => Err(Error::UnsupportedExpansion("unknown handle return target")),
         }
     }
 }
