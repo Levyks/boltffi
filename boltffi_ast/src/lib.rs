@@ -55,4 +55,7 @@ pub use record::{FieldDef, RecordDef};
 pub use source::{Source, SourceFile, SourceSpan, Visibility};
 pub use stream::{StreamDef, StreamMode};
 pub use trait_def::TraitDef;
-pub use type_expr::{FnSig, FnTrait, FnTraitKind, MapKind, TraitBound, TypeExpr, TypeParameter};
+pub use type_expr::{
+    AdditionalBound, BaseTrait, FnSig, FnTrait, FnTraitKind, MapKind, TraitBounds, TypeExpr,
+    TypeParameter,
+};

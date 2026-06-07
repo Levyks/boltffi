@@ -113,13 +113,13 @@ impl fmt::Display for ClosureTypeSignature<'_> {
             TypeExpr::Record { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::Enum { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::Class { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
-            TypeExpr::ImplTrait(boltffi_ast::TraitBound::Trait { id, .. })
-            | TypeExpr::Dyn(boltffi_ast::TraitBound::Trait { id, .. }) => {
-                formatter.write_str(&source_type_signature(id.as_str()))
-            }
-            TypeExpr::ImplTrait(boltffi_ast::TraitBound::Fn(_))
-            | TypeExpr::Dyn(boltffi_ast::TraitBound::Fn(_))
-            | TypeExpr::FnPtr(_) => formatter.write_str("Closure"),
+            TypeExpr::ImplTrait(bounds) | TypeExpr::Dyn(bounds) => match &bounds.base {
+                boltffi_ast::BaseTrait::Named { id, .. } => {
+                    formatter.write_str(&source_type_signature(id.as_str()))
+                }
+                boltffi_ast::BaseTrait::Function(_) => formatter.write_str("Closure"),
+            },
+            TypeExpr::FnPtr(_) => formatter.write_str("Closure"),
             TypeExpr::Custom { id, .. } => formatter.write_str(&source_type_signature(id.as_str())),
             TypeExpr::SelfType => formatter.write_str("Self"),
             TypeExpr::Vec(inner) => write!(formatter, "Vec{}", ClosureTypeSignature(inner)),

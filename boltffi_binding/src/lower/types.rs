@@ -1,4 +1,4 @@
-use boltffi_ast::{TraitBound, TypeExpr};
+use boltffi_ast::{BaseTrait, TypeExpr};
 
 use crate::{Primitive, TypeRef};
 
@@ -21,15 +21,23 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
         TypeExpr::Record { id, .. } => TypeRef::Record(ids.record(id)?),
         TypeExpr::Enum { id, .. } => TypeRef::Enum(ids.enumeration(id)?),
         TypeExpr::Class { id, .. } => TypeRef::Class(ids.class(id)?),
-        TypeExpr::ImplTrait(TraitBound::Trait { id, .. })
-        | TypeExpr::Dyn(TraitBound::Trait { id, .. }) => TypeRef::Callback(ids.callback(id)?),
-        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
-            TypeExpr::Dyn(TraitBound::Trait { id, .. }) => TypeRef::Callback(ids.callback(id)?),
-            TypeExpr::Dyn(TraitBound::Fn(_)) => {
+        TypeExpr::ImplTrait(bounds) => match &bounds.base {
+            BaseTrait::Named { id, .. } => TypeRef::Callback(ids.callback(id)?),
+            BaseTrait::Function(_) => {
                 return Err(LowerError::unsupported_type(
                     UnsupportedType::ClosureInValuePosition,
                 ));
             }
+        },
+        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
+            TypeExpr::Dyn(bounds) => match &bounds.base {
+                BaseTrait::Named { id, .. } => TypeRef::Callback(ids.callback(id)?),
+                BaseTrait::Function(_) => {
+                    return Err(LowerError::unsupported_type(
+                        UnsupportedType::ClosureInValuePosition,
+                    ));
+                }
+            },
             _ => {
                 return Err(LowerError::unsupported_type(
                     UnsupportedType::OpaqueRustContainer,
@@ -54,12 +62,16 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
             key: Box::new(lower(ids, key)?),
             value: Box::new(lower(ids, value)?),
         },
-        TypeExpr::FnPtr(_)
-        | TypeExpr::ImplTrait(TraitBound::Fn(_))
-        | TypeExpr::Dyn(TraitBound::Fn(_)) => {
+        TypeExpr::FnPtr(_) => {
             return Err(LowerError::unsupported_type(
                 UnsupportedType::ClosureInValuePosition,
             ));
+        }
+        TypeExpr::Dyn(bounds) => {
+            return Err(LowerError::unsupported_type(match &bounds.base {
+                BaseTrait::Named { .. } => UnsupportedType::OpaqueRustContainer,
+                BaseTrait::Function(_) => UnsupportedType::ClosureInValuePosition,
+            }));
         }
         TypeExpr::Unit => {
             return Err(LowerError::unsupported_type(

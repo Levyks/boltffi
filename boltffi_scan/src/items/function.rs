@@ -54,8 +54,9 @@ fn parameters(sig: &syn::Signature, scanner: &Scanner<'_>) -> Result<Vec<Paramet
 mod tests {
     use super::*;
     use boltffi_ast::{
-        CallableForm, CanonicalName, ExecutionKind, FnTraitKind, NamePart, ParameterPassing, Path,
-        Primitive, RecordId, ReturnDef, Source, TraitBound, TypeExpr, Visibility,
+        AdditionalBound, BaseTrait, CallableForm, CanonicalName, ExecutionKind, FnTraitKind,
+        NamePart, ParameterPassing, Path, Primitive, RecordId, ReturnDef, Source, TypeExpr,
+        Visibility,
     };
 
     fn parse(source: &str) -> syn::ItemFn {
@@ -149,12 +150,17 @@ mod tests {
             scan("pub fn make_handler() -> impl Send + FnMut(u32, bool) -> i64 { todo!() }")
                 .expect("scan");
 
-        let ReturnDef::Value(TypeExpr::ImplTrait(TraitBound::Fn(function_trait))) =
-            function.returns
-        else {
+        let ReturnDef::Value(TypeExpr::ImplTrait(bounds)) = function.returns else {
             panic!("expected closure return");
         };
+        let BaseTrait::Function(function_trait) = bounds.base else {
+            panic!("expected function trait base");
+        };
         assert_eq!(function_trait.kind, FnTraitKind::FnMut);
+        assert_eq!(
+            bounds.bounds,
+            vec![AdditionalBound::AutoTrait(Path::single("Send"))]
+        );
         assert_eq!(
             function_trait
                 .signature
@@ -176,10 +182,11 @@ mod tests {
     fn closure_return_without_arrow_records_void_invoke_return() {
         let function = scan("pub fn make_handler() -> impl FnOnce(u32) { todo!() }").expect("scan");
 
-        let ReturnDef::Value(TypeExpr::ImplTrait(TraitBound::Fn(function_trait))) =
-            function.returns
-        else {
+        let ReturnDef::Value(TypeExpr::ImplTrait(bounds)) = function.returns else {
             panic!("expected closure return");
+        };
+        let BaseTrait::Function(function_trait) = bounds.base else {
+            panic!("expected function trait base");
         };
 
         assert_eq!(function_trait.kind, FnTraitKind::FnOnce);

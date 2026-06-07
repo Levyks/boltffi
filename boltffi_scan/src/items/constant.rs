@@ -1,4 +1,4 @@
-use boltffi_ast::{ConstantDef, ConstantId, TypeExpr};
+use boltffi_ast::{ConstantDef, ConstantId, Primitive, TypeExpr};
 use syn::spanned::Spanned;
 
 use crate::attributes::Attributes;
@@ -45,9 +45,23 @@ fn build(
 fn constant_type(types: &type_expr::Scanner<'_>, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
     match type_expr::unwrapped(ty) {
         syn::Type::Reference(reference) if reference.mutability.is_none() => {
-            types.scan(&reference.elem)
+            borrowed_constant_type(types, ty, &reference.elem)
         }
         _ => types.scan(ty),
+    }
+}
+
+fn borrowed_constant_type(
+    types: &type_expr::Scanner<'_>,
+    source: &syn::Type,
+    element: &syn::Type,
+) -> Result<TypeExpr, ScanError> {
+    match types.scan(element)? {
+        TypeExpr::Str => Ok(TypeExpr::Str),
+        TypeExpr::Slice(inner) if matches!(inner.as_ref(), TypeExpr::Primitive(Primitive::U8)) => {
+            Ok(TypeExpr::Slice(inner))
+        }
+        _ => Err(ScanError::unsupported_type(source)),
     }
 }
 
@@ -56,7 +70,7 @@ mod tests {
     use super::*;
     use boltffi_ast::{
         CanonicalName, ConstExpr, EnumId, FloatLiteral, IntegerLiteral, Literal, NamePart, Path,
-        PathRoot, PathSegment, Primitive, Source, SourceName, TypeExpr, Visibility,
+        PathRoot, PathSegment, Primitive, RecordId, Source, SourceName, TypeExpr, Visibility,
     };
 
     fn parse(source: &str) -> syn::ItemConst {
@@ -222,6 +236,23 @@ mod tests {
         assert!(matches!(
             error,
             ScanError::UnsupportedType { spelling } if spelling == "Point"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_string_and_non_byte_reference_constants() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::Point"));
+        let error = super::build(
+            &parse("pub const ORIGIN: &Point = &Point::ORIGIN;"),
+            &ModuleScope::root("demo"),
+            &declared_types,
+        )
+        .expect_err("borrowed record constant rejects");
+
+        assert!(matches!(
+            error,
+            ScanError::UnsupportedType { spelling } if spelling == "&Point"
         ));
     }
 

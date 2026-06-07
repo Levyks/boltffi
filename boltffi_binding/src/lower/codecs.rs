@@ -1,4 +1,4 @@
-use boltffi_ast::{TraitBound, TypeExpr};
+use boltffi_ast::{BaseTrait, TypeExpr};
 
 use crate::{CodecNode, CodecPlan, FieldKey, Op, Primitive, ReadPlan, ValueRef, WritePlan};
 
@@ -47,31 +47,39 @@ pub(super) fn node(
             }
         }
         TypeExpr::Class { id, .. } => CodecNode::ClassHandle(ids.class(id)?),
-        TypeExpr::ImplTrait(TraitBound::Trait { id, .. })
-        | TypeExpr::Dyn(TraitBound::Trait { id, .. }) => {
-            CodecNode::CallbackHandle(ids.callback(id)?)
-        }
-        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
-            TypeExpr::Dyn(TraitBound::Trait { id, .. }) => {
-                CodecNode::CallbackHandle(ids.callback(id)?)
-            }
-            TypeExpr::Dyn(TraitBound::Fn(_)) => {
+        TypeExpr::ImplTrait(bounds) => match &bounds.base {
+            BaseTrait::Named { id, .. } => CodecNode::CallbackHandle(ids.callback(id)?),
+            BaseTrait::Function(_) => {
                 return Err(LowerError::unsupported_type(
                     super::error::UnsupportedType::ClosureInValuePosition,
                 ));
             }
+        },
+        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
+            TypeExpr::Dyn(bounds) => match &bounds.base {
+                BaseTrait::Named { id, .. } => CodecNode::CallbackHandle(ids.callback(id)?),
+                BaseTrait::Function(_) => {
+                    return Err(LowerError::unsupported_type(
+                        super::error::UnsupportedType::ClosureInValuePosition,
+                    ));
+                }
+            },
             _ => {
                 return Err(LowerError::unsupported_type(
                     super::error::UnsupportedType::OpaqueRustContainer,
                 ));
             }
         },
-        TypeExpr::FnPtr(_)
-        | TypeExpr::ImplTrait(TraitBound::Fn(_))
-        | TypeExpr::Dyn(TraitBound::Fn(_)) => {
+        TypeExpr::FnPtr(_) => {
             return Err(LowerError::unsupported_type(
                 super::error::UnsupportedType::ClosureInValuePosition,
             ));
+        }
+        TypeExpr::Dyn(bounds) => {
+            return Err(LowerError::unsupported_type(match &bounds.base {
+                BaseTrait::Named { .. } => super::error::UnsupportedType::OpaqueRustContainer,
+                BaseTrait::Function(_) => super::error::UnsupportedType::ClosureInValuePosition,
+            }));
         }
         TypeExpr::Custom { id, .. } => CodecNode::Custom(ids.custom(id)?),
         TypeExpr::Vec(element) | TypeExpr::Slice(element) => {

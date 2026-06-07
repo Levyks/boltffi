@@ -268,6 +268,13 @@ mod tests {
         ))
     }
 
+    fn borrowed_listener_object() -> TypeExpr {
+        TypeExpr::dyn_trait(
+            SourceTraitId::new("demo::Listener"),
+            Path::single("Listener"),
+        )
+    }
+
     fn arc_listener() -> TypeExpr {
         TypeExpr::arc(TypeExpr::dyn_trait(
             SourceTraitId::new("demo::Listener"),
@@ -884,6 +891,20 @@ mod tests {
             ParameterPassing::Ref,
         )
         .expect_err("borrowed impl Trait callback param must reject");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::BorrowedCallbackParameter)
+        ));
+    }
+
+    #[test]
+    fn borrowed_dyn_callback_object_param_is_rejected_without_panicking() {
+        let error = lower_record_with_listener_param_passing::<Native>(
+            borrowed_listener_object(),
+            ParameterPassing::Ref,
+        )
+        .expect_err("borrowed dyn Listener callback param must reject");
 
         assert!(matches!(
             error.kind(),

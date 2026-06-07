@@ -1,8 +1,9 @@
 use std::num::NonZeroUsize;
 
 use boltffi_ast::{
-    ConstExpr, CustomTypeId, FnSig, FnTrait, FnTraitKind, GenericArgument, MapKind, NamePart, Path,
-    PathRoot, PathSegment, Primitive, ReturnDef, TraitBound, TypeExpr,
+    AdditionalBound, BaseTrait, ConstExpr, CustomTypeId, FnSig, FnTrait, FnTraitKind,
+    GenericArgument, MapKind, NamePart, Path, PathRoot, PathSegment, Primitive, ReturnDef,
+    TraitBounds, TypeExpr,
 };
 use quote::ToTokens;
 
@@ -195,7 +196,7 @@ impl<'a> Scanner<'a> {
         trait_object: &syn::TypeTraitObject,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
-        self.single_trait_bound(&trait_object.bounds, source)
+        self.trait_bounds(&trait_object.bounds, source)
             .map(TypeExpr::Dyn)
     }
 
@@ -204,49 +205,66 @@ impl<'a> Scanner<'a> {
         impl_trait: &syn::TypeImplTrait,
         source: &syn::Type,
     ) -> Result<TypeExpr, ScanError> {
-        self.single_trait_bound(&impl_trait.bounds, source)
+        self.trait_bounds(&impl_trait.bounds, source)
             .map(TypeExpr::ImplTrait)
     }
 
-    fn single_trait_bound(
+    fn trait_bounds(
         &self,
         bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
         source: &syn::Type,
-    ) -> Result<TraitBound, ScanError> {
-        let recognized = bounds
+    ) -> Result<TraitBounds, ScanError> {
+        let parts = bounds
             .iter()
-            .map(|bound| self.ffi_trait_bound(bound, source))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        match recognized.as_slice() {
-            [bound] => Ok(bound.clone()),
+            .map(|bound| self.trait_bound_part(bound, source))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (base, bounds) = parts.into_iter().try_fold(
+            (None, Vec::new()),
+            |(base, mut bounds), part| match part {
+                TraitBoundPart::Base(next) if base.is_none() => Ok((Some(next), bounds)),
+                TraitBoundPart::Base(_) => Err(ScanError::unsupported_type(source)),
+                TraitBoundPart::Additional(bound) => {
+                    bounds.push(bound);
+                    Ok((base, bounds))
+                }
+            },
+        )?;
+        base.map(|base| TraitBounds::new(base, bounds))
+            .ok_or_else(|| ScanError::unsupported_type(source))
+    }
+
+    fn trait_bound_part(
+        &self,
+        bound: &syn::TypeParamBound,
+        source: &syn::Type,
+    ) -> Result<TraitBoundPart, ScanError> {
+        match bound {
+            syn::TypeParamBound::Trait(bound) => self.trait_path_bound(bound, source),
+            syn::TypeParamBound::Lifetime(lifetime) => Ok(TraitBoundPart::Additional(
+                AdditionalBound::Lifetime(lifetime.to_token_stream().to_string()),
+            )),
             _ => Err(ScanError::unsupported_type(source)),
         }
     }
 
-    fn ffi_trait_bound(
+    fn trait_path_bound(
         &self,
-        bound: &syn::TypeParamBound,
+        bound: &syn::TraitBound,
         source: &syn::Type,
-    ) -> Result<Option<TraitBound>, ScanError> {
-        let syn::TypeParamBound::Trait(bound) = bound else {
-            return Err(ScanError::unsupported_type(source));
-        };
-        match self.trait_bound(bound, source) {
-            Ok(bound) => Ok(Some(bound)),
-            Err(error) => {
-                if self.marker_bound(bound)? {
-                    Ok(None)
-                } else {
-                    Err(error)
-                }
-            }
+    ) -> Result<TraitBoundPart, ScanError> {
+        if let Some(base) = self.base_trait(bound)? {
+            return Ok(TraitBoundPart::Base(base));
         }
+        if let Some(bound) = self.additional_bound(bound)? {
+            return Ok(TraitBoundPart::Additional(bound));
+        }
+        Err(ScanError::unsupported_type(source))
     }
 
-    fn marker_bound(&self, bound: &syn::TraitBound) -> Result<bool, ScanError> {
+    fn additional_bound(
+        &self,
+        bound: &syn::TraitBound,
+    ) -> Result<Option<AdditionalBound>, ScanError> {
         if !matches!(bound.modifier, syn::TraitBoundModifier::None)
             || bound.lifetimes.is_some()
             || closure_bound(bound).is_some()
@@ -256,28 +274,29 @@ impl<'a> Scanner<'a> {
                 .iter()
                 .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
         {
-            return Ok(false);
+            return Ok(None);
         }
-        Ok(!matches!(
-            self.declared_types
-                .resolve_type_in_scope(self.scope, &bound.path)?,
-            SourceType::Declared(DeclaredType::Trait(_))
-        ))
+        match self
+            .declared_types
+            .resolve_type_in_scope(self.scope, &bound.path)?
+        {
+            SourceType::Declared(_) | SourceType::Unregistered => Ok(None),
+            SourceType::External(_) | SourceType::Unknown => Ok(Some(AdditionalBound::AutoTrait(
+                ast_path(&bound.path, self)?,
+            ))),
+        }
     }
 
-    fn trait_bound(
-        &self,
-        bound: &syn::TraitBound,
-        source: &syn::Type,
-    ) -> Result<TraitBound, ScanError> {
+    fn base_trait(&self, bound: &syn::TraitBound) -> Result<Option<BaseTrait>, ScanError> {
         if !matches!(bound.modifier, syn::TraitBoundModifier::None) || bound.lifetimes.is_some() {
-            return Err(ScanError::unsupported_type(source));
+            return Ok(None);
         }
         if let Some((kind, arguments)) = closure_bound(bound) {
             return self
                 .fn_trait(kind, arguments)
                 .map(Box::new)
-                .map(TraitBound::Fn);
+                .map(BaseTrait::Function)
+                .map(Some);
         }
         if bound
             .path
@@ -285,18 +304,21 @@ impl<'a> Scanner<'a> {
             .iter()
             .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
         {
-            return Err(ScanError::unsupported_type(source));
+            return Ok(None);
         }
         let path = ast_path(&bound.path, self)?;
         match self
             .declared_types
             .resolve_type_in_scope(self.scope, &bound.path)?
         {
-            SourceType::Declared(DeclaredType::Trait(id)) => Ok(TraitBound::Trait {
+            SourceType::Declared(DeclaredType::Trait(id)) => Ok(Some(BaseTrait::Named {
                 id: id.clone(),
                 path,
-            }),
-            _ => Err(ScanError::unsupported_type(source)),
+            })),
+            SourceType::Declared(_)
+            | SourceType::Unregistered
+            | SourceType::External(_)
+            | SourceType::Unknown => Ok(None),
         }
     }
 
@@ -622,9 +644,16 @@ fn closure_kind(name: &str) -> Option<FnTraitKind> {
     })
 }
 
+enum TraitBoundPart {
+    Base(BaseTrait),
+    Additional(AdditionalBound),
+}
+
 #[cfg(test)]
 mod tests {
-    use boltffi_ast::{ClassId, Primitive, RecordId, TraitId};
+    use boltffi_ast::{
+        AdditionalBound, BaseTrait, ClassId, Primitive, RecordId, TraitBounds, TraitId,
+    };
 
     use super::*;
     use crate::ModuleScope;
@@ -636,6 +665,23 @@ mod tests {
 
     fn scan(source: &str) -> Result<TypeExpr, ScanError> {
         Scanner::new(&DeclaredTypes::new(), &ModuleScope::root("demo")).scan(&ty(source))
+    }
+
+    fn dyn_trait_with_bounds(id: &str, path: &str, bounds: Vec<AdditionalBound>) -> TypeExpr {
+        TypeExpr::Dyn(TraitBounds::new(
+            BaseTrait::Named {
+                id: TraitId::new(id),
+                path: Path::single(path),
+            },
+            bounds,
+        ))
+    }
+
+    fn impl_fn_with_bounds(function_trait: FnTrait, bounds: Vec<AdditionalBound>) -> TypeExpr {
+        TypeExpr::ImplTrait(TraitBounds::new(
+            BaseTrait::Function(Box::new(function_trait)),
+            bounds,
+        ))
     }
 
     #[test]
@@ -717,6 +763,14 @@ mod tests {
             )))
         );
         assert_eq!(
+            scanner.scan(&ty("Box<dyn Listener + Send>")),
+            Ok(TypeExpr::boxed(dyn_trait_with_bounds(
+                "demo::Listener",
+                "Listener",
+                vec![AdditionalBound::AutoTrait(Path::single("Send"))]
+            )))
+        );
+        assert_eq!(
             scanner.scan(&ty("impl Listener")),
             Ok(TypeExpr::impl_trait(
                 TraitId::new("demo::Listener"),
@@ -747,6 +801,22 @@ mod tests {
                     ReturnDef::Value(TypeExpr::String)
                 )
             )))
+        );
+        assert_eq!(
+            scan("impl FnMut(u32) -> String + Send + 'static"),
+            Ok(impl_fn_with_bounds(
+                FnTrait::new(
+                    FnTraitKind::FnMut,
+                    FnSig::new(
+                        vec![TypeExpr::Primitive(Primitive::U32)],
+                        ReturnDef::Value(TypeExpr::String)
+                    )
+                ),
+                vec![
+                    AdditionalBound::AutoTrait(Path::single("Send")),
+                    AdditionalBound::Lifetime("'static".to_owned())
+                ]
+            ))
         );
         assert_eq!(
             scan("Box<dyn FnOnce(u32)>"),

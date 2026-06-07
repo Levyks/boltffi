@@ -5,14 +5,14 @@ use crate::{ClassId, CustomTypeId, EnumId, Path, Primitive, RecordId, ReturnDef,
 /// A Rust type exactly as written at an exported BoltFFI use site.
 ///
 /// Every variant mirrors a Rust type form and nests like the source, so
-/// `Option<Arc<dyn Listener>>` is `Option(Arc(Dyn(Trait)))` rather than one
-/// folded nullable-callback shape. Faithfulness is the contract: the
+/// `Option<Arc<dyn Listener>>` is `Option(Arc(Dyn(TraitBounds)))` rather than
+/// one folded nullable-callback shape. Faithfulness is the contract: the
 /// expression records what the source says, not what the FFI boundary needs.
 /// Whether a representable type is supported in the position where it appears
 /// is decided by later stages.
 ///
 /// Invalid Rust stays unrepresentable. `dyn` and `impl Trait` accept only a
-/// [`TraitBound`], so `dyn Vec<u8>` cannot be constructed.
+/// [`TraitBounds`], so `dyn Vec<u8>` cannot be constructed.
 ///
 /// Named leaves keep both a stable `id` and the `path` as written, because the
 /// canonical identity (`demo::Point`) and the source spelling
@@ -63,9 +63,9 @@ pub enum TypeExpr {
         path: Path,
     },
     /// A `dyn Trait` object.
-    Dyn(TraitBound),
+    Dyn(TraitBounds),
     /// An `impl Trait`.
-    ImplTrait(TraitBound),
+    ImplTrait(TraitBounds),
     /// A `Box<T>`.
     Boxed(Box<TypeExpr>),
     /// An `Arc<T>`.
@@ -125,22 +125,22 @@ impl TypeExpr {
 
     /// Builds a `dyn Trait` expression for a declared callback trait.
     pub fn dyn_trait(id: TraitId, path: Path) -> Self {
-        Self::Dyn(TraitBound::Trait { id, path })
+        Self::Dyn(TraitBounds::named(id, path))
     }
 
     /// Builds an `impl Trait` expression for a declared callback trait.
     pub fn impl_trait(id: TraitId, path: Path) -> Self {
-        Self::ImplTrait(TraitBound::Trait { id, path })
+        Self::ImplTrait(TraitBounds::named(id, path))
     }
 
     /// Builds a `dyn Fn*` expression.
     pub fn dyn_fn(function_trait: FnTrait) -> Self {
-        Self::Dyn(TraitBound::Fn(Box::new(function_trait)))
+        Self::Dyn(TraitBounds::function(function_trait))
     }
 
     /// Builds an `impl Fn*` expression.
     pub fn impl_fn(function_trait: FnTrait) -> Self {
-        Self::ImplTrait(TraitBound::Fn(Box::new(function_trait)))
+        Self::ImplTrait(TraitBounds::function(function_trait))
     }
 
     /// Builds a `Box<T>` expression.
@@ -206,27 +206,69 @@ impl TypeExpr {
     }
 }
 
-/// A trait that can sit behind `dyn` or `impl Trait`.
+/// The bounds written after `dyn` or `impl Trait`.
 ///
-/// Only a trait is legal in those positions, so restricting [`TypeExpr::Dyn`]
-/// and [`TypeExpr::ImplTrait`] to this type keeps `dyn Vec<u8>` and
-/// `impl Point` unrepresentable.
+/// Rust requires one base trait in these positions. Additional auto-trait and
+/// lifetime bounds refine that base type and must stay attached to the source
+/// type so regenerated Rust preserves constraints such as `Send + 'static`.
 ///
 /// # Example
 ///
-/// `Box<dyn Listener>` carries `Trait { id, path }`, while
-/// `Box<dyn Fn(u32)>` carries `Fn(_)`.
+/// `Box<dyn Listener + Send>` has a named base trait and one auto-trait bound.
+/// `impl Fn(u32) + 'static` has a function base trait and one lifetime bound.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum TraitBound {
-    /// A trait exported as a BoltFFI callback.
-    Trait {
+pub struct TraitBounds {
+    /// The trait that defines the `dyn` object or `impl Trait` shape.
+    pub base: BaseTrait,
+    /// Extra Rust bounds written after the base trait.
+    pub bounds: Vec<AdditionalBound>,
+}
+
+impl TraitBounds {
+    /// Builds bounds around one base trait and its additional bounds.
+    pub fn new(base: BaseTrait, bounds: Vec<AdditionalBound>) -> Self {
+        Self { base, bounds }
+    }
+
+    /// Builds bounds for a named trait.
+    pub fn named(id: TraitId, path: Path) -> Self {
+        Self::new(BaseTrait::Named { id, path }, Vec::new())
+    }
+
+    /// Builds bounds for an `Fn`-family trait.
+    pub fn function(function_trait: FnTrait) -> Self {
+        Self::new(BaseTrait::Function(Box::new(function_trait)), Vec::new())
+    }
+}
+
+/// The first trait in a `dyn` or `impl Trait` bound list.
+///
+/// This is the part of the Rust type that determines whether the source wrote
+/// a named trait object or an `Fn`-family callable.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum BaseTrait {
+    /// A named trait.
+    Named {
         /// Declaration this reference resolves to.
         id: TraitId,
         /// Path as written at this use site.
         path: Path,
     },
-    /// An `Fn`, `FnMut`, or `FnOnce` bound.
-    Fn(Box<FnTrait>),
+    /// An `Fn`, `FnMut`, or `FnOnce` trait.
+    Function(Box<FnTrait>),
+}
+
+/// An extra bound after the base trait in `dyn` or `impl Trait`.
+///
+/// Auto traits and lifetimes affect the Rust type but do not change the base
+/// trait that later stages use to decide whether the shape is a named trait
+/// object or an `Fn`-family callable.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum AdditionalBound {
+    /// An auto-trait bound such as `Send` or `Sync`.
+    AutoTrait(Path),
+    /// A lifetime bound such as `'static`.
+    Lifetime(String),
 }
 
 /// Which map constructor was written.

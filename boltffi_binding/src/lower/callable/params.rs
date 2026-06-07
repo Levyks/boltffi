@@ -167,6 +167,11 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
             receive: D::receive_from(receive),
         });
     }
+    if CallbackHandleSource::bare_dyn(type_expr).is_some() && !matches!(receive, Receive::ByValue) {
+        return Err(LowerError::unsupported_type(
+            UnsupportedType::BorrowedCallbackParameter,
+        ));
+    }
     match type_expr {
         TypeExpr::Primitive(_) => Ok(ParamPlan::Direct {
             ty: types::lower(ids, type_expr)?,

@@ -56,8 +56,8 @@ mod params;
 mod returns;
 
 use boltffi_ast::{
-    CanonicalName as SourceName, ClassId, ExecutionKind, FnSig, FnTrait, FunctionDef, MethodDef,
-    ParameterDef, Receiver, ReturnDef, TraitBound, TraitId, TypeExpr,
+    BaseTrait, CanonicalName as SourceName, ClassId, ExecutionKind, FnSig, FnTrait, FunctionDef,
+    MethodDef, ParameterDef, Receiver, ReturnDef, TraitBounds, TraitId, TypeExpr,
 };
 
 use crate::{
@@ -125,9 +125,11 @@ impl<'src> CallableOwner<'src> {
             (Self::Class(class), boltffi_ast::TypeExpr::Class { id, .. }) => id == &class.id,
             (
                 Self::Trait(source_trait),
-                boltffi_ast::TypeExpr::ImplTrait(boltffi_ast::TraitBound::Trait { id, .. })
-                | boltffi_ast::TypeExpr::Dyn(boltffi_ast::TraitBound::Trait { id, .. }),
-            ) => id == &source_trait.id,
+                boltffi_ast::TypeExpr::ImplTrait(bounds) | boltffi_ast::TypeExpr::Dyn(bounds),
+            ) => match &bounds.base {
+                boltffi_ast::BaseTrait::Named { id, .. } => id == &source_trait.id,
+                boltffi_ast::BaseTrait::Function(_) => false,
+            },
             _ => false,
         }
     }
@@ -471,17 +473,23 @@ impl<'a> ClosureSource<'a> {
                 signature,
                 presence: HandlePresence::Required,
             }),
-            TypeExpr::ImplTrait(TraitBound::Fn(function_trait)) => Some(Self {
-                form: ClosureForm::from(function_trait.kind),
-                signature: &function_trait.signature,
-                presence: HandlePresence::Required,
-            }),
-            TypeExpr::Boxed(inner) => match inner.as_ref() {
-                TypeExpr::Dyn(TraitBound::Fn(function_trait)) => Some(Self {
+            TypeExpr::ImplTrait(bounds) => match &bounds.base {
+                BaseTrait::Function(function_trait) => Some(Self {
                     form: ClosureForm::from(function_trait.kind),
                     signature: &function_trait.signature,
                     presence: HandlePresence::Required,
                 }),
+                BaseTrait::Named { .. } => None,
+            },
+            TypeExpr::Boxed(inner) => match inner.as_ref() {
+                TypeExpr::Dyn(bounds) => match &bounds.base {
+                    BaseTrait::Function(function_trait) => Some(Self {
+                        form: ClosureForm::from(function_trait.kind),
+                        signature: &function_trait.signature,
+                        presence: HandlePresence::Required,
+                    }),
+                    BaseTrait::Named { .. } => None,
+                },
                 _ => None,
             },
             _ => None,
@@ -538,17 +546,36 @@ impl<'a> CallbackHandleSource<'a> {
         })
     }
 
-    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn bare_dyn(type_expr: &'a TypeExpr) -> Option<Self> {
         match type_expr {
-            TypeExpr::ImplTrait(TraitBound::Trait { id, .. }) => Some(Self {
-                id,
-                presence: HandlePresence::Required,
-            }),
-            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
-                TypeExpr::Dyn(TraitBound::Trait { id, .. }) => Some(Self {
+            TypeExpr::Dyn(bounds) => match &bounds.base {
+                BaseTrait::Named { id, .. } => Some(Self {
                     id,
                     presence: HandlePresence::Required,
                 }),
+                BaseTrait::Function(_) => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::ImplTrait(bounds) => match &bounds.base {
+                BaseTrait::Named { id, .. } => Some(Self {
+                    id,
+                    presence: HandlePresence::Required,
+                }),
+                BaseTrait::Function(_) => None,
+            },
+            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => match inner.as_ref() {
+                TypeExpr::Dyn(bounds) => match &bounds.base {
+                    BaseTrait::Named { id, .. } => Some(Self {
+                        id,
+                        presence: HandlePresence::Required,
+                    }),
+                    BaseTrait::Function(_) => None,
+                },
                 _ => None,
             },
             _ => None,
@@ -634,13 +661,14 @@ fn substitute_self_signature(
 
 fn substitute_self_trait_bound(
     owner: CallableOwner<'_>,
-    bound: &TraitBound,
-) -> Result<TraitBound, LowerError> {
-    match bound {
-        TraitBound::Trait { .. } => Ok(bound.clone()),
-        TraitBound::Fn(function_trait) => Ok(TraitBound::Fn(Box::new(FnTrait::new(
+    bounds: &TraitBounds,
+) -> Result<TraitBounds, LowerError> {
+    let base = match &bounds.base {
+        BaseTrait::Named { .. } => bounds.base.clone(),
+        BaseTrait::Function(function_trait) => BaseTrait::Function(Box::new(FnTrait::new(
             function_trait.kind,
             substitute_self_signature(owner, &function_trait.signature)?,
-        )))),
-    }
+        ))),
+    };
+    Ok(TraitBounds::new(base, bounds.bounds.clone()))
 }
