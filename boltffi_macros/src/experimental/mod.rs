@@ -1,10 +1,8 @@
 #![allow(dead_code)]
 
-mod decl;
 mod error;
 
 pub mod expansion;
-mod index;
-mod render;
-mod syntax;
+mod rust_api;
 mod target;
+mod wrapper;
