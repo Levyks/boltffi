@@ -898,27 +898,25 @@ final class _$$BoltFFIStreamCtx<T extends $$ffi.SizedNativeType> {
     >,
   )
   pollFn;
-  late final int Function($$ffi.Pointer<$$ffi.Void>, $$ffi.Pointer<T>, int)
-  popBatchFn;
   late final int Function($$ffi.Pointer<$$ffi.Void>, int) waitFn;
   late final void Function($$ffi.Pointer<$$ffi.Void>) unsubscribeFn;
   late final void Function($$ffi.Pointer<$$ffi.Void>) freeFn;
-  late final int itemSize;
+  late final int? itemSize;
 
   _$$BoltFFIStreamCtx({
     required this.subscribe,
     required this.pollFn,
-    required this.popBatchFn,
     required this.waitFn,
     required this.unsubscribeFn,
     required this.freeFn,
-    required this.itemSize,
+    this.itemSize,
   });
 
   Stream<O> stream<O>(
     void Function(
       $$ffi.Pointer<$$ffi.Void> handle,
-      $$typed_data.Uint8List buf,
+      int batchSize,
+      int? itemSize,
       $$async.StreamController<O> controller,
     )
     onReady,
@@ -935,13 +933,11 @@ final class _$$BoltFFIStreamCtx<T extends $$ffi.SizedNativeType> {
       },
     );
 
-    final buf = $$typed_data.Uint8List(_k$defaultBatchSize * itemSize);
-
     void streamCallback(int data, int res) {
       switch (res) {
         case _k$StreamPollResult$Ready:
-          onReady(handle, buf, controller);
-          pollFn(handle, data, streamCallbackCallable.nativeFunction);
+          onReady(handle, _k$defaultBatchSize, itemSize, controller);
+          pollFn(handle, 0, streamCallbackCallable.nativeFunction);
         case _k$StreamPollResult$Closed:
           streamCallbackCallable.close();
           controller.close();
@@ -956,8 +952,7 @@ final class _$$BoltFFIStreamCtx<T extends $$ffi.SizedNativeType> {
   }
 
   $$BoltFFIStreamPopBatchHandle<O> batch<O>(
-    List<O> Function($$ffi.Pointer<$$ffi.Void>, $$typed_data.Uint8List, int)
-    mapper,
+    List<O> Function($$ffi.Pointer<$$ffi.Void>, int, int?) mapper,
   ) {
     var handle = subscribe();
 
@@ -966,8 +961,7 @@ final class _$$BoltFFIStreamCtx<T extends $$ffi.SizedNativeType> {
         if (handle == $$ffi.nullptr) {
           return [];
         }
-        final buf = $$typed_data.Uint8List(batchSize * itemSize);
-        return mapper(handle, buf, batchSize);
+        return mapper(handle, batchSize, itemSize);
       },
       cancel: () {
         freeFn(handle);

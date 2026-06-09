@@ -70,19 +70,38 @@ final class {{ class.name }} implements $$ffi.Finalizable {
     final ctx = _$$BoltFFIStreamCtx(
       subscribe: () => _f${{ stream.subscribe_fn.symbol }}(_handle),
       pollFn: _f${{ stream.poll_fn.symbol }},
-      popBatchFn: _f${{ stream.pop_batch_fn.symbol }},
       waitFn: _f${{ stream.wait_fn.symbol }},
       unsubscribeFn: _f${{ stream.unsubscribe_fn.symbol }},
       freeFn: _f${{ stream.free_fn.symbol }},
-      itemSize: {{ stream.ffi_item_size.unwrap_or(0) }}
+{%- match stream.ffi_item_size %}
+{% when Some with (size) %}
+      itemSize: {{ size }}
+{% when None %}
+{%- endmatch %}
     );
 
-    return ctx.stream((handle, buf, controller) {
-      final popped = _f${{ stream.pop_batch_fn.symbol }}(
-        handle,
-        buf.address.cast(),
-        _$$BoltFFIStreamCtx._k$defaultBatchSize,
-      );
+    return ctx.stream((handle, batchSize, itemSize, controller) {
+{%- match stream.ffi_item_size %}
+{% when Some with (size) %}
+      final l$buf = $$typed_data.Uint8List(batchSize * itemSize!);
+      final l$count = _f${{ stream.pop_batch_fn.symbol }}(handle, l$buf.address.cast(), batchSize);
+      if (l$count == 0) {
+        return;
+      }
+      final List<{{ stream.item_ty.dart_type() }}> l$items = [];
+{% when None %}
+      final l$buf = _f${{ stream.pop_batch_fn.symbol }}(handle, batchSize);
+      if (l$buf.len == 0) {
+        return;
+      }
+      final l$bufReader = _$$WireReader(l$buf.ptr, l$buf.len);
+      final List<{{ stream.item_ty.dart_type() }}> l$items = l$bufReader.readList((l$bufReader) => {{ stream.item_wire_decode_expr("l$bufReader") }});
+      if (l$items.isEmpty) {
+        return;
+      }
+      _f$boltffi_free_buf(l$buf);
+{%- endmatch %}
+      controller.addStream(Stream.fromIterable(l$items));
     });
   }
 {% when crate::ir::StreamMode::Callback %}
@@ -90,19 +109,38 @@ final class {{ class.name }} implements $$ffi.Finalizable {
     final ctx = _$$BoltFFIStreamCtx(
       subscribe: () => _f${{ stream.subscribe_fn.symbol }}(_handle),
       pollFn: _f${{ stream.poll_fn.symbol }},
-      popBatchFn: _f${{ stream.pop_batch_fn.symbol }},
       waitFn: _f${{ stream.wait_fn.symbol }},
       unsubscribeFn: _f${{ stream.unsubscribe_fn.symbol }},
       freeFn: _f${{ stream.free_fn.symbol }},
-      itemSize: {{ stream.ffi_item_size.unwrap_or(0) }}
+{%- match stream.ffi_item_size %}
+{% when Some with (size) %}
+      itemSize: {{ size }}
+{% when None %}
+{%- endmatch %}
     );
 
-    final Stream<{{ stream.item_ty.dart_type() }}> stream = ctx.stream((handle, buf, controller) {
-      final popped = _f${{ stream.pop_batch_fn.symbol }}(
-        handle,
-        buf.address.cast(),
-        _$$BoltFFIStreamCtx._k$defaultBatchSize,
-      );
+    final Stream<{{ stream.item_ty.dart_type() }}> stream = ctx.stream((handle, batchSize, itemSize, controller) {
+{%- match stream.ffi_item_size %}
+{% when Some with (size) %}
+      final l$buf = $$typed_data.Uint8List(batchSize * itemSize!);
+      final l$count = _f${{ stream.pop_batch_fn.symbol }}(handle, l$buf.address.cast(), batchSize);
+      if (l$count == 0) {
+        return;
+      }
+      final List<{{ stream.item_ty.dart_type() }}> l$items = [];
+{% when None %}
+      final l$buf = _f${{ stream.pop_batch_fn.symbol }}(handle, batchSize);
+      if (l$buf.len == 0) {
+        return;
+      }
+      final l$bufReader = _$$WireReader(l$buf.ptr, l$buf.len);
+      final List<{{ stream.item_ty.dart_type() }}> l$items = l$bufReader.readList((l$bufReader) => {{ stream.item_wire_decode_expr("l$bufReader") }});
+      if (l$items.isEmpty) {
+        return;
+      }
+      _f$boltffi_free_buf(l$buf);
+{%- endmatch %}
+      controller.addStream(Stream.fromIterable(l$items));
     });
 
     return stream.listen(cb);
@@ -112,24 +150,38 @@ final class {{ class.name }} implements $$ffi.Finalizable {
     final ctx = _$$BoltFFIStreamCtx(
       subscribe: () => _f${{ stream.subscribe_fn.symbol }}(_handle),
       pollFn: _f${{ stream.poll_fn.symbol }},
-      popBatchFn: _f${{ stream.pop_batch_fn.symbol }},
       waitFn: _f${{ stream.wait_fn.symbol }},
       unsubscribeFn: _f${{ stream.unsubscribe_fn.symbol }},
       freeFn: _f${{ stream.free_fn.symbol }},
-      itemSize: {{ stream.ffi_item_size.unwrap_or(0) }}
+{%- match stream.ffi_item_size %}
+{% when Some with (size) %}
+      itemSize: {{ size }}
+{% when None %}
+{%- endmatch %}
     );
 
-    return ctx.batch((handle, buf, batchSize) {
-      final popped = _f${{ stream.pop_batch_fn.symbol }}(
-        handle,
-        buf.address.cast(),
-        batchSize,
-      );
-      if (popped == 0) {
+    return ctx.batch((handle, batchSize, itemSize) {
+{%- match stream.ffi_item_size %}
+{% when Some with (size) %}
+      final l$buf = $$typed_data.Uint8List(batchSize * itemSize!);
+      final l$count = _f${{ stream.pop_batch_fn.symbol }}(handle, l$buf.address.cast(), batchSize);
+      if (l$count == 0) {
         return [];
       }
-
-      return [];
+      final List<{{ stream.item_ty.dart_type() }}> l$items = [];
+{% when None %}
+      final l$buf = _f${{ stream.pop_batch_fn.symbol }}(handle, batchSize);
+      if (l$buf.len == 0) {
+        return;
+      }
+      final l$bufReader = _$$WireReader(l$buf.ptr, l$buf.len);
+      final List<{{ stream.item_ty.dart_type() }}> l$items = l$bufReader.readList((l$bufReader) => {{ stream.item_wire_decode_expr("l$bufReader") }});
+      if (l$items.isEmpty) {
+        return [];
+      }
+      _f$boltffi_free_buf(l$buf);
+{%- endmatch %}
+      return l$items;
     });
   }
 {% endmatch -%}

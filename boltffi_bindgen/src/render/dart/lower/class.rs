@@ -1,7 +1,10 @@
 use boltffi_ffi_rules::naming;
 
 use crate::{
-    ir::{AbiStream, CallId, ClassDef, ClassId, PrimitiveType, StreamDef, StreamId},
+    ir::{
+        AbiStream, CallId, ClassDef, ClassId, PrimitiveType, StreamDef, StreamId,
+        StreamItemTransport,
+    },
     render::dart::{
         DartClass, DartNativeFunction, DartNativeFunctionCallMode, DartNativeFunctionKind,
         DartNativeFunctionParam, DartNativeType, DartStream, DartType, NamingConvention,
@@ -19,9 +22,48 @@ impl<'a> super::DartLowerer<'a> {
     fn lower_one_stream(&self, stream: &StreamDef, class_id: &ClassId) -> DartStream {
         let abi_stream = self.abi_stream_for(&stream.id, class_id).unwrap();
 
+        let StreamItemTransport::WireEncoded { decode_ops } = &abi_stream.item;
+
+        let mut pop_batch_params = vec![DartNativeFunctionParam {
+            name: "handle".to_string(),
+            native_type: DartNativeType::Pointer(Box::new(DartNativeType::Void)),
+        }];
+        match abi_stream.item_size {
+            Some(_) => {
+                pop_batch_params.extend([
+                    DartNativeFunctionParam {
+                        name: "output_ptr".to_string(),
+                        native_type: DartNativeType::Pointer(Box::new(
+                            DartNativeType::from_transport(&abi_stream.item_transport),
+                        )),
+                    },
+                    DartNativeFunctionParam {
+                        name: "output_capacity".to_string(),
+                        native_type: DartNativeType::Primitive(PrimitiveType::USize),
+                    },
+                ]);
+            }
+            None => pop_batch_params.extend([DartNativeFunctionParam {
+                name: "max_count".to_string(),
+                native_type: DartNativeType::Primitive(PrimitiveType::USize),
+            }]),
+        }
+        let pop_batch_return_type = match abi_stream.item_size {
+            Some(_) => DartNativeType::Primitive(PrimitiveType::USize),
+            None => DartNativeType::OwnedBuffer,
+        };
+        let pop_batch_fn = DartNativeFunction {
+            symbol: abi_stream.pop_batch.to_string(),
+            params: pop_batch_params,
+            return_type: pop_batch_return_type,
+            is_leaf: true,
+            call_mode: DartNativeFunctionCallMode::Sync,
+        };
+
         DartStream {
             name: NamingConvention::function_name(stream.id.as_str()),
-            item_ty: DartType::from_transport(&abi_stream.item_transport),
+            item_ty: DartType::from_type_expr(&stream.item_type, &self.ffi.catalog),
+            item_read_seq: decode_ops.clone(),
             ffi_item_ty: DartNativeType::from_transport(&abi_stream.item_transport),
             ffi_item_size: abi_stream.item_size,
             subscribe_fn: DartNativeFunction {
@@ -58,28 +100,7 @@ impl<'a> super::DartLowerer<'a> {
                 is_leaf: false,
                 call_mode: DartNativeFunctionCallMode::Sync,
             },
-            pop_batch_fn: DartNativeFunction {
-                symbol: abi_stream.pop_batch.to_string(),
-                params: vec![
-                    DartNativeFunctionParam {
-                        name: "handle".to_string(),
-                        native_type: DartNativeType::Pointer(Box::new(DartNativeType::Void)),
-                    },
-                    DartNativeFunctionParam {
-                        name: "output_ptr".to_string(),
-                        native_type: DartNativeType::Pointer(Box::new(
-                            DartNativeType::from_transport(&abi_stream.item_transport),
-                        )),
-                    },
-                    DartNativeFunctionParam {
-                        name: "output_capacity".to_string(),
-                        native_type: DartNativeType::Primitive(PrimitiveType::USize),
-                    },
-                ],
-                return_type: DartNativeType::Primitive(PrimitiveType::USize),
-                is_leaf: true,
-                call_mode: DartNativeFunctionCallMode::Sync,
-            },
+            pop_batch_fn,
             wait_fn: DartNativeFunction {
                 symbol: abi_stream.wait.to_string(),
                 params: vec![
@@ -103,7 +124,7 @@ impl<'a> super::DartLowerer<'a> {
                     native_type: DartNativeType::Pointer(Box::new(DartNativeType::Void)),
                 }],
                 return_type: DartNativeType::Void,
-                is_leaf: true,
+                is_leaf: false,
                 call_mode: DartNativeFunctionCallMode::Sync,
             },
             free_fn: DartNativeFunction {

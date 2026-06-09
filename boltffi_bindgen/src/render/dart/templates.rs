@@ -184,7 +184,7 @@ mod tests {
     pub fn snapshot_class() {
         let mut ffi = empty_contract();
 
-        let stream = |mode: StreamMode| StreamDef {
+        let temperature_stream = |mode: StreamMode| StreamDef {
             id: StreamId::new(format!(
                 "temperature_event_{}",
                 match mode {
@@ -198,6 +198,33 @@ mod tests {
             doc: None,
             deprecated: None,
         };
+
+        let names_stream = |mode: StreamMode| StreamDef {
+            id: StreamId::new(format!(
+                "names_event_{}",
+                match mode {
+                    StreamMode::Async => "async",
+                    StreamMode::Batch => "batch",
+                    StreamMode::Callback => "callback",
+                }
+            )),
+            item_type: TypeExpr::String,
+            mode,
+            doc: None,
+            deprecated: None,
+        };
+
+        let mut streams = vec![];
+        streams.extend(
+            [StreamMode::Async, StreamMode::Batch, StreamMode::Callback]
+                .into_iter()
+                .map(temperature_stream),
+        );
+        streams.extend(
+            [StreamMode::Async, StreamMode::Batch, StreamMode::Callback]
+                .into_iter()
+                .map(names_stream),
+        );
 
         ffi.catalog.insert_class(ClassDef {
             id: ClassId::new("Person"),
@@ -246,10 +273,7 @@ mod tests {
                 doc: None,
                 deprecated: None,
             }],
-            streams: [StreamMode::Async, StreamMode::Batch, StreamMode::Callback]
-                .into_iter()
-                .map(stream)
-                .collect(),
+            streams,
             doc: None,
             deprecated: None,
         });
