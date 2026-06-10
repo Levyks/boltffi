@@ -1,9 +1,6 @@
-use boltffi_binding::{
-    CallbackLocalHandle, HandlePresence, HandleTarget, Native, Wasm32, native, wasm32,
-};
+use boltffi_binding::{HandlePresence, HandleTarget, Native, Wasm32, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::parse_str;
 
 use crate::experimental::{
     error::Error,
@@ -169,7 +166,13 @@ impl<'context, 'a> NativeReturn<'context, 'a> {
             return Err(Error::UnsupportedExpansion("non-callback handle return"));
         };
         let declaration = self.input.expansion.callback(*id)?;
-        let local_handle = LocalHandlePath::new(declaration.local_handle()).tokens()?;
+        let local_protocol = declaration
+            .local_protocol()
+            .ok_or(Error::UnsupportedExpansion(
+                "callback return without local callback protocol",
+            ))?;
+        let local_handle =
+            wrapper::handle::CallbackLocalPath::new(local_protocol.handle()).tokens()?;
         let value = &self.input.value;
         Ok(match (callback.form(), callback.presence()) {
             (rust_api::CallbackCarrier::BoxedDyn, HandlePresence::Required) => quote! {
@@ -255,7 +258,13 @@ impl<'context, 'a> WasmReturn<'context, 'a> {
             return Err(Error::UnsupportedExpansion("non-callback handle return"));
         };
         let declaration = self.input.expansion.callback(*id)?;
-        let local_handle = LocalHandlePath::new(declaration.local_handle()).tokens()?;
+        let local_protocol = declaration
+            .local_protocol()
+            .ok_or(Error::UnsupportedExpansion(
+                "callback return without local callback protocol",
+            ))?;
+        let local_handle =
+            wrapper::handle::CallbackLocalPath::new(local_protocol.handle()).tokens()?;
         let value = &self.input.value;
         Ok(match (callback.form(), callback.presence()) {
             (rust_api::CallbackCarrier::BoxedDyn, HandlePresence::Required) => quote! {
@@ -282,29 +291,6 @@ impl<'context, 'a> WasmReturn<'context, 'a> {
                 ));
             }
         })
-    }
-}
-
-struct LocalHandlePath<'a> {
-    handle: &'a CallbackLocalHandle,
-}
-
-impl<'a> LocalHandlePath<'a> {
-    fn new(handle: &'a CallbackLocalHandle) -> Self {
-        Self { handle }
-    }
-
-    fn tokens(self) -> Result<TokenStream, Error> {
-        let suffix = self
-            .handle
-            .segments()
-            .iter()
-            .map(|segment| segment.as_str())
-            .collect::<Vec<_>>()
-            .join("::");
-        let path = parse_str::<syn::Path>(&format!("crate::{suffix}"))
-            .map_err(|_| Error::SourceSyntaxMismatch("callback local handle path is not Rust"))?;
-        Ok(quote! { #path })
     }
 }
 

@@ -57,7 +57,7 @@ pub use wasm::WASM_ABI_VERSION;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WasmCallbackOutBuf;
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{take_packed_utf8_string, write_return_slot};
+pub use wasm::{take_packed_bytes, take_packed_utf8_string, write_return_slot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnexpectedFfiCallbackError(pub String);

@@ -1,7 +1,8 @@
 use boltffi_ast::{FnSig, ReturnDef, TypeExpr};
 use boltffi_binding::{
-    ClosureForm, ClosureParameter, ErrorDecl, HandlePresence, ImportedCallable, IntoRust, Native,
-    OutgoingParam, ParamPlan, ReturnPlan, TypeRef, Wasm32, WritePlan, native, wasm32,
+    ClosureForm, ClosureParameter, ClosureReturn, ErrorDecl, HandlePresence, ImportedCallable,
+    IntoRust, Native, OutgoingParam, ParamPlan, ReturnPlan, TypeRef, Wasm32, WritePlan, native,
+    wasm32,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -20,7 +21,7 @@ use super::Tokens;
 pub struct Renderer;
 
 pub struct Input<'context, 'binding, S: Target> {
-    closure: &'binding ClosureParameter<S, IntoRust>,
+    closure: ForeignClosure<'binding, S>,
     source: rust_api::Closure<'binding>,
     ident: Ident,
     failure: TokenStream,
@@ -36,11 +37,63 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         expansion: &'context Expansion<'binding, S>,
     ) -> Self {
         Self {
-            closure,
+            closure: ForeignClosure::Parameter(closure),
             source,
             ident,
             failure,
             expansion,
+        }
+    }
+
+    pub fn returned(
+        closure: &'binding ClosureReturn<S, IntoRust>,
+        source: rust_api::Closure<'binding>,
+        ident: Ident,
+        failure: TokenStream,
+        expansion: &'context Expansion<'binding, S>,
+    ) -> Self {
+        Self {
+            closure: ForeignClosure::Return(closure),
+            source,
+            ident,
+            failure,
+            expansion,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ForeignClosure<'binding, S: Target> {
+    Parameter(&'binding ClosureParameter<S, IntoRust>),
+    Return(&'binding ClosureReturn<S, IntoRust>),
+}
+
+impl<'binding, S: Target> ForeignClosure<'binding, S> {
+    fn form(self) -> ClosureForm {
+        match self {
+            Self::Parameter(closure) => closure.form(),
+            Self::Return(closure) => closure.form(),
+        }
+    }
+
+    fn presence(self) -> HandlePresence {
+        match self {
+            Self::Parameter(closure) => closure.presence(),
+            Self::Return(closure) => closure.presence(),
+        }
+    }
+
+    fn registration(self) -> &'binding boltffi_binding::ClosureRegistration<S, IntoRust> {
+        match self {
+            Self::Parameter(closure) => closure.registration(),
+            Self::Return(closure) => closure.registration(),
+        }
+    }
+
+    fn invoke(self) -> &'binding ImportedCallable<S> {
+        match self {
+            Self::Parameter(closure) => closure.invoke(),
+            Self::Return(closure) => closure.invoke(),
         }
     }
 }
@@ -81,19 +134,23 @@ impl<'context, 'binding> NativeClosure<'context, 'binding> {
 
     fn invoke_context(self) -> Result<Tokens, Error> {
         let ident = &self.input.ident;
-        let rust_closure = RustClosure::new(self.input.source, self.input.closure)?;
+        let closure_binding = ClosureBinding::new(
+            self.input.source,
+            self.input.closure.form(),
+            self.input.closure.presence(),
+        )?;
         let invoke = ClosureInvoke::<Native>::new(
             self.input.closure.invoke(),
             self.input.source.signature(),
-            &rust_closure,
+            &closure_binding,
             self.input.expansion,
         )?;
         let invoke_parameters = invoke.parameters()?;
-        let names = RegistrationNames::new(ident);
-        let callback = &names.call;
-        let context = &names.context;
-        let release = &names.release;
-        let owner = &names.owner;
+        let names = names::ClosureRegistration::new(ident);
+        let callback = names.call();
+        let context = names.context();
+        let release = names.release();
+        let owner = names.owner();
         let return_tokens = invoke.return_tokens()?;
         let return_ffi_parameter_types = return_tokens.ffi_parameter_types();
         let return_call_arguments = return_tokens.call_arguments();
@@ -105,17 +162,17 @@ impl<'context, 'binding> NativeClosure<'context, 'binding> {
             #callback(#owner.context() #(, #call_arguments)* #(, #return_call_arguments)*)
         };
         let body = return_tokens.body(call);
-        let closure = rust_closure.native_binding(NativeBinding {
+        let closure = closure_binding.native_binding(NativeBinding {
             ident,
-            callback,
-            context,
-            release,
-            owner,
+            callback: &callback,
+            context: &context,
+            release: &release,
+            owner: &owner,
             rust_parameters: &invoke_parameters.rust_parameters,
             body,
             failure: &self.input.failure,
         })?;
-        let function_pointer_type = rust_closure.native_function_pointer_type(
+        let function_pointer_type = closure_binding.native_function_pointer_type(
             &invoke_parameters
                 .ffi_parameter_types
                 .iter()
@@ -124,7 +181,7 @@ impl<'context, 'binding> NativeClosure<'context, 'binding> {
                 .collect::<Vec<_>>(),
             return_type.clone(),
         )?;
-        let release_type = rust_closure.native_release_function_type();
+        let release_type = closure_binding.native_release_function_type();
 
         Ok(Tokens {
             items: Vec::new(),
@@ -145,7 +202,7 @@ impl<'context, 'binding> NativeClosure<'context, 'binding> {
     }
 }
 
-impl RustClosure {
+impl ClosureBinding {
     fn native_release_function_type(&self) -> TokenStream {
         match self {
             Self::NullableBoxed(_, _) => quote! {
@@ -158,7 +215,7 @@ impl RustClosure {
     }
 }
 
-impl RustClosure {
+impl ClosureBinding {
     fn native_function_pointer_type(
         &self,
         ffi_parameter_types: &[TokenStream],
@@ -186,11 +243,15 @@ impl<'context, 'binding> WasmClosure<'context, 'binding> {
 
     fn tokens(self) -> Result<Tokens, Error> {
         let ident = &self.input.ident;
-        let rust_closure = RustClosure::new(self.input.source, self.input.closure)?;
+        let closure_binding = ClosureBinding::new(
+            self.input.source,
+            self.input.closure.form(),
+            self.input.closure.presence(),
+        )?;
         let invoke = ClosureInvoke::<Wasm32>::new(
             self.input.closure.invoke(),
             self.input.source.signature(),
-            &rust_closure,
+            &closure_binding,
             self.input.expansion,
         )?;
         let invoke_parameters = invoke.parameters()?;
@@ -198,8 +259,8 @@ impl<'context, 'binding> WasmClosure<'context, 'binding> {
         let registration = self.input.closure.registration().shape();
         let call = Ident::new(registration.call().name().as_str(), ident.span());
         let free = Ident::new(registration.free().name().as_str(), ident.span());
-        let names = RegistrationNames::new(ident);
-        let owner = &names.owner;
+        let names = names::ClosureRegistration::new(ident);
+        let owner = names.owner();
         let return_ffi_parameter_types = return_tokens.ffi_parameter_types();
         let return_call_arguments = return_tokens.call_arguments();
         let return_type = return_tokens.ffi_return_type();
@@ -210,9 +271,9 @@ impl<'context, 'binding> WasmClosure<'context, 'binding> {
             #call(#owner.handle() #(, #call_arguments)* #(, #return_call_arguments)*)
         };
         let body = return_tokens.body(call_body);
-        let closure = rust_closure.wasm_binding(
+        let closure = closure_binding.wasm_binding(
             ident,
-            owner,
+            &owner,
             &free,
             &invoke_parameters.rust_parameters,
             body,
@@ -251,30 +312,10 @@ impl<'context, 'binding> WasmClosure<'context, 'binding> {
     }
 }
 
-struct RegistrationNames {
-    call: Ident,
-    context: Ident,
-    release: Ident,
-    owner: Ident,
-}
-
-impl RegistrationNames {
-    fn new(ident: &Ident) -> Self {
-        let ident_text = ident.to_string();
-        let stem = ident_text.strip_prefix("__boltffi_").unwrap_or(&ident_text);
-        Self {
-            call: Ident::new(&format!("__boltffi_{stem}_call"), ident.span()),
-            context: Ident::new(&format!("__boltffi_{stem}_context"), ident.span()),
-            release: Ident::new(&format!("__boltffi_{stem}_release"), ident.span()),
-            owner: Ident::new(&format!("__boltffi_{stem}_owner"), ident.span()),
-        }
-    }
-}
-
 struct ClosureInvoke<'context, 'binding, 'rust, S: Target> {
     callable: &'binding ImportedCallable<S>,
     source: &'binding FnSig,
-    rust_closure: &'rust RustClosure,
+    closure_binding: &'rust ClosureBinding,
     expansion: &'context Expansion<'binding, S>,
 }
 
@@ -282,7 +323,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
     fn new(
         callable: &'binding ImportedCallable<S>,
         source: &'binding FnSig,
-        rust_closure: &'rust RustClosure,
+        closure_binding: &'rust ClosureBinding,
         expansion: &'context Expansion<'binding, S>,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
@@ -293,7 +334,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
         Ok(Self {
             callable,
             source,
-            rust_closure,
+            closure_binding,
             expansion,
         })
     }
@@ -304,7 +345,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
             .params()
             .iter()
             .zip(self.source.parameters.iter())
-            .zip(self.rust_closure.parameters().iter())
+            .zip(self.closure_binding.parameters().iter())
             .enumerate()
             .map(|(index, ((param, source), rust_type))| {
                 InvokeParameterInput::new(index, param.payload(), source, rust_type, self.expansion)
@@ -331,7 +372,7 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
                 self.callable.returns().plan(),
                 self.callable.error(),
                 &self.source.returns,
-                self.rust_closure.return_type(),
+                self.closure_binding.return_type(),
                 self.expansion,
             ),
         )
@@ -1063,24 +1104,25 @@ struct RustFallibleReturn {
     err: Type,
 }
 
-enum RustClosure {
+enum ClosureBinding {
     ImplTrait(ClosureSignature),
     Boxed(ClosureSignature, Type),
     NullableBoxed(ClosureSignature, Type),
 }
 
-impl RustClosure {
-    fn new<S: Target>(
+impl ClosureBinding {
+    fn new(
         source: rust_api::Closure<'_>,
-        closure: &ClosureParameter<S, IntoRust>,
+        closure_form: ClosureForm,
+        closure_presence: HandlePresence,
     ) -> Result<Self, Error> {
-        if source.function() != closure.form() {
+        if source.function() != closure_form {
             return Err(Error::SourceSyntaxMismatch(
                 "source closure parameter form does not match binding closure",
             ));
         }
-        let signature = ClosureSignature::from_source(source.signature(), closure.form())?;
-        let rust_closure = match (closure.presence(), source.form()) {
+        let signature = ClosureSignature::from_source(source.signature(), closure_form)?;
+        let closure_binding = match (closure_presence, source.form()) {
             (HandlePresence::Required, rust_api::ClosureSourceForm::BoxedDyn) => {
                 Ok(Self::Boxed(signature, source.ty()?))
             }
@@ -1097,7 +1139,7 @@ impl RustClosure {
                 "source closure parameter form does not match binding closure",
             )),
         }?;
-        Ok(rust_closure)
+        Ok(closure_binding)
     }
 
     fn parameters(&self) -> &[Type] {

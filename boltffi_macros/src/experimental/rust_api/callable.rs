@@ -1,4 +1,6 @@
-use boltffi_ast::{BaseTrait, FunctionDef, ParameterDef, ParameterPassing, ReturnDef, TypeExpr};
+use boltffi_ast::{
+    BaseTrait, FunctionDef, MethodDef, ParameterDef, ParameterPassing, ReturnDef, TypeExpr,
+};
 use boltffi_binding::{HandlePresence, HandleTarget, Primitive, Receive};
 use syn::{Ident, Type, parse_str};
 
@@ -16,6 +18,13 @@ impl<'a> Callable<'a> {
         Self {
             parameters: &function.parameters,
             returns: &function.returns,
+        }
+    }
+
+    pub fn method(method: &'a MethodDef) -> Self {
+        Self {
+            parameters: &method.parameters,
+            returns: &method.returns,
         }
     }
 
@@ -238,19 +247,24 @@ impl CallbackObject {
 
 pub enum HandleReturn {
     Class,
-    Callback(CallbackReturn),
+    Callback(Box<CallbackReturn>),
 }
 
 pub struct CallbackReturn {
     form: CallbackCarrier,
     presence: HandlePresence,
+    object: Type,
 }
 
 impl CallbackReturn {
     fn new(presence: HandlePresence, type_expr: &TypeExpr) -> Result<Self, Error> {
+        let object = callback_object_inner(type_expr).ok_or(Error::SourceSyntaxMismatch(
+            "source callback handle is not a trait object container",
+        ))?;
         Ok(Self {
             form: CallbackCarrier::from_type_expr(type_expr)?,
             presence,
+            object: TypeTokens::new(object)?.into_type(),
         })
     }
 
@@ -260,6 +274,10 @@ impl CallbackReturn {
 
     pub const fn presence(&self) -> HandlePresence {
         self.presence
+    }
+
+    pub fn object(&self) -> &Type {
+        &self.object
     }
 }
 
@@ -417,7 +435,9 @@ impl<'a> Handle<'a> {
                     _ => return Err(Error::UnsupportedExpansion("unknown handle presence")),
                 };
                 self.matches(target, presence)?;
-                CallbackReturn::new(presence, type_expr).map(HandleReturn::Callback)
+                CallbackReturn::new(presence, type_expr)
+                    .map(Box::new)
+                    .map(HandleReturn::Callback)
             }
             _ => Err(Error::UnsupportedExpansion("unknown handle return target")),
         }

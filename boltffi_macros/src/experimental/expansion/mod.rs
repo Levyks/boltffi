@@ -1,7 +1,7 @@
 mod index;
 mod pair;
 
-use boltffi_ast::FunctionDef;
+use boltffi_ast::{FunctionDef, TraitDef};
 use boltffi_binding::{
     CallbackDecl, CallbackId, CustomTypeDecl, CustomTypeId, EncodedRecordDecl, FunctionDecl,
     LoweredBindings, RecordId, Surface,
@@ -46,6 +46,20 @@ impl<'a, S: Surface> Expansion<'a, S> {
         self.index.callback(self.lowered, id)
     }
 
+    /// Returns the lowered callback declaration paired with the scanned source trait.
+    pub fn callback_trait(
+        &self,
+        source: &'a TraitDef,
+    ) -> Result<DeclarationPair<'a, TraitDef, CallbackDecl<S>>, Error> {
+        match self
+            .index
+            .paired(self.lowered, SourceDeclaration::Callback(source))?
+        {
+            PairedDeclaration::Callback(pair) => Ok(pair),
+            _ => Err(Error::WrongDeclaration),
+        }
+    }
+
     /// Returns the encoded record declaration for an encoded record codec node.
     pub fn encoded_record(&self, id: RecordId) -> Result<&'a EncodedRecordDecl<S>, Error> {
         self.index.encoded_record(self.lowered, id)
@@ -71,9 +85,9 @@ mod tests {
     use boltffi_ast::{
         CanonicalName, ClassDef, ClassId, CustomRemoteType, CustomTypeConverter,
         CustomTypeConverters, CustomTypeDef, CustomTypeId, ExecutionKind, FieldDef, FnSig, FnTrait,
-        FnTraitKind, FunctionDef, FunctionId, PackageInfo, ParameterDef, ParameterPassing, Path,
-        Primitive, RecordDef, RecordId, ReturnDef, Source, SourceContract, SourceName, TraitDef,
-        TraitId, TypeExpr, Visibility,
+        FnTraitKind, FunctionDef, FunctionId, MethodDef, MethodId, PackageInfo, ParameterDef,
+        ParameterPassing, Path, Primitive, Receiver, RecordDef, RecordId, ReturnDef, Source,
+        SourceContract, SourceName, TraitDef, TraitId, TypeExpr, Visibility,
     };
     use boltffi_binding::{Native, Wasm32, lower_with_declarations};
     use proc_macro2::TokenStream;
@@ -116,6 +130,20 @@ mod tests {
             #syntax
             #wrapper
         })
+    }
+
+    fn expand_native_callback<'a>(
+        expansion: &Expansion<'a, Native>,
+        source: &'a TraitDef,
+    ) -> Result<TokenStream, Error> {
+        wrapper::callback::Renderer::new(expansion.callback_trait(source)?, expansion).render()
+    }
+
+    fn expand_wasm_callback<'a>(
+        expansion: &Expansion<'a, Wasm32>,
+        source: &'a TraitDef,
+    ) -> Result<TokenStream, Error> {
+        wrapper::callback::Renderer::new(expansion.callback_trait(source)?, expansion).render()
     }
 
     fn source_contract() -> SourceContract {
@@ -386,6 +414,182 @@ mod tests {
         )
     }
 
+    fn listener_trait_with_method() -> TraitDef {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("on_value"),
+            CanonicalName::single("on_value"),
+            Receiver::Shared,
+        );
+        method.parameters = vec![parameter("value", TypeExpr::Primitive(Primitive::U32))];
+        method.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+        listener.methods.push(method);
+        listener
+    }
+
+    fn listener_trait_contract() -> SourceContract {
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait_with_method());
+        source
+    }
+
+    fn bytes_returning_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("payload"),
+            CanonicalName::single("payload"),
+            Receiver::Shared,
+        );
+        method.returns = ReturnDef::value(byte_vec());
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn borrowed_string_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("on_name"),
+            CanonicalName::single("on_name"),
+            Receiver::Shared,
+        );
+        let mut parameter = parameter("name", TypeExpr::Str);
+        parameter.passing = ParameterPassing::Ref;
+        method.parameters = vec![parameter];
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn borrowed_u32_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("on_value"),
+            CanonicalName::single("on_value"),
+            Receiver::Shared,
+        );
+        let mut parameter = parameter("value", TypeExpr::Primitive(Primitive::U32));
+        parameter.passing = ParameterPassing::Ref;
+        method.parameters = vec![parameter];
+        method.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn async_string_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("on_event"),
+            CanonicalName::single("on_event"),
+            Receiver::Shared,
+        );
+        method.execution = ExecutionKind::Async;
+        method.parameters = vec![parameter("value", TypeExpr::Primitive(Primitive::I32))];
+        method.returns = ReturnDef::value(TypeExpr::String);
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn closure_taking_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("on_render"),
+            CanonicalName::single("on_render"),
+            Receiver::Shared,
+        );
+        method.parameters = vec![parameter(
+            "callback",
+            impl_closure(
+                vec![TypeExpr::Primitive(Primitive::U32)],
+                ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
+            ),
+        )];
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn closure_returning_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("make_handler"),
+            CanonicalName::single("make_handler"),
+            Receiver::Shared,
+        );
+        method.returns = ReturnDef::value(impl_closure(
+            vec![TypeExpr::Primitive(Primitive::U32)],
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
+        ));
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn boxed_closure_returning_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("make_handler"),
+            CanonicalName::single("make_handler"),
+            Receiver::Shared,
+        );
+        method.returns = ReturnDef::value(boxed_closure(
+            vec![TypeExpr::Primitive(Primitive::U32)],
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
+        ));
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn string_closure_taking_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("on_render"),
+            CanonicalName::single("on_render"),
+            Receiver::Shared,
+        );
+        method.parameters = vec![parameter(
+            "callback",
+            impl_closure(vec![TypeExpr::String], ReturnDef::value(TypeExpr::String)),
+        )];
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
+    fn fallible_callback_returning_listener_contract() -> SourceContract {
+        let mut listener = listener_trait();
+        let mut method = MethodDef::new(
+            MethodId::new("listener"),
+            CanonicalName::single("listener"),
+            Receiver::Shared,
+        );
+        method.returns = result_return(boxed_listener(), TypeExpr::String);
+        listener.methods.push(method);
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener);
+        source
+    }
+
     fn closure_param_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::apply"),
@@ -503,6 +707,22 @@ mod tests {
         ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
+    fn closure_return_with_record_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::make_callback"),
+            CanonicalName::single("make_callback"),
+        );
+        function.returns = ReturnDef::value(impl_closure(
+            vec![record("Point")],
+            ReturnDef::value(TypeExpr::Primitive(Primitive::U32)),
+        ));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(point_record());
         source.functions.push(function);
         source
     }
@@ -2831,6 +3051,360 @@ mod tests {
     }
 
     #[test]
+    fn native_callback_trait_expansion_emits_vtable_and_local_handle_protocol() {
+        let source = listener_trait_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+
+        assert!(rendered.contains("pub struct ListenerVTable"));
+        assert!(rendered.contains("pub on_value : extern \"C\" fn (handle : u64 , u32) -> u32"));
+        assert!(
+            rendered.contains("pub unsafe extern \"C\" fn boltffi_register_callback_demo_listener")
+        );
+        assert!(rendered.contains("pub extern \"C\" fn boltffi_create_callback_demo_listener"));
+        assert!(rendered.contains("impl Listener for ForeignListener"));
+        assert!(
+            rendered
+                .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
+        );
+        assert!(rendered.contains("pub (crate) fn __boltffi_local_demo_listener_handle"));
+        assert!(rendered.contains("static __BOLTFFI_LOCAL_LISTENER_VTABLE"));
+    }
+
+    #[test]
+    fn wasm_callback_trait_expansion_emits_imports_and_local_registry_protocol() {
+        let source = listener_trait_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_wasm_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+
+        assert!(
+            rendered.contains("fn __boltffi_callback_lifecycle_demo_listener_free (handle : u32)")
+        );
+        assert!(
+            rendered.contains(
+                "fn __boltffi_callback_lifecycle_demo_listener_clone (handle : u32) -> u32"
+            )
+        );
+        assert!(rendered.contains(
+            "fn __boltffi_callback_method_demo_listener_on_value (handle : u32 , __boltffi_arg0 : u32) -> u32"
+        ));
+        assert!(rendered.contains("pub extern \"C\" fn boltffi_create_callback_demo_listener"));
+        assert!(rendered.contains("impl Listener for ForeignListener"));
+        assert!(rendered.contains("pub struct LocalListener"));
+        assert!(rendered.contains("impl Listener for LocalListener"));
+        assert!(rendered.contains("if handle < 2147483648u32"));
+        assert!(rendered.contains("let handle = __boltffi_local_demo_listener_clone (handle)"));
+        assert!(rendered.contains(":: std :: sync :: Arc :: new (LocalListener { handle })"));
+        assert!(rendered.contains("Box :: new (LocalListener { handle })"));
+        let local_drop = rendered
+            .split("impl Drop for LocalListener")
+            .nth(1)
+            .and_then(|tail| tail.split("impl Listener for LocalListener").next())
+            .expect("local listener drop body");
+        assert!(local_drop.contains("__boltffi_local_demo_listener_free (self . handle)"));
+        assert!(!local_drop.contains("__boltffi_callback_lifecycle_demo_listener_free"));
+        assert!(rendered.contains("static __BOLTFFI_LOCAL_LISTENER_REGISTRY"));
+        assert!(rendered.contains("pub extern \"C\" fn __boltffi_local_demo_listener_on_value"));
+        assert!(rendered.contains("pub (crate) fn __boltffi_local_demo_listener_handle"));
+    }
+
+    #[test]
+    fn wasm_callback_method_returning_bytes_uses_out_buffer() {
+        let source = bytes_returning_listener_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_wasm_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "fn __boltffi_callback_method_demo_listener_payload (handle : u32 , __boltffi_callback_out : * mut :: boltffi :: __private :: WasmCallbackOutBuf)"
+        ));
+        assert!(rendered.contains(
+            "let mut __boltffi_callback_out = :: boltffi :: __private :: WasmCallbackOutBuf :: empty ()"
+        ));
+        assert!(rendered.contains("__boltffi_callback_out . as_slice ()"));
+        assert!(rendered.contains(
+            "pub extern \"C\" fn __boltffi_local_demo_listener_payload (handle : u32) -> u64"
+        ));
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: take_packed_bytes (__boltffi_local_demo_listener_payload (self . handle))"
+        ));
+        assert!(!rendered.contains(
+            "__boltffi_local_demo_listener_payload (self . handle , & mut __boltffi_callback_out)"
+        ));
+    }
+
+    #[test]
+    fn native_callback_method_borrowed_string_param_encodes_reference() {
+        let source = borrowed_string_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains("fn on_name (& self , name : & str)"));
+        assert!(
+            rendered.contains("pub on_name : extern \"C\" fn (handle : u64 , * const u8 , usize)")
+        );
+        assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& name)"));
+    }
+
+    #[test]
+    fn native_callback_method_borrowed_direct_scalar_param_passes_value() {
+        let source = borrowed_u32_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains("fn on_value (& self , value : & u32) -> u32"));
+        assert!(rendered.contains("self . handle , * value"));
+    }
+
+    #[test]
+    fn native_async_callback_method_expansion_uses_completion_callback() {
+        let source = async_string_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "pub on_event : extern \"C\" fn (handle : u64 , i32 , completion : :: boltffi :: __private :: AsyncCallback < :: boltffi :: __private :: FfiBuf > , completion_data : * mut :: core :: ffi :: c_void)"
+        ));
+        assert!(rendered.contains("async fn on_event (& self , value : i32) -> String"));
+        assert!(rendered.contains("__boltffi_completion_data"));
+        assert!(rendered.contains("async callback return conversion failed"));
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
+        );
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: BoxFromCallbackHandle for dyn Listener")
+        );
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: CallbackForeignType for dyn Listener")
+        );
+    }
+
+    #[test]
+    fn wasm_async_callback_method_expansion_uses_start_import_and_complete_export() {
+        let source = async_string_listener_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_wasm_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "fn __boltffi_callback_async_start_demo_listener_on_event (handle : u32 , request_id : u32 , __boltffi_arg0 : i32)"
+        ));
+        assert!(rendered.contains(
+            "pub unsafe extern \"C\" fn boltffi_callback_demo_listener_on_event_complete"
+        ));
+        assert!(rendered.contains("AsyncCallbackRegistry :: current"));
+        assert!(rendered.contains("async callback return conversion failed"));
+        assert!(!rendered.contains("pub struct LocalListener"));
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
+        );
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: BoxFromCallbackHandle for dyn Listener")
+        );
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: CallbackForeignType for dyn Listener")
+        );
+    }
+
+    #[test]
+    fn native_callback_method_closure_param_expansion_registers_closure() {
+        let source = closure_taking_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains("fn on_render (& self , callback : impl Fn (u32) -> u32)"));
+        assert!(rendered.contains("__boltffi_callback_call"));
+        assert!(rendered.contains("__boltffi_callback_context"));
+        assert!(rendered.contains("__boltffi_callback_release"));
+        assert!(rendered.contains("pub on_render : extern \"C\" fn"));
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
+        );
+        assert!(!rendered.contains("pub (crate) fn __boltffi_local_demo_listener_handle"));
+    }
+
+    #[test]
+    fn native_callback_method_closure_param_expansion_encodes_closure_invocation() {
+        let source = string_closure_taking_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains("fn on_render (& self , callback : impl Fn (String) -> String)"));
+        assert!(rendered.contains(
+            "extern \"C\" fn __boltffi_callback_call (__boltffi_context : * mut :: core :: ffi :: c_void , __boltffi_arg0_ptr : * const u8 , __boltffi_arg0_len : usize) -> :: boltffi :: __private :: FfiBuf"
+        ));
+        assert!(rendered.contains(":: boltffi :: __private :: wire :: decode :: < String >"));
+        assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: wire_encode"));
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
+        );
+    }
+
+    #[test]
+    fn wasm_callback_method_closure_param_expansion_encodes_closure_invocation() {
+        let source = string_closure_taking_listener_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_wasm_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains("fn on_render (& self , callback : impl Fn (String) -> String)"));
+        assert!(rendered.contains("pub unsafe extern \"C\" fn boltffi_closure_"));
+        assert!(rendered.contains(
+            "(__boltffi_context : u32 , __boltffi_arg0_ptr : * const u8 , __boltffi_arg0_len : usize) -> u64"
+        ));
+        assert!(rendered.contains(":: boltffi :: __private :: wire :: decode :: < String >"));
+        assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: wire_encode"));
+        assert!(
+            !rendered
+                .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
+        );
+    }
+
+    #[test]
+    fn native_callback_method_closure_return_expansion_reads_native_registration() {
+        let source = closure_returning_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "pub make_handler : extern \"C\" fn (handle : u64 , __boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiStatus"
+        ));
+        assert!(rendered.contains("fn make_handler (& self) -> impl Fn (u32) -> u32"));
+        assert!(rendered.contains(
+            "let mut __boltffi_return_out = :: core :: mem :: MaybeUninit :: < __BoltffiCallbackClosureReturn__boltffi_closure > :: uninit ()"
+        ));
+        assert!(rendered.contains(
+            "NativeCallbackOwner :: new (__boltffi_closure_context , __boltffi_closure_release)"
+        ));
+    }
+
+    #[test]
+    fn wasm_callback_method_closure_return_expansion_reads_wasm_handle() {
+        let source = closure_returning_listener_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_wasm_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "fn __boltffi_callback_method_demo_listener_make_handler (handle : u32 , __boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiStatus"
+        ));
+        assert!(rendered.contains("fn make_handler (& self) -> impl Fn (u32) -> u32"));
+        assert!(rendered.contains(
+            "let mut __boltffi_return_out = :: core :: mem :: MaybeUninit :: < u32 > :: uninit ()"
+        ));
+        assert!(rendered.contains("WasmCallbackOwner :: new (__boltffi_closure"));
+    }
+
+    #[test]
+    fn native_callback_local_method_closure_return_expansion_writes_local_registration() {
+        let source = boxed_closure_returning_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "extern \"C\" fn __boltffi_local_demo_listener_make_handler (handle : u64 , __boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiStatus"
+        ));
+        assert!(rendered.contains(
+            "* __boltffi_return_out = __BoltffiClosureReturn__boltffi_closure { invoke : Some"
+        ));
+        assert!(rendered.contains("release : Some"));
+    }
+
+    #[test]
+    fn native_callback_method_returning_callback_result_uses_local_success_handle() {
+        let source = fallible_callback_returning_listener_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
+
+        assert!(rendered.contains(
+            "pub listener : extern \"C\" fn (handle : u64 , __boltffi_success_out : * mut :: boltffi :: __private :: CallbackHandle) -> :: boltffi :: __private :: FfiBuf"
+        ));
+        assert!(rendered.contains(
+            "let mut __boltffi_success_out = :: core :: mem :: MaybeUninit :: < :: boltffi :: __private :: CallbackHandle > :: uninit ()"
+        ));
+        assert!(rendered.contains("BoxFromCallbackHandle"));
+        assert!(rendered.contains(
+            "box_from_callback_handle (unsafe { __boltffi_success_out . assume_init () })"
+        ));
+        assert!(rendered.contains(
+            "* __boltffi_success_out = crate :: __boltffi_local_demo_listener_handle (:: std :: sync :: Arc :: from (__boltffi_success))"
+        ));
+        assert!(!rendered.contains("boltffi_create_callback_demo_listener (__boltffi_success)"));
+    }
+
+    #[test]
     fn wasm_nullable_arc_callback_param_expansion_recovers_optional_shared_trait_object() {
         let source = nullable_arc_callback_param_contract();
         let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
@@ -2900,7 +3474,7 @@ mod tests {
                     -> ::boltffi::__private::CallbackHandle
                 {
                     let __boltffi_result: Box<dyn Listener> = make_listener();
-                    crate::__boltffi_local_listener_handle(::std::sync::Arc::from(__boltffi_result))
+                    crate::__boltffi_local_demo_listener_handle(::std::sync::Arc::from(__boltffi_result))
                 }
             }
             .to_string()
@@ -2933,7 +3507,7 @@ mod tests {
                     -> ::boltffi::__private::CallbackHandle
                 {
                     let __boltffi_result: ::std::sync::Arc<dyn Listener> = shared_listener();
-                    crate::__boltffi_local_listener_handle(__boltffi_result)
+                    crate::__boltffi_local_demo_listener_handle(__boltffi_result)
                 }
             }
             .to_string()
@@ -2967,7 +3541,7 @@ mod tests {
                         maybe_listener();
                     __boltffi_result
                         .map(|__boltffi_callback|
-                            crate::__boltffi_local_listener_handle(__boltffi_callback).handle() as u32
+                            crate::__boltffi_local_demo_listener_handle(__boltffi_callback).handle() as u32
                         )
                         .unwrap_or(0)
                 }
@@ -3002,7 +3576,7 @@ mod tests {
                     let __boltffi_result: Option<Box<dyn Listener> > = maybe_boxed_listener();
                     __boltffi_result
                         .map(|__boltffi_callback| {
-                            crate::__boltffi_local_listener_handle(
+                            crate::__boltffi_local_demo_listener_handle(
                                 ::std::sync::Arc::from(__boltffi_callback)
                             ).handle() as u32
                         })
@@ -3043,7 +3617,7 @@ mod tests {
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
                                     *__boltffi_return_out =
-                                        crate::__boltffi_local_listener_handle(
+                                        crate::__boltffi_local_demo_listener_handle(
                                             ::std::sync::Arc::from(__boltffi_success)
                                         );
                                 }
@@ -3433,6 +4007,35 @@ mod tests {
         assert!(rendered.contains(
             "* __boltffi_return_out = Box :: into_raw (Box :: new (Box :: new (__boltffi_closure) as Box < dyn Fn (u32) -> u32 + 'static >)) as usize as u32"
         ));
+    }
+
+    #[test]
+    fn wasm_closure_return_invoke_reads_direct_record_param_from_pointer() {
+        let source = closure_return_with_record_param_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn make_callback() -> impl Fn(Point) -> u32 {
+                |point| point.x as u32
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        syn::parse2::<syn::File>(tokens.clone()).expect("expanded closure return parses");
+        let rendered = tokens.to_string();
+
+        assert!(rendered.contains(
+            "pub unsafe extern \"C\" fn boltffi_closure_1____closure__demo_point_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : * const u8) -> u32"
+        ));
+        assert!(rendered.contains(
+            "let __boltffi_arg0 : Point = unsafe { let __boltffi_value = :: core :: ptr :: read_unaligned (__boltffi_arg0 as * const < Point as :: boltffi :: __private :: Passable > :: In) ; < Point as :: boltffi :: __private :: Passable > :: unpack (__boltffi_value) }"
+        ));
+        assert!(
+            !rendered.contains(
+                "__boltffi_arg0 : < Point as :: boltffi :: __private :: Passable > :: In"
+            )
+        );
     }
 
     #[test]

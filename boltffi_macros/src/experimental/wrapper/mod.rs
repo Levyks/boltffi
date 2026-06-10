@@ -5,12 +5,15 @@ mod names;
 
 pub mod arguments;
 pub mod async_call;
+pub mod callback;
 pub mod encoded;
 pub mod function;
 pub mod handle;
 pub mod param;
 pub mod returns;
 pub mod type_ref;
+
+mod closure;
 
 /// A render rule for one typed expansion input.
 ///

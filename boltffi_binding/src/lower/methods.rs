@@ -363,8 +363,8 @@ impl<S: SurfaceLower, T> CallbackMethodSurface<S, T> {
 
 fn require_callback_receiver(receiver: Receiver) -> Result<(), LowerError> {
     match receiver {
-        Receiver::Shared | Receiver::Mutable => Ok(()),
-        Receiver::None | Receiver::Owned => Err(LowerError::unsupported_type(
+        Receiver::Shared => Ok(()),
+        Receiver::None | Receiver::Owned | Receiver::Mutable => Err(LowerError::unsupported_type(
             UnsupportedType::InvalidCallbackReceiver,
         )),
     }
