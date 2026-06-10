@@ -12,39 +12,39 @@ pub enum PollStyle {
 }
 
 /// Lifecycle symbols of a poll-handle async protocol.
-pub struct PollHandleSymbols<'a> {
-    poll: &'a NativeSymbol,
-    complete: &'a NativeSymbol,
-    cancel: &'a NativeSymbol,
-    free: &'a NativeSymbol,
-    panic_message: &'a NativeSymbol,
+pub struct PollHandleSymbols<'symbols> {
+    poll: &'symbols NativeSymbol,
+    complete: &'symbols NativeSymbol,
+    cancel: &'symbols NativeSymbol,
+    free: &'symbols NativeSymbol,
+    panic_message: &'symbols NativeSymbol,
     style: PollStyle,
 }
 
-impl<'a> PollHandleSymbols<'a> {
+impl<'symbols> PollHandleSymbols<'symbols> {
     /// Returns the symbol that advances the operation.
-    pub fn poll(&self) -> &'a NativeSymbol {
+    pub fn poll(&self) -> &'symbols NativeSymbol {
         self.poll
     }
 
     /// Returns the symbol that extracts the resolved value once ready.
-    pub fn complete(&self) -> &'a NativeSymbol {
+    pub fn complete(&self) -> &'symbols NativeSymbol {
         self.complete
     }
 
     /// Returns the symbol that requests cancellation.
-    pub fn cancel(&self) -> &'a NativeSymbol {
+    pub fn cancel(&self) -> &'symbols NativeSymbol {
         self.cancel
     }
 
     /// Returns the symbol that releases the async state.
-    pub fn free(&self) -> &'a NativeSymbol {
+    pub fn free(&self) -> &'symbols NativeSymbol {
         self.free
     }
 
     /// Returns the symbol that retrieves the panic message after a failed
     /// operation.
-    pub fn panic_message(&self) -> &'a NativeSymbol {
+    pub fn panic_message(&self) -> &'symbols NativeSymbol {
         self.panic_message
     }
 

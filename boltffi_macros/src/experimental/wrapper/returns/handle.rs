@@ -13,19 +13,19 @@ use crate::experimental::{
 pub struct Value;
 pub struct Failure;
 
-pub struct ValueInput<'context, 'a, S: Target, C> {
-    expansion: &'context Expansion<'a, S>,
-    target: &'a HandleTarget,
+pub struct ValueInput<'expansion, 'lowered, S: Target, C> {
+    expansion: &'expansion Expansion<'lowered, S>,
+    target: &'lowered HandleTarget,
     carrier: C,
     presence: HandlePresence,
     value: syn::Ident,
     handle_return: rust_api::HandleReturn,
 }
 
-impl<'context, 'a, S: Target, C> ValueInput<'context, 'a, S, C> {
+impl<'expansion, 'lowered, S: Target, C> ValueInput<'expansion, 'lowered, S, C> {
     pub fn new(
-        expansion: &'context Expansion<'a, S>,
-        target: &'a HandleTarget,
+        expansion: &'expansion Expansion<'lowered, S>,
+        target: &'lowered HandleTarget,
         carrier: C,
         presence: HandlePresence,
         value: syn::Ident,
@@ -68,27 +68,27 @@ impl ValueTokens {
     }
 }
 
-impl<'context, 'a> Render<Native, ValueInput<'context, 'a, Native, native::HandleCarrier>>
-    for Value
+impl<'expansion, 'lowered>
+    Render<Native, ValueInput<'expansion, 'lowered, Native, native::HandleCarrier>> for Value
 {
     type Output = ValueTokens;
 
     fn render(
         self,
-        input: ValueInput<'context, 'a, Native, native::HandleCarrier>,
+        input: ValueInput<'expansion, 'lowered, Native, native::HandleCarrier>,
     ) -> Result<Self::Output, Error> {
         NativeReturn::new(input).tokens()
     }
 }
 
-impl<'context, 'a> Render<Wasm32, ValueInput<'context, 'a, Wasm32, wasm32::HandleCarrier>>
-    for Value
+impl<'expansion, 'lowered>
+    Render<Wasm32, ValueInput<'expansion, 'lowered, Wasm32, wasm32::HandleCarrier>> for Value
 {
     type Output = ValueTokens;
 
     fn render(
         self,
-        input: ValueInput<'context, 'a, Wasm32, wasm32::HandleCarrier>,
+        input: ValueInput<'expansion, 'lowered, Wasm32, wasm32::HandleCarrier>,
     ) -> Result<Self::Output, Error> {
         WasmReturn::new(input).tokens()
     }
@@ -110,12 +110,12 @@ impl Render<Wasm32, FailureInput<wasm32::HandleCarrier>> for Failure {
     }
 }
 
-struct NativeReturn<'context, 'a> {
-    input: ValueInput<'context, 'a, Native, native::HandleCarrier>,
+struct NativeReturn<'expansion, 'lowered> {
+    input: ValueInput<'expansion, 'lowered, Native, native::HandleCarrier>,
 }
 
-impl<'context, 'a> NativeReturn<'context, 'a> {
-    fn new(input: ValueInput<'context, 'a, Native, native::HandleCarrier>) -> Self {
+impl<'expansion, 'lowered> NativeReturn<'expansion, 'lowered> {
+    fn new(input: ValueInput<'expansion, 'lowered, Native, native::HandleCarrier>) -> Self {
         Self { input }
     }
 
@@ -202,12 +202,12 @@ impl<'context, 'a> NativeReturn<'context, 'a> {
     }
 }
 
-struct WasmReturn<'context, 'a> {
-    input: ValueInput<'context, 'a, Wasm32, wasm32::HandleCarrier>,
+struct WasmReturn<'expansion, 'lowered> {
+    input: ValueInput<'expansion, 'lowered, Wasm32, wasm32::HandleCarrier>,
 }
 
-impl<'context, 'a> WasmReturn<'context, 'a> {
-    fn new(input: ValueInput<'context, 'a, Wasm32, wasm32::HandleCarrier>) -> Self {
+impl<'expansion, 'lowered> WasmReturn<'expansion, 'lowered> {
+    fn new(input: ValueInput<'expansion, 'lowered, Wasm32, wasm32::HandleCarrier>) -> Self {
         Self { input }
     }
 

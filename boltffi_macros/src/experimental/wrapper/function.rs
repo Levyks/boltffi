@@ -18,27 +18,33 @@ use super::export;
 ///
 /// The renderer receives a paired source and binding declaration, then renders only the
 /// generated extern wrapper. The original Rust function item remains owned by the caller.
-pub struct Renderer<'context, 'a, S: Target> {
-    pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
-    expansion: &'context Expansion<'a, S>,
+pub struct Renderer<'expansion, 'lowered, S: Target> {
+    pair: DeclarationPair<'lowered, FunctionDef, FunctionDecl<S>>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S> Renderer<'context, 'a, S>
+impl<'expansion, 'lowered, S> Renderer<'expansion, 'lowered, S>
 where
     S: Target,
-    wrapper::arguments::SyncRenderer:
-        Render<S, wrapper::arguments::Input<'context, 'a, S>, Output = wrapper::arguments::Tokens>,
+    wrapper::arguments::SyncRenderer: Render<
+            S,
+            wrapper::arguments::Input<'expansion, 'lowered, S>,
+            Output = wrapper::arguments::Tokens,
+        >,
     wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'context, 'a, S>, Output = TokenStream>,
-    wrapper::returns::Renderer:
-        Render<S, wrapper::returns::Input<'context, 'a, S>, Output = wrapper::returns::Tokens>,
+        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+    wrapper::returns::Renderer: Render<
+            S,
+            wrapper::returns::Input<'expansion, 'lowered, S>,
+            Output = wrapper::returns::Tokens,
+        >,
     wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
 {
     /// Creates a renderer for one paired function declaration.
     pub fn new(
-        pair: DeclarationPair<'a, FunctionDef, FunctionDecl<S>>,
-        expansion: &'context Expansion<'a, S>,
+        pair: DeclarationPair<'lowered, FunctionDef, FunctionDecl<S>>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self { pair, expansion }
     }

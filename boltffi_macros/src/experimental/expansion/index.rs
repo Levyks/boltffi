@@ -24,11 +24,11 @@ impl ExpansionIndex {
         }
     }
 
-    pub fn paired<'a, S: Surface>(
+    pub fn paired<'lowered, S: Surface>(
         &self,
-        lowered: &'a LoweredBindings<S>,
-        source: SourceDeclaration<'a>,
-    ) -> Result<PairedDeclaration<'a, S>, Error> {
+        lowered: &'lowered LoweredBindings<S>,
+        source: SourceDeclaration<'lowered>,
+    ) -> Result<PairedDeclaration<'lowered, S>, Error> {
         let source_id = source.id();
         let binding_id = lowered
             .declarations()
@@ -47,11 +47,11 @@ impl ExpansionIndex {
         source.pair(binding)
     }
 
-    pub fn custom_type<'a, S: Surface>(
+    pub fn custom_type<'lowered, S: Surface>(
         &self,
-        lowered: &'a LoweredBindings<S>,
+        lowered: &'lowered LoweredBindings<S>,
         id: CustomTypeId,
-    ) -> Result<&'a CustomTypeDecl, Error> {
+    ) -> Result<&'lowered CustomTypeDecl, Error> {
         let declaration_id = DeclarationId::CustomType(id);
         let index = self
             .binding_by_id
@@ -64,11 +64,11 @@ impl ExpansionIndex {
         }
     }
 
-    pub fn callback<'a, S: Surface>(
+    pub fn callback<'lowered, S: Surface>(
         &self,
-        lowered: &'a LoweredBindings<S>,
+        lowered: &'lowered LoweredBindings<S>,
         id: CallbackId,
-    ) -> Result<&'a CallbackDecl<S>, Error> {
+    ) -> Result<&'lowered CallbackDecl<S>, Error> {
         let declaration_id = DeclarationId::Callback(id);
         let index = self
             .binding_by_id
@@ -81,11 +81,11 @@ impl ExpansionIndex {
         }
     }
 
-    pub fn encoded_record<'a, S: Surface>(
+    pub fn encoded_record<'lowered, S: Surface>(
         &self,
-        lowered: &'a LoweredBindings<S>,
+        lowered: &'lowered LoweredBindings<S>,
         id: RecordId,
-    ) -> Result<&'a EncodedRecordDecl<S>, Error> {
+    ) -> Result<&'lowered EncodedRecordDecl<S>, Error> {
         let declaration_id = DeclarationId::Record(id);
         let index = self
             .binding_by_id

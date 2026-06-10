@@ -51,19 +51,19 @@ impl Signature {
     }
 }
 
-pub struct Invoke<'context, 'a, S: Target> {
-    callable: &'a ExportedCallable<S>,
-    source: &'a FnSig,
-    signature: &'a Signature,
-    expansion: &'context Expansion<'a, S>,
+pub struct Invoke<'expansion, 'lowered, S: Target> {
+    callable: &'lowered ExportedCallable<S>,
+    source: &'lowered FnSig,
+    signature: &'lowered Signature,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Invoke<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Invoke<'expansion, 'lowered, S> {
     pub fn new(
-        callable: &'a ExportedCallable<S>,
-        source: &'a FnSig,
-        signature: &'a Signature,
-        expansion: &'context Expansion<'a, S>,
+        callable: &'lowered ExportedCallable<S>,
+        source: &'lowered FnSig,
+        signature: &'lowered Signature,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
@@ -80,7 +80,7 @@ impl<'context, 'a, S: Target> Invoke<'context, 'a, S> {
 
     fn render_parameters(&self, failure: &TokenStream) -> Result<InvokeParameters, Error>
     where
-        ParameterRenderer: Render<S, Parameter<'context, 'a, S>, Output = ParameterTokens>,
+        ParameterRenderer: Render<S, Parameter<'expansion, 'lowered, S>, Output = ParameterTokens>,
     {
         self.callable
             .params()
@@ -107,7 +107,7 @@ impl<'context, 'a, S: Target> Invoke<'context, 'a, S> {
 
     fn render_return(&self) -> Result<InvokeReturn, Error>
     where
-        ReturnRenderer: Render<S, Return<'context, 'a, S>, Output = InvokeReturn>,
+        ReturnRenderer: Render<S, Return<'expansion, 'lowered, S>, Output = InvokeReturn>,
     {
         <ReturnRenderer as Render<S, _>>::render(
             ReturnRenderer,
@@ -122,7 +122,7 @@ impl<'context, 'a, S: Target> Invoke<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a> Invoke<'context, 'a, Native> {
+impl<'expansion, 'lowered> Invoke<'expansion, 'lowered, Native> {
     pub fn parameters(&self, failure: &TokenStream) -> Result<InvokeParameters, Error> {
         self.render_parameters(failure)
     }
@@ -132,7 +132,7 @@ impl<'context, 'a> Invoke<'context, 'a, Native> {
     }
 }
 
-impl<'context, 'a> Invoke<'context, 'a, Wasm32> {
+impl<'expansion, 'lowered> Invoke<'expansion, 'lowered, Wasm32> {
     pub fn parameters(&self, failure: &TokenStream) -> Result<InvokeParameters, Error> {
         self.render_parameters(failure)
     }
@@ -144,23 +144,23 @@ impl<'context, 'a> Invoke<'context, 'a, Wasm32> {
 
 struct ParameterRenderer;
 
-struct Parameter<'context, 'a, S: Target> {
+struct Parameter<'expansion, 'lowered, S: Target> {
     index: usize,
-    payload: &'a IncomingParam<S>,
-    source: &'a TypeExpr,
-    rust_type: &'a Type,
+    payload: &'lowered IncomingParam<S>,
+    source: &'lowered TypeExpr,
+    rust_type: &'lowered Type,
     failure: TokenStream,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Parameter<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Parameter<'expansion, 'lowered, S> {
     fn direct_tokens(&self) -> Result<Option<ParameterTokens>, Error>
     where
-        for<'binding> wrapper::param::direct::Renderer:
-            Render<S, wrapper::param::direct::Input<'binding>, Output = wrapper::param::Tokens>,
-        for<'binding> wrapper::param::closure::Renderer: Render<
+        for<'direct> wrapper::param::direct::Renderer:
+            Render<S, wrapper::param::direct::Input<'direct>, Output = wrapper::param::Tokens>,
+        wrapper::param::closure::Renderer: Render<
                 S,
-                wrapper::param::closure::Input<'context, 'binding, S>,
+                wrapper::param::closure::Input<'expansion, 'lowered, S>,
                 Output = wrapper::param::Tokens,
             >,
     {
@@ -248,10 +248,12 @@ impl<'context, 'a, S: Target> Parameter<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a> Render<Native, Parameter<'context, 'a, Native>> for ParameterRenderer {
+impl<'expansion, 'lowered> Render<Native, Parameter<'expansion, 'lowered, Native>>
+    for ParameterRenderer
+{
     type Output = ParameterTokens;
 
-    fn render(self, input: Parameter<'context, 'a, Native>) -> Result<Self::Output, Error> {
+    fn render(self, input: Parameter<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
         }
@@ -273,10 +275,12 @@ impl<'context, 'a> Render<Native, Parameter<'context, 'a, Native>> for Parameter
     }
 }
 
-impl<'context, 'a> Render<Wasm32, Parameter<'context, 'a, Wasm32>> for ParameterRenderer {
+impl<'expansion, 'lowered> Render<Wasm32, Parameter<'expansion, 'lowered, Wasm32>>
+    for ParameterRenderer
+{
     type Output = ParameterTokens;
 
-    fn render(self, input: Parameter<'context, 'a, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(self, input: Parameter<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
         }
@@ -379,21 +383,21 @@ impl From<Vec<ParameterTokens>> for InvokeParameters {
 
 struct ReturnRenderer;
 
-struct Return<'context, 'a, S: Target> {
-    plan: &'a ReturnPlan<S, OutOfRust>,
-    error: &'a ErrorDecl<S, OutOfRust>,
-    source: &'a ReturnDef,
-    rust_type: Option<&'a Type>,
-    expansion: &'context Expansion<'a, S>,
+struct Return<'expansion, 'lowered, S: Target> {
+    plan: &'lowered ReturnPlan<S, OutOfRust>,
+    error: &'lowered ErrorDecl<S, OutOfRust>,
+    source: &'lowered ReturnDef,
+    rust_type: Option<&'lowered Type>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Return<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Return<'expansion, 'lowered, S> {
     fn new(
-        plan: &'a ReturnPlan<S, OutOfRust>,
-        error: &'a ErrorDecl<S, OutOfRust>,
-        source: &'a ReturnDef,
-        rust_type: Option<&'a Type>,
-        expansion: &'context Expansion<'a, S>,
+        plan: &'lowered ReturnPlan<S, OutOfRust>,
+        error: &'lowered ErrorDecl<S, OutOfRust>,
+        source: &'lowered ReturnDef,
+        rust_type: Option<&'lowered Type>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             plan,
@@ -461,18 +465,21 @@ impl<'context, 'a, S: Target> Return<'context, 'a, S> {
         Ok(RustFallibleReturn { ok })
     }
 
-    fn source_fallible(&self) -> Result<rust_api::Fallible<'a>, Error> {
+    fn source_fallible(&self) -> Result<rust_api::Fallible<'lowered>, Error> {
         rust_api::Return::new(self.source).fallible()
     }
 
     fn encoded_error(
         &self,
-        error_codec: &'a ReadPlan,
+        error_codec: &'lowered ReadPlan,
         error_shape: S::BufferShape,
     ) -> Result<EncodedError, Error>
     where
-        returns::encoded::Renderer: Render<S, returns::encoded::Input<'context, 'a, S>, Output = returns::encoded::Tokens>
-            + Render<S, returns::encoded::Empty<S>, Output = returns::encoded::Tokens>,
+        returns::encoded::Renderer: Render<
+                S,
+                returns::encoded::Input<'expansion, 'lowered, S>,
+                Output = returns::encoded::Tokens,
+            > + Render<S, returns::encoded::Empty<S>, Output = returns::encoded::Tokens>,
     {
         let error_ident = names::Wrapper::new(Span::call_site()).error();
         let error = <returns::encoded::Renderer as Render<S, _>>::render(
@@ -492,10 +499,10 @@ impl<'context, 'a, S: Target> Return<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a> Render<Native, Return<'context, 'a, Native>> for ReturnRenderer {
+impl<'expansion, 'lowered> Render<Native, Return<'expansion, 'lowered, Native>> for ReturnRenderer {
     type Output = InvokeReturn;
 
-    fn render(self, input: Return<'context, 'a, Native>) -> Result<Self::Output, Error> {
+    fn render(self, input: Return<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens::<Native>()? {
             return Ok(tokens);
         }
@@ -596,10 +603,10 @@ impl<'context, 'a> Render<Native, Return<'context, 'a, Native>> for ReturnRender
     }
 }
 
-impl<'context, 'a> Render<Wasm32, Return<'context, 'a, Wasm32>> for ReturnRenderer {
+impl<'expansion, 'lowered> Render<Wasm32, Return<'expansion, 'lowered, Wasm32>> for ReturnRenderer {
     type Output = InvokeReturn;
 
-    fn render(self, input: Return<'context, 'a, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(self, input: Return<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens::<Wasm32>()? {
             return Ok(tokens);
         }

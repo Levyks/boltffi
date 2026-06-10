@@ -20,21 +20,21 @@ use super::Tokens;
 
 pub struct Renderer;
 
-pub struct Input<'context, 'binding, S: Target> {
-    closure: ForeignClosure<'binding, S>,
-    source: rust_api::Closure<'binding>,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    closure: ForeignClosure<'lowered, S>,
+    source: rust_api::Closure<'lowered>,
     ident: Ident,
     failure: TokenStream,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        closure: &'binding ClosureParameter<S, IntoRust>,
-        source: rust_api::Closure<'binding>,
+        closure: &'lowered ClosureParameter<S, IntoRust>,
+        source: rust_api::Closure<'lowered>,
         ident: Ident,
         failure: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             closure: ForeignClosure::Parameter(closure),
@@ -46,11 +46,11 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
     }
 
     pub fn returned(
-        closure: &'binding ClosureReturn<S, IntoRust>,
-        source: rust_api::Closure<'binding>,
+        closure: &'lowered ClosureReturn<S, IntoRust>,
+        source: rust_api::Closure<'lowered>,
         ident: Ident,
         failure: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             closure: ForeignClosure::Return(closure),
@@ -63,12 +63,12 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
 }
 
 #[derive(Clone, Copy)]
-enum ForeignClosure<'binding, S: Target> {
-    Parameter(&'binding ClosureParameter<S, IntoRust>),
-    Return(&'binding ClosureReturn<S, IntoRust>),
+enum ForeignClosure<'lowered, S: Target> {
+    Parameter(&'lowered ClosureParameter<S, IntoRust>),
+    Return(&'lowered ClosureReturn<S, IntoRust>),
 }
 
-impl<'binding, S: Target> ForeignClosure<'binding, S> {
+impl<'lowered, S: Target> ForeignClosure<'lowered, S> {
     fn form(self) -> ClosureForm {
         match self {
             Self::Parameter(closure) => closure.form(),
@@ -83,14 +83,14 @@ impl<'binding, S: Target> ForeignClosure<'binding, S> {
         }
     }
 
-    fn registration(self) -> &'binding boltffi_binding::ClosureRegistration<S, IntoRust> {
+    fn registration(self) -> &'lowered boltffi_binding::ClosureRegistration<S, IntoRust> {
         match self {
             Self::Parameter(closure) => closure.registration(),
             Self::Return(closure) => closure.registration(),
         }
     }
 
-    fn invoke(self) -> &'binding ImportedCallable<S> {
+    fn invoke(self) -> &'lowered ImportedCallable<S> {
         match self {
             Self::Parameter(closure) => closure.invoke(),
             Self::Return(closure) => closure.invoke(),
@@ -98,28 +98,28 @@ impl<'binding, S: Target> ForeignClosure<'binding, S> {
     }
 }
 
-impl<'context, 'binding> Render<Native, Input<'context, 'binding, Native>> for Renderer {
+impl<'expansion, 'lowered> Render<Native, Input<'expansion, 'lowered, Native>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'binding, Native>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
         NativeClosure::new(input).tokens()
     }
 }
 
-impl<'context, 'binding> Render<Wasm32, Input<'context, 'binding, Wasm32>> for Renderer {
+impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'binding, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
         WasmClosure::new(input).tokens()
     }
 }
 
-struct NativeClosure<'context, 'binding> {
-    input: Input<'context, 'binding, Native>,
+struct NativeClosure<'expansion, 'lowered> {
+    input: Input<'expansion, 'lowered, Native>,
 }
 
-impl<'context, 'binding> NativeClosure<'context, 'binding> {
-    fn new(input: Input<'context, 'binding, Native>) -> Self {
+impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
+    fn new(input: Input<'expansion, 'lowered, Native>) -> Self {
         Self { input }
     }
 
@@ -232,12 +232,12 @@ impl ClosureBinding {
     }
 }
 
-struct WasmClosure<'context, 'binding> {
-    input: Input<'context, 'binding, Wasm32>,
+struct WasmClosure<'expansion, 'lowered> {
+    input: Input<'expansion, 'lowered, Wasm32>,
 }
 
-impl<'context, 'binding> WasmClosure<'context, 'binding> {
-    fn new(input: Input<'context, 'binding, Wasm32>) -> Self {
+impl<'expansion, 'lowered> WasmClosure<'expansion, 'lowered> {
+    fn new(input: Input<'expansion, 'lowered, Wasm32>) -> Self {
         Self { input }
     }
 
@@ -312,19 +312,19 @@ impl<'context, 'binding> WasmClosure<'context, 'binding> {
     }
 }
 
-struct ClosureInvoke<'context, 'binding, 'rust, S: Target> {
-    callable: &'binding ImportedCallable<S>,
-    source: &'binding FnSig,
+struct ClosureInvoke<'expansion, 'lowered, 'rust, S: Target> {
+    callable: &'lowered ImportedCallable<S>,
+    source: &'lowered FnSig,
     closure_binding: &'rust ClosureBinding,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'rust, S> {
+impl<'expansion, 'lowered, 'rust, S: Target> ClosureInvoke<'expansion, 'lowered, 'rust, S> {
     fn new(
-        callable: &'binding ImportedCallable<S>,
-        source: &'binding FnSig,
+        callable: &'lowered ImportedCallable<S>,
+        source: &'lowered FnSig,
         closure_binding: &'rust ClosureBinding,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<Self, Error> {
         if callable.params().len() != source.parameters.len() {
             return Err(Error::SourceSyntaxMismatch(
@@ -359,13 +359,13 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
     where
         ForeignClosureReturnRenderer: Render<
                 S,
-                ForeignClosureReturn<'context, 'binding, 'rust, S>,
+                ForeignClosureReturn<'expansion, 'lowered, 'rust, S>,
                 Output = ForeignClosureReturnTokens<'rust>,
             >,
     {
         <ForeignClosureReturnRenderer as Render<
             S,
-            ForeignClosureReturn<'context, 'binding, 'rust, S>,
+            ForeignClosureReturn<'expansion, 'lowered, 'rust, S>,
         >>::render(
             ForeignClosureReturnRenderer,
             ForeignClosureReturn::new(
@@ -379,21 +379,21 @@ impl<'context, 'binding, 'rust, S: Target> ClosureInvoke<'context, 'binding, 'ru
     }
 }
 
-struct InvokeParameterInput<'context, 'binding, 'rust, S: Target> {
+struct InvokeParameterInput<'expansion, 'lowered, 'rust, S: Target> {
     index: usize,
-    payload: &'binding OutgoingParam<S>,
-    source: &'binding TypeExpr,
+    payload: &'lowered OutgoingParam<S>,
+    source: &'lowered TypeExpr,
     rust_type: &'rust Type,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, 'rust, S: Target> InvokeParameterInput<'context, 'binding, 'rust, S> {
+impl<'expansion, 'lowered, 'rust, S: Target> InvokeParameterInput<'expansion, 'lowered, 'rust, S> {
     fn new(
         index: usize,
-        payload: &'binding OutgoingParam<S>,
-        source: &'binding TypeExpr,
+        payload: &'lowered OutgoingParam<S>,
+        source: &'lowered TypeExpr,
         rust_type: &'rust Type,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             index,
@@ -499,21 +499,21 @@ impl From<Vec<InvokeParameterTokens>> for InvokeParameters {
     }
 }
 
-struct ForeignClosureReturn<'context, 'binding, 'rust, S: Target> {
-    plan: &'binding ReturnPlan<S, IntoRust>,
-    error: &'binding ErrorDecl<S, IntoRust>,
-    source: &'binding ReturnDef,
+struct ForeignClosureReturn<'expansion, 'lowered, 'rust, S: Target> {
+    plan: &'lowered ReturnPlan<S, IntoRust>,
+    error: &'lowered ErrorDecl<S, IntoRust>,
+    source: &'lowered ReturnDef,
     rust_type: Option<&'rust Type>,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, 'rust, S: Target> ForeignClosureReturn<'context, 'binding, 'rust, S> {
+impl<'expansion, 'lowered, 'rust, S: Target> ForeignClosureReturn<'expansion, 'lowered, 'rust, S> {
     fn new(
-        plan: &'binding ReturnPlan<S, IntoRust>,
-        error: &'binding ErrorDecl<S, IntoRust>,
-        source: &'binding ReturnDef,
+        plan: &'lowered ReturnPlan<S, IntoRust>,
+        error: &'lowered ErrorDecl<S, IntoRust>,
+        source: &'lowered ReturnDef,
         rust_type: Option<&'rust Type>,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             plan,
@@ -583,7 +583,7 @@ impl<'context, 'binding, 'rust, S: Target> ForeignClosureReturn<'context, 'bindi
 
     fn encoded_expression(
         &self,
-        codec: &'binding WritePlan,
+        codec: &'lowered WritePlan,
         rust_type: &Type,
         bytes: TokenStream,
     ) -> Result<TokenStream, Error> {
@@ -599,15 +599,15 @@ impl<'context, 'binding, 'rust, S: Target> ForeignClosureReturn<'context, 'bindi
 
 struct ForeignClosureReturnRenderer;
 
-impl<'context, 'binding, 'rust>
-    Render<Native, ForeignClosureReturn<'context, 'binding, 'rust, Native>>
+impl<'expansion, 'lowered, 'rust>
+    Render<Native, ForeignClosureReturn<'expansion, 'lowered, 'rust, Native>>
     for ForeignClosureReturnRenderer
 {
     type Output = ForeignClosureReturnTokens<'rust>;
 
     fn render(
         self,
-        input: ForeignClosureReturn<'context, 'binding, 'rust, Native>,
+        input: ForeignClosureReturn<'expansion, 'lowered, 'rust, Native>,
     ) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
@@ -727,15 +727,15 @@ impl<'context, 'binding, 'rust>
     }
 }
 
-impl<'context, 'binding, 'rust>
-    Render<Wasm32, ForeignClosureReturn<'context, 'binding, 'rust, Wasm32>>
+impl<'expansion, 'lowered, 'rust>
+    Render<Wasm32, ForeignClosureReturn<'expansion, 'lowered, 'rust, Wasm32>>
     for ForeignClosureReturnRenderer
 {
     type Output = ForeignClosureReturnTokens<'rust>;
 
     fn render(
         self,
-        input: ForeignClosureReturn<'context, 'binding, 'rust, Wasm32>,
+        input: ForeignClosureReturn<'expansion, 'lowered, 'rust, Wasm32>,
     ) -> Result<Self::Output, Error> {
         if let Some(tokens) = input.direct_tokens()? {
             return Ok(tokens);
@@ -1253,15 +1253,15 @@ impl ClosureBinding {
     }
 }
 
-struct NativeBinding<'a> {
-    ident: &'a Ident,
-    callback: &'a Ident,
-    context: &'a Ident,
-    release: &'a Ident,
-    owner: &'a Ident,
-    rust_parameters: &'a [TokenStream],
+struct NativeBinding<'tokens> {
+    ident: &'tokens Ident,
+    callback: &'tokens Ident,
+    context: &'tokens Ident,
+    release: &'tokens Ident,
+    owner: &'tokens Ident,
+    rust_parameters: &'tokens [TokenStream],
     body: TokenStream,
-    failure: &'a TokenStream,
+    failure: &'tokens TokenStream,
 }
 
 struct ClosureSignature {

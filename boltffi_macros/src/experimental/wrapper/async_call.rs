@@ -20,23 +20,23 @@ use crate::experimental::{
 
 pub struct Renderer;
 
-pub struct Input<'context, 'binding, S: Target> {
-    symbol: &'binding NativeSymbol,
-    callable: &'binding ExportedCallable<S>,
-    source: rust_api::Callable<'binding>,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    symbol: &'lowered NativeSymbol,
+    callable: &'lowered ExportedCallable<S>,
+    source: rust_api::Callable<'lowered>,
     rust_call: export::RustCall,
     receiver: export::ReceiverTokens,
     visibility: TokenStream,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        function: &'binding FunctionDecl<S>,
-        source: rust_api::Callable<'binding>,
+        function: &'lowered FunctionDecl<S>,
+        source: rust_api::Callable<'lowered>,
         function_ident: Ident,
         visibility: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self::exported(
             function.symbol(),
@@ -50,13 +50,13 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
     }
 
     pub fn exported(
-        symbol: &'binding NativeSymbol,
-        callable: &'binding ExportedCallable<S>,
-        source: rust_api::Callable<'binding>,
+        symbol: &'lowered NativeSymbol,
+        callable: &'lowered ExportedCallable<S>,
+        source: rust_api::Callable<'lowered>,
         rust_call: export::RustCall,
         receiver: export::ReceiverTokens,
         visibility: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             symbol,
@@ -70,28 +70,28 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
     }
 }
 
-impl<'context, 'binding> Render<Native, Input<'context, 'binding, Native>> for Renderer {
+impl<'expansion, 'lowered> Render<Native, Input<'expansion, 'lowered, Native>> for Renderer {
     type Output = TokenStream;
 
-    fn render(self, input: Input<'context, 'binding, Native>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
         NativeAsync::new(input).tokens()
     }
 }
 
-impl<'context, 'binding> Render<Wasm32, Input<'context, 'binding, Wasm32>> for Renderer {
+impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> for Renderer {
     type Output = TokenStream;
 
-    fn render(self, input: Input<'context, 'binding, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
         WasmAsync::new(input).tokens()
     }
 }
 
-struct NativeAsync<'context, 'binding> {
-    input: Input<'context, 'binding, Native>,
+struct NativeAsync<'expansion, 'lowered> {
+    input: Input<'expansion, 'lowered, Native>,
 }
 
-impl<'context, 'binding> NativeAsync<'context, 'binding> {
-    fn new(input: Input<'context, 'binding, Native>) -> Self {
+impl<'expansion, 'lowered> NativeAsync<'expansion, 'lowered> {
+    fn new(input: Input<'expansion, 'lowered, Native>) -> Self {
         Self { input }
     }
 
@@ -127,12 +127,12 @@ impl<'context, 'binding> NativeAsync<'context, 'binding> {
     }
 }
 
-struct WasmAsync<'context, 'binding> {
-    input: Input<'context, 'binding, Wasm32>,
+struct WasmAsync<'expansion, 'lowered> {
+    input: Input<'expansion, 'lowered, Wasm32>,
 }
 
-impl<'context, 'binding> WasmAsync<'context, 'binding> {
-    fn new(input: Input<'context, 'binding, Wasm32>) -> Self {
+impl<'expansion, 'lowered> WasmAsync<'expansion, 'lowered> {
+    fn new(input: Input<'expansion, 'lowered, Wasm32>) -> Self {
         Self { input }
     }
 
@@ -168,33 +168,33 @@ impl<'context, 'binding> WasmAsync<'context, 'binding> {
     }
 }
 
-struct AsyncExports<'context, 'binding, S: Target> {
-    symbol: &'binding NativeSymbol,
-    callable: &'binding ExportedCallable<S>,
-    source: rust_api::Callable<'binding>,
+struct AsyncExports<'expansion, 'lowered, S: Target> {
+    symbol: &'lowered NativeSymbol,
+    callable: &'lowered ExportedCallable<S>,
+    source: rust_api::Callable<'lowered>,
     rust_call: export::RustCall,
     receiver: export::ReceiverTokens,
     visibility: TokenStream,
     rust_return_type: Type,
     complete: Complete,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, S> AsyncExports<'context, 'binding, S>
+impl<'expansion, 'lowered, S> AsyncExports<'expansion, 'lowered, S>
 where
     S: Target,
     for<'plan> encoded::Renderer:
-        Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
+        Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
     encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
     for<'plan> closure::Write:
-        Render<S, closure::WriteInput<'context, 'plan, S>, Output = closure::WriteTokens>,
+        Render<S, closure::WriteInput<'expansion, 'plan, S>, Output = closure::WriteTokens>,
     direct_vec::Renderer: Render<S, direct_vec::Input, Output = wrapper::returns::Tokens>
         + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
     for<'plan> fallible::Success:
-        Render<S, fallible::SuccessInput<'context, 'plan, S>, Output = fallible::SuccessTokens>,
+        Render<S, fallible::SuccessInput<'expansion, 'plan, S>, Output = fallible::SuccessTokens>,
     for<'plan> handle::Value: Render<
             S,
-            handle::ValueInput<'context, 'plan, S, S::HandleCarrier>,
+            handle::ValueInput<'expansion, 'plan, S, S::HandleCarrier>,
             Output = handle::ValueTokens,
         >,
     wrapper::handle::Carrier: Render<
@@ -206,13 +206,13 @@ where
         + Render<S, scalar_option::Empty, Output = wrapper::returns::Tokens>,
 {
     fn new(
-        symbol: &'binding NativeSymbol,
-        callable: &'binding ExportedCallable<S>,
-        source: rust_api::Callable<'binding>,
+        symbol: &'lowered NativeSymbol,
+        callable: &'lowered ExportedCallable<S>,
+        source: rust_api::Callable<'lowered>,
         rust_call: export::RustCall,
         receiver: export::ReceiverTokens,
         visibility: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<Self, Error> {
         let rust_return_type = source
             .returns()
@@ -243,7 +243,7 @@ where
         P: AsyncProtocol,
         wrapper::arguments::AsyncRenderer: Render<
                 S,
-                wrapper::arguments::Input<'context, 'binding, S>,
+                wrapper::arguments::Input<'expansion, 'lowered, S>,
                 Output = wrapper::arguments::Tokens,
             >,
     {
@@ -303,12 +303,12 @@ where
     }
 }
 
-struct AsyncParameters<'binding, S: Target> {
-    params: &'binding [ParamDecl<S, IntoRust>],
+struct AsyncParameters<'lowered, S: Target> {
+    params: &'lowered [ParamDecl<S, IntoRust>],
 }
 
-impl<'binding, S: Target> AsyncParameters<'binding, S> {
-    fn new(params: &'binding [ParamDecl<S, IntoRust>]) -> Self {
+impl<'lowered, S: Target> AsyncParameters<'lowered, S> {
+    fn new(params: &'lowered [ParamDecl<S, IntoRust>]) -> Self {
         Self { params }
     }
 
@@ -373,12 +373,12 @@ trait AsyncProtocol {
     fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
 }
 
-struct NativeProtocol<'a> {
-    poll: &'a NativeSymbol,
-    complete: &'a NativeSymbol,
-    cancel: &'a NativeSymbol,
-    free: &'a NativeSymbol,
-    panic_message: &'a NativeSymbol,
+struct NativeProtocol<'symbols> {
+    poll: &'symbols NativeSymbol,
+    complete: &'symbols NativeSymbol,
+    cancel: &'symbols NativeSymbol,
+    free: &'symbols NativeSymbol,
+    panic_message: &'symbols NativeSymbol,
 }
 
 impl AsyncProtocol for NativeProtocol<'_> {
@@ -432,12 +432,12 @@ impl AsyncProtocol for NativeProtocol<'_> {
     }
 }
 
-struct WasmProtocol<'a> {
-    poll_sync: &'a NativeSymbol,
-    complete: &'a NativeSymbol,
-    cancel: &'a NativeSymbol,
-    free: &'a NativeSymbol,
-    panic_message: &'a NativeSymbol,
+struct WasmProtocol<'symbols> {
+    poll_sync: &'symbols NativeSymbol,
+    complete: &'symbols NativeSymbol,
+    cancel: &'symbols NativeSymbol,
+    free: &'symbols NativeSymbol,
+    panic_message: &'symbols NativeSymbol,
 }
 
 impl AsyncProtocol for WasmProtocol<'_> {
@@ -498,25 +498,29 @@ struct PlainComplete {
 }
 
 impl Complete {
-    fn new<'context, 'plan, S: Target>(
+    fn new<'expansion, 'plan, S: Target>(
         symbol: &'plan NativeSymbol,
         callable: &'plan ExportedCallable<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
-        expansion: &'context Expansion<'plan, S>,
+        expansion: &'expansion Expansion<'plan, S>,
     ) -> Result<Self, Error>
     where
-        encoded::Renderer: Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
+        encoded::Renderer:
+            Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         closure::Write:
-            Render<S, closure::WriteInput<'context, 'plan, S>, Output = closure::WriteTokens>,
+            Render<S, closure::WriteInput<'expansion, 'plan, S>, Output = closure::WriteTokens>,
         direct_vec::Renderer: Render<S, direct_vec::Input, Output = wrapper::returns::Tokens>
             + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
-        fallible::Success:
-            Render<S, fallible::SuccessInput<'context, 'plan, S>, Output = fallible::SuccessTokens>,
+        fallible::Success: Render<
+                S,
+                fallible::SuccessInput<'expansion, 'plan, S>,
+                Output = fallible::SuccessTokens,
+            >,
         for<'handle> handle::Value: Render<
                 S,
-                handle::ValueInput<'context, 'handle, S, S::HandleCarrier>,
+                handle::ValueInput<'expansion, 'handle, S, S::HandleCarrier>,
                 Output = handle::ValueTokens,
             >,
         wrapper::handle::Carrier: Render<
@@ -554,20 +558,21 @@ impl Complete {
 }
 
 impl PlainComplete {
-    fn new<'context, 'plan, S: Target>(
+    fn new<'expansion, 'plan, S: Target>(
         callable: &'plan ExportedCallable<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
-        expansion: &'context Expansion<'plan, S>,
+        expansion: &'expansion Expansion<'plan, S>,
     ) -> Result<Self, Error>
     where
-        encoded::Renderer: Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
+        encoded::Renderer:
+            Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         direct_vec::Renderer: Render<S, direct_vec::Input, Output = wrapper::returns::Tokens>
             + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
         for<'handle> handle::Value: Render<
                 S,
-                handle::ValueInput<'context, 'handle, S, S::HandleCarrier>,
+                handle::ValueInput<'expansion, 'handle, S, S::HandleCarrier>,
                 Output = handle::ValueTokens,
             >,
         wrapper::handle::Carrier: Render<
@@ -743,23 +748,27 @@ struct FallibleComplete {
 }
 
 impl FallibleComplete {
-    fn new<'context, 'plan, S: Target>(
+    fn new<'expansion, 'plan, S: Target>(
         symbol: &'plan NativeSymbol,
         callable: &'plan ExportedCallable<S>,
         source: rust_api::Fallible<'plan>,
         rust_return_type: &Type,
-        expansion: &'context Expansion<'plan, S>,
+        expansion: &'expansion Expansion<'plan, S>,
     ) -> Result<Self, Error>
     where
-        encoded::Renderer: Render<S, encoded::Input<'context, 'plan, S>, Output = encoded::Tokens>,
+        encoded::Renderer:
+            Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         closure::Write:
-            Render<S, closure::WriteInput<'context, 'plan, S>, Output = closure::WriteTokens>,
-        fallible::Success:
-            Render<S, fallible::SuccessInput<'context, 'plan, S>, Output = fallible::SuccessTokens>,
+            Render<S, closure::WriteInput<'expansion, 'plan, S>, Output = closure::WriteTokens>,
+        fallible::Success: Render<
+                S,
+                fallible::SuccessInput<'expansion, 'plan, S>,
+                Output = fallible::SuccessTokens,
+            >,
         for<'handle> handle::Value: Render<
                 S,
-                handle::ValueInput<'context, 'handle, S, S::HandleCarrier>,
+                handle::ValueInput<'expansion, 'handle, S, S::HandleCarrier>,
                 Output = handle::ValueTokens,
             >,
     {

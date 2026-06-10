@@ -21,27 +21,27 @@ use crate::experimental::{
 /// The renderer emits the runtime trait implementations that make a scanned Rust
 /// record usable by generated wrappers. The record shape comes from the lowered
 /// `RecordDecl`, so the generated code cannot reclassify the source struct.
-pub struct Renderer<'context, 'a, S: Target> {
-    pair: DeclarationPair<'a, RecordDef, RecordDecl<S>>,
-    expansion: &'context Expansion<'a, S>,
+pub struct Renderer<'expansion, 'lowered, S: Target> {
+    pair: DeclarationPair<'lowered, RecordDef, RecordDecl<S>>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct Direct<'context, 'a, S: Target> {
-    source: &'a RecordDef,
-    binding: &'a DirectRecordDecl<S>,
-    expansion: &'context Expansion<'a, S>,
+struct Direct<'expansion, 'lowered, S: Target> {
+    source: &'lowered RecordDef,
+    binding: &'lowered DirectRecordDecl<S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct Encoded<'context, 'a, S: Target> {
-    source: &'a RecordDef,
-    binding: &'a EncodedRecordDecl<S>,
-    expansion: &'context Expansion<'a, S>,
+struct Encoded<'expansion, 'lowered, S: Target> {
+    source: &'lowered RecordDef,
+    binding: &'lowered EncodedRecordDecl<S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct EncodedField<'context, 'a, S: Target> {
-    source: &'a FieldDef,
-    binding: &'a EncodedFieldDecl,
-    expansion: &'context Expansion<'a, S>,
+struct EncodedField<'expansion, 'lowered, S: Target> {
+    source: &'lowered FieldDef,
+    binding: &'lowered EncodedFieldDecl,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 struct EncodedFieldTokens {
@@ -51,37 +51,37 @@ struct EncodedFieldTokens {
     initializer: Ident,
 }
 
-struct RecordExports<'context, 'a, S: Target> {
-    source: &'a RecordDef,
+struct RecordExports<'expansion, 'lowered, S: Target> {
+    source: &'lowered RecordDef,
     record: Ident,
-    initializers: &'a [InitializerDecl<S>],
-    methods: &'a [ExportedMethodDecl<S, NativeSymbol>],
-    receiver: ReceiverKind<'a>,
-    expansion: &'context Expansion<'a, S>,
+    initializers: &'lowered [InitializerDecl<S>],
+    methods: &'lowered [ExportedMethodDecl<S, NativeSymbol>],
+    receiver: ReceiverKind<'lowered>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct RecordExport<'context, 'a, S: Target> {
-    source: &'a RecordDef,
+struct RecordExport<'expansion, 'lowered, S: Target> {
+    source: &'lowered RecordDef,
     record: Ident,
-    source_method: &'a MethodDef,
-    symbol: &'a NativeSymbol,
-    callable: &'a ExportedCallable<S>,
-    receiver: ReceiverKind<'a>,
-    expansion: &'context Expansion<'a, S>,
+    source_method: &'lowered MethodDef,
+    symbol: &'lowered NativeSymbol,
+    callable: &'lowered ExportedCallable<S>,
+    receiver: ReceiverKind<'lowered>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 #[derive(Clone, Copy)]
-enum ReceiverKind<'a> {
+enum ReceiverKind<'lowered> {
     None,
     Direct,
-    Encoded { codec: &'a WritePlan },
+    Encoded { codec: &'lowered WritePlan },
 }
 
-impl<'context, 'a, S: Target> Renderer<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
     /// Creates a renderer for one paired record declaration.
     pub fn new(
-        pair: DeclarationPair<'a, RecordDef, RecordDecl<S>>,
-        expansion: &'context Expansion<'a, S>,
+        pair: DeclarationPair<'lowered, RecordDef, RecordDecl<S>>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self { pair, expansion }
     }
@@ -92,20 +92,22 @@ impl<'context, 'a, S: Target> Renderer<'context, 'a, S> {
         S: Target,
         wrapper::arguments::SyncRenderer: Render<
                 S,
-                wrapper::arguments::Input<'context, 'a, S>,
+                wrapper::arguments::Input<'expansion, 'lowered, S>,
                 Output = wrapper::arguments::Tokens,
             >,
-        wrapper::returns::Failure:
-            Render<S, wrapper::returns::FailureInput<'context, 'a, S>, Output = TokenStream>,
-        wrapper::returns::Renderer:
-            Render<S, wrapper::returns::Input<'context, 'a, S>, Output = wrapper::returns::Tokens>,
+        wrapper::returns::Failure: Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+        wrapper::returns::Renderer: Render<
+                S,
+                wrapper::returns::Input<'expansion, 'lowered, S>,
+                Output = wrapper::returns::Tokens,
+            >,
         wrapper::async_call::Renderer:
-            Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+            Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
         wrapper::param::direct::Record:
             Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
         wrapper::param::encoded::Renderer: Render<
                 S,
-                wrapper::param::encoded::Input<'context, 'a, S>,
+                wrapper::param::encoded::Input<'expansion, 'lowered, S>,
                 Output = wrapper::param::Tokens,
             >,
     {
@@ -127,21 +129,30 @@ impl<'context, 'a, S: Target> Renderer<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S> Direct<'context, 'a, S>
+impl<'expansion, 'lowered, S> Direct<'expansion, 'lowered, S>
 where
     S: Target,
-    wrapper::arguments::SyncRenderer:
-        Render<S, wrapper::arguments::Input<'context, 'a, S>, Output = wrapper::arguments::Tokens>,
+    wrapper::arguments::SyncRenderer: Render<
+            S,
+            wrapper::arguments::Input<'expansion, 'lowered, S>,
+            Output = wrapper::arguments::Tokens,
+        >,
     wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'context, 'a, S>, Output = TokenStream>,
-    wrapper::returns::Renderer:
-        Render<S, wrapper::returns::Input<'context, 'a, S>, Output = wrapper::returns::Tokens>,
+        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+    wrapper::returns::Renderer: Render<
+            S,
+            wrapper::returns::Input<'expansion, 'lowered, S>,
+            Output = wrapper::returns::Tokens,
+        >,
     wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-    wrapper::param::encoded::Renderer:
-        Render<S, wrapper::param::encoded::Input<'context, 'a, S>, Output = wrapper::param::Tokens>,
+    wrapper::param::encoded::Renderer: Render<
+            S,
+            wrapper::param::encoded::Input<'expansion, 'lowered, S>,
+            Output = wrapper::param::Tokens,
+        >,
 {
     fn render(self) -> Result<TokenStream, Error> {
         let record = record_ident(self.source)?;
@@ -227,21 +238,30 @@ where
     }
 }
 
-impl<'context, 'a, S> Encoded<'context, 'a, S>
+impl<'expansion, 'lowered, S> Encoded<'expansion, 'lowered, S>
 where
     S: Target,
-    wrapper::arguments::SyncRenderer:
-        Render<S, wrapper::arguments::Input<'context, 'a, S>, Output = wrapper::arguments::Tokens>,
+    wrapper::arguments::SyncRenderer: Render<
+            S,
+            wrapper::arguments::Input<'expansion, 'lowered, S>,
+            Output = wrapper::arguments::Tokens,
+        >,
     wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'context, 'a, S>, Output = TokenStream>,
-    wrapper::returns::Renderer:
-        Render<S, wrapper::returns::Input<'context, 'a, S>, Output = wrapper::returns::Tokens>,
+        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+    wrapper::returns::Renderer: Render<
+            S,
+            wrapper::returns::Input<'expansion, 'lowered, S>,
+            Output = wrapper::returns::Tokens,
+        >,
     wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-    wrapper::param::encoded::Renderer:
-        Render<S, wrapper::param::encoded::Input<'context, 'a, S>, Output = wrapper::param::Tokens>,
+    wrapper::param::encoded::Renderer: Render<
+            S,
+            wrapper::param::encoded::Input<'expansion, 'lowered, S>,
+            Output = wrapper::param::Tokens,
+        >,
 {
     fn render(self) -> Result<TokenStream, Error> {
         let record = record_ident(self.source)?;
@@ -339,7 +359,7 @@ where
     }
 }
 
-impl<'context, 'a, S: Target> EncodedField<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> EncodedField<'expansion, 'lowered, S> {
     fn tokens(self) -> Result<EncodedFieldTokens, Error> {
         self.validate_key()?;
         let field = field_ident(self.source)?;
@@ -471,21 +491,30 @@ impl<'context, 'a, S: Target> EncodedField<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S> RecordExports<'context, 'a, S>
+impl<'expansion, 'lowered, S> RecordExports<'expansion, 'lowered, S>
 where
     S: Target,
-    wrapper::arguments::SyncRenderer:
-        Render<S, wrapper::arguments::Input<'context, 'a, S>, Output = wrapper::arguments::Tokens>,
+    wrapper::arguments::SyncRenderer: Render<
+            S,
+            wrapper::arguments::Input<'expansion, 'lowered, S>,
+            Output = wrapper::arguments::Tokens,
+        >,
     wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'context, 'a, S>, Output = TokenStream>,
-    wrapper::returns::Renderer:
-        Render<S, wrapper::returns::Input<'context, 'a, S>, Output = wrapper::returns::Tokens>,
+        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+    wrapper::returns::Renderer: Render<
+            S,
+            wrapper::returns::Input<'expansion, 'lowered, S>,
+            Output = wrapper::returns::Tokens,
+        >,
     wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-    wrapper::param::encoded::Renderer:
-        Render<S, wrapper::param::encoded::Input<'context, 'a, S>, Output = wrapper::param::Tokens>,
+    wrapper::param::encoded::Renderer: Render<
+            S,
+            wrapper::param::encoded::Input<'expansion, 'lowered, S>,
+            Output = wrapper::param::Tokens,
+        >,
 {
     fn render(self) -> Result<TokenStream, Error> {
         let initializers = self
@@ -528,7 +557,7 @@ where
         })
     }
 
-    fn source_method(&self, name: &CanonicalName) -> Result<&'a MethodDef, Error> {
+    fn source_method(&self, name: &CanonicalName) -> Result<&'lowered MethodDef, Error> {
         let binding_name = name.as_path_string();
         let matches = self
             .source
@@ -548,21 +577,30 @@ where
     }
 }
 
-impl<'context, 'a, S> RecordExport<'context, 'a, S>
+impl<'expansion, 'lowered, S> RecordExport<'expansion, 'lowered, S>
 where
     S: Target,
-    wrapper::arguments::SyncRenderer:
-        Render<S, wrapper::arguments::Input<'context, 'a, S>, Output = wrapper::arguments::Tokens>,
+    wrapper::arguments::SyncRenderer: Render<
+            S,
+            wrapper::arguments::Input<'expansion, 'lowered, S>,
+            Output = wrapper::arguments::Tokens,
+        >,
     wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'context, 'a, S>, Output = TokenStream>,
-    wrapper::returns::Renderer:
-        Render<S, wrapper::returns::Input<'context, 'a, S>, Output = wrapper::returns::Tokens>,
+        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+    wrapper::returns::Renderer: Render<
+            S,
+            wrapper::returns::Input<'expansion, 'lowered, S>,
+            Output = wrapper::returns::Tokens,
+        >,
     wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-    wrapper::param::encoded::Renderer:
-        Render<S, wrapper::param::encoded::Input<'context, 'a, S>, Output = wrapper::param::Tokens>,
+    wrapper::param::encoded::Renderer: Render<
+            S,
+            wrapper::param::encoded::Input<'expansion, 'lowered, S>,
+            Output = wrapper::param::Tokens,
+        >,
 {
     fn render(self) -> Result<TokenStream, Error> {
         let method = method_ident(self.source_method)?;
@@ -603,24 +641,27 @@ where
 }
 
 impl<'receiver> ReceiverKind<'receiver> {
-    fn render<'context, S>(
+    fn render<'expansion, S>(
         self,
         source: &'receiver RecordDef,
         record: &Ident,
         callable: &'receiver ExportedCallable<S>,
         receive: Option<Receive>,
         method: Ident,
-        expansion: &'context Expansion<'receiver, S>,
+        expansion: &'expansion Expansion<'receiver, S>,
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
         S: Target,
-        wrapper::returns::Failure:
-            Render<S, wrapper::returns::FailureInput<'context, 'receiver, S>, Output = TokenStream>,
+        wrapper::returns::Failure: Render<
+                S,
+                wrapper::returns::FailureInput<'expansion, 'receiver, S>,
+                Output = TokenStream,
+            >,
         wrapper::param::direct::Record:
             Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
         wrapper::param::encoded::Renderer: Render<
                 S,
-                wrapper::param::encoded::Input<'context, 'receiver, S>,
+                wrapper::param::encoded::Input<'expansion, 'receiver, S>,
                 Output = wrapper::param::Tokens,
             >,
     {

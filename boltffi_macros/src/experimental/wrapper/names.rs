@@ -48,12 +48,12 @@ impl Wrapper {
     }
 }
 
-pub struct ClosureRegistration<'a> {
-    source: &'a Ident,
+pub struct ClosureRegistration<'source> {
+    source: &'source Ident,
 }
 
-impl<'a> ClosureRegistration<'a> {
-    pub const fn new(source: &'a Ident) -> Self {
+impl<'source> ClosureRegistration<'source> {
+    pub const fn new(source: &'source Ident) -> Self {
         Self { source }
     }
 
@@ -80,12 +80,12 @@ impl<'a> ClosureRegistration<'a> {
     }
 }
 
-pub struct NativeClosureRegistration<'a> {
-    source: &'a Ident,
+pub struct NativeClosureRegistration<'source> {
+    source: &'source Ident,
 }
 
-impl<'a> NativeClosureRegistration<'a> {
-    pub const fn new(source: &'a Ident) -> Self {
+impl<'source> NativeClosureRegistration<'source> {
+    pub const fn new(source: &'source Ident) -> Self {
         Self { source }
     }
 
@@ -111,13 +111,13 @@ impl<'a> NativeClosureRegistration<'a> {
     }
 }
 
-pub struct ReturnedClosureRegistration<'a> {
-    owner: &'a Ident,
-    channel: &'a str,
+pub struct ReturnedClosureRegistration<'source> {
+    owner: &'source Ident,
+    channel: &'source str,
 }
 
-impl<'a> ReturnedClosureRegistration<'a> {
-    pub const fn new(owner: &'a Ident, channel: &'a str) -> Self {
+impl<'source> ReturnedClosureRegistration<'source> {
+    pub const fn new(owner: &'source Ident, channel: &'source str) -> Self {
         Self { owner, channel }
     }
 
@@ -140,12 +140,12 @@ impl<'a> ReturnedClosureRegistration<'a> {
     }
 }
 
-pub struct Parameter<'a> {
-    source: &'a Ident,
+pub struct Parameter<'source> {
+    source: &'source Ident,
 }
 
-impl<'a> Parameter<'a> {
-    pub const fn new(source: &'a Ident) -> Self {
+impl<'source> Parameter<'source> {
+    pub const fn new(source: &'source Ident) -> Self {
         Self { source }
     }
 
@@ -214,12 +214,12 @@ impl ClosureArgument {
     }
 }
 
-pub struct RecordField<'a> {
-    source: &'a Ident,
+pub struct RecordField<'source> {
+    source: &'source Ident,
 }
 
-impl<'a> RecordField<'a> {
-    pub const fn new(source: &'a Ident) -> Self {
+impl<'source> RecordField<'source> {
+    pub const fn new(source: &'source Ident) -> Self {
         Self { source }
     }
 

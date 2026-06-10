@@ -17,14 +17,14 @@ pub use self::pair::DeclarationPair;
 ///
 /// The value pairs scanned source declarations with their lowered binding declarations.
 /// It does not render Rust syntax, choose target sets, scan source, or run lowering.
-pub struct Expansion<'a, S: Surface> {
-    lowered: &'a LoweredBindings<S>,
+pub struct Expansion<'lowered, S: Surface> {
+    lowered: &'lowered LoweredBindings<S>,
     index: ExpansionIndex,
 }
 
-impl<'a, S: Surface> Expansion<'a, S> {
+impl<'lowered, S: Surface> Expansion<'lowered, S> {
     /// Creates an indexed view over lowered bindings for one target surface.
-    pub fn new(lowered: &'a LoweredBindings<S>) -> Self {
+    pub fn new(lowered: &'lowered LoweredBindings<S>) -> Self {
         Self {
             lowered,
             index: ExpansionIndex::new(lowered),
@@ -32,25 +32,25 @@ impl<'a, S: Surface> Expansion<'a, S> {
     }
 
     /// Returns the lowered binding declarations.
-    pub fn bindings(&self) -> &'a boltffi_binding::Bindings<S> {
+    pub fn bindings(&self) -> &'lowered boltffi_binding::Bindings<S> {
         self.lowered.bindings()
     }
 
     /// Returns the custom declaration for a custom codec node.
-    pub fn custom_type(&self, id: CustomTypeId) -> Result<&'a CustomTypeDecl, Error> {
+    pub fn custom_type(&self, id: CustomTypeId) -> Result<&'lowered CustomTypeDecl, Error> {
         self.index.custom_type(self.lowered, id)
     }
 
     /// Returns the callback declaration for a callback handle target.
-    pub fn callback(&self, id: CallbackId) -> Result<&'a CallbackDecl<S>, Error> {
+    pub fn callback(&self, id: CallbackId) -> Result<&'lowered CallbackDecl<S>, Error> {
         self.index.callback(self.lowered, id)
     }
 
     /// Returns the lowered callback declaration paired with the scanned source trait.
     pub fn callback_trait(
         &self,
-        source: &'a TraitDef,
-    ) -> Result<DeclarationPair<'a, TraitDef, CallbackDecl<S>>, Error> {
+        source: &'lowered TraitDef,
+    ) -> Result<DeclarationPair<'lowered, TraitDef, CallbackDecl<S>>, Error> {
         match self
             .index
             .paired(self.lowered, SourceDeclaration::Callback(source))?
@@ -61,15 +61,15 @@ impl<'a, S: Surface> Expansion<'a, S> {
     }
 
     /// Returns the encoded record declaration for an encoded record codec node.
-    pub fn encoded_record(&self, id: RecordId) -> Result<&'a EncodedRecordDecl<S>, Error> {
+    pub fn encoded_record(&self, id: RecordId) -> Result<&'lowered EncodedRecordDecl<S>, Error> {
         self.index.encoded_record(self.lowered, id)
     }
 
     /// Returns the lowered record declaration paired with the scanned source record.
     pub fn record(
         &self,
-        source: &'a RecordDef,
-    ) -> Result<DeclarationPair<'a, RecordDef, RecordDecl<S>>, Error> {
+        source: &'lowered RecordDef,
+    ) -> Result<DeclarationPair<'lowered, RecordDef, RecordDecl<S>>, Error> {
         match self
             .index
             .paired(self.lowered, SourceDeclaration::Record(source))?
@@ -82,8 +82,8 @@ impl<'a, S: Surface> Expansion<'a, S> {
     /// Returns the lowered function declaration paired with the scanned source function.
     pub fn function(
         &self,
-        source: &'a FunctionDef,
-    ) -> Result<DeclarationPair<'a, FunctionDef, FunctionDecl<S>>, Error> {
+        source: &'lowered FunctionDef,
+    ) -> Result<DeclarationPair<'lowered, FunctionDef, FunctionDecl<S>>, Error> {
         match self
             .index
             .paired(self.lowered, SourceDeclaration::Function(source))?
@@ -112,30 +112,33 @@ mod tests {
     use crate::experimental::target::Target;
     use crate::experimental::{error::Error, wrapper};
 
-    fn expand_function<'a, S>(
-        expansion: &Expansion<'a, S>,
-        source: &'a FunctionDef,
+    fn expand_function<'lowered, S>(
+        expansion: &Expansion<'lowered, S>,
+        source: &'lowered FunctionDef,
         syntax: ItemFn,
     ) -> Result<TokenStream, Error>
     where
         S: Target,
-        for<'context> wrapper::arguments::SyncRenderer: wrapper::Render<
+        for<'expansion> wrapper::arguments::SyncRenderer: wrapper::Render<
                 S,
-                wrapper::arguments::Input<'context, 'a, S>,
+                wrapper::arguments::Input<'expansion, 'lowered, S>,
                 Output = wrapper::arguments::Tokens,
             >,
-        for<'context> wrapper::returns::Failure: wrapper::Render<
+        for<'expansion> wrapper::returns::Failure: wrapper::Render<
                 S,
-                wrapper::returns::FailureInput<'context, 'a, S>,
+                wrapper::returns::FailureInput<'expansion, 'lowered, S>,
                 Output = TokenStream,
             >,
-        for<'context> wrapper::returns::Renderer: wrapper::Render<
+        for<'expansion> wrapper::returns::Renderer: wrapper::Render<
                 S,
-                wrapper::returns::Input<'context, 'a, S>,
+                wrapper::returns::Input<'expansion, 'lowered, S>,
                 Output = wrapper::returns::Tokens,
             >,
-        for<'context> wrapper::async_call::Renderer:
-            wrapper::Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
+        for<'expansion> wrapper::async_call::Renderer: wrapper::Render<
+                S,
+                wrapper::async_call::Input<'expansion, 'lowered, S>,
+                Output = TokenStream,
+            >,
     {
         let wrapper =
             wrapper::function::Renderer::new(expansion.function(source)?, expansion).render()?;
@@ -146,47 +149,50 @@ mod tests {
         })
     }
 
-    fn expand_native_callback<'a>(
-        expansion: &Expansion<'a, Native>,
-        source: &'a TraitDef,
+    fn expand_native_callback<'lowered>(
+        expansion: &Expansion<'lowered, Native>,
+        source: &'lowered TraitDef,
     ) -> Result<TokenStream, Error> {
         wrapper::callback::Renderer::new(expansion.callback_trait(source)?, expansion).render()
     }
 
-    fn expand_wasm_callback<'a>(
-        expansion: &Expansion<'a, Wasm32>,
-        source: &'a TraitDef,
+    fn expand_wasm_callback<'lowered>(
+        expansion: &Expansion<'lowered, Wasm32>,
+        source: &'lowered TraitDef,
     ) -> Result<TokenStream, Error> {
         wrapper::callback::Renderer::new(expansion.callback_trait(source)?, expansion).render()
     }
 
-    fn expand_record<'a, S>(
-        expansion: &Expansion<'a, S>,
-        source: &'a RecordDef,
+    fn expand_record<'lowered, S>(
+        expansion: &Expansion<'lowered, S>,
+        source: &'lowered RecordDef,
     ) -> Result<TokenStream, Error>
     where
         S: Target,
-        for<'context> wrapper::arguments::SyncRenderer: wrapper::Render<
+        for<'expansion> wrapper::arguments::SyncRenderer: wrapper::Render<
                 S,
-                wrapper::arguments::Input<'context, 'a, S>,
+                wrapper::arguments::Input<'expansion, 'lowered, S>,
                 Output = wrapper::arguments::Tokens,
             >,
-        for<'context> wrapper::returns::Failure: wrapper::Render<
+        for<'expansion> wrapper::returns::Failure: wrapper::Render<
                 S,
-                wrapper::returns::FailureInput<'context, 'a, S>,
+                wrapper::returns::FailureInput<'expansion, 'lowered, S>,
                 Output = TokenStream,
             >,
-        for<'context> wrapper::returns::Renderer: wrapper::Render<
+        for<'expansion> wrapper::returns::Renderer: wrapper::Render<
                 S,
-                wrapper::returns::Input<'context, 'a, S>,
+                wrapper::returns::Input<'expansion, 'lowered, S>,
                 Output = wrapper::returns::Tokens,
             >,
-        for<'context> wrapper::async_call::Renderer:
-            wrapper::Render<S, wrapper::async_call::Input<'context, 'a, S>, Output = TokenStream>,
-        wrapper::param::direct::Record: wrapper::Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-        for<'context> wrapper::param::encoded::Renderer: wrapper::Render<
+        for<'expansion> wrapper::async_call::Renderer: wrapper::Render<
                 S,
-                wrapper::param::encoded::Input<'context, 'a, S>,
+                wrapper::async_call::Input<'expansion, 'lowered, S>,
+                Output = TokenStream,
+            >,
+        wrapper::param::direct::Record: wrapper::Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
+        for<'expansion> wrapper::param::encoded::Renderer: wrapper::Render<
+                S,
+                wrapper::param::encoded::Input<'expansion, 'lowered, S>,
                 Output = wrapper::param::Tokens,
             >,
     {

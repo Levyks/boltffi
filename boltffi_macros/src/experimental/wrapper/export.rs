@@ -10,14 +10,14 @@ use crate::experimental::{
     wrapper::{self, Render},
 };
 
-pub struct Renderer<'context, 'binding, S: Target> {
-    symbol: &'binding NativeSymbol,
-    callable: &'binding ExportedCallable<S>,
-    source: rust_api::Callable<'binding>,
+pub struct Renderer<'expansion, 'lowered, S: Target> {
+    symbol: &'lowered NativeSymbol,
+    callable: &'lowered ExportedCallable<S>,
+    source: rust_api::Callable<'lowered>,
     rust_call: RustCall,
     receiver: ReceiverTokens,
     visibility: TokenStream,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 pub struct RustCall {
@@ -44,28 +44,32 @@ enum RustCallTarget {
     },
 }
 
-impl<'context, 'binding, S> Renderer<'context, 'binding, S>
+impl<'expansion, 'lowered, S> Renderer<'expansion, 'lowered, S>
 where
     S: Target,
     wrapper::arguments::SyncRenderer: Render<
             S,
-            wrapper::arguments::Input<'context, 'binding, S>,
+            wrapper::arguments::Input<'expansion, 'lowered, S>,
             Output = wrapper::arguments::Tokens,
         >,
     wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'context, 'binding, S>, Output = TokenStream>,
-    wrapper::returns::Renderer: Render<S, wrapper::returns::Input<'context, 'binding, S>, Output = wrapper::returns::Tokens>,
+        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
+    wrapper::returns::Renderer: Render<
+            S,
+            wrapper::returns::Input<'expansion, 'lowered, S>,
+            Output = wrapper::returns::Tokens,
+        >,
     wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'context, 'binding, S>, Output = TokenStream>,
+        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
 {
     pub fn new(
-        symbol: &'binding NativeSymbol,
-        callable: &'binding ExportedCallable<S>,
-        source: rust_api::Callable<'binding>,
+        symbol: &'lowered NativeSymbol,
+        callable: &'lowered ExportedCallable<S>,
+        source: rust_api::Callable<'lowered>,
         rust_call: RustCall,
         receiver: ReceiverTokens,
         visibility: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             symbol,

@@ -14,17 +14,17 @@ use super::Tokens;
 pub struct Renderer;
 pub struct Record;
 
-pub struct Input<'binding> {
-    ty: &'binding TypeRef,
+pub struct Input<'lowered> {
+    ty: &'lowered TypeRef,
     receive: Receive,
     rust_type: Type,
     ident: Ident,
     failure: TokenStream,
 }
 
-impl<'binding> Input<'binding> {
+impl<'lowered> Input<'lowered> {
     pub fn new(
-        ty: &'binding TypeRef,
+        ty: &'lowered TypeRef,
         receive: Receive,
         rust_type: Type,
         ident: Ident,
@@ -58,7 +58,7 @@ impl RecordInput {
     }
 }
 
-impl<'binding, S> Render<S, Input<'binding>> for Renderer
+impl<'lowered, S> Render<S, Input<'lowered>> for Renderer
 where
     S: Target,
     for<'ty> wrapper::type_ref::Renderer: Render<S, &'ty TypeRef, Output = TokenStream>,
@@ -66,7 +66,7 @@ where
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'binding>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'lowered>) -> Result<Self::Output, Error> {
         match input.ty {
             TypeRef::Primitive(primitive) => {
                 PrimitiveParam::new(*primitive, input.receive, input.ident).tokens::<S>()

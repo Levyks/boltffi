@@ -9,18 +9,18 @@ use boltffi_binding::{
 
 use crate::experimental::error::Error;
 
-pub enum SourceDeclaration<'a> {
-    Record(&'a RecordDef),
-    Enum(&'a EnumDef),
-    Function(&'a FunctionDef),
-    Class(&'a ClassDef),
-    Callback(&'a TraitDef),
-    Stream(&'a StreamDef),
-    Constant(&'a ConstantDef),
-    CustomType(&'a CustomTypeDef),
+pub enum SourceDeclaration<'lowered> {
+    Record(&'lowered RecordDef),
+    Enum(&'lowered EnumDef),
+    Function(&'lowered FunctionDef),
+    Class(&'lowered ClassDef),
+    Callback(&'lowered TraitDef),
+    Stream(&'lowered StreamDef),
+    Constant(&'lowered ConstantDef),
+    CustomType(&'lowered CustomTypeDef),
 }
 
-impl<'a> SourceDeclaration<'a> {
+impl<'lowered> SourceDeclaration<'lowered> {
     pub fn id(&self) -> SourceDeclarationId {
         match self {
             Self::Record(source) => SourceDeclarationId::Record(source.id.clone()),
@@ -34,7 +34,10 @@ impl<'a> SourceDeclaration<'a> {
         }
     }
 
-    pub fn pair<S: Surface>(self, binding: &'a Decl<S>) -> Result<PairedDeclaration<'a, S>, Error> {
+    pub fn pair<S: Surface>(
+        self,
+        binding: &'lowered Decl<S>,
+    ) -> Result<PairedDeclaration<'lowered, S>, Error> {
         match (self, binding) {
             (Self::Record(source), Decl::Record(binding)) => Ok(PairedDeclaration::Record(
                 DeclarationPair::new(source, binding.as_ref()),
@@ -65,32 +68,32 @@ impl<'a> SourceDeclaration<'a> {
     }
 }
 
-pub enum PairedDeclaration<'a, S: Surface> {
-    Record(DeclarationPair<'a, RecordDef, RecordDecl<S>>),
-    Enum(DeclarationPair<'a, EnumDef, EnumDecl<S>>),
-    Function(DeclarationPair<'a, FunctionDef, FunctionDecl<S>>),
-    Class(DeclarationPair<'a, ClassDef, ClassDecl<S>>),
-    Callback(DeclarationPair<'a, TraitDef, CallbackDecl<S>>),
-    Stream(DeclarationPair<'a, StreamDef, StreamDecl<S>>),
-    Constant(DeclarationPair<'a, ConstantDef, ConstantDecl<S>>),
-    CustomType(DeclarationPair<'a, CustomTypeDef, CustomTypeDecl>),
+pub enum PairedDeclaration<'lowered, S: Surface> {
+    Record(DeclarationPair<'lowered, RecordDef, RecordDecl<S>>),
+    Enum(DeclarationPair<'lowered, EnumDef, EnumDecl<S>>),
+    Function(DeclarationPair<'lowered, FunctionDef, FunctionDecl<S>>),
+    Class(DeclarationPair<'lowered, ClassDef, ClassDecl<S>>),
+    Callback(DeclarationPair<'lowered, TraitDef, CallbackDecl<S>>),
+    Stream(DeclarationPair<'lowered, StreamDef, StreamDecl<S>>),
+    Constant(DeclarationPair<'lowered, ConstantDef, ConstantDecl<S>>),
+    CustomType(DeclarationPair<'lowered, CustomTypeDef, CustomTypeDecl>),
 }
 
-pub struct DeclarationPair<'a, Source, Binding> {
-    source: &'a Source,
-    binding: &'a Binding,
+pub struct DeclarationPair<'lowered, Source, Binding> {
+    source: &'lowered Source,
+    binding: &'lowered Binding,
 }
 
-impl<'a, Source, Binding> DeclarationPair<'a, Source, Binding> {
-    pub fn new(source: &'a Source, binding: &'a Binding) -> Self {
+impl<'lowered, Source, Binding> DeclarationPair<'lowered, Source, Binding> {
+    pub fn new(source: &'lowered Source, binding: &'lowered Binding) -> Self {
         Self { source, binding }
     }
 
-    pub fn source(&self) -> &'a Source {
+    pub fn source(&self) -> &'lowered Source {
         self.source
     }
 
-    pub fn binding(&self) -> &'a Binding {
+    pub fn binding(&self) -> &'lowered Binding {
         self.binding
     }
 }

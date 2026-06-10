@@ -110,13 +110,13 @@ impl Render<Wasm32, Empty> for Renderer {
     }
 }
 
-pub struct Scalar<'a> {
+pub struct Scalar<'value> {
     primitive: Primitive,
-    value: &'a syn::Ident,
+    value: &'value syn::Ident,
 }
 
-impl<'a> Scalar<'a> {
-    pub fn new(primitive: Primitive, value: &'a syn::Ident) -> Self {
+impl<'value> Scalar<'value> {
+    pub fn new(primitive: Primitive, value: &'value syn::Ident) -> Self {
         Self { primitive, value }
     }
 

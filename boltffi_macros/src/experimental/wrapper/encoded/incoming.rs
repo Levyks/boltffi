@@ -7,27 +7,30 @@ use crate::experimental::{
     error::Error, expansion::Expansion, rust_api, target::Target, wrapper::names,
 };
 
-pub struct Value<'context, 'a, S: Target> {
-    codec: &'a CodecNode,
-    expansion: &'context Expansion<'a, S>,
+pub struct Value<'expansion, 'lowered, S: Target> {
+    codec: &'lowered CodecNode,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct Input<'a> {
-    target: &'a rust_api::DecodeTarget,
-    binding: &'a Ident,
-    pointer: &'a Ident,
-    length: &'a Ident,
-    failure: &'a TokenStream,
+pub struct Input<'decode> {
+    target: &'decode rust_api::DecodeTarget,
+    binding: &'decode Ident,
+    pointer: &'decode Ident,
+    length: &'decode Ident,
+    failure: &'decode TokenStream,
 }
 
-pub struct Bytes<'a> {
-    rust_type: &'a Type,
+pub struct Bytes<'rust> {
+    rust_type: &'rust Type,
     bytes: TokenStream,
     failure: TokenStream,
 }
 
-impl<'context, 'a, S: Target> Value<'context, 'a, S> {
-    pub const fn new(codec: &'a CodecNode, expansion: &'context Expansion<'a, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> Value<'expansion, 'lowered, S> {
+    pub const fn new(
+        codec: &'lowered CodecNode,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
         Self { codec, expansion }
     }
 
@@ -86,8 +89,8 @@ impl<'context, 'a, S: Target> Value<'context, 'a, S> {
     }
 }
 
-impl<'a> Bytes<'a> {
-    pub fn new(rust_type: &'a Type, bytes: TokenStream, failure: TokenStream) -> Self {
+impl<'rust> Bytes<'rust> {
+    pub fn new(rust_type: &'rust Type, bytes: TokenStream, failure: TokenStream) -> Self {
         Self {
             rust_type,
             bytes,
@@ -96,13 +99,13 @@ impl<'a> Bytes<'a> {
     }
 }
 
-impl<'a> Input<'a> {
+impl<'decode> Input<'decode> {
     pub const fn new(
-        target: &'a rust_api::DecodeTarget,
-        binding: &'a Ident,
-        pointer: &'a Ident,
-        length: &'a Ident,
-        failure: &'a TokenStream,
+        target: &'decode rust_api::DecodeTarget,
+        binding: &'decode Ident,
+        pointer: &'decode Ident,
+        length: &'decode Ident,
+        failure: &'decode TokenStream,
     ) -> Self {
         Self {
             target,
@@ -113,11 +116,11 @@ impl<'a> Input<'a> {
         }
     }
 
-    fn reference<S: Target>(
+    fn reference<'lowered, S: Target>(
         &self,
         codec: &CodecNode,
         borrow: rust_api::DecodeBorrow,
-        expansion: &Expansion<'a, S>,
+        expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
         let storage = names::Parameter::new(self.binding).storage();
         let owned = self.owned(
@@ -135,13 +138,13 @@ impl<'a> Input<'a> {
         })
     }
 
-    fn owned<S: Target>(
+    fn owned<'lowered, S: Target>(
         &self,
         codec: &CodecNode,
         rust_type: &Type,
         binding: &Ident,
         mutable: bool,
-        expansion: &Expansion<'a, S>,
+        expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
         let pointer = self.pointer;
         let length = self.length;

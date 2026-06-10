@@ -12,19 +12,19 @@ use crate::experimental::{
     wrapper::{self, Render},
 };
 
-pub struct Incoming<'context, 'a, S: Target> {
-    codec: &'a CodecNode,
-    expansion: &'context Expansion<'a, S>,
+pub struct Incoming<'expansion, 'lowered, S: Target> {
+    codec: &'lowered CodecNode,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct Outgoing<'context, 'a, S: Target> {
-    codec: &'a CodecNode,
-    expansion: &'context Expansion<'a, S>,
+pub struct Outgoing<'expansion, 'lowered, S: Target> {
+    codec: &'lowered CodecNode,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct BorrowedOutgoing<'context, 'a, S: Target> {
-    codec: &'a CodecNode,
-    expansion: &'context Expansion<'a, S>,
+pub struct BorrowedOutgoing<'expansion, 'lowered, S: Target> {
+    codec: &'lowered CodecNode,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 pub struct IncomingConversion {
@@ -33,12 +33,12 @@ pub struct IncomingConversion {
     changed: bool,
 }
 
-struct ConverterRenderer<'a> {
-    converter: &'a CustomTypeConverter,
+struct ConverterRenderer<'lowered> {
+    converter: &'lowered CustomTypeConverter,
 }
 
-struct PathRenderer<'a> {
-    path: &'a CustomConverterPath,
+struct PathRenderer<'lowered> {
+    path: &'lowered CustomConverterPath,
 }
 
 impl IncomingConversion {
@@ -55,8 +55,11 @@ impl IncomingConversion {
     }
 }
 
-impl<'context, 'a, S: Target> Incoming<'context, 'a, S> {
-    pub const fn new(codec: &'a CodecNode, expansion: &'context Expansion<'a, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> Incoming<'expansion, 'lowered, S> {
+    pub const fn new(
+        codec: &'lowered CodecNode,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
         Self { codec, expansion }
     }
 
@@ -206,8 +209,11 @@ impl<'context, 'a, S: Target> Incoming<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S: Target> Outgoing<'context, 'a, S> {
-    pub const fn new(codec: &'a CodecNode, expansion: &'context Expansion<'a, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> Outgoing<'expansion, 'lowered, S> {
+    pub const fn new(
+        codec: &'lowered CodecNode,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
         Self { codec, expansion }
     }
 
@@ -270,8 +276,11 @@ impl<'context, 'a, S: Target> Outgoing<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S: Target> BorrowedOutgoing<'context, 'a, S> {
-    pub const fn new(codec: &'a CodecNode, expansion: &'context Expansion<'a, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> BorrowedOutgoing<'expansion, 'lowered, S> {
+    pub const fn new(
+        codec: &'lowered CodecNode,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
         Self { codec, expansion }
     }
 
@@ -334,8 +343,8 @@ impl<'context, 'a, S: Target> BorrowedOutgoing<'context, 'a, S> {
     }
 }
 
-impl<'a> ConverterRenderer<'a> {
-    const fn new(converter: &'a CustomTypeConverter) -> Self {
+impl<'lowered> ConverterRenderer<'lowered> {
+    const fn new(converter: &'lowered CustomTypeConverter) -> Self {
         Self { converter }
     }
 
@@ -350,8 +359,8 @@ impl<'a> ConverterRenderer<'a> {
     }
 }
 
-impl<'a> PathRenderer<'a> {
-    const fn new(path: &'a CustomConverterPath) -> Self {
+impl<'lowered> PathRenderer<'lowered> {
+    const fn new(path: &'lowered CustomConverterPath) -> Self {
         Self { path }
     }
 
@@ -457,8 +466,8 @@ fn contains_custom<S: Target>(
     }
 }
 
-fn contains_any<'a, S: Target>(
-    mut codecs: impl Iterator<Item = &'a CodecNode>,
+fn contains_any<'lowered, S: Target>(
+    mut codecs: impl Iterator<Item = &'lowered CodecNode>,
     expansion: &Expansion<'_, S>,
 ) -> Result<bool, Error> {
     codecs.try_fold(false, |found, codec| {

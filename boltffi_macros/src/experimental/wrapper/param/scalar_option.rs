@@ -98,13 +98,13 @@ impl Render<Wasm32, Input> for Renderer {
     }
 }
 
-struct Scalar<'a> {
+struct Scalar<'value> {
     primitive: Primitive,
-    value: &'a Ident,
+    value: &'value Ident,
 }
 
-impl<'a> Scalar<'a> {
-    fn new(primitive: Primitive, value: &'a Ident) -> Self {
+impl<'value> Scalar<'value> {
+    fn new(primitive: Primitive, value: &'value Ident) -> Self {
         Self { primitive, value }
     }
 

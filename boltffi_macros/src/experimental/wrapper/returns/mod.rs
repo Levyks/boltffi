@@ -57,23 +57,23 @@ impl RustInvocation {
     }
 }
 
-pub struct Input<'context, 'a, S: Target> {
-    returns: &'a ReturnDecl<S, OutOfRust>,
-    error: &'a ErrorDecl<S, OutOfRust>,
-    source: rust_api::Return<'a>,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    returns: &'lowered ReturnDecl<S, OutOfRust>,
+    error: &'lowered ErrorDecl<S, OutOfRust>,
+    source: rust_api::Return<'lowered>,
     rust_type: Option<Type>,
     invocation: RustInvocation,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Input<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        returns: &'a ReturnDecl<S, OutOfRust>,
-        error: &'a ErrorDecl<S, OutOfRust>,
-        source: rust_api::Return<'a>,
+        returns: &'lowered ReturnDecl<S, OutOfRust>,
+        error: &'lowered ErrorDecl<S, OutOfRust>,
+        source: rust_api::Return<'lowered>,
         rust_type: Option<Type>,
         invocation: RustInvocation,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             returns,
@@ -93,17 +93,17 @@ pub struct Tokens {
     body: TokenStream,
 }
 
-pub struct FailureInput<'context, 'a, S: Target> {
-    returns: &'a ReturnDecl<S, OutOfRust>,
-    error: &'a ErrorDecl<S, OutOfRust>,
-    expansion: &'context Expansion<'a, S>,
+pub struct FailureInput<'expansion, 'lowered, S: Target> {
+    returns: &'lowered ReturnDecl<S, OutOfRust>,
+    error: &'lowered ErrorDecl<S, OutOfRust>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> FailureInput<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> FailureInput<'expansion, 'lowered, S> {
     pub fn new(
-        returns: &'a ReturnDecl<S, OutOfRust>,
-        error: &'a ErrorDecl<S, OutOfRust>,
-        expansion: &'context Expansion<'a, S>,
+        returns: &'lowered ReturnDecl<S, OutOfRust>,
+        error: &'lowered ErrorDecl<S, OutOfRust>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             returns,
@@ -131,23 +131,23 @@ impl Tokens {
     }
 }
 
-impl<'context, 'a, S> Render<S, Input<'context, 'a, S>> for Renderer
+impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
     S: Target,
-    closure::Renderer: Render<S, closure::Input<'context, 'a, S>, Output = Tokens>,
-    encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>,
+    closure::Renderer: Render<S, closure::Input<'expansion, 'lowered, S>, Output = Tokens>,
+    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
     direct_vec::Renderer: Render<S, direct_vec::Input, Output = Tokens>,
-    fallible::Renderer: Render<S, fallible::Input<'context, 'a, S>, Output = Tokens>,
+    fallible::Renderer: Render<S, fallible::Input<'expansion, 'lowered, S>, Output = Tokens>,
     handle::Value: Render<
             S,
-            handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+            handle::ValueInput<'expansion, 'lowered, S, S::HandleCarrier>,
             Output = handle::ValueTokens,
         >,
     scalar_option::Renderer: Render<S, scalar_option::Input, Output = Tokens>,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'a, S>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         if !matches!(input.error, ErrorDecl::None(_)) {
             return <fallible::Renderer as Render<S, _>>::render(
                 fallible::Renderer,
@@ -367,18 +367,18 @@ where
     }
 }
 
-impl<'context, 'a, S> Render<S, FailureInput<'context, 'a, S>> for Failure
+impl<'expansion, 'lowered, S> Render<S, FailureInput<'expansion, 'lowered, S>> for Failure
 where
     S: Target,
     direct_vec::Failure: Render<S, direct_vec::FailureInput, Output = TokenStream>,
     encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
-    encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>,
+    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
     handle::Failure: Render<S, handle::FailureInput<S::HandleCarrier>, Output = TokenStream>,
     scalar_option::Failure: Render<S, scalar_option::FailureInput, Output = TokenStream>,
 {
     type Output = TokenStream;
 
-    fn render(self, input: FailureInput<'context, 'a, S>) -> Result<Self::Output, Error> {
+    fn render(self, input: FailureInput<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         if !matches!(input.error, ErrorDecl::None(_)) {
             return ErrorFailure::new(input.error, input.expansion).tokens();
         }
@@ -433,19 +433,23 @@ where
     }
 }
 
-struct ErrorFailure<'context, 'a, S: Target> {
-    error: &'a ErrorDecl<S, OutOfRust>,
-    expansion: &'context Expansion<'a, S>,
+struct ErrorFailure<'expansion, 'lowered, S: Target> {
+    error: &'lowered ErrorDecl<S, OutOfRust>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> ErrorFailure<'context, 'a, S> {
-    fn new(error: &'a ErrorDecl<S, OutOfRust>, expansion: &'context Expansion<'a, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> ErrorFailure<'expansion, 'lowered, S> {
+    fn new(
+        error: &'lowered ErrorDecl<S, OutOfRust>,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
         Self { error, expansion }
     }
 
     fn tokens(self) -> Result<TokenStream, Error>
     where
-        encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>,
+        encoded::Renderer:
+            Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
     {
         match self.error {
             ErrorDecl::EncodedViaReturnSlot { codec, shape, .. }

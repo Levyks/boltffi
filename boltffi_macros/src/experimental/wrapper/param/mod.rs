@@ -33,19 +33,19 @@ pub fn requires_failure_return<S: Target>(param: &ParamDecl<S, IntoRust>) -> boo
     }
 }
 
-pub struct Input<'context, 'binding, S: Target> {
-    param: &'binding ParamDecl<S, IntoRust>,
-    source: rust_api::Parameter<'binding>,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    param: &'lowered ParamDecl<S, IntoRust>,
+    source: rust_api::Parameter<'lowered>,
     failure: TokenStream,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        param: &'binding ParamDecl<S, IntoRust>,
-        source: rust_api::Parameter<'binding>,
+        param: &'lowered ParamDecl<S, IntoRust>,
+        source: rust_api::Parameter<'lowered>,
         failure: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             param,
@@ -91,19 +91,19 @@ impl Tokens {
     }
 }
 
-impl<'context, 'binding, S> Render<S, Input<'context, 'binding, S>> for Renderer
+impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
     S: Target,
-    direct::Renderer: Render<S, direct::Input<'binding>, Output = Tokens>,
-    direct_vec::Renderer: Render<S, direct_vec::Input<'binding>, Output = Tokens>,
-    closure::Renderer: Render<S, closure::Input<'context, 'binding, S>, Output = Tokens>,
-    encoded::Renderer: Render<S, encoded::Input<'context, 'binding, S>, Output = Tokens>,
-    handle::Renderer: Render<S, handle::Input<'binding, S::HandleCarrier>, Output = Tokens>,
+    direct::Renderer: Render<S, direct::Input<'lowered>, Output = Tokens>,
+    direct_vec::Renderer: Render<S, direct_vec::Input<'lowered>, Output = Tokens>,
+    closure::Renderer: Render<S, closure::Input<'expansion, 'lowered, S>, Output = Tokens>,
+    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = Tokens>,
+    handle::Renderer: Render<S, handle::Input<'lowered, S::HandleCarrier>, Output = Tokens>,
     scalar_option::Renderer: Render<S, scalar_option::Input, Output = Tokens>,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'binding, S>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         let ident = input.source.ident()?;
         match input.param.payload() {
             IncomingParam::Value(ParamPlan::Direct { ty, receive }) => {

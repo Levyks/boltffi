@@ -16,28 +16,28 @@ use super::{RustInvocation, Tokens, closure, encoded, handle};
 pub struct Renderer;
 pub struct Success;
 
-pub struct Input<'context, 'a, S: Target> {
-    returns: &'a ReturnDecl<S, OutOfRust>,
-    error: &'a ErrorDecl<S, OutOfRust>,
-    source: rust_api::Return<'a>,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    returns: &'lowered ReturnDecl<S, OutOfRust>,
+    error: &'lowered ErrorDecl<S, OutOfRust>,
+    source: rust_api::Return<'lowered>,
     invocation: RustInvocation,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct SuccessInput<'context, 'a, S: Target> {
-    returns: &'a ReturnDecl<S, OutOfRust>,
-    source: rust_api::Fallible<'a>,
+pub struct SuccessInput<'expansion, 'lowered, S: Target> {
+    returns: &'lowered ReturnDecl<S, OutOfRust>,
+    source: rust_api::Fallible<'lowered>,
     owner: Ident,
     span: Span,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> SuccessInput<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> SuccessInput<'expansion, 'lowered, S> {
     pub fn new(
-        returns: &'a ReturnDecl<S, OutOfRust>,
-        source: rust_api::Fallible<'a>,
+        returns: &'lowered ReturnDecl<S, OutOfRust>,
+        source: rust_api::Fallible<'lowered>,
         owner: Ident,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         let span = owner.span();
         Self {
@@ -50,13 +50,13 @@ impl<'context, 'a, S: Target> SuccessInput<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S: Target> Input<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        returns: &'a ReturnDecl<S, OutOfRust>,
-        error: &'a ErrorDecl<S, OutOfRust>,
-        source: rust_api::Return<'a>,
+        returns: &'lowered ReturnDecl<S, OutOfRust>,
+        error: &'lowered ErrorDecl<S, OutOfRust>,
+        source: rust_api::Return<'lowered>,
         invocation: RustInvocation,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             returns,
@@ -68,21 +68,21 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S> Render<S, Input<'context, 'a, S>> for Renderer
+impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
     S: Target,
-    encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>
+    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>
         + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
-    Success: Render<S, SuccessInput<'context, 'a, S>, Output = SuccessTokens>,
+    Success: Render<S, SuccessInput<'expansion, 'lowered, S>, Output = SuccessTokens>,
     handle::Value: Render<
             S,
-            handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+            handle::ValueInput<'expansion, 'lowered, S, S::HandleCarrier>,
             Output = handle::ValueTokens,
         >,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'a, S>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         match input.error {
             ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } => EncodedError::new(
                 input.returns,
@@ -108,23 +108,23 @@ where
     }
 }
 
-struct EncodedError<'context, 'a, S: Target> {
-    returns: &'a ReturnDecl<S, OutOfRust>,
-    error_codec: &'a ReadPlan,
+struct EncodedError<'expansion, 'lowered, S: Target> {
+    returns: &'lowered ReturnDecl<S, OutOfRust>,
+    error_codec: &'lowered ReadPlan,
     error_shape: S::BufferShape,
-    source: rust_api::Fallible<'a>,
+    source: rust_api::Fallible<'lowered>,
     invocation: RustInvocation,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> EncodedError<'expansion, 'lowered, S> {
     fn new(
-        returns: &'a ReturnDecl<S, OutOfRust>,
-        error_codec: &'a ReadPlan,
+        returns: &'lowered ReturnDecl<S, OutOfRust>,
+        error_codec: &'lowered ReadPlan,
         error_shape: S::BufferShape,
-        source: rust_api::Fallible<'a>,
+        source: rust_api::Fallible<'lowered>,
         invocation: RustInvocation,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             returns,
@@ -138,12 +138,12 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
 
     fn tokens(self) -> Result<Tokens, Error>
     where
-        encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>
+        encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>
             + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
-        Success: Render<S, SuccessInput<'context, 'a, S>, Output = SuccessTokens>,
+        Success: Render<S, SuccessInput<'expansion, 'lowered, S>, Output = SuccessTokens>,
         handle::Value: Render<
                 S,
-                handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+                handle::ValueInput<'expansion, 'lowered, S, S::HandleCarrier>,
                 Output = handle::ValueTokens,
             >,
     {
@@ -216,20 +216,21 @@ impl<'context, 'a, S: Target> EncodedError<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S> Render<S, SuccessInput<'context, 'a, S>> for Success
+impl<'expansion, 'lowered, S> Render<S, SuccessInput<'expansion, 'lowered, S>> for Success
 where
     S: Target,
-    encoded::Renderer: Render<S, encoded::Input<'context, 'a, S>, Output = encoded::Tokens>,
-    closure::Write: Render<S, closure::WriteInput<'context, 'a, S>, Output = closure::WriteTokens>,
+    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
+    closure::Write:
+        Render<S, closure::WriteInput<'expansion, 'lowered, S>, Output = closure::WriteTokens>,
     handle::Value: Render<
             S,
-            handle::ValueInput<'context, 'a, S, S::HandleCarrier>,
+            handle::ValueInput<'expansion, 'lowered, S, S::HandleCarrier>,
             Output = handle::ValueTokens,
         >,
 {
     type Output = SuccessTokens;
 
-    fn render(self, input: SuccessInput<'context, 'a, S>) -> Result<Self::Output, Error> {
+    fn render(self, input: SuccessInput<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         let locals = names::Wrapper::new(input.span);
         let success_ident = locals.success();
         match input.returns.plan() {

@@ -11,19 +11,19 @@ use crate::experimental::{
 
 pub struct Renderer;
 
-pub struct Input<'context, 'a, S: Target> {
-    codec: &'a ReadPlan,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    codec: &'lowered ReadPlan,
     shape: S::BufferShape,
     value: syn::Ident,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Input<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        codec: &'a ReadPlan,
+        codec: &'lowered ReadPlan,
         shape: S::BufferShape,
         value: syn::Ident,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             codec,
@@ -34,10 +34,10 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
     }
 
     pub fn string(
-        codec: &'a ReadPlan,
+        codec: &'lowered ReadPlan,
         shape: S::BufferShape,
         value: syn::Ident,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             codec,
@@ -78,10 +78,10 @@ impl<S: Target> Empty<S> {
     }
 }
 
-impl<'context, 'a> Render<Native, Input<'context, 'a, Native>> for Renderer {
+impl<'expansion, 'lowered> Render<Native, Input<'expansion, 'lowered, Native>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'a, Native>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
         let value = input.value;
         match input.shape {
             native::BufferShape::Buffer => {
@@ -123,10 +123,10 @@ impl Render<Native, Empty<Native>> for Renderer {
     }
 }
 
-impl<'context, 'a> Render<Wasm32, Input<'context, 'a, Wasm32>> for Renderer {
+impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'a, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
         let value = input.value;
 
         match input.shape {

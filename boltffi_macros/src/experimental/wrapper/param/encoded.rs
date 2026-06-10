@@ -15,23 +15,23 @@ use super::Tokens;
 
 pub struct Renderer;
 
-pub struct Input<'context, 'binding, S: Target> {
-    codec: &'binding WritePlan,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    codec: &'lowered WritePlan,
     shape: S::BufferShape,
     target: rust_api::DecodeTarget,
     ident: Ident,
     failure: TokenStream,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        codec: &'binding WritePlan,
+        codec: &'lowered WritePlan,
         shape: S::BufferShape,
         target: rust_api::DecodeTarget,
         ident: Ident,
         failure: TokenStream,
-        expansion: &'context Expansion<'binding, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             codec,
@@ -44,10 +44,10 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
     }
 }
 
-impl<'context, 'binding> Render<Native, Input<'context, 'binding, Native>> for Renderer {
+impl<'expansion, 'lowered> Render<Native, Input<'expansion, 'lowered, Native>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'binding, Native>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
         match input.shape {
             native::BufferShape::Slice => Slice::new(input).tokens(),
             native::BufferShape::Buffer | native::BufferShape::BufferPointer => Err(
@@ -60,10 +60,10 @@ impl<'context, 'binding> Render<Native, Input<'context, 'binding, Native>> for R
     }
 }
 
-impl<'context, 'binding> Render<Wasm32, Input<'context, 'binding, Wasm32>> for Renderer {
+impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'binding, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
         match input.shape {
             wasm32::BufferShape::Slice => Slice::new(input).tokens(),
             wasm32::BufferShape::Packed => {
@@ -76,26 +76,26 @@ impl<'context, 'binding> Render<Wasm32, Input<'context, 'binding, Wasm32>> for R
     }
 }
 
-struct Slice<'context, 'binding, S: Target> {
-    codec: &'binding WritePlan,
+struct Slice<'expansion, 'lowered, S: Target> {
+    codec: &'lowered WritePlan,
     target: rust_api::DecodeTarget,
     ident: Ident,
     pointer: Ident,
     length: Ident,
     failure: TokenStream,
-    expansion: &'context Expansion<'binding, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'binding, S: Target> From<Input<'context, 'binding, S>>
-    for Slice<'context, 'binding, S>
+impl<'expansion, 'lowered, S: Target> From<Input<'expansion, 'lowered, S>>
+    for Slice<'expansion, 'lowered, S>
 {
-    fn from(input: Input<'context, 'binding, S>) -> Self {
+    fn from(input: Input<'expansion, 'lowered, S>) -> Self {
         Self::new(input)
     }
 }
 
-impl<'context, 'binding, S: Target> Slice<'context, 'binding, S> {
-    fn new(input: Input<'context, 'binding, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> Slice<'expansion, 'lowered, S> {
+    fn new(input: Input<'expansion, 'lowered, S>) -> Self {
         let ident = input.ident;
         let locals = names::Parameter::new(&ident);
         let pointer = locals.pointer();

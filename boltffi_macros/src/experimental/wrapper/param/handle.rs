@@ -14,51 +14,51 @@ use super::Tokens;
 pub struct Renderer;
 struct CallbackCarrier;
 
-pub struct Plan<'binding, C> {
-    target: &'binding HandleTarget,
+pub struct Plan<'lowered, C> {
+    target: &'lowered HandleTarget,
     carrier: C,
     presence: HandlePresence,
     receive: Receive,
 }
 
-pub struct Input<'binding, C> {
-    plan: Plan<'binding, C>,
-    source: rust_api::Parameter<'binding>,
+pub struct Input<'lowered, C> {
+    plan: Plan<'lowered, C>,
+    source: rust_api::Parameter<'lowered>,
     ident: Ident,
     failure: TokenStream,
 }
 
-struct CallbackHandleInput<'a> {
-    ident: &'a Ident,
+struct CallbackHandleInput<'ident> {
+    ident: &'ident Ident,
 }
 
-impl<'a> CallbackHandleInput<'a> {
-    fn new(ident: &'a Ident) -> Self {
+impl<'ident> CallbackHandleInput<'ident> {
+    fn new(ident: &'ident Ident) -> Self {
         Self { ident }
     }
 }
 
-impl<'a> Render<Native, CallbackHandleInput<'a>> for CallbackCarrier {
+impl<'ident> Render<Native, CallbackHandleInput<'ident>> for CallbackCarrier {
     type Output = TokenStream;
 
-    fn render(self, input: CallbackHandleInput<'a>) -> Result<Self::Output, Error> {
+    fn render(self, input: CallbackHandleInput<'ident>) -> Result<Self::Output, Error> {
         let ident = input.ident;
         Ok(quote! { #ident })
     }
 }
 
-impl<'a> Render<Wasm32, CallbackHandleInput<'a>> for CallbackCarrier {
+impl<'ident> Render<Wasm32, CallbackHandleInput<'ident>> for CallbackCarrier {
     type Output = TokenStream;
 
-    fn render(self, input: CallbackHandleInput<'a>) -> Result<Self::Output, Error> {
+    fn render(self, input: CallbackHandleInput<'ident>) -> Result<Self::Output, Error> {
         let ident = input.ident;
         Ok(quote! { ::boltffi::__private::CallbackHandle::from_wasm_handle(#ident) })
     }
 }
 
-impl<'binding, C> Plan<'binding, C> {
+impl<'lowered, C> Plan<'lowered, C> {
     pub fn new(
-        target: &'binding HandleTarget,
+        target: &'lowered HandleTarget,
         carrier: C,
         presence: HandlePresence,
         receive: Receive,
@@ -72,10 +72,10 @@ impl<'binding, C> Plan<'binding, C> {
     }
 }
 
-impl<'binding, C> Input<'binding, C> {
+impl<'lowered, C> Input<'lowered, C> {
     pub fn new(
-        plan: Plan<'binding, C>,
-        source: rust_api::Parameter<'binding>,
+        plan: Plan<'lowered, C>,
+        source: rust_api::Parameter<'lowered>,
         ident: Ident,
         failure: TokenStream,
     ) -> Self {
@@ -88,28 +88,28 @@ impl<'binding, C> Input<'binding, C> {
     }
 }
 
-impl<'binding> Render<Native, Input<'binding, native::HandleCarrier>> for Renderer {
+impl<'lowered> Render<Native, Input<'lowered, native::HandleCarrier>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'binding, native::HandleCarrier>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'lowered, native::HandleCarrier>) -> Result<Self::Output, Error> {
         ClassParam::new(input).tokens::<Native>()
     }
 }
 
-impl<'binding> Render<Wasm32, Input<'binding, wasm32::HandleCarrier>> for Renderer {
+impl<'lowered> Render<Wasm32, Input<'lowered, wasm32::HandleCarrier>> for Renderer {
     type Output = Tokens;
 
-    fn render(self, input: Input<'binding, wasm32::HandleCarrier>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'lowered, wasm32::HandleCarrier>) -> Result<Self::Output, Error> {
         ClassParam::new(input).tokens::<Wasm32>()
     }
 }
 
-struct ClassParam<'binding, C> {
-    input: Input<'binding, C>,
+struct ClassParam<'lowered, C> {
+    input: Input<'lowered, C>,
 }
 
-impl<'binding, C> ClassParam<'binding, C> {
-    fn new(input: Input<'binding, C>) -> Self {
+impl<'lowered, C> ClassParam<'lowered, C> {
+    fn new(input: Input<'lowered, C>) -> Self {
         Self { input }
     }
 

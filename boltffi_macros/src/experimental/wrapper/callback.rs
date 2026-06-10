@@ -22,46 +22,46 @@ use crate::experimental::{
 };
 
 /// A callback-trait protocol renderer for one target surface.
-pub struct Renderer<'context, 'a, S: Target> {
-    pair: DeclarationPair<'a, TraitDef, CallbackDecl<S>>,
-    expansion: &'context Expansion<'a, S>,
+pub struct Renderer<'expansion, 'lowered, S: Target> {
+    pair: DeclarationPair<'lowered, TraitDef, CallbackDecl<S>>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Renderer<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
     /// Creates a renderer for one paired callback declaration.
     pub fn new(
-        pair: DeclarationPair<'a, TraitDef, CallbackDecl<S>>,
-        expansion: &'context Expansion<'a, S>,
+        pair: DeclarationPair<'lowered, TraitDef, CallbackDecl<S>>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self { pair, expansion }
     }
 }
 
-impl<'context, 'a> Renderer<'context, 'a, Native> {
+impl<'expansion, 'lowered> Renderer<'expansion, 'lowered, Native> {
     /// Renders the native callback protocol items.
     pub fn render(self) -> Result<TokenStream, Error> {
         NativeProtocol::new(self.pair.source(), self.pair.binding(), self.expansion).tokens()
     }
 }
 
-impl<'context, 'a> Renderer<'context, 'a, Wasm32> {
+impl<'expansion, 'lowered> Renderer<'expansion, 'lowered, Wasm32> {
     /// Renders the wasm callback protocol items.
     pub fn render(self) -> Result<TokenStream, Error> {
         WasmProtocol::new(self.pair.source(), self.pair.binding(), self.expansion).tokens()
     }
 }
 
-struct NativeProtocol<'context, 'a> {
-    source: &'a TraitDef,
-    binding: &'a CallbackDecl<Native>,
-    expansion: &'context Expansion<'a, Native>,
+struct NativeProtocol<'expansion, 'lowered> {
+    source: &'lowered TraitDef,
+    binding: &'lowered CallbackDecl<Native>,
+    expansion: &'expansion Expansion<'lowered, Native>,
 }
 
-impl<'context, 'a> NativeProtocol<'context, 'a> {
+impl<'expansion, 'lowered> NativeProtocol<'expansion, 'lowered> {
     fn new(
-        source: &'a TraitDef,
-        binding: &'a CallbackDecl<Native>,
-        expansion: &'context Expansion<'a, Native>,
+        source: &'lowered TraitDef,
+        binding: &'lowered CallbackDecl<Native>,
+        expansion: &'expansion Expansion<'lowered, Native>,
     ) -> Self {
         Self {
             source,
@@ -330,17 +330,17 @@ impl<'context, 'a> NativeProtocol<'context, 'a> {
     }
 }
 
-struct WasmProtocol<'context, 'a> {
-    source: &'a TraitDef,
-    binding: &'a CallbackDecl<Wasm32>,
-    expansion: &'context Expansion<'a, Wasm32>,
+struct WasmProtocol<'expansion, 'lowered> {
+    source: &'lowered TraitDef,
+    binding: &'lowered CallbackDecl<Wasm32>,
+    expansion: &'expansion Expansion<'lowered, Wasm32>,
 }
 
-impl<'context, 'a> WasmProtocol<'context, 'a> {
+impl<'expansion, 'lowered> WasmProtocol<'expansion, 'lowered> {
     fn new(
-        source: &'a TraitDef,
-        binding: &'a CallbackDecl<Wasm32>,
-        expansion: &'context Expansion<'a, Wasm32>,
+        source: &'lowered TraitDef,
+        binding: &'lowered CallbackDecl<Wasm32>,
+        expansion: &'expansion Expansion<'lowered, Wasm32>,
     ) -> Self {
         Self {
             source,
@@ -699,21 +699,21 @@ impl<'context, 'a> WasmProtocol<'context, 'a> {
     }
 }
 
-struct MethodPair<'a, S: Target, TargetName> {
-    source: &'a MethodDef,
-    binding: &'a ImportedMethodDecl<S, TargetName>,
-    local: Option<&'a CallbackLocalMethodDecl<S>>,
+struct MethodPair<'lowered, S: Target, TargetName> {
+    source: &'lowered MethodDef,
+    binding: &'lowered ImportedMethodDecl<S, TargetName>,
+    local: Option<&'lowered CallbackLocalMethodDecl<S>>,
 }
 
-struct CallbackMethods<'a, S: Target, TargetName> {
-    methods: Vec<MethodPair<'a, S, TargetName>>,
+struct CallbackMethods<'lowered, S: Target, TargetName> {
+    methods: Vec<MethodPair<'lowered, S, TargetName>>,
 }
 
-impl<'a, S: Target, TargetName> CallbackMethods<'a, S, TargetName> {
+impl<'lowered, S: Target, TargetName> CallbackMethods<'lowered, S, TargetName> {
     fn new(
-        source: &'a [MethodDef],
-        binding: &'a [ImportedMethodDecl<S, TargetName>],
-        local: Option<&'a [CallbackLocalMethodDecl<S>]>,
+        source: &'lowered [MethodDef],
+        binding: &'lowered [ImportedMethodDecl<S, TargetName>],
+        local: Option<&'lowered [CallbackLocalMethodDecl<S>]>,
     ) -> Result<Self, Error> {
         if source.len() != binding.len() || local.is_some_and(|local| source.len() != local.len()) {
             return Err(Error::SourceSyntaxMismatch(
@@ -744,7 +744,7 @@ impl<'a, S: Target, TargetName> CallbackMethods<'a, S, TargetName> {
         Ok(Self { methods })
     }
 
-    fn iter(&self) -> impl Iterator<Item = &MethodPair<'a, S, TargetName>> {
+    fn iter(&self) -> impl Iterator<Item = &MethodPair<'lowered, S, TargetName>> {
         self.methods.iter()
     }
 
@@ -795,27 +795,27 @@ impl<'a, S: Target, TargetName> CallbackMethods<'a, S, TargetName> {
     }
 }
 
-struct MethodAbi<'context, 'a, S: Target> {
-    source: &'a MethodDef,
-    callable: &'a ImportedCallable<S>,
-    local_callable: Option<&'a ExportedCallable<S>>,
-    expansion: &'context Expansion<'a, S>,
+struct MethodAbi<'expansion, 'lowered, S: Target> {
+    source: &'lowered MethodDef,
+    callable: &'lowered ImportedCallable<S>,
+    local_callable: Option<&'lowered ExportedCallable<S>>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S> MethodAbi<'context, 'a, S>
+impl<'expansion, 'lowered, S> MethodAbi<'expansion, 'lowered, S>
 where
     S: CallbackMethodSurface,
     wrapper::returns::closure::Write: Render<
             S,
-            wrapper::returns::closure::WriteInput<'context, 'a, S>,
+            wrapper::returns::closure::WriteInput<'expansion, 'lowered, S>,
             Output = wrapper::returns::closure::WriteTokens,
         >,
 {
     fn new(
-        source: &'a MethodDef,
-        callable: &'a ImportedCallable<S>,
-        local_callable: Option<&'a ExportedCallable<S>>,
-        expansion: &'context Expansion<'a, S>,
+        source: &'lowered MethodDef,
+        callable: &'lowered ImportedCallable<S>,
+        local_callable: Option<&'lowered ExportedCallable<S>>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<Self, Error> {
         match callable.execution() {
             ExecutionDecl::Synchronous(_) => Ok(Self {
@@ -1090,7 +1090,7 @@ where
         self.parameters().map(|parameters| parameters.items)
     }
 
-    fn return_tokens(&self) -> Result<MethodReturn<'context, 'a, S>, Error> {
+    fn return_tokens(&self) -> Result<MethodReturn<'expansion, 'lowered, S>, Error> {
         MethodReturn::new(
             self.callable.returns().plan(),
             self.callable.error(),
@@ -1124,7 +1124,7 @@ where
     }
 }
 
-impl<'context, 'a> MethodAbi<'context, 'a, Wasm32> {
+impl<'expansion, 'lowered> MethodAbi<'expansion, 'lowered, Wasm32> {
     fn wasm_complete_export(&self) -> Option<Result<TokenStream, Error>> {
         match self.callable.execution() {
             ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::CallbackCompletion { complete }) => {
@@ -1161,19 +1161,19 @@ impl<'context, 'a> MethodAbi<'context, 'a, Wasm32> {
     }
 }
 
-struct MethodParameter<'context, 'a, S: Target> {
-    binding: &'a ParamDecl<S, OutOfRust>,
-    local: Option<&'a ParamDecl<S, IntoRust>>,
-    source: &'a ParameterDef,
-    expansion: &'context Expansion<'a, S>,
+struct MethodParameter<'expansion, 'lowered, S: Target> {
+    binding: &'lowered ParamDecl<S, OutOfRust>,
+    local: Option<&'lowered ParamDecl<S, IntoRust>>,
+    source: &'lowered ParameterDef,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: CallbackMethodSurface> MethodParameter<'context, 'a, S> {
+impl<'expansion, 'lowered, S: CallbackMethodSurface> MethodParameter<'expansion, 'lowered, S> {
     fn new(
-        binding: &'a ParamDecl<S, OutOfRust>,
-        local: Option<&'a ParamDecl<S, IntoRust>>,
-        source: &'a ParameterDef,
-        expansion: &'context Expansion<'a, S>,
+        binding: &'lowered ParamDecl<S, OutOfRust>,
+        local: Option<&'lowered ParamDecl<S, IntoRust>>,
+        source: &'lowered ParameterDef,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             binding,
@@ -1345,17 +1345,17 @@ impl ForeignMethodParameterTokens {
     }
 }
 
-struct NativeOutgoingClosure<'a> {
-    closure: &'a ClosureParameter<Native, OutOfRust>,
-    source: &'a ParameterDef,
-    expansion: &'a Expansion<'a, Native>,
+struct NativeOutgoingClosure<'lowered> {
+    closure: &'lowered ClosureParameter<Native, OutOfRust>,
+    source: &'lowered ParameterDef,
+    expansion: &'lowered Expansion<'lowered, Native>,
 }
 
-impl<'a> NativeOutgoingClosure<'a> {
+impl<'lowered> NativeOutgoingClosure<'lowered> {
     fn new(
-        closure: &'a ClosureParameter<Native, OutOfRust>,
-        source: &'a ParameterDef,
-        expansion: &'a Expansion<'a, Native>,
+        closure: &'lowered ClosureParameter<Native, OutOfRust>,
+        source: &'lowered ParameterDef,
+        expansion: &'lowered Expansion<'lowered, Native>,
     ) -> Self {
         Self {
             closure,
@@ -1447,17 +1447,17 @@ impl<'a> NativeOutgoingClosure<'a> {
     }
 }
 
-struct WasmOutgoingClosure<'a> {
-    closure: &'a ClosureParameter<Wasm32, OutOfRust>,
-    source: &'a ParameterDef,
-    expansion: &'a Expansion<'a, Wasm32>,
+struct WasmOutgoingClosure<'lowered> {
+    closure: &'lowered ClosureParameter<Wasm32, OutOfRust>,
+    source: &'lowered ParameterDef,
+    expansion: &'lowered Expansion<'lowered, Wasm32>,
 }
 
-impl<'a> WasmOutgoingClosure<'a> {
+impl<'lowered> WasmOutgoingClosure<'lowered> {
     fn new(
-        closure: &'a ClosureParameter<Wasm32, OutOfRust>,
-        source: &'a ParameterDef,
-        expansion: &'a Expansion<'a, Wasm32>,
+        closure: &'lowered ClosureParameter<Wasm32, OutOfRust>,
+        source: &'lowered ParameterDef,
+        expansion: &'lowered Expansion<'lowered, Wasm32>,
     ) -> Self {
         Self {
             closure,
@@ -1726,13 +1726,13 @@ impl MethodParameters {
     }
 }
 
-struct MethodReturn<'context, 'a, S: CallbackMethodSurface> {
-    plan: &'a ReturnPlan<S, IntoRust>,
-    error: &'a ErrorDecl<S, IntoRust>,
-    local_plan: Option<&'a ReturnPlan<S, OutOfRust>>,
-    local_error: Option<&'a ErrorDecl<S, OutOfRust>>,
-    source: rust_api::Return<'a>,
-    expansion: &'context Expansion<'a, S>,
+struct MethodReturn<'expansion, 'lowered, S: CallbackMethodSurface> {
+    plan: &'lowered ReturnPlan<S, IntoRust>,
+    error: &'lowered ErrorDecl<S, IntoRust>,
+    local_plan: Option<&'lowered ReturnPlan<S, OutOfRust>>,
+    local_error: Option<&'lowered ErrorDecl<S, OutOfRust>>,
+    source: rust_api::Return<'lowered>,
+    expansion: &'expansion Expansion<'lowered, S>,
     foreign_ffi_parameters: Vec<TokenStream>,
     foreign_arguments: Vec<TokenStream>,
     foreign_return_type: TokenStream,
@@ -1741,26 +1741,26 @@ struct MethodReturn<'context, 'a, S: CallbackMethodSurface> {
     local_return_type: TokenStream,
 }
 
-struct LocalReturn<'a, S: CallbackMethodSurface> {
-    plan: &'a ReturnPlan<S, OutOfRust>,
-    error: &'a ErrorDecl<S, OutOfRust>,
+struct LocalReturn<'lowered, S: CallbackMethodSurface> {
+    plan: &'lowered ReturnPlan<S, OutOfRust>,
+    error: &'lowered ErrorDecl<S, OutOfRust>,
 }
 
-impl<'context, 'a, S> MethodReturn<'context, 'a, S>
+impl<'expansion, 'lowered, S> MethodReturn<'expansion, 'lowered, S>
 where
     S: CallbackMethodSurface,
     wrapper::returns::closure::Write: Render<
             S,
-            wrapper::returns::closure::WriteInput<'context, 'a, S>,
+            wrapper::returns::closure::WriteInput<'expansion, 'lowered, S>,
             Output = wrapper::returns::closure::WriteTokens,
         >,
 {
     fn new(
-        plan: &'a ReturnPlan<S, IntoRust>,
-        error: &'a ErrorDecl<S, IntoRust>,
-        local_callable: Option<&'a ExportedCallable<S>>,
-        source: rust_api::Return<'a>,
-        expansion: &'context Expansion<'a, S>,
+        plan: &'lowered ReturnPlan<S, IntoRust>,
+        error: &'lowered ErrorDecl<S, IntoRust>,
+        local_callable: Option<&'lowered ExportedCallable<S>>,
+        source: rust_api::Return<'lowered>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<Self, Error> {
         let foreign_abi = Self::abi(plan, error, source)?;
         let local_plan = local_callable.map(|callable| callable.returns().plan());
@@ -1791,9 +1791,9 @@ where
     }
 
     fn abi<D>(
-        plan: &'a ReturnPlan<S, D>,
-        error: &'a ErrorDecl<S, D>,
-        source: rust_api::Return<'a>,
+        plan: &'lowered ReturnPlan<S, D>,
+        error: &'lowered ErrorDecl<S, D>,
+        source: rust_api::Return<'lowered>,
     ) -> Result<CallbackReturnAbi, Error>
     where
         D: Direction,
@@ -2186,7 +2186,7 @@ where
 
     fn fallible_abi<D>(
         plan: &ReturnPlan<S, D>,
-        source: rust_api::Fallible<'a>,
+        source: rust_api::Fallible<'lowered>,
         error_return_type: TokenStream,
     ) -> Result<CallbackReturnAbi, Error>
     where
@@ -2863,7 +2863,7 @@ where
 
     fn direct_return_type(
         ty: &TypeRef,
-        source: rust_api::Return<'a>,
+        source: rust_api::Return<'lowered>,
     ) -> Result<TokenStream, Error> {
         match ty {
             TypeRef::Primitive(_) => {
@@ -2884,13 +2884,13 @@ where
         Self::source_type(self.source)
     }
 
-    fn source_type(source: rust_api::Return<'a>) -> Result<Type, Error> {
+    fn source_type(source: rust_api::Return<'lowered>) -> Result<Type, Error> {
         source.written_type()?.ok_or(Error::SourceSyntaxMismatch(
             "callback method return requires source return type",
         ))
     }
 
-    fn local_return(&self) -> Result<LocalReturn<'a, S>, Error> {
+    fn local_return(&self) -> Result<LocalReturn<'lowered, S>, Error> {
         match (self.local_plan, self.local_error) {
             (Some(plan), Some(error)) => Ok(LocalReturn { plan, error }),
             (None, None) => Err(Error::UnsupportedExpansion(
@@ -2910,22 +2910,22 @@ trait CallbackMethodSurface: Target {
 
     fn callback_handle(value: TokenStream) -> TokenStream;
 
-    fn foreign_closure_parameter_tokens<'a>(
-        closure: &'a ClosureParameter<Self, OutOfRust>,
-        source: &'a ParameterDef,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_parameter_tokens<'lowered>(
+        closure: &'lowered ClosureParameter<Self, OutOfRust>,
+        source: &'lowered ParameterDef,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<ForeignMethodParameterTokens, Error>;
 
-    fn local_parameter_tokens<'a>(
-        local: &'a ParamDecl<Self, IntoRust>,
-        source: &'a ParameterDef,
+    fn local_parameter_tokens<'lowered>(
+        local: &'lowered ParamDecl<Self, IntoRust>,
+        source: &'lowered ParameterDef,
         failure: TokenStream,
-        expansion: &Expansion<'a, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<LocalMethodParameterTokens, Error>;
 
-    fn local_handle_value<'a>(
-        expansion: &Expansion<'a, Self>,
-        target: &'a HandleTarget,
+    fn local_handle_value<'lowered>(
+        expansion: &Expansion<'lowered, Self>,
+        target: &'lowered HandleTarget,
         carrier: Self::HandleCarrier,
         presence: HandlePresence,
         value: Ident,
@@ -2951,31 +2951,31 @@ trait CallbackMethodSurface: Target {
 
     fn callback_closure_return_abi() -> CallbackReturnAbi;
 
-    fn foreign_closure_return_body<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
+    fn foreign_closure_return_body<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
         call: TokenStream,
-        expansion: &Expansion<'a, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
-    fn foreign_closure_success_storage<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_success_storage<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
-    fn foreign_closure_success_value<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_success_value<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
-    fn decode_callback_encoded_out_pointer(
+    fn decode_callback_encoded_out_pointer<'lowered>(
         shape: Self::BufferShape,
         value: TokenStream,
-        codec: &boltffi_binding::CodecNode,
+        codec: &'lowered boltffi_binding::CodecNode,
         rust_type: Type,
-        expansion: &Expansion<'_, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
     fn encode_callback_encoded_out_pointer(
@@ -2998,19 +2998,19 @@ impl CallbackMethodSurface for Native {
         value
     }
 
-    fn foreign_closure_parameter_tokens<'a>(
-        closure: &'a ClosureParameter<Self, OutOfRust>,
-        source: &'a ParameterDef,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_parameter_tokens<'lowered>(
+        closure: &'lowered ClosureParameter<Self, OutOfRust>,
+        source: &'lowered ParameterDef,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<ForeignMethodParameterTokens, Error> {
         NativeOutgoingClosure::new(closure, source, expansion).tokens()
     }
 
-    fn local_parameter_tokens<'a>(
-        local: &'a ParamDecl<Self, IntoRust>,
-        source: &'a ParameterDef,
+    fn local_parameter_tokens<'lowered>(
+        local: &'lowered ParamDecl<Self, IntoRust>,
+        source: &'lowered ParameterDef,
         failure: TokenStream,
-        expansion: &Expansion<'a, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<LocalMethodParameterTokens, Error> {
         let tokens = <wrapper::param::Renderer as Render<Native, _>>::render(
             wrapper::param::Renderer,
@@ -3023,9 +3023,9 @@ impl CallbackMethodSurface for Native {
         })
     }
 
-    fn local_handle_value<'a>(
-        expansion: &Expansion<'a, Self>,
-        target: &'a HandleTarget,
+    fn local_handle_value<'lowered>(
+        expansion: &Expansion<'lowered, Self>,
+        target: &'lowered HandleTarget,
         carrier: Self::HandleCarrier,
         presence: HandlePresence,
         value: Ident,
@@ -3126,11 +3126,11 @@ impl CallbackMethodSurface for Native {
         }
     }
 
-    fn foreign_closure_return_body<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
+    fn foreign_closure_return_body<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
         call: TokenStream,
-        expansion: &Expansion<'a, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
         let slot_names = wrapper::names::ClosureRegistration::new(&value);
@@ -3192,10 +3192,10 @@ impl CallbackMethodSurface for Native {
         })
     }
 
-    fn foreign_closure_success_storage<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_success_storage<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
         let tokens = <wrapper::param::closure::Renderer as Render<Native, _>>::render(
@@ -3238,10 +3238,10 @@ impl CallbackMethodSurface for Native {
         })
     }
 
-    fn foreign_closure_success_value<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_success_value<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
         let slot_names = wrapper::names::ClosureRegistration::new(&value);
@@ -3274,12 +3274,12 @@ impl CallbackMethodSurface for Native {
         })
     }
 
-    fn decode_callback_encoded_out_pointer(
+    fn decode_callback_encoded_out_pointer<'lowered>(
         shape: Self::BufferShape,
         value: TokenStream,
-        codec: &boltffi_binding::CodecNode,
+        codec: &'lowered boltffi_binding::CodecNode,
         rust_type: Type,
-        expansion: &Expansion<'_, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         match shape {
             native::BufferShape::Buffer => wrapper::encoded::incoming::Value::new(codec, expansion)
@@ -3329,19 +3329,19 @@ impl CallbackMethodSurface for Wasm32 {
         quote! { ::boltffi::__private::CallbackHandle::from_wasm_handle(#value) }
     }
 
-    fn foreign_closure_parameter_tokens<'a>(
-        closure: &'a ClosureParameter<Self, OutOfRust>,
-        source: &'a ParameterDef,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_parameter_tokens<'lowered>(
+        closure: &'lowered ClosureParameter<Self, OutOfRust>,
+        source: &'lowered ParameterDef,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<ForeignMethodParameterTokens, Error> {
         WasmOutgoingClosure::new(closure, source, expansion).tokens()
     }
 
-    fn local_parameter_tokens<'a>(
-        local: &'a ParamDecl<Self, IntoRust>,
-        source: &'a ParameterDef,
+    fn local_parameter_tokens<'lowered>(
+        local: &'lowered ParamDecl<Self, IntoRust>,
+        source: &'lowered ParameterDef,
         failure: TokenStream,
-        expansion: &Expansion<'a, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<LocalMethodParameterTokens, Error> {
         let tokens = <wrapper::param::Renderer as Render<Wasm32, _>>::render(
             wrapper::param::Renderer,
@@ -3354,9 +3354,9 @@ impl CallbackMethodSurface for Wasm32 {
         })
     }
 
-    fn local_handle_value<'a>(
-        expansion: &Expansion<'a, Self>,
-        target: &'a HandleTarget,
+    fn local_handle_value<'lowered>(
+        expansion: &Expansion<'lowered, Self>,
+        target: &'lowered HandleTarget,
         carrier: Self::HandleCarrier,
         presence: HandlePresence,
         value: Ident,
@@ -3460,11 +3460,11 @@ impl CallbackMethodSurface for Wasm32 {
         }
     }
 
-    fn foreign_closure_return_body<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
+    fn foreign_closure_return_body<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
         call: TokenStream,
-        expansion: &Expansion<'a, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
         let tokens = <wrapper::param::closure::Renderer as Render<Wasm32, _>>::render(
@@ -3495,20 +3495,20 @@ impl CallbackMethodSurface for Wasm32 {
         })
     }
 
-    fn foreign_closure_success_storage<'a>(
-        _closure: &'a ClosureReturn<Self, IntoRust>,
-        _source: rust_api::Closure<'a>,
-        _expansion: &Expansion<'a, Self>,
+    fn foreign_closure_success_storage<'lowered>(
+        _closure: &'lowered ClosureReturn<Self, IntoRust>,
+        _source: rust_api::Closure<'lowered>,
+        _expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         Ok(quote! {
             let mut __boltffi_success_out = ::core::mem::MaybeUninit::<u32>::uninit();
         })
     }
 
-    fn foreign_closure_success_value<'a>(
-        closure: &'a ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'a>,
-        expansion: &Expansion<'a, Self>,
+    fn foreign_closure_success_value<'lowered>(
+        closure: &'lowered ClosureReturn<Self, IntoRust>,
+        source: rust_api::Closure<'lowered>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
         let tokens = <wrapper::param::closure::Renderer as Render<Wasm32, _>>::render(
@@ -3534,12 +3534,12 @@ impl CallbackMethodSurface for Wasm32 {
         })
     }
 
-    fn decode_callback_encoded_out_pointer(
+    fn decode_callback_encoded_out_pointer<'lowered>(
         shape: Self::BufferShape,
         value: TokenStream,
-        codec: &boltffi_binding::CodecNode,
+        codec: &'lowered boltffi_binding::CodecNode,
         rust_type: Type,
-        expansion: &Expansion<'_, Self>,
+        expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         match shape {
             wasm32::BufferShape::Packed => packed_encoded_value(

@@ -18,21 +18,21 @@ use super::{RustInvocation, Tokens};
 pub struct Renderer;
 pub struct Write;
 
-pub struct Input<'context, 'a, S: Target> {
-    closure: &'a ClosureReturn<S, OutOfRust>,
-    source: rust_api::Closure<'a>,
+pub struct Input<'expansion, 'lowered, S: Target> {
+    closure: &'lowered ClosureReturn<S, OutOfRust>,
+    source: rust_api::Closure<'lowered>,
     invocation: RustInvocation,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct WriteInput<'context, 'a, S: Target> {
-    closure: &'a ClosureReturn<S, OutOfRust>,
-    source: rust_api::Closure<'a>,
+pub struct WriteInput<'expansion, 'lowered, S: Target> {
+    closure: &'lowered ClosureReturn<S, OutOfRust>,
+    source: rust_api::Closure<'lowered>,
     value: Ident,
     owner: Ident,
     channel: ClosureReturnChannel,
     span: Span,
-    expansion: &'context Expansion<'a, S>,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 #[derive(Clone, Copy)]
@@ -47,12 +47,12 @@ pub struct WriteTokens {
     body: TokenStream,
 }
 
-impl<'context, 'a, S: Target> Input<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     pub fn new(
-        closure: &'a ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'a>,
+        closure: &'lowered ClosureReturn<S, OutOfRust>,
+        source: rust_api::Closure<'lowered>,
         invocation: RustInvocation,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             closure,
@@ -63,13 +63,13 @@ impl<'context, 'a, S: Target> Input<'context, 'a, S> {
     }
 }
 
-impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
+impl<'expansion, 'lowered, S: Target> WriteInput<'expansion, 'lowered, S> {
     pub fn returned(
-        closure: &'a ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'a>,
+        closure: &'lowered ClosureReturn<S, OutOfRust>,
+        source: rust_api::Closure<'lowered>,
         value: Ident,
         owner: Ident,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self::new(
             closure,
@@ -82,11 +82,11 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
     }
 
     pub fn success(
-        closure: &'a ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'a>,
+        closure: &'lowered ClosureReturn<S, OutOfRust>,
+        source: rust_api::Closure<'lowered>,
         value: Ident,
         owner: Ident,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self::new(
             closure,
@@ -99,12 +99,12 @@ impl<'context, 'a, S: Target> WriteInput<'context, 'a, S> {
     }
 
     fn new(
-        closure: &'a ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'a>,
+        closure: &'lowered ClosureReturn<S, OutOfRust>,
+        source: rust_api::Closure<'lowered>,
         value: Ident,
         owner: Ident,
         channel: ClosureReturnChannel,
-        expansion: &'context Expansion<'a, S>,
+        expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         let span = owner.span();
         Self {
@@ -134,14 +134,14 @@ impl WriteTokens {
     }
 }
 
-impl<'context, 'a, S> Render<S, Input<'context, 'a, S>> for Renderer
+impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
     S: Target,
-    Write: Render<S, WriteInput<'context, 'a, S>, Output = WriteTokens>,
+    Write: Render<S, WriteInput<'expansion, 'lowered, S>, Output = WriteTokens>,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'context, 'a, S>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         let RustInvocation {
             owner,
             span,
@@ -178,10 +178,13 @@ where
     }
 }
 
-impl<'context, 'a> Render<Native, WriteInput<'context, 'a, Native>> for Write {
+impl<'expansion, 'lowered> Render<Native, WriteInput<'expansion, 'lowered, Native>> for Write {
     type Output = WriteTokens;
 
-    fn render(self, input: WriteInput<'context, 'a, Native>) -> Result<Self::Output, Error> {
+    fn render(
+        self,
+        input: WriteInput<'expansion, 'lowered, Native>,
+    ) -> Result<Self::Output, Error> {
         match input.closure.registration().shape() {
             native::ClosureRegistration::InvokeContextRelease => NativeClosure::new(input).tokens(),
             _ => Err(Error::UnsupportedExpansion(
@@ -191,20 +194,23 @@ impl<'context, 'a> Render<Native, WriteInput<'context, 'a, Native>> for Write {
     }
 }
 
-impl<'context, 'a> Render<Wasm32, WriteInput<'context, 'a, Wasm32>> for Write {
+impl<'expansion, 'lowered> Render<Wasm32, WriteInput<'expansion, 'lowered, Wasm32>> for Write {
     type Output = WriteTokens;
 
-    fn render(self, input: WriteInput<'context, 'a, Wasm32>) -> Result<Self::Output, Error> {
+    fn render(
+        self,
+        input: WriteInput<'expansion, 'lowered, Wasm32>,
+    ) -> Result<Self::Output, Error> {
         WasmClosure::new(input).tokens()
     }
 }
 
-struct NativeClosure<'context, 'a> {
-    input: WriteInput<'context, 'a, Native>,
+struct NativeClosure<'expansion, 'lowered> {
+    input: WriteInput<'expansion, 'lowered, Native>,
 }
 
-impl<'context, 'a> NativeClosure<'context, 'a> {
-    fn new(input: WriteInput<'context, 'a, Native>) -> Self {
+impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
+    fn new(input: WriteInput<'expansion, 'lowered, Native>) -> Self {
         Self { input }
     }
 
@@ -322,12 +328,12 @@ impl<'context, 'a> NativeClosure<'context, 'a> {
     }
 }
 
-struct WasmClosure<'context, 'a> {
-    input: WriteInput<'context, 'a, Wasm32>,
+struct WasmClosure<'expansion, 'lowered> {
+    input: WriteInput<'expansion, 'lowered, Wasm32>,
 }
 
-impl<'context, 'a> WasmClosure<'context, 'a> {
-    fn new(input: WriteInput<'context, 'a, Wasm32>) -> Self {
+impl<'expansion, 'lowered> WasmClosure<'expansion, 'lowered> {
+    fn new(input: WriteInput<'expansion, 'lowered, Wasm32>) -> Self {
         Self { input }
     }
 

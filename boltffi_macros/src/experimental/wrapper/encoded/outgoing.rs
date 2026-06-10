@@ -4,13 +4,16 @@ use quote::quote;
 
 use crate::experimental::{error::Error, expansion::Expansion, target::Target};
 
-pub struct Value<'context, 'a, S: Target> {
-    codec: &'a CodecNode,
-    expansion: &'context Expansion<'a, S>,
+pub struct Value<'expansion, 'lowered, S: Target> {
+    codec: &'lowered CodecNode,
+    expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'context, 'a, S: Target> Value<'context, 'a, S> {
-    pub const fn new(codec: &'a CodecNode, expansion: &'context Expansion<'a, S>) -> Self {
+impl<'expansion, 'lowered, S: Target> Value<'expansion, 'lowered, S> {
+    pub const fn new(
+        codec: &'lowered CodecNode,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
         Self { codec, expansion }
     }
 

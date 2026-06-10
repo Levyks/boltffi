@@ -13,15 +13,15 @@ pub enum ClosureSourceForm {
 }
 
 #[derive(Clone, Copy)]
-pub struct Closure<'a> {
+pub struct Closure<'source> {
     form: ClosureSourceForm,
     function: ClosureForm,
-    signature: &'a FnSig,
-    source: &'a TypeExpr,
+    signature: &'source FnSig,
+    source: &'source TypeExpr,
 }
 
-impl<'a> Closure<'a> {
-    pub fn new(type_expr: &'a TypeExpr, presence: HandlePresence) -> Result<Self, Error> {
+impl<'source> Closure<'source> {
+    pub fn new(type_expr: &'source TypeExpr, presence: HandlePresence) -> Result<Self, Error> {
         match presence {
             HandlePresence::Required => Self::required(type_expr),
             HandlePresence::Nullable => match type_expr {
@@ -42,7 +42,7 @@ impl<'a> Closure<'a> {
         self.function
     }
 
-    pub const fn signature(&self) -> &'a FnSig {
+    pub const fn signature(&self) -> &'source FnSig {
         self.signature
     }
 
@@ -50,7 +50,7 @@ impl<'a> Closure<'a> {
         TypeTokens::new(self.source).map(TypeTokens::into_type)
     }
 
-    fn required(type_expr: &'a TypeExpr) -> Result<Self, Error> {
+    fn required(type_expr: &'source TypeExpr) -> Result<Self, Error> {
         match type_expr {
             TypeExpr::FnPtr(signature) => Ok(Self {
                 form: ClosureSourceForm::FunctionPointer,
@@ -91,7 +91,7 @@ impl<'a> Closure<'a> {
         }
     }
 
-    fn nullable(inner: &'a TypeExpr, source: &'a TypeExpr) -> Result<Self, Error> {
+    fn nullable(inner: &'source TypeExpr, source: &'source TypeExpr) -> Result<Self, Error> {
         match inner {
             TypeExpr::Boxed(boxed) => match boxed.as_ref() {
                 TypeExpr::Dyn(bounds) => match &bounds.base {

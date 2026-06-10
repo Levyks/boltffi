@@ -13,16 +13,16 @@ use super::Tokens;
 
 pub struct Renderer;
 
-pub struct Input<'binding> {
-    element: &'binding TypeRef,
+pub struct Input<'lowered> {
+    element: &'lowered TypeRef,
     rust_element: Type,
     ident: Ident,
     failure: TokenStream,
 }
 
-impl<'binding> Input<'binding> {
+impl<'lowered> Input<'lowered> {
     pub fn new(
-        element: &'binding TypeRef,
+        element: &'lowered TypeRef,
         rust_element: Type,
         ident: Ident,
         failure: TokenStream,
@@ -36,14 +36,14 @@ impl<'binding> Input<'binding> {
     }
 }
 
-impl<'binding, S> Render<S, Input<'binding>> for Renderer
+impl<'lowered, S> Render<S, Input<'lowered>> for Renderer
 where
     S: Target,
     for<'ty> wrapper::type_ref::Renderer: Render<S, &'ty TypeRef, Output = TokenStream>,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'binding>) -> Result<Self::Output, Error> {
+    fn render(self, input: Input<'lowered>) -> Result<Self::Output, Error> {
         match input.element {
             TypeRef::Primitive(primitive) => {
                 PrimitiveVec::new(*primitive, input.ident).tokens::<S>()
