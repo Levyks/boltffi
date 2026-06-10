@@ -312,15 +312,18 @@ impl<'a> MetadataCommand<'a> {
 impl MetadataMode {
     fn args(self) -> &'static [&'static str] {
         match self {
-            Self::CurrentBuild => &["--offline"],
-            Self::Standalone if Self::env_flag("CARGO_FROZEN") => &["--frozen"],
-            Self::Standalone
+            Self::CurrentBuild | Self::Standalone if Self::env_flag("CARGO_FROZEN") => {
+                &["--frozen"]
+            }
+            Self::CurrentBuild | Self::Standalone
                 if Self::env_flag("CARGO_NET_OFFLINE") || Self::env_flag("CARGO_OFFLINE") =>
             {
                 &["--offline"]
             }
-            Self::Standalone if Self::env_flag("CARGO_LOCKED") => &["--locked"],
-            Self::Standalone => &[],
+            Self::CurrentBuild | Self::Standalone if Self::env_flag("CARGO_LOCKED") => {
+                &["--locked"]
+            }
+            Self::CurrentBuild | Self::Standalone => &[],
         }
     }
 
