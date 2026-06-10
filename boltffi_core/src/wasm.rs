@@ -138,14 +138,19 @@ pub fn return_slot_addr() -> u32 {
 
 #[cfg(target_arch = "wasm32")]
 pub unsafe fn take_packed_utf8_string(packed: u64) -> String {
+    let bytes = unsafe { take_packed_bytes(packed) };
+    unsafe { String::from_utf8_unchecked(bytes) }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn take_packed_bytes(packed: u64) -> Vec<u8> {
     if packed == 0 {
-        return String::new();
+        return Vec::new();
     }
 
     let pointer = (packed as u32) as usize;
     let length = ((packed >> 32) as u32) as usize;
-    let bytes = unsafe { Vec::from_raw_parts(pointer as *mut u8, length, length) };
-    unsafe { String::from_utf8_unchecked(bytes) }
+    unsafe { Vec::from_raw_parts(pointer as *mut u8, length, length) }
 }
 
 #[cfg(target_arch = "wasm32")]

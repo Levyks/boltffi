@@ -102,11 +102,12 @@ pub use custom::{
 };
 pub(crate) use decl::StreamDeclParts;
 pub use decl::{
-    CStyleEnumDecl, CStyleVariantDecl, CallbackDecl, CallbackLocalHandle, ClassDecl, ConstantDecl,
-    ConstantValueDecl, CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl,
-    DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl,
-    ExportedMethodDecl, FieldKey, FunctionDecl, ImportedMethodDecl, InitializerDecl, MethodDecl,
-    RecordDecl, StreamDecl, StreamItemPlan, StreamMode, StreamProtocol, VariantTag,
+    CStyleEnumDecl, CStyleVariantDecl, CallbackDecl, CallbackLocalFunction,
+    CallbackLocalMethodDecl, CallbackLocalProtocol, ClassDecl, ConstantDecl, ConstantValueDecl,
+    CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl, DirectFieldDecl,
+    DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, EnumDecl, ExportedMethodDecl, FieldKey,
+    FunctionDecl, ImportedMethodDecl, InitializerDecl, MethodDecl, RecordDecl, StreamDecl,
+    StreamItemPlan, StreamMode, StreamProtocol, VariantTag,
 };
 pub use direction::{CallableScope, Direction, ForeignBody, IntoRust, OutOfRust, RustBody};
 pub use error::{BindingError, BindingErrorKind};

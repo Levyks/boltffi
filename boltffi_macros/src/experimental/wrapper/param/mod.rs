@@ -6,7 +6,7 @@ use crate::experimental::{
 };
 
 pub mod closure;
-mod direct;
+pub mod direct;
 mod direct_vec;
 mod encoded;
 mod handle;

@@ -156,11 +156,42 @@ pub fn callback_create_handle_symbol_name(callback_id: &str) -> String {
     )
 }
 
-pub fn callback_local_handle_name(callback_name: &str) -> String {
+pub fn callback_local_handle_name(callback_id: &str) -> String {
+    callback_local_function_name(callback_id, CallbackLocalLifecycle::Handle)
+}
+
+#[derive(Clone, Copy)]
+pub enum CallbackLocalLifecycle {
+    Handle,
+    Free,
+    Clone,
+}
+
+impl CallbackLocalLifecycle {
+    pub const fn suffix(self) -> &'static str {
+        match self {
+            Self::Handle => "handle",
+            Self::Free => "free",
+            Self::Clone => "clone",
+        }
+    }
+}
+
+pub fn callback_local_function_name(callback_id: &str, function: CallbackLocalLifecycle) -> String {
     format!(
-        "__{}_local_{}_handle",
+        "__{}_local_{}_{}",
         FFI_PREFIX,
-        to_snake_case(callback_name)
+        symbol_path(callback_id),
+        function.suffix()
+    )
+}
+
+pub fn callback_local_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
+    format!(
+        "__{}_local_{}_{}",
+        FFI_PREFIX,
+        symbol_path(callback_id),
+        slot.as_str()
     )
 }
 
@@ -427,8 +458,8 @@ mod tests {
     #[test]
     fn callback_local_handle_name_uses_local_callback_namespace() {
         assert_eq!(
-            callback_local_handle_name("ProgressListener"),
-            "__boltffi_local_progress_listener_handle"
+            callback_local_handle_name("demo::progress::ProgressListener"),
+            "__boltffi_local_demo_progress_progress_listener_handle"
         );
     }
 

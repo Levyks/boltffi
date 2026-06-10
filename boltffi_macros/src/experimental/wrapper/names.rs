@@ -44,6 +44,38 @@ impl Wrapper {
     }
 }
 
+pub struct ClosureRegistration<'a> {
+    source: &'a Ident,
+}
+
+impl<'a> ClosureRegistration<'a> {
+    pub const fn new(source: &'a Ident) -> Self {
+        Self { source }
+    }
+
+    pub fn call(&self) -> Ident {
+        self.ident("call")
+    }
+
+    pub fn context(&self) -> Ident {
+        self.ident("context")
+    }
+
+    pub fn release(&self) -> Ident {
+        self.ident("release")
+    }
+
+    pub fn owner(&self) -> Ident {
+        self.ident("owner")
+    }
+
+    fn ident(&self, role: &str) -> Ident {
+        let text = self.source.to_string();
+        let stem = text.strip_prefix("__boltffi_").unwrap_or(&text);
+        Ident::new(&format!("__boltffi_{stem}_{role}"), self.source.span())
+    }
+}
+
 pub struct Parameter<'a> {
     source: &'a Ident,
 }

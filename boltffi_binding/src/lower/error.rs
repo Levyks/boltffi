@@ -285,8 +285,8 @@ pub enum UnsupportedType {
     /// A callback method snake-cases to a name already taken by the vtable
     /// lifecycle slot (`free` or `clone`) or by another callback method.
     CallbackMethodSlotCollision,
-    /// A callback method declared a static or owned receiver, neither of
-    /// which the callback handle protocol can dispatch.
+    /// A callback method declared a receiver the callback handle protocol
+    /// cannot dispatch.
     InvalidCallbackReceiver,
     /// A callback handle parameter was borrowed instead of passed by value.
     BorrowedCallbackParameter,

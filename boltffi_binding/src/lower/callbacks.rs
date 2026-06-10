@@ -14,23 +14,27 @@
 //! function carries the private bound under `#[allow(private_bounds)]`
 //! so callers only see the [`SurfaceLower`] contract.
 
-use boltffi_ast::{ExecutionKind, MethodDef, TraitDef as SourceTrait};
+use boltffi_ast::{
+    BaseTrait, ExecutionKind, FnSig, MethodDef, ParameterDef, ParameterPassing, ReturnDef,
+    TraitDef as SourceTrait, TypeExpr,
+};
 
 use crate::{
-    CallbackDecl, CallbackLocalHandle, CanonicalName, ExecutionDecl, ImportModule, ImportSymbol,
-    NamePart, Native, Surface, SymbolName, VTableSlot, Wasm32, native, wasm32,
+    CallbackDecl, CallbackLocalFunction, CallbackLocalMethodDecl, CallbackLocalProtocol,
+    CanonicalName, ExecutionDecl, ImportModule, ImportSymbol, NamePart, Native, Surface,
+    SymbolName, VTableSlot, Wasm32, native, wasm32,
 };
 
 use super::{
-    LowerError,
+    LowerError, callable,
     error::UnsupportedType,
     ids::DeclarationIds,
     index::Index,
     metadata, methods,
     surface::SurfaceLower,
     symbol::{
-        self, CallbackSlot, SymbolAllocator, VTABLE_CLONE_SLOT_NAME, VTABLE_FREE_SLOT_NAME,
-        WASM_CALLBACK_IMPORT_MODULE,
+        self, CallbackLocalLifecycle, CallbackSlot, SymbolAllocator, VTABLE_CLONE_SLOT_NAME,
+        VTABLE_FREE_SLOT_NAME, WASM_CALLBACK_IMPORT_MODULE,
     },
 };
 
@@ -60,31 +64,344 @@ fn lower_one<S: SurfaceLower>(
     let callback_id = ids.callback(&callback.id)?;
     let canonical = CanonicalName::from(&callback.name);
     let protocol = S::build_callback_protocol(idx, ids, allocator, callback)?;
+    let local_protocol = LocalCallbackProtocolSource::new(callback)
+        .map(|callback| local_protocol::<S>(idx, ids, allocator, callback))
+        .transpose()?;
     Ok(CallbackDecl::new(
         callback_id,
         canonical,
         metadata::decl_meta(callback.doc.as_ref(), callback.deprecated.as_ref()),
         S::callback_handle_carrier(),
         protocol,
-        local_handle(callback),
+        local_protocol,
     ))
 }
 
-fn local_handle(callback: &SourceTrait) -> CallbackLocalHandle {
+fn local_protocol<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    callback: LocalCallbackProtocolSource<'_>,
+) -> Result<CallbackLocalProtocol<S>, LowerError> {
+    let callback = callback.source;
+    let module_segments = local_module_segments(callback);
+    let handle = local_function(
+        &module_segments,
+        symbol::callback_local_function_name(
+            callback.id.as_str(),
+            symbol::CallbackLocalLifecycle::Handle,
+        ),
+    );
+    let free = local_function(
+        &module_segments,
+        symbol::callback_local_function_name(
+            callback.id.as_str(),
+            symbol::CallbackLocalLifecycle::Free,
+        ),
+    );
+    let clone = local_function(
+        &module_segments,
+        symbol::callback_local_function_name(
+            callback.id.as_str(),
+            symbol::CallbackLocalLifecycle::Clone,
+        ),
+    );
+    let methods = callback
+        .methods
+        .iter()
+        .enumerate()
+        .map(|(index, method)| {
+            let raw_method_name = method.name.parts().last().map_or("", |part| part.as_str());
+            let slot = CallbackSlot::from_method_name(raw_method_name);
+            Ok(CallbackLocalMethodDecl::new(
+                crate::MethodId::from_raw(index as u32),
+                CanonicalName::from(&method.name),
+                metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),
+                local_function(
+                    &module_segments,
+                    symbol::callback_local_method_name(callback.id.as_str(), &slot),
+                ),
+                callable::lower_local_callback_method::<S>(
+                    idx,
+                    ids,
+                    allocator,
+                    callable::CallableOwner::Trait(callback),
+                    method,
+                )?,
+            ))
+        })
+        .collect::<Result<Vec<_>, LowerError>>()?;
+    Ok(CallbackLocalProtocol::new(handle, free, clone, methods))
+}
+
+#[derive(Clone, Copy)]
+struct LocalCallbackProtocolSource<'a> {
+    source: &'a SourceTrait,
+}
+
+impl<'a> LocalCallbackProtocolSource<'a> {
+    fn new(source: &'a SourceTrait) -> Option<Self> {
+        source
+            .methods
+            .iter()
+            .all(Self::accepts_method)
+            .then_some(Self { source })
+    }
+
+    fn accepts_method(method: &MethodDef) -> bool {
+        method.execution == ExecutionKind::Sync
+            && method
+                .parameters
+                .iter()
+                .all(|parameter| LocalCallbackParameter::new(parameter).is_supported())
+            && LocalCallbackReturn::new(&method.returns).is_supported()
+    }
+}
+
+struct LocalCallbackParameter<'a> {
+    definition: &'a ParameterDef,
+}
+
+impl<'a> LocalCallbackParameter<'a> {
+    fn new(definition: &'a ParameterDef) -> Self {
+        Self { definition }
+    }
+
+    fn is_supported(&self) -> bool {
+        if let Some(closure) = IncomingClosureParameter::new(&self.definition.type_expr) {
+            return matches!(self.definition.passing, ParameterPassing::Value)
+                && closure.is_supported();
+        }
+        if CallbackHandleParameter::new(&self.definition.type_expr).requires_value_passing() {
+            return matches!(self.definition.passing, ParameterPassing::Value);
+        }
+        CallbackValueType::new(&self.definition.type_expr).is_supported()
+    }
+}
+
+struct LocalCallbackReturn<'a> {
+    definition: &'a ReturnDef,
+}
+
+impl<'a> LocalCallbackReturn<'a> {
+    fn new(definition: &'a ReturnDef) -> Self {
+        Self { definition }
+    }
+
+    fn is_supported(&self) -> bool {
+        match self.definition {
+            ReturnDef::Void => true,
+            ReturnDef::Value(type_expr) => {
+                ReturnedClosure::new(type_expr).is_some()
+                    || CallbackValueType::new(type_expr).is_supported()
+            }
+        }
+    }
+}
+
+struct IncomingClosureParameter<'a> {
+    signature: &'a FnSig,
+}
+
+impl<'a> IncomingClosureParameter<'a> {
+    fn new(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::Boxed(inner) => Self::boxed_dyn(inner),
+            TypeExpr::Option(inner) => match inner.as_ref() {
+                TypeExpr::Boxed(boxed) => Self::boxed_dyn(boxed),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn boxed_dyn(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::Dyn(bounds) => match &bounds.base {
+                BaseTrait::Function(function) => Some(Self {
+                    signature: &function.signature,
+                }),
+                BaseTrait::Named { .. } => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn is_supported(&self) -> bool {
+        CallbackClosureSignature::new(self.signature).is_supported()
+    }
+}
+
+struct ReturnedClosure<'a> {
+    signature: &'a FnSig,
+}
+
+impl<'a> ReturnedClosure<'a> {
+    fn new(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::FnPtr(signature) => Some(Self { signature }),
+            TypeExpr::Boxed(inner) => Self::boxed_dyn(inner),
+            TypeExpr::Option(inner) => match inner.as_ref() {
+                TypeExpr::Boxed(boxed) => Self::boxed_dyn(boxed),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn boxed_dyn(type_expr: &'a TypeExpr) -> Option<Self> {
+        match type_expr {
+            TypeExpr::Dyn(bounds) => match &bounds.base {
+                BaseTrait::Function(function) => Some(Self {
+                    signature: &function.signature,
+                }),
+                BaseTrait::Named { .. } => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn is_supported(&self) -> bool {
+        CallbackClosureSignature::new(self.signature).is_supported()
+    }
+}
+
+struct CallbackClosureSignature<'a> {
+    signature: &'a FnSig,
+}
+
+impl<'a> CallbackClosureSignature<'a> {
+    fn new(signature: &'a FnSig) -> Self {
+        Self { signature }
+    }
+
+    fn is_supported(&self) -> bool {
+        self.signature
+            .parameters
+            .iter()
+            .all(|type_expr| CallbackValueType::new(type_expr).is_supported())
+            && ClosureInvokeReturn::new(&self.signature.returns).is_supported()
+    }
+}
+
+struct ClosureInvokeReturn<'a> {
+    definition: &'a ReturnDef,
+}
+
+impl<'a> ClosureInvokeReturn<'a> {
+    fn new(definition: &'a ReturnDef) -> Self {
+        Self { definition }
+    }
+
+    fn is_supported(&self) -> bool {
+        match self.definition {
+            ReturnDef::Void => true,
+            ReturnDef::Value(type_expr) => CallbackValueType::new(type_expr).is_supported(),
+        }
+    }
+}
+
+struct CallbackValueType<'a> {
+    type_expr: &'a TypeExpr,
+}
+
+impl<'a> CallbackValueType<'a> {
+    fn new(type_expr: &'a TypeExpr) -> Self {
+        Self { type_expr }
+    }
+
+    fn is_supported(&self) -> bool {
+        match self.type_expr {
+            TypeExpr::ImplTrait(_)
+            | TypeExpr::SelfType
+            | TypeExpr::Parameter(_)
+            | TypeExpr::FnPtr(_)
+            | TypeExpr::Dyn(_) => false,
+            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => {
+                CallbackBoxedType::new(inner).is_supported()
+            }
+            TypeExpr::Vec(inner) | TypeExpr::Slice(inner) | TypeExpr::Option(inner) => {
+                Self::new(inner).is_supported()
+            }
+            TypeExpr::Result { ok, err } => {
+                Self::new(ok).is_supported() && Self::new(err).is_supported()
+            }
+            TypeExpr::Tuple(elements) => elements
+                .iter()
+                .all(|element| Self::new(element).is_supported()),
+            TypeExpr::Map { key, value, .. } => {
+                Self::new(key).is_supported() && Self::new(value).is_supported()
+            }
+            TypeExpr::Primitive(_)
+            | TypeExpr::Unit
+            | TypeExpr::String
+            | TypeExpr::Str
+            | TypeExpr::Record { .. }
+            | TypeExpr::Enum { .. }
+            | TypeExpr::Class { .. }
+            | TypeExpr::Custom { .. } => true,
+        }
+    }
+}
+
+struct CallbackHandleParameter<'a> {
+    type_expr: &'a TypeExpr,
+}
+
+impl<'a> CallbackHandleParameter<'a> {
+    fn new(type_expr: &'a TypeExpr) -> Self {
+        Self { type_expr }
+    }
+
+    fn requires_value_passing(&self) -> bool {
+        match self.type_expr {
+            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => {
+                matches!(inner.as_ref(), TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }))
+            }
+            TypeExpr::Option(inner) => Self::new(inner).requires_value_passing(),
+            _ => false,
+        }
+    }
+}
+
+struct CallbackBoxedType<'a> {
+    inner: &'a TypeExpr,
+}
+
+impl<'a> CallbackBoxedType<'a> {
+    fn new(inner: &'a TypeExpr) -> Self {
+        Self { inner }
+    }
+
+    fn is_supported(&self) -> bool {
+        matches!(self.inner, TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }))
+    }
+}
+
+fn local_module_segments(callback: &SourceTrait) -> Vec<NamePart> {
     let path_segments = callback
         .id
         .as_str()
         .split("::")
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
-    let module_segments = path_segments
+    path_segments
         .iter()
         .skip(1)
         .take(path_segments.len().saturating_sub(2))
         .copied()
-        .map(NamePart::new);
-    let helper = NamePart::new(symbol::callback_local_handle_name(callback.name.spelling()));
-    CallbackLocalHandle::new(module_segments.chain(std::iter::once(helper)).collect())
+        .map(NamePart::new)
+        .collect()
+}
+
+fn local_function(module_segments: &[NamePart], name: String) -> CallbackLocalFunction {
+    CallbackLocalFunction::new(
+        module_segments
+            .iter()
+            .cloned()
+            .chain(std::iter::once(NamePart::new(name)))
+            .collect(),
+    )
 }
 
 fn reject_slot_collisions(callback: &SourceTrait) -> Result<(), LowerError> {
@@ -92,8 +409,12 @@ fn reject_slot_collisions(callback: &SourceTrait) -> Result<(), LowerError> {
     callback.methods.iter().try_for_each(|method| {
         let raw = method.name.parts().last().map_or("", |part| part.as_str());
         let slot = CallbackSlot::from_method_name(raw);
-        let collides_with_lifecycle =
-            slot.as_str() == VTABLE_FREE_SLOT_NAME || slot.as_str() == VTABLE_CLONE_SLOT_NAME;
+        let collides_with_lifecycle = [
+            VTABLE_FREE_SLOT_NAME,
+            VTABLE_CLONE_SLOT_NAME,
+            CallbackLocalLifecycle::Handle.suffix(),
+        ]
+        .contains(&slot.as_str());
         let collides_with_peer = seen.iter().any(|existing| existing == &slot);
         if collides_with_lifecycle || collides_with_peer {
             return Err(LowerError::unsupported_type(
@@ -311,6 +632,20 @@ mod tests {
         ))
     }
 
+    fn boxed_closure() -> TypeExpr {
+        TypeExpr::boxed(TypeExpr::dyn_fn(FnTrait::new(
+            FnTraitKind::Fn,
+            FnSig::new(vec![TypeExpr::Primitive(Primitive::U32)], ReturnDef::Void),
+        )))
+    }
+
+    fn function_pointer_closure() -> TypeExpr {
+        TypeExpr::fn_ptr(FnSig::new(
+            vec![TypeExpr::Primitive(Primitive::U32)],
+            ReturnDef::Void,
+        ))
+    }
+
     fn boxed_callback_trait(id: &str, path: &str) -> TypeExpr {
         TypeExpr::boxed(TypeExpr::dyn_trait(
             SourceTraitId::new(id),
@@ -442,12 +777,36 @@ mod tests {
         );
         assert_eq!(
             callback
-                .local_handle()
+                .local_protocol()
+                .expect("sync callback should have local protocol")
+                .handle()
                 .segments()
                 .iter()
                 .map(|segment| segment.as_str())
                 .collect::<Vec<_>>(),
-            vec!["__boltffi_local_listener_handle"]
+            vec!["__boltffi_local_demo_listener_handle"]
+        );
+        assert_eq!(
+            callback
+                .local_protocol()
+                .expect("sync callback should have local protocol")
+                .free()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["__boltffi_local_demo_listener_free"]
+        );
+        assert_eq!(
+            callback
+                .local_protocol()
+                .expect("sync callback should have local protocol")
+                .clone_fn()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["__boltffi_local_demo_listener_clone"]
         );
     }
 
@@ -505,6 +864,125 @@ mod tests {
     }
 
     #[test]
+    fn callback_local_protocol_carries_method_entry_points() {
+        let mut callback = listener_callback();
+        callback.methods.push(method("on_event", Receiver::Shared));
+        callback.methods.push(method("handleURL", Receiver::Shared));
+
+        let bindings = lower_callback::<Native>(callback);
+        let methods = first_callback(&bindings)
+            .local_protocol()
+            .expect("sync callback should have local protocol")
+            .methods();
+
+        assert_eq!(methods.len(), 2);
+        assert_eq!(
+            methods[0]
+                .target()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["__boltffi_local_demo_listener_on_event"]
+        );
+        assert_eq!(
+            methods[1]
+                .target()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["__boltffi_local_demo_listener_handle_url"]
+        );
+    }
+
+    #[test]
+    fn callback_method_with_impl_closure_param_has_no_local_protocol() {
+        let mut callback = listener_callback();
+        let mut on_event = method("on_event", Receiver::Shared);
+        on_event.parameters = vec![value_param("callback", closure())];
+        callback.methods.push(on_event);
+
+        let bindings = lower_callback::<Native>(callback);
+        let callback = first_callback(&bindings);
+
+        assert_eq!(callback.protocol().vtable().methods().len(), 1);
+        assert!(callback.local_protocol().is_none());
+    }
+
+    #[test]
+    fn callback_method_with_function_pointer_closure_param_has_no_local_protocol() {
+        let mut callback = listener_callback();
+        let mut on_event = method("on_event", Receiver::Shared);
+        on_event.parameters = vec![value_param("callback", function_pointer_closure())];
+        callback.methods.push(on_event);
+
+        let bindings = lower_callback::<Native>(callback);
+        let callback = first_callback(&bindings);
+
+        assert_eq!(callback.protocol().vtable().methods().len(), 1);
+        assert!(callback.local_protocol().is_none());
+    }
+
+    #[test]
+    fn callback_method_with_boxed_closure_param_keeps_local_protocol() {
+        let mut callback = listener_callback();
+        let mut on_event = method("on_event", Receiver::Shared);
+        on_event.parameters = vec![value_param("callback", boxed_closure())];
+        callback.methods.push(on_event);
+
+        let bindings = lower_callback::<Native>(callback);
+        let callback = first_callback(&bindings);
+
+        assert_eq!(callback.protocol().vtable().methods().len(), 1);
+        assert!(callback.local_protocol().is_some());
+    }
+
+    #[test]
+    fn callback_method_returning_function_pointer_closure_keeps_local_protocol() {
+        let mut callback = listener_callback();
+        let mut handler = method("handler", Receiver::Shared);
+        handler.returns = ReturnDef::value(function_pointer_closure());
+        callback.methods.push(handler);
+
+        let bindings = lower_callback::<Native>(callback);
+        let callback = first_callback(&bindings);
+
+        assert_eq!(callback.protocol().vtable().methods().len(), 1);
+        assert!(callback.local_protocol().is_some());
+    }
+
+    #[test]
+    fn callback_local_protocol_names_include_source_namespace() {
+        let mut callback = TraitDef::new("demo::api::Listener".into(), name("Listener"));
+        callback.methods.push(method("on_event", Receiver::Shared));
+
+        let bindings = lower_callback::<Wasm32>(callback);
+        let protocol = first_callback(&bindings)
+            .local_protocol()
+            .expect("sync callback should have local protocol");
+
+        assert_eq!(
+            protocol
+                .handle()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api", "__boltffi_local_demo_api_listener_handle"]
+        );
+        assert_eq!(
+            protocol.methods()[0]
+                .target()
+                .segments()
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api", "__boltffi_local_demo_api_listener_on_event"]
+        );
+    }
+
+    #[test]
     fn wasm32_callback_method_target_is_an_env_import() {
         let mut callback = listener_callback();
         callback.methods.push(method("on_event", Receiver::Shared));
@@ -523,7 +1001,7 @@ mod tests {
     #[test]
     fn callback_method_with_primitive_param_lowers_to_direct_callable() {
         let mut callback = listener_callback();
-        let mut handle = method("handle", Receiver::Shared);
+        let mut handle = method("on_code", Receiver::Shared);
         handle.parameters = vec![value_param("code", TypeExpr::Primitive(Primitive::I32))];
         callback.methods.push(handle);
 
@@ -546,7 +1024,7 @@ mod tests {
     #[test]
     fn callback_method_with_string_param_uses_read_codec() {
         let mut callback = listener_callback();
-        let mut handle = method("handle", Receiver::Shared);
+        let mut handle = method("on_message", Receiver::Shared);
         handle.parameters = vec![value_param("message", TypeExpr::String)];
         callback.methods.push(handle);
 
@@ -1149,6 +1627,21 @@ mod tests {
     }
 
     #[test]
+    fn callback_method_named_handle_is_rejected_as_slot_collision() {
+        let mut callback = listener_callback();
+        callback.methods.push(method("handle", Receiver::Shared));
+
+        let mut contract = package();
+        contract.traits.push(callback);
+        let error = lower::<Native>(&contract).expect_err("method named handle must reject");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::CallbackMethodSlotCollision)
+        ));
+    }
+
+    #[test]
     fn callback_methods_that_snake_case_to_same_name_are_rejected() {
         let mut callback = listener_callback();
         callback.methods.push(method("onURL", Receiver::Shared));
@@ -1187,6 +1680,21 @@ mod tests {
         let mut contract = package();
         contract.traits.push(callback);
         let error = lower::<Native>(&contract).expect_err("owned receiver must reject");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::InvalidCallbackReceiver)
+        ));
+    }
+
+    #[test]
+    fn callback_method_with_mutable_receiver_is_rejected() {
+        let mut callback = listener_callback();
+        callback.methods.push(method("update", Receiver::Mutable));
+
+        let mut contract = package();
+        contract.traits.push(callback);
+        let error = lower::<Native>(&contract).expect_err("mutable receiver must reject");
 
         assert!(matches!(
             error.kind(),

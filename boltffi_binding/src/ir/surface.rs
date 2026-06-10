@@ -440,6 +440,9 @@ pub mod wasm32 {
     };
     use crate::{ImportSymbol, ImportedCallable, ImportedMethodDecl, NativeSymbol};
 
+    /// First handle value reserved for foreign-owned callback implementations.
+    pub const FOREIGN_CALLBACK_HANDLE_START: u32 = 0x8000_0000;
+
     /// How an encoded payload occupies wasm call slots.
     ///
     /// A slice is the borrowed `(pointer, count)` pair, both as 32-bit

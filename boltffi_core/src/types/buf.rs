@@ -107,12 +107,19 @@ pub extern "C" fn boltffi_free_buf(buf: FfiBuf) {
 #[cfg(target_arch = "wasm32")]
 impl FfiBuf {
     pub fn into_packed(self) -> u64 {
-        let ptr = self.ptr;
         let len = self.len;
-        mem::forget(self);
         if len == 0 {
             return 0;
         }
+        if self.cap == len && self.align == 1 {
+            let ptr = self.ptr;
+            mem::forget(self);
+            return ((len as u64) << 32) | (ptr as u64);
+        }
+
+        let bytes = unsafe { self.as_byte_slice() }.to_vec().into_boxed_slice();
+        drop(self);
+        let ptr = Box::into_raw(bytes) as *mut u8;
         ((len as u64) << 32) | (ptr as u64)
     }
 }

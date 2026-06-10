@@ -189,6 +189,26 @@ pub(super) fn lower_imported_method<S: SurfaceLower>(
     )?)
 }
 
+pub(super) fn lower_local_callback_method<S: SurfaceLower>(
+    idx: &Index<'_>,
+    ids: &DeclarationIds,
+    allocator: &mut SymbolAllocator,
+    owner: CallableOwner<'_>,
+    method: &MethodDef,
+) -> Result<ExportedCallable<S>, LowerError> {
+    let parameters = params::lower::<S, IntoRust>(idx, ids, allocator, owner, &method.parameters)?;
+    let (returns, error) =
+        returns::lower::<S, OutOfRust>(idx, ids, allocator, owner, &method.returns)?;
+
+    Ok(ExportedCallable::<S>::new(
+        None,
+        parameters,
+        returns,
+        error,
+        ExecutionDecl::synchronous(),
+    )?)
+}
+
 /// Lowers an inline closure crossing into Rust as a parameter.
 ///
 /// The closure was created on the foreign side, so its body lives

@@ -1,6 +1,7 @@
-use boltffi_binding::{Native, Wasm32, native, wasm32};
+use boltffi_binding::{CallbackLocalFunction, Native, Wasm32, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
+use syn::parse_str;
 
 use crate::experimental::{error::Error, wrapper::Render};
 
@@ -96,5 +97,31 @@ impl Render<Wasm32, CarrierInput<wasm32::HandleCarrier>> for Carrier {
             }),
             _ => Err(Error::UnsupportedExpansion("unknown wasm handle carrier")),
         }
+    }
+}
+
+/// A generated Rust path to a local callback function.
+pub struct CallbackLocalPath<'a> {
+    function: &'a CallbackLocalFunction,
+}
+
+impl<'a> CallbackLocalPath<'a> {
+    /// Creates a path renderer for a lowered local callback function.
+    pub const fn new(function: &'a CallbackLocalFunction) -> Self {
+        Self { function }
+    }
+
+    /// Returns the crate-rooted Rust path.
+    pub fn tokens(self) -> Result<TokenStream, Error> {
+        let suffix = self
+            .function
+            .segments()
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let path = parse_str::<syn::Path>(&format!("crate::{suffix}"))
+            .map_err(|_| Error::SourceSyntaxMismatch("callback local handle path is not Rust"))?;
+        Ok(quote! { #path })
     }
 }

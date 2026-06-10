@@ -65,10 +65,9 @@ impl<S: Surface> Decl<S> {
     ///
     /// Records, enums, and classes yield their initializers and
     /// methods. A function yields its single callable. A constant
-    /// yields the accessor's callable when it has one. Callback,
-    /// stream, and custom-type declarations yield nothing here;
-    /// callback methods are foreign-implemented and live on
-    /// [`imported_callables`](Self::imported_callables).
+    /// yields the accessor's callable when it has one. Callback
+    /// declarations yield Rust-side local protocol methods when the
+    /// callback can be implemented in Rust.
     pub fn exported_callables(&self) -> Box<dyn Iterator<Item = &ExportedCallable<S>> + '_> {
         match self {
             Self::Record(record) => match record.as_ref() {
@@ -116,9 +115,13 @@ impl<S: Surface> Decl<S> {
                     Box::new(std::iter::once(callable.as_ref()))
                 }
             },
-            Self::Callback(_) | Self::Stream(_) | Self::CustomType(_) => {
-                Box::new(std::iter::empty())
-            }
+            Self::Callback(callback) => match callback.local_protocol() {
+                Some(protocol) => {
+                    Box::new(protocol.methods().iter().map(|method| method.callable()))
+                }
+                None => Box::new(std::iter::empty()),
+            },
+            Self::Stream(_) | Self::CustomType(_) => Box::new(std::iter::empty()),
         }
     }
 
@@ -984,8 +987,8 @@ impl<S: Surface> ClassDecl<S> {
 /// so renderers never reconstruct dispatch names by convention.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "S::HandleCarrier: Serialize, S::CallbackProtocol: Serialize",
-    deserialize = "S::HandleCarrier: serde::de::DeserializeOwned, S::CallbackProtocol: serde::de::DeserializeOwned"
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize, S::CallbackProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned, S::CallbackProtocol: serde::de::DeserializeOwned"
 ))]
 pub struct CallbackDecl<S: Surface> {
     id: CallbackId,
@@ -993,7 +996,7 @@ pub struct CallbackDecl<S: Surface> {
     meta: DeclMeta,
     handle: S::HandleCarrier,
     protocol: S::CallbackProtocol,
-    local_handle: CallbackLocalHandle,
+    local_protocol: Option<CallbackLocalProtocol<S>>,
 }
 
 impl<S: Surface> CallbackDecl<S> {
@@ -1003,7 +1006,7 @@ impl<S: Surface> CallbackDecl<S> {
         meta: DeclMeta,
         handle: S::HandleCarrier,
         protocol: S::CallbackProtocol,
-        local_handle: CallbackLocalHandle,
+        local_protocol: Option<CallbackLocalProtocol<S>>,
     ) -> Self {
         Self {
             id,
@@ -1011,7 +1014,7 @@ impl<S: Surface> CallbackDecl<S> {
             meta,
             handle,
             protocol,
-            local_handle,
+            local_protocol,
         }
     }
 
@@ -1040,24 +1043,125 @@ impl<S: Surface> CallbackDecl<S> {
         &self.protocol
     }
 
-    /// Returns the Rust helper that binds a Rust implementation to a callback handle.
-    pub fn local_handle(&self) -> &CallbackLocalHandle {
-        &self.local_handle
+    /// Returns the Rust-side protocol for callback values implemented in Rust.
+    pub fn local_protocol(&self) -> Option<&CallbackLocalProtocol<S>> {
+        self.local_protocol.as_ref()
     }
 }
 
-/// A crate-local Rust function that creates a callback handle from a Rust implementation.
-///
-/// The path is crate-rooted and points at the helper emitted beside the exported
-/// trait. It is separate from [`native::CallbackProtocol::create_handle`] and
-/// [`wasm32::CallbackProtocol::create_handle`], which bind foreign
-/// implementations.
+/// Rust-side functions backing callback values implemented in Rust.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct CallbackLocalHandle {
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+))]
+pub struct CallbackLocalProtocol<S: Surface> {
+    handle: CallbackLocalFunction,
+    free: CallbackLocalFunction,
+    clone: CallbackLocalFunction,
+    methods: Vec<CallbackLocalMethodDecl<S>>,
+}
+
+impl<S: Surface> CallbackLocalProtocol<S> {
+    pub(crate) fn new(
+        handle: CallbackLocalFunction,
+        free: CallbackLocalFunction,
+        clone: CallbackLocalFunction,
+        methods: Vec<CallbackLocalMethodDecl<S>>,
+    ) -> Self {
+        Self {
+            handle,
+            free,
+            clone,
+            methods,
+        }
+    }
+
+    /// Returns the helper that creates a callback handle from a Rust implementation.
+    pub fn handle(&self) -> &CallbackLocalFunction {
+        &self.handle
+    }
+
+    /// Returns the function that releases a local callback handle.
+    pub fn free(&self) -> &CallbackLocalFunction {
+        &self.free
+    }
+
+    /// Returns the function that duplicates a local callback handle.
+    pub fn clone_fn(&self) -> &CallbackLocalFunction {
+        &self.clone
+    }
+
+    /// Returns the local method entry points.
+    pub fn methods(&self) -> &[CallbackLocalMethodDecl<S>] {
+        &self.methods
+    }
+}
+
+/// A crate-local entry point for a Rust-owned callback method.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "S::BufferShape: Serialize, S::HandleCarrier: Serialize, S::AsyncProtocol: Serialize",
+    deserialize = "S::BufferShape: serde::de::DeserializeOwned, S::HandleCarrier: serde::de::DeserializeOwned, S::AsyncProtocol: serde::de::DeserializeOwned"
+))]
+pub struct CallbackLocalMethodDecl<S: Surface> {
+    id: MethodId,
+    name: CanonicalName,
+    meta: DeclMeta,
+    target: CallbackLocalFunction,
+    callable: ExportedCallable<S>,
+}
+
+impl<S: Surface> CallbackLocalMethodDecl<S> {
+    pub(crate) fn new(
+        id: MethodId,
+        name: CanonicalName,
+        meta: DeclMeta,
+        target: CallbackLocalFunction,
+        callable: ExportedCallable<S>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            meta,
+            target,
+            callable,
+        }
+    }
+
+    /// Returns the method id.
+    pub const fn id(&self) -> MethodId {
+        self.id
+    }
+
+    /// Returns the canonical method name.
+    pub fn name(&self) -> &CanonicalName {
+        &self.name
+    }
+
+    /// Returns the declaration metadata.
+    pub fn meta(&self) -> &DeclMeta {
+        &self.meta
+    }
+
+    /// Returns the local entry point.
+    pub fn target(&self) -> &CallbackLocalFunction {
+        &self.target
+    }
+
+    /// Returns the Rust-owned callback method callable.
+    pub fn callable(&self) -> &ExportedCallable<S> {
+        &self.callable
+    }
+}
+
+/// A crate-local callback protocol function.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct CallbackLocalFunction {
     segments: Vec<NamePart>,
 }
 
-impl CallbackLocalHandle {
+impl CallbackLocalFunction {
     pub(crate) fn new(segments: Vec<NamePart>) -> Self {
         Self { segments }
     }
@@ -1065,8 +1169,8 @@ impl CallbackLocalHandle {
     /// Returns the crate-rooted path segments after `crate`.
     ///
     /// A root trait named `Listener` yields
-    /// `["__boltffi_local_listener_handle"]`. A trait in `api::Listener`
-    /// yields `["api", "__boltffi_local_listener_handle"]`.
+    /// `["__boltffi_local_demo_listener_handle"]`. A trait in `api::Listener`
+    /// yields `["api", "__boltffi_local_demo_api_listener_handle"]`.
     pub fn segments(&self) -> &[NamePart] {
         &self.segments
     }
