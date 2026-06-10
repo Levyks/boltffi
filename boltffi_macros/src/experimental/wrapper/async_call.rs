@@ -1,6 +1,7 @@
 use boltffi_binding::{
-    ErrorDecl, ExecutionDecl, FunctionDecl, HandleTarget, IncomingParam, IntoRust, Native,
-    NativeSymbol, ParamDecl, ParamPlan, Receive, ReturnPlan, TypeRef, Wasm32, native, wasm32,
+    ErrorDecl, ExecutionDecl, ExportedCallable, FunctionDecl, HandleTarget, IncomingParam,
+    IntoRust, Native, NativeSymbol, ParamDecl, ParamPlan, Receive, ReturnPlan, TypeRef, Wasm32,
+    native, wasm32,
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -12,7 +13,7 @@ use crate::experimental::{
     rust_api,
     target::Target,
     wrapper::{
-        self, Render, names,
+        self, Render, export, names,
         returns::{closure, direct_vec, encoded, fallible, handle, scalar_option},
     },
 };
@@ -20,9 +21,11 @@ use crate::experimental::{
 pub struct Renderer;
 
 pub struct Input<'context, 'binding, S: Target> {
-    function: &'binding FunctionDecl<S>,
+    symbol: &'binding NativeSymbol,
+    callable: &'binding ExportedCallable<S>,
     source: rust_api::Callable<'binding>,
-    function_ident: Ident,
+    rust_call: export::RustCall,
+    receiver: export::ReceiverTokens,
     visibility: TokenStream,
     expansion: &'context Expansion<'binding, S>,
 }
@@ -35,10 +38,32 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         visibility: TokenStream,
         expansion: &'context Expansion<'binding, S>,
     ) -> Self {
-        Self {
-            function,
+        Self::exported(
+            function.symbol(),
+            function.callable(),
             source,
-            function_ident,
+            export::RustCall::function(function_ident),
+            export::ReceiverTokens::none(),
+            visibility,
+            expansion,
+        )
+    }
+
+    pub fn exported(
+        symbol: &'binding NativeSymbol,
+        callable: &'binding ExportedCallable<S>,
+        source: rust_api::Callable<'binding>,
+        rust_call: export::RustCall,
+        receiver: export::ReceiverTokens,
+        visibility: TokenStream,
+        expansion: &'context Expansion<'binding, S>,
+    ) -> Self {
+        Self {
+            symbol,
+            callable,
+            source,
+            rust_call,
+            receiver,
             visibility,
             expansion,
         }
@@ -78,15 +103,17 @@ impl<'context, 'binding> NativeAsync<'context, 'binding> {
             free,
             panic_message,
             ..
-        }) = self.input.function.callable().execution()
+        }) = self.input.callable.execution()
         else {
             return Err(Error::UnsupportedExpansion("native async protocol"));
         };
 
         AsyncExports::new(
-            self.input.function,
+            self.input.symbol,
+            self.input.callable,
             self.input.source,
-            self.input.function_ident,
+            self.input.rust_call,
+            self.input.receiver,
             self.input.visibility,
             self.input.expansion,
         )?
@@ -117,15 +144,17 @@ impl<'context, 'binding> WasmAsync<'context, 'binding> {
             free,
             panic_message,
             ..
-        }) = self.input.function.callable().execution()
+        }) = self.input.callable.execution()
         else {
             return Err(Error::UnsupportedExpansion("wasm async protocol"));
         };
 
         AsyncExports::new(
-            self.input.function,
+            self.input.symbol,
+            self.input.callable,
             self.input.source,
-            self.input.function_ident,
+            self.input.rust_call,
+            self.input.receiver,
             self.input.visibility,
             self.input.expansion,
         )?
@@ -140,9 +169,11 @@ impl<'context, 'binding> WasmAsync<'context, 'binding> {
 }
 
 struct AsyncExports<'context, 'binding, S: Target> {
-    function: &'binding FunctionDecl<S>,
+    symbol: &'binding NativeSymbol,
+    callable: &'binding ExportedCallable<S>,
     source: rust_api::Callable<'binding>,
-    function_ident: Ident,
+    rust_call: export::RustCall,
+    receiver: export::ReceiverTokens,
     visibility: TokenStream,
     rust_return_type: Type,
     complete: Complete,
@@ -175,9 +206,11 @@ where
         + Render<S, scalar_option::Empty, Output = wrapper::returns::Tokens>,
 {
     fn new(
-        function: &'binding FunctionDecl<S>,
+        symbol: &'binding NativeSymbol,
+        callable: &'binding ExportedCallable<S>,
         source: rust_api::Callable<'binding>,
-        function_ident: Ident,
+        rust_call: export::RustCall,
+        receiver: export::ReceiverTokens,
         visibility: TokenStream,
         expansion: &'context Expansion<'binding, S>,
     ) -> Result<Self, Error> {
@@ -185,11 +218,19 @@ where
             .returns()
             .written_type()?
             .unwrap_or_else(|| parse_quote! { () });
-        let complete = Complete::new(function, source.returns(), &rust_return_type, expansion)?;
+        let complete = Complete::new(
+            symbol,
+            callable,
+            source.returns(),
+            &rust_return_type,
+            expansion,
+        )?;
         Ok(Self {
-            function,
+            symbol,
+            callable,
             source,
-            function_ident,
+            rust_call,
+            receiver,
             visibility,
             rust_return_type,
             complete,
@@ -208,25 +249,32 @@ where
     {
         let cfg = S::cfg_attr();
         let visibility = &self.visibility;
-        let start_ident = format_ident!("{}", self.function.symbol().name().as_str());
-        let function_ident = &self.function_ident;
+        let start_ident = format_ident!("{}", self.symbol.name().as_str());
         let rust_return_type = &self.rust_return_type;
-        AsyncParameters::new(self.function.callable().params()).validate()?;
+        AsyncParameters::new(self.callable.params()).validate()?;
+        if !self.receiver.writebacks().is_empty() {
+            return Err(Error::UnsupportedExpansion("async receiver writeback"));
+        }
         let failure = quote! {
             return ::boltffi::__private::rustfuture::rust_future_invalid_arg::<#rust_return_type>();
         };
         let params = <wrapper::arguments::AsyncRenderer as Render<S, _>>::render(
             wrapper::arguments::AsyncRenderer,
-            wrapper::arguments::Input::new(
-                self.function.callable(),
-                self.source,
-                failure,
-                self.expansion,
-            ),
+            wrapper::arguments::Input::new(self.callable, self.source, failure, self.expansion),
         )?;
-        let ffi_parameters = params.ffi_parameters();
-        let conversions = params.conversions();
-        let arguments = params.rust_arguments();
+        let ffi_parameters = self
+            .receiver
+            .ffi_parameters()
+            .iter()
+            .chain(params.ffi_parameters())
+            .collect::<Vec<_>>();
+        let conversions = self
+            .receiver
+            .conversions()
+            .iter()
+            .chain(params.conversions())
+            .collect::<Vec<_>>();
+        let rust_call = self.rust_call.expression(params.rust_arguments());
         let safety = (!ffi_parameters.is_empty()).then(|| quote! { unsafe });
         let start = quote! {
             #cfg
@@ -234,7 +282,7 @@ where
             #visibility #safety extern "C" fn #start_ident(#(#ffi_parameters),*) -> ::boltffi::__private::RustFutureHandle {
                 #(#conversions)*
                 ::boltffi::__private::rustfuture::rust_future_new(async move {
-                    #function_ident(#(#arguments),*).await
+                    #rust_call.await
                 })
             }
         };
@@ -451,7 +499,8 @@ struct PlainComplete {
 
 impl Complete {
     fn new<'context, 'plan, S: Target>(
-        function: &'plan FunctionDecl<S>,
+        symbol: &'plan NativeSymbol,
+        callable: &'plan ExportedCallable<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
         expansion: &'context Expansion<'plan, S>,
@@ -478,16 +527,17 @@ impl Complete {
         scalar_option::Renderer: Render<S, scalar_option::Input, Output = wrapper::returns::Tokens>
             + Render<S, scalar_option::Empty, Output = wrapper::returns::Tokens>,
     {
-        if !matches!(function.callable().error(), ErrorDecl::None(_)) {
+        if !matches!(callable.error(), ErrorDecl::None(_)) {
             return FallibleComplete::new(
-                function,
+                symbol,
+                callable,
                 source.fallible()?,
                 rust_return_type,
                 expansion,
             )
             .map(Self::Fallible);
         }
-        PlainComplete::new(function, source, rust_return_type, expansion).map(Self::Plain)
+        PlainComplete::new(callable, source, rust_return_type, expansion).map(Self::Plain)
     }
 
     fn tokens<S: Target>(
@@ -505,7 +555,7 @@ impl Complete {
 
 impl PlainComplete {
     fn new<'context, 'plan, S: Target>(
-        function: &'plan FunctionDecl<S>,
+        callable: &'plan ExportedCallable<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
         expansion: &'context Expansion<'plan, S>,
@@ -529,7 +579,7 @@ impl PlainComplete {
             + Render<S, scalar_option::Empty, Output = wrapper::returns::Tokens>,
     {
         let result = names::Wrapper::new(proc_macro2::Span::call_site()).result();
-        match function.callable().returns().plan() {
+        match callable.returns().plan() {
             ReturnPlan::Void => Ok(Self {
                 return_type: TokenStream::new(),
                 ok_pattern: quote! { _ },
@@ -694,7 +744,8 @@ struct FallibleComplete {
 
 impl FallibleComplete {
     fn new<'context, 'plan, S: Target>(
-        function: &'plan FunctionDecl<S>,
+        symbol: &'plan NativeSymbol,
+        callable: &'plan ExportedCallable<S>,
         source: rust_api::Fallible<'plan>,
         rust_return_type: &Type,
         expansion: &'context Expansion<'plan, S>,
@@ -712,8 +763,7 @@ impl FallibleComplete {
                 Output = handle::ValueTokens,
             >,
     {
-        let ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } = function.callable().error()
-        else {
+        let ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } = callable.error() else {
             return Err(Error::UnsupportedExpansion("async error channel"));
         };
         let error = names::Wrapper::new(proc_macro2::Span::call_site()).error();
@@ -728,9 +778,9 @@ impl FallibleComplete {
         let success = <fallible::Success as Render<S, _>>::render(
             fallible::Success,
             fallible::SuccessInput::new(
-                function.callable().returns(),
+                callable.returns(),
                 source,
-                format_ident!("{}", function.symbol().name().as_str()),
+                format_ident!("{}", symbol.name().as_str()),
                 expansion,
             ),
         )?;

@@ -36,7 +36,7 @@ pub(super) fn lower<S: SurfaceLower>(
 /// pick `DirectRecord` vs `EncodedRecord` from the same predicate the
 /// record's own declaration uses.
 pub(super) fn is_direct(record: &SourceRecord) -> bool {
-    primitive::has_effective_repr_c(&record.repr)
+    primitive::has_repr_c(&record.repr)
         && !record.fields.is_empty()
         && record
             .fields
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_unannotated_primitive_record_as_direct() {
+    fn classifies_unannotated_primitive_record_as_encoded() {
         let bindings = lower_record::<Native>(record(
             "demo::Point",
             "point",
@@ -230,31 +230,23 @@ mod tests {
                 field("y", TypeExpr::Primitive(Primitive::F64)),
             ],
         ));
-        let record = direct_record(&bindings);
+        let record = encoded_record(&bindings);
 
-        assert_eq!(record.layout().size(), ByteSize::new(16));
-        assert_eq!(record.layout().alignment().get(), 8);
-        assert_eq!(
-            record
-                .layout()
-                .fields()
-                .iter()
-                .map(|field| field.offset().get())
-                .collect::<Vec<_>>(),
-            vec![0, 8]
-        );
+        assert_eq!(record.fields().len(), 2);
     }
 
     #[test]
     fn lays_out_direct_record_with_padding() {
-        let bindings = lower_record::<Native>(record(
+        let mut source = record(
             "demo::Header",
             "header",
             vec![
                 field("tag", TypeExpr::Primitive(Primitive::U8)),
                 field("count", TypeExpr::Primitive(Primitive::U32)),
             ],
-        ));
+        );
+        source.repr = ReprAttr::new(vec![ReprItem::C]);
+        let bindings = lower_record::<Native>(source);
         let record = direct_record(&bindings);
 
         assert_eq!(record.layout().size(), ByteSize::new(8));
@@ -331,14 +323,16 @@ mod tests {
     }
 
     fn point_record() -> RecordDef {
-        record(
+        let mut record = record(
             "demo::Point",
             "Point",
             vec![
                 field("x", TypeExpr::Primitive(Primitive::F64)),
                 field("y", TypeExpr::Primitive(Primitive::F64)),
             ],
-        )
+        );
+        record.repr = ReprAttr::new(vec![ReprItem::C]);
+        record
     }
 
     fn method(method_name: &str, receiver: Receiver) -> MethodDef {

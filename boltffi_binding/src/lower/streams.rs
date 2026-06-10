@@ -195,8 +195,8 @@ mod tests {
         CanonicalName as SourceName, ClassDef, ClassId as SourceClassId,
         DeprecationInfo as SourceDeprecationInfo, DocComment as SourceDocComment, FieldDef,
         PackageInfo as SourcePackage, Path as SourcePath, Primitive, RecordDef,
-        RecordId as SourceRecordId, SourceContract, StreamDef, StreamId as SourceStreamId,
-        StreamMode, TraitDef, TraitId as SourceTraitId, TypeExpr,
+        RecordId as SourceRecordId, ReprAttr, ReprItem, SourceContract, StreamDef,
+        StreamId as SourceStreamId, StreamMode, TraitDef, TraitId as SourceTraitId, TypeExpr,
     };
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
@@ -231,6 +231,7 @@ mod tests {
 
     fn direct_record(id: &str, record_name: &str) -> RecordDef {
         let mut record = RecordDef::new(SourceRecordId::new(id), name(record_name));
+        record.repr = ReprAttr::new(vec![ReprItem::C]);
         record.fields.push(FieldDef::new(
             name("x"),
             TypeExpr::Primitive(Primitive::F64),

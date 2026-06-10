@@ -59,7 +59,7 @@ mod tests {
         CanonicalName as SourceName, ClassDef, DeprecationInfo as SourceDeprecationInfo,
         DocComment as SourceDocComment, EnumDef, FieldDef, MethodDef, MethodId as SourceMethodId,
         PackageInfo as SourcePackage, ParameterDef, Path as SourcePath, Primitive, Receiver,
-        RecordDef, ReturnDef, SourceContract, TypeExpr, VariantDef,
+        RecordDef, ReprAttr, ReprItem, ReturnDef, SourceContract, TypeExpr, VariantDef,
     };
 
     use crate::lower::lower;
@@ -113,6 +113,7 @@ mod tests {
 
     fn record(id: &str, record_name: &str, fields: Vec<FieldDef>) -> RecordDef {
         let mut record = RecordDef::new(id.into(), name(record_name));
+        record.repr = ReprAttr::new(vec![ReprItem::C]);
         record.fields = fields;
         record
     }

@@ -80,9 +80,7 @@ where
 
     pub fn render(self) -> Result<TokenStream, Error> {
         if matches!(self.callable.execution(), ExecutionDecl::Asynchronous(_)) {
-            return Err(Error::UnsupportedExpansion(
-                "record async exported callable",
-            ));
+            return Err(Error::UnsupportedExpansion("async exported callable"));
         }
 
         let cfg = S::cfg_attr();
@@ -189,7 +187,7 @@ impl RustCall {
         }
     }
 
-    fn expression(&self, arguments: &[TokenStream]) -> TokenStream {
+    pub fn expression(&self, arguments: &[TokenStream]) -> TokenStream {
         match &self.target {
             RustCallTarget::Function(function) => quote! { #function(#(#arguments),*) },
             RustCallTarget::Associated { owner, method } => {
@@ -228,5 +226,17 @@ impl ReceiverTokens {
 
     fn requires_failure_return(&self) -> bool {
         self.requires_failure_return
+    }
+
+    pub fn ffi_parameters(&self) -> &[TokenStream] {
+        &self.ffi_parameters
+    }
+
+    pub fn conversions(&self) -> &[TokenStream] {
+        &self.conversions
+    }
+
+    pub fn writebacks(&self) -> &[TokenStream] {
+        &self.writebacks
     }
 }

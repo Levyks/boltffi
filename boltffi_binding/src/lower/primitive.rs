@@ -37,8 +37,8 @@ pub(super) fn integer_repr(repr: &ReprAttr) -> Option<IntegerRepr> {
     })
 }
 
-pub(super) fn has_effective_repr_c(repr: &ReprAttr) -> bool {
-    repr.items.is_empty() || repr.items.iter().any(|item| matches!(item, ReprItem::C))
+pub(super) fn has_repr_c(repr: &ReprAttr) -> bool {
+    repr.items.iter().any(|item| matches!(item, ReprItem::C))
 }
 
 impl From<SourcePrimitive> for Primitive {

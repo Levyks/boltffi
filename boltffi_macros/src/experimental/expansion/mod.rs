@@ -434,6 +434,7 @@ mod tests {
 
     fn point_record() -> RecordDef {
         let mut record = RecordDef::new("demo::Point".into(), CanonicalName::single("Point"));
+        record.repr = ReprAttr::new(vec![ReprItem::C]);
         record.fields = vec![FieldDef::new(
             CanonicalName::single("x"),
             TypeExpr::Primitive(Primitive::F64),
@@ -1773,6 +1774,105 @@ mod tests {
             "let __boltffi_receiver : Point = unsafe { < Point as :: boltffi :: __private :: Passable > :: unpack (__boltffi_receiver) } ;"
         ));
         assert!(rendered.contains("__boltffi_receiver . norm ()"));
+    }
+
+    #[test]
+    fn native_direct_record_method_returning_self_renders_concrete_record_type() {
+        let method = record_method(
+            "copy",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::SelfType),
+        );
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        syn::parse2::<syn::File>(quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub fn copy(&self) -> Self {
+                    *self
+                }
+            }
+
+            #tokens
+        })
+        .expect("direct record self-returning method expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_method_record_demo_point_copy"));
+        assert!(rendered.contains("-> < Point as :: boltffi :: __private :: Passable > :: Out"));
+        assert!(!rendered.contains("< Self as :: boltffi :: __private :: Passable >"));
+        assert!(rendered.contains("__boltffi_receiver . copy ()"));
+    }
+
+    #[test]
+    fn native_direct_record_expansion_emits_async_instance_method_wrapper() {
+        let mut method = record_method(
+            "compute",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::F64)),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        syn::parse2::<syn::File>(quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub async fn compute(&self) -> f64 {
+                    self.x
+                }
+            }
+
+            #tokens
+        })
+        .expect("direct record async method expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_method_record_demo_point_compute"));
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { __boltffi_receiver . compute () . await })"
+        ));
+        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_compute_poll"));
+    }
+
+    #[test]
+    fn native_direct_record_expansion_rejects_mutable_receiver_without_writeback() {
+        let method = record_method(
+            "shift",
+            Receiver::Mutable,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::F64)),
+        );
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let error = expand_record(&expansion, &source.records[0]).expect_err("record rejects");
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedExpansion("mutable direct record receiver without writeback")
+        ));
     }
 
     #[test]

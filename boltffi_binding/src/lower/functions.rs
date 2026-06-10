@@ -63,7 +63,7 @@ mod tests {
         DocComment as SourceDocComment, ExecutionKind, FieldDef, FunctionDef,
         FunctionId as SourceFunctionId, MethodDef, MethodId as SourceMethodId,
         PackageInfo as SourcePackage, ParameterDef, Path as SourcePath, Primitive, Receiver,
-        RecordDef, ReturnDef, SourceContract, TypeExpr,
+        RecordDef, ReprAttr, ReprItem, ReturnDef, SourceContract, TypeExpr,
     };
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
@@ -129,6 +129,7 @@ mod tests {
 
     fn point_record() -> RecordDef {
         let mut point = RecordDef::new("demo::Point".into(), name("Point"));
+        point.repr = ReprAttr::new(vec![ReprItem::C]);
         point.fields = vec![FieldDef::new(
             name("x"),
             TypeExpr::Primitive(Primitive::F64),

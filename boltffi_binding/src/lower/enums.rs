@@ -303,14 +303,16 @@ mod tests {
     }
 
     fn point_record() -> RecordDef {
-        record(
+        let mut record = record(
             "demo::Point",
             "Point",
             vec![
                 field("x", TypeExpr::Primitive(Primitive::F64)),
                 field("y", TypeExpr::Primitive(Primitive::F64)),
             ],
-        )
+        );
+        record.repr = ReprAttr::new(vec![ReprItem::C]);
+        record
     }
 
     fn method(method_name: &str, receiver: Receiver) -> MethodDef {

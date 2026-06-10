@@ -1,6 +1,6 @@
 use boltffi_ast::{FieldDef, MethodDef, Path as SourcePath, RecordDef, TypeExpr, Visibility};
 use boltffi_binding::{
-    CanonicalName, CodecNode, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl,
+    CanonicalName, CodecNode, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, ExecutionDecl,
     ExportedCallable, ExportedMethodDecl, FieldKey, InitializerDecl, NativeSymbol, Receive,
     RecordDecl, SurfaceLower, WritePlan,
 };
@@ -574,10 +574,25 @@ where
             method,
             self.expansion,
         )?;
+        let source_signature = rust_api::Callable::record_method(self.source_method, self.source);
+        if matches!(self.callable.execution(), ExecutionDecl::Asynchronous(_)) {
+            return <wrapper::async_call::Renderer as Render<S, _>>::render(
+                wrapper::async_call::Renderer,
+                wrapper::async_call::Input::exported(
+                    self.symbol,
+                    self.callable,
+                    source_signature,
+                    rust_call,
+                    receiver,
+                    visibility(self.source_method)?,
+                    self.expansion,
+                ),
+            );
+        }
         export::Renderer::new(
             self.symbol,
             self.callable,
-            rust_api::Callable::method(self.source_method),
+            source_signature,
             rust_call,
             receiver,
             visibility(self.source_method)?,
@@ -618,6 +633,13 @@ impl<'receiver> ReceiverKind<'receiver> {
                 "initializer binding unexpectedly has a receiver",
             )),
             (Self::Direct, Some(receive)) => {
+                if receive == Receive::ByMutRef
+                    && matches!(S::DIRECT_RECORD_PARAMS, DirectRecordCrossing::Value)
+                {
+                    return Err(Error::UnsupportedExpansion(
+                        "mutable direct record receiver without writeback",
+                    ));
+                }
                 let rust_type = record_type(source)?;
                 let receiver = names::Wrapper::new(method.span()).receiver();
                 let requires_failure_return =
@@ -657,6 +679,11 @@ impl<'receiver> ReceiverKind<'receiver> {
                 export::RustCall::associated(quote! { #record }, method),
             )),
             (Self::Encoded { codec }, Some(receive)) => {
+                if receive == Receive::ByMutRef {
+                    return Err(Error::UnsupportedExpansion(
+                        "mutable encoded record receiver without writeback",
+                    ));
+                }
                 let source_type = TypeExpr::record(
                     source.id.clone(),
                     SourcePath::single(source.name.spelling()),

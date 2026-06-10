@@ -39,7 +39,7 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
         wrapper::param::Renderer: Render<S, wrapper::param::Input<'context, 'binding, S>, Output = wrapper::param::Tokens>,
     {
         let binding = self.callable;
-        if binding.params().len() != self.source.parameters().len() {
+        if binding.params().len() != self.source.parameter_count() {
             return Err(Error::SourceSyntaxMismatch(
                 "source parameter count does not match binding parameter count",
             ));
@@ -52,12 +52,7 @@ impl<'context, 'binding, S: Target> Input<'context, 'binding, S> {
             .map(|(param, source)| {
                 <wrapper::param::Renderer as Render<S, _>>::render(
                     wrapper::param::Renderer,
-                    wrapper::param::Input::new(
-                        param,
-                        rust_api::Parameter::new(source),
-                        self.failure.clone(),
-                        self.expansion,
-                    ),
+                    wrapper::param::Input::new(param, source, self.failure.clone(), self.expansion),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
