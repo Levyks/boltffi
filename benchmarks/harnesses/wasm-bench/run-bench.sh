@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR/../../.."
 DEMO_DIR="$ROOT_DIR/examples/demo"
 DEMO_WASM_PKG_DIR="$ROOT_DIR/examples/platforms/wasm/dist"
+RUNTIME_DIR="$ROOT_DIR/runtime/typescript"
 BENCH_OVERLAY="$DEMO_DIR/boltffi.benchmark.toml"
 RESULTS_DIR="$SCRIPT_DIR/build/results/benchmarkjs"
 GENERATED_DIR="$SCRIPT_DIR/build/generated"
@@ -13,6 +14,22 @@ BENCH_FILTER=""
 WASM_RUST_TARGET="wasm32-unknown-unknown"
 
 cd "$SCRIPT_DIR"
+
+resolve_wasm_bindgen_version() {
+    cargo metadata --manifest-path "$DEMO_DIR/Cargo.toml" --format-version 1 \
+        | python3 -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "wasm-bindgen"))'
+}
+
+ensure_wasm_bindgen_cli() {
+    local wasm_bindgen_version
+    wasm_bindgen_version="$(resolve_wasm_bindgen_version)"
+
+    if command -v wasm-bindgen >/dev/null 2>&1 && [[ "$(wasm-bindgen --version)" == "wasm-bindgen $wasm_bindgen_version" ]]; then
+        return
+    fi
+
+    cargo install wasm-bindgen-cli --version "$wasm_bindgen_version" --locked --force
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -36,7 +53,16 @@ mkdir -p "$GENERATED_DIR"
 
 rustup target add "$WASM_RUST_TARGET"
 
+(
+    cd "$RUNTIME_DIR"
+    npm ci
+    npm run build
+)
+
+export PATH="$RUNTIME_DIR/node_modules/.bin:$PATH"
+
 npm ci
+ensure_wasm_bindgen_cli
 
 export CARGO_TARGET_DIR="$ROOT_DIR/benchmarks/generated/boltffi/target"
 (
