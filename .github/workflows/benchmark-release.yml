@@ -57,6 +57,10 @@ jobs:
         with:
           node-version: '24'
 
+      - uses: Aandreba/setup-binaryen@v1.0.0
+        with:
+          token: ${{ github.token }}
+
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'

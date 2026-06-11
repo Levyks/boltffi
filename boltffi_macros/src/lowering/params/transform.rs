@@ -47,7 +47,7 @@ pub(super) enum ParamTransform {
     VecPassable(syn::Type),
     ClassHandle(ClassHandleParam),
     WireEncoded(WireEncodedParam),
-    Passable(syn::Type),
+    Passable(PassableParam),
 }
 
 pub(super) struct ClassifiedParamTransform {
@@ -83,6 +83,19 @@ pub(super) struct ClassHandleParam {
     pub(super) nullable: bool,
 }
 
+#[derive(Clone)]
+pub(super) struct PassableParam {
+    pub(super) rust_type: syn::Type,
+    pub(super) passing: PassablePassing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PassablePassing {
+    ByValue,
+    SharedRef,
+    MutableRef,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ClassHandleParamKind {
     SharedRef,
@@ -116,6 +129,25 @@ impl WireEncodedParam {
             kind: WireEncodedParamKind::Vec,
             decoded_type,
             passing: WireEncodedPassing::SharedRef,
+        }
+    }
+}
+
+impl PassableParam {
+    fn from_type(ty: &Type) -> Self {
+        match ty {
+            Type::Reference(reference) if reference.mutability.is_some() => Self {
+                rust_type: (*reference.elem).clone(),
+                passing: PassablePassing::MutableRef,
+            },
+            Type::Reference(reference) => Self {
+                rust_type: (*reference.elem).clone(),
+                passing: PassablePassing::SharedRef,
+            },
+            _ => Self {
+                rust_type: ty.clone(),
+                passing: PassablePassing::ByValue,
+            },
         }
     }
 }
@@ -399,20 +431,30 @@ impl<'a> ParamTransformClassifier<'a> {
         }
 
         if let Type::Reference(type_ref) = ty
-            && self
+            && let Some(category) = self
                 .named_type_transport_classifier
                 .named_type_category(&type_ref.elem)
-                .is_some()
         {
-            return ClassifiedParamTransform {
-                contract: ParamContract::new(
-                    ParamValueStrategy::WireEncoded(WireParamStrategy::SingleValue),
-                    Self::passing_strategy(ty),
-                ),
-                transform: ParamTransform::WireEncoded(WireEncodedParam::from_type(
-                    WireEncodedParamKind::Required,
-                    ty,
-                )),
+            return match category {
+                DataTypeCategory::Scalar | DataTypeCategory::Blittable => {
+                    ClassifiedParamTransform {
+                        contract: ParamContract::new(
+                            self.named_value_strategy(&type_ref.elem),
+                            Self::passing_strategy(ty),
+                        ),
+                        transform: ParamTransform::Passable(PassableParam::from_type(ty)),
+                    }
+                }
+                DataTypeCategory::WireEncoded => ClassifiedParamTransform {
+                    contract: ParamContract::new(
+                        ParamValueStrategy::WireEncoded(WireParamStrategy::SingleValue),
+                        Self::passing_strategy(ty),
+                    ),
+                    transform: ParamTransform::WireEncoded(WireEncodedParam::from_type(
+                        WireEncodedParamKind::Required,
+                        ty,
+                    )),
+                },
             };
         }
 
@@ -436,7 +478,7 @@ impl<'a> ParamTransformClassifier<'a> {
                         self.named_value_strategy(ty),
                         Self::passing_strategy(ty),
                     ),
-                    transform: ParamTransform::Passable(ty.clone()),
+                    transform: ParamTransform::Passable(PassableParam::from_type(ty)),
                 },
                 NamedTypeTransport::WireEncoded => ClassifiedParamTransform {
                     contract: ParamContract::new(

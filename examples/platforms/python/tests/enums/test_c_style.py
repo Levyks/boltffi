@@ -43,6 +43,20 @@ class CStyleEnumsTests(DemoTestCase):
             demo.opposite_direction(demo.Direction.EAST),
             demo.Direction.WEST,
         )
+        self.demo_case("case:enums.c_style.direction.should_return_method_parameter_value")
+        self.assertEqual(
+            demo.Direction.NORTH.horizontal_or(demo.Direction.WEST),
+            demo.Direction.WEST,
+        )
+        self.assertEqual(
+            demo.Direction.EAST.horizontal_or(demo.Direction.WEST),
+            demo.Direction.EAST,
+        )
+        self.demo_case("case:enums.c_style.direction.should_return_degrees")
+        self.assertEqual(demo.direction_to_degrees(demo.Direction.NORTH), 0)
+        self.assertEqual(demo.direction_to_degrees(demo.Direction.EAST), 90)
+        self.assertEqual(demo.direction_to_degrees(demo.Direction.SOUTH), 180)
+        self.assertEqual(demo.direction_to_degrees(demo.Direction.WEST), 270)
 
     def test_repr_int_enums(self) -> None:
         self.demo_case("case:enums.repr_int.priority.should_roundtrip_value")

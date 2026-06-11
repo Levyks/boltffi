@@ -22,6 +22,7 @@ const suiteModules = [
   "./tests/enums/complex_variants.test.mjs",
   "./tests/enums/data_enum.test.mjs",
   "./tests/enums/repr_int.test.mjs",
+  "./tests/multicrate/mod.test.mjs",
   "./tests/options/complex.test.mjs",
   "./tests/options/primitives.test.mjs",
   "./tests/primitives/scalars.test.mjs",

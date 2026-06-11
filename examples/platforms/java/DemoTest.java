@@ -50,6 +50,7 @@ public final class DemoTest {
             testBlittableRecordVecs();
             testOptions();
             testRecordsWithVecs();
+            testMultiCrateExports();
             testInventoryConstructors();
             testConstructorCoverageMatrix();
             testClosures();
@@ -252,6 +253,97 @@ public final class DemoTest {
             : "echoDatetimes roundtrip";
 
         System.out.println("  PASS\n");
+    }
+
+    private static void testMultiCrateExports() {
+        System.out.println("Testing multi-crate exports...");
+
+        ForeignUser user = new ForeignUser("Ada", 37);
+        ForeignSession session = new ForeignSession(7, user, ForeignKind.EXPRESS);
+        ForeignLabeler labeler = (labelUser, kind) -> "label:" + labelUser.name() + ":" + foreignKindName(kind);
+
+        assert Demo.multiEchoKind(ForeignKind.ARCHIVE) == ForeignKind.ARCHIVE : "multiEchoKind";
+        assert Demo.multiKindLabel(ForeignKind.EXPRESS).equals("express") : "multiKindLabel";
+        assert Demo.multiShiftPoint(new ForeignPoint(1.0, 2.0), 3.0, 4.0).equals(new ForeignPoint(4.0, 6.0)) : "multiShiftPoint";
+        assert Math.abs(Demo.multiPointSum(new ForeignPoint(2.0, 5.0)) - 7.0) < 0.0000001 : "multiPointSum";
+        assert Demo.multiUserSummary(user).equals("Ada#37") : "multiUserSummary";
+        assert Demo.multiEchoCode("mc-7").equals("mc-7") : "multiEchoCode";
+        assert Demo.multiCodeValue("mc-7").equals("mc-7") : "multiCodeValue";
+        assert Demo.multiStateSummary(ForeignState.Ready.INSTANCE).equals("ready") : "multiStateSummary ready";
+        assert Demo.multiStateSummary(new ForeignState.Busy("sync")).equals("busy:sync") : "multiStateSummary busy";
+        assert Demo.multiMakeSession(7, user, ForeignKind.EXPRESS).equals(session) : "multiMakeSession";
+        assert Demo.multiSessionSummary(session).equals("7#Ada#37#express") : "multiSessionSummary";
+        assert Demo.multiTotalAge(Arrays.asList(session, new ForeignSession(8, new ForeignUser("Grace", 41), ForeignKind.ARCHIVE))) == 78 : "multiTotalAge";
+        Optional<String> multiOptionalUserName = Demo.multiOptionalUserName(Optional.of(session));
+        assert multiOptionalUserName.isPresent() && multiOptionalUserName.get().equals("Ada") : "multiOptionalUserName some";
+        assert !Demo.multiOptionalUserName(Optional.empty()).isPresent() : "multiOptionalUserName none";
+        assert Demo.multiEventSummary(new SessionEvent.Started(session)).equals("started:7#Ada#37#express") : "multiEventSummary started";
+        assert Demo.multiEventSummary(SessionEvent.Stopped.INSTANCE).equals("stopped") : "multiEventSummary stopped";
+        assert Demo.multiTrySession(9, user, ForeignKind.ARCHIVE).equals(new ForeignSession(9, user, ForeignKind.ARCHIVE)) : "multiTrySession ok";
+        try {
+            Demo.multiTrySession(0, user, ForeignKind.STANDARD);
+            assert false : "multiTrySession should throw";
+        } catch (RuntimeException error) {
+            assert error.getMessage().contains("session id must be positive") : "multiTrySession error message";
+        }
+        assert Demo.multiBorrowedSummary(user, session, ForeignKind.ARCHIVE).equals("Ada#37#7#express#archive") : "multiBorrowedSummary";
+        assert Demo.multiFormatWithLabeler(labeler, user, ForeignKind.EXPRESS).equals("label:Ada:express") : "multiFormatWithLabeler";
+
+        assert Demo.modelEchoKind(ForeignKind.STANDARD) == ForeignKind.STANDARD : "modelEchoKind";
+        assert Demo.modelKindLabel(ForeignKind.ARCHIVE).equals("archive") : "modelKindLabel";
+        assert Demo.modelShiftPoint(new ForeignPoint(2.0, 3.0), 5.0, 7.0).equals(new ForeignPoint(7.0, 10.0)) : "modelShiftPoint";
+        assert Math.abs(Demo.modelPointSum(new ForeignPoint(4.0, 6.0)) - 10.0) < 0.0000001 : "modelPointSum";
+        assert Demo.modelUserSummary(user).equals("Ada#37") : "modelUserSummary";
+        assert Demo.modelEchoCode("dep").equals("dep") : "modelEchoCode";
+        assert Demo.modelCodeValue("dep").equals("dep") : "modelCodeValue";
+        assert Demo.modelStateSummary(new ForeignState.Busy("dep")).equals("busy:dep") : "modelStateSummary";
+        assert Demo.modelFormatWithLabeler(labeler, user, ForeignKind.ARCHIVE).equals("label:Ada:archive") : "modelFormatWithLabeler";
+
+        assert Demo.sessionMake(7, user, ForeignKind.EXPRESS).equals(session) : "sessionMake";
+        assert Demo.sessionSummary(session).equals("7#Ada#37#express") : "sessionSummary";
+        assert Demo.sessionTotalAge(Collections.singletonList(session)) == 37 : "sessionTotalAge";
+        Optional<String> sessionOptionalUserName = Demo.sessionOptionalUserName(Optional.of(session));
+        assert sessionOptionalUserName.isPresent() && sessionOptionalUserName.get().equals("Ada") : "sessionOptionalUserName some";
+        assert !Demo.sessionOptionalUserName(Optional.empty()).isPresent() : "sessionOptionalUserName none";
+        assert Demo.sessionEventSummary(new SessionEvent.Started(session)).equals("started:7#Ada#37#express") : "sessionEventSummary";
+        assert Demo.sessionTryMake(7, user, ForeignKind.STANDARD).equals(new ForeignSession(7, user, ForeignKind.STANDARD)) : "sessionTryMake";
+        assert Demo.sessionApplyLabeler(labeler, user, ForeignKind.STANDARD).equals("label:Ada:standard") : "sessionApplyLabeler";
+
+        try (ForeignCounter counter = new ForeignCounter(10)) {
+            assert counter.add(5) == 15 : "ForeignCounter.add";
+            assert counter.get() == 15 : "ForeignCounter.get";
+            assert counter.summarizeUser(user, ForeignKind.STANDARD).equals("Ada#37#standard#15") : "ForeignCounter.summarizeUser";
+        }
+
+        try (SessionBook emptyBook = new SessionBook()) {
+            assert emptyBook.count() == 0 : "SessionBook.count empty";
+            assert emptyBook.summarizeFirst(ForeignKind.ARCHIVE).equals("empty#archive") : "SessionBook.summarizeFirst empty";
+        }
+
+        try (SessionBook book = new SessionBook(session)) {
+            assert book.count() == 1 : "SessionBook.count";
+            assert book.addSession(new ForeignSession(8, new ForeignUser("Grace", 41), ForeignKind.ARCHIVE)) == 2 : "SessionBook.addSession";
+            assert book.summarizeFirst(ForeignKind.STANDARD).equals("7#Ada#37#express") : "SessionBook.summarizeFirst";
+            assert book.summarizeBorrowed(user, session, ForeignKind.ARCHIVE).equals("Ada#37#7#express#archive") : "SessionBook.summarizeBorrowed";
+            ForeignMetrics metrics = book.metricsForPoints(Arrays.asList(new ForeignPoint(1.0, 2.0), new ForeignPoint(3.0, 4.0)));
+            assert Math.abs(metrics.score() - 10.0) < 0.0001 : "SessionBook.metricsForPoints score";
+            assert metrics.count() == 2 : "SessionBook.metricsForPoints count";
+        }
+
+        System.out.println("  PASS\n");
+    }
+
+    private static String foreignKindName(ForeignKind kind) {
+        switch (kind) {
+            case STANDARD:
+                return "standard";
+            case EXPRESS:
+                return "express";
+            case ARCHIVE:
+                return "archive";
+            default:
+                throw new IllegalArgumentException("unknown ForeignKind: " + kind);
+        }
     }
 
     private static void testBuiltins() {
@@ -527,6 +619,9 @@ public final class DemoTest {
         assert Direction.fromDegrees(225.0) == Direction.WEST : "Direction.fromDegrees(225)";
         demoCase("case:enums.c_style.direction.should_return_opposite_from_method");
         assert Direction.NORTH.opposite() == Direction.SOUTH : "Direction.opposite";
+        demoCase("case:enums.c_style.direction.should_return_method_parameter_value");
+        assert Direction.NORTH.horizontalOr(Direction.WEST) == Direction.WEST : "Direction.horizontalOr(North, West)";
+        assert Direction.EAST.horizontalOr(Direction.WEST) == Direction.EAST : "Direction.horizontalOr(East, West)";
         demoCase("case:enums.c_style.direction.should_identify_horizontal_values");
         assert Direction.WEST.isHorizontal() : "Direction.isHorizontal(West)";
         assert !Direction.NORTH.isHorizontal() : "Direction.isHorizontal(North)";

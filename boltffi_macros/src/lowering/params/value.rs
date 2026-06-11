@@ -4,8 +4,8 @@ use syn::Ident;
 
 use super::ParamLoweringState;
 use super::transform::{
-    ClassHandleParam, ClassHandleParamKind, ParamTransform, WireEncodedParam, WireEncodedParamKind,
-    WireEncodedPassing, len_ident, ptr_ident,
+    ClassHandleParam, ClassHandleParamKind, ParamTransform, PassableParam, PassablePassing,
+    WireEncodedParam, WireEncodedParamKind, WireEncodedPassing, len_ident, ptr_ident,
 };
 use crate::index::custom_types::{
     CustomTypeRegistry, contains_custom_types, from_wire_expr_owned, wire_type_for,
@@ -614,13 +614,27 @@ impl<'a> ValueParamDecoder<'a> {
         &self,
         acc: &mut ParamLoweringState,
         name: &Ident,
-        rust_type: &syn::Type,
+        passable_param: &PassableParam,
     ) {
+        let rust_type = &passable_param.rust_type;
         acc.ffi_params
             .push(quote! { #name: <#rust_type as ::boltffi::__private::Passable>::In });
-        acc.setup.push(quote! {
-            let #name: #rust_type = unsafe { <#rust_type as ::boltffi::__private::Passable>::unpack(#name) };
-        });
+        match passable_param.passing {
+            PassablePassing::ByValue => {
+                acc.setup.push(passable_param.unpack_binding(name, name));
+            }
+            PassablePassing::SharedRef | PassablePassing::MutableRef => {
+                let storage_name = Ident::new(&format!("{}_storage", name), name.span());
+                acc.setup
+                    .push(passable_param.unpack_binding(name, &storage_name));
+                let binding = match passable_param.passing {
+                    PassablePassing::SharedRef => quote! { let #name = &#storage_name; },
+                    PassablePassing::MutableRef => quote! { let #name = &mut #storage_name; },
+                    PassablePassing::ByValue => unreachable!(),
+                };
+                acc.setup.push(binding);
+            }
+        }
         acc.call_args.push(quote! { #name });
     }
 
@@ -628,14 +642,29 @@ impl<'a> ValueParamDecoder<'a> {
         &self,
         acc: &mut ParamLoweringState,
         name: &Ident,
-        rust_type: &syn::Type,
+        passable_param: &PassableParam,
     ) {
+        let rust_type = &passable_param.rust_type;
         acc.ffi_params
             .push(quote! { #name: <#rust_type as ::boltffi::__private::Passable>::In });
-        acc.setup.push(quote! {
-            let #name: #rust_type = unsafe { <#rust_type as ::boltffi::__private::Passable>::unpack(#name) };
-        });
-        acc.move_vars.push(name.clone());
+        match passable_param.passing {
+            PassablePassing::ByValue => {
+                acc.setup.push(passable_param.unpack_binding(name, name));
+                acc.move_vars.push(name.clone());
+            }
+            PassablePassing::SharedRef | PassablePassing::MutableRef => {
+                let storage_name = Ident::new(&format!("{}_storage", name), name.span());
+                acc.setup
+                    .push(passable_param.unpack_binding(name, &storage_name));
+                let binding = match passable_param.passing {
+                    PassablePassing::SharedRef => quote! { let #name = &#storage_name; },
+                    PassablePassing::MutableRef => quote! { let #name = &mut #storage_name; },
+                    PassablePassing::ByValue => unreachable!(),
+                };
+                acc.thread_setup.push(binding);
+                acc.move_vars.push(storage_name);
+            }
+        }
         acc.call_args.push(quote! { #name });
     }
 
@@ -737,20 +766,21 @@ impl<'a> SyncValueParamLowerer<'a> {
                 self.decoder
                     .lower_sync_wire_encoded_param(acc, name, &wire_param)
             }
-            ParamTransform::Passable(ref rust_type)
-                if contains_custom_types(rust_type, self.decoder.custom_types) =>
+            ParamTransform::Passable(ref passable_param)
+                if contains_custom_types(&passable_param.rust_type, self.decoder.custom_types) =>
             {
                 let wire_param = WireEncodedParam {
                     kind: WireEncodedParamKind::Required,
-                    decoded_type: rust_type.clone(),
+                    decoded_type: passable_param.rust_type.clone(),
                     passing: WireEncodedPassing::ByValue,
                 };
                 self.decoder
                     .lower_sync_wire_encoded_param(acc, name, &wire_param);
             }
-            ParamTransform::Passable(rust_type) => self
-                .decoder
-                .lower_sync_passable_param(acc, name, &rust_type),
+            ParamTransform::Passable(passable_param) => {
+                self.decoder
+                    .lower_sync_passable_param(acc, name, &passable_param)
+            }
             ParamTransform::PassThrough => {
                 self.decoder
                     .lower_sync_pass_through_param(acc, name, original_type)
@@ -810,20 +840,21 @@ impl<'a> AsyncValueParamLowerer<'a> {
                 self.decoder
                     .lower_async_wire_encoded_param(acc, name, &wire_param)
             }
-            ParamTransform::Passable(ref rust_type)
-                if contains_custom_types(rust_type, self.decoder.custom_types) =>
+            ParamTransform::Passable(ref passable_param)
+                if contains_custom_types(&passable_param.rust_type, self.decoder.custom_types) =>
             {
                 let wire_param = WireEncodedParam {
                     kind: WireEncodedParamKind::Required,
-                    decoded_type: rust_type.clone(),
+                    decoded_type: passable_param.rust_type.clone(),
                     passing: WireEncodedPassing::ByValue,
                 };
                 self.decoder
                     .lower_async_wire_encoded_param(acc, name, &wire_param);
             }
-            ParamTransform::Passable(rust_type) => self
-                .decoder
-                .lower_async_passable_param(acc, name, &rust_type),
+            ParamTransform::Passable(passable_param) => {
+                self.decoder
+                    .lower_async_passable_param(acc, name, &passable_param)
+            }
             ParamTransform::PassThrough => {
                 self.decoder
                     .lower_async_pass_through_param(acc, name, original_type)
@@ -837,6 +868,20 @@ impl<'a> AsyncValueParamLowerer<'a> {
             | ParamTransform::ImplTrait(_) => {
                 unreachable!("unsupported async params must be rejected before lowering")
             }
+        }
+    }
+}
+
+impl PassableParam {
+    fn unpack_binding(&self, input_name: &Ident, output_name: &Ident) -> TokenStream {
+        let rust_type = &self.rust_type;
+        match self.passing {
+            PassablePassing::MutableRef => quote! {
+                let mut #output_name: #rust_type = unsafe { <#rust_type as ::boltffi::__private::Passable>::unpack(#input_name) };
+            },
+            PassablePassing::ByValue | PassablePassing::SharedRef => quote! {
+                let #output_name: #rust_type = unsafe { <#rust_type as ::boltffi::__private::Passable>::unpack(#input_name) };
+            },
         }
     }
 }

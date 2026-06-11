@@ -2900,7 +2900,7 @@ impl<'a> LegacyPackageScanner<'a> {
             .ok_or_else(|| "cargo package disappeared during legacy scan".to_string())?;
         let dependency_modules = self
             .graph
-            .exported_dependencies(package_id)
+            .reachable_exported_dependencies(package_id)
             .into_iter()
             .map(|dependency| self.scan_package(dependency.id(), dependency.module_name()))
             .collect::<Result<Vec<_>, _>>()?;
@@ -2956,6 +2956,8 @@ fn scan_single_crate_with_pointer_width(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::process;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn extract_doc_from_single_line() {
@@ -3777,6 +3779,164 @@ mod tests {
             state_code.inputs.first().map(|param| &param.param_type),
             Some(MType::Record(name)) if name == "SessionState"
         ));
+    }
+
+    #[test]
+    fn cargo_metadata_imports_transitive_exports_before_legacy_root_scan() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_root = std::env::temp_dir().join(format!(
+            "boltffi_transitive_multicrate_scan_{}_{}",
+            process::id(),
+            unique_suffix
+        ));
+        let root_crate = temp_root.join("root_api");
+        let session_crate = temp_root.join("session_api");
+        let model_crate = temp_root.join("model_api");
+        let root_src = root_crate.join("src");
+        let session_src = session_crate.join("src");
+        let model_src = model_crate.join("src");
+
+        fs::create_dir_all(&root_src).expect("create root src");
+        fs::create_dir_all(&session_src).expect("create session src");
+        fs::create_dir_all(&model_src).expect("create model src");
+        fs::write(
+            root_crate.join("Cargo.toml"),
+            r#"
+                [package]
+                name = "root_api"
+                version = "0.1.0"
+                edition = "2024"
+
+                [dependencies]
+                session_api = { path = "../session_api" }
+            "#,
+        )
+        .expect("write root manifest");
+        fs::write(
+            session_crate.join("Cargo.toml"),
+            r#"
+                [package]
+                name = "session_api"
+                version = "0.1.0"
+                edition = "2024"
+
+                [dependencies]
+                model_api = { path = "../model_api" }
+            "#,
+        )
+        .expect("write session manifest");
+        fs::write(
+            model_crate.join("Cargo.toml"),
+            r#"
+                [package]
+                name = "model_api"
+                version = "0.1.0"
+                edition = "2024"
+            "#,
+        )
+        .expect("write model manifest");
+        fs::write(
+            model_src.join("lib.rs"),
+            r#"
+                #[boltffi::data]
+                #[derive(Clone, Copy)]
+                pub enum ForeignKind {
+                    Standard,
+                    Express,
+                }
+
+                #[boltffi::data]
+                #[derive(Clone)]
+                pub struct ForeignUser {
+                    pub name: String,
+                }
+
+                #[boltffi::export]
+                pub fn model_echo_kind(kind: ForeignKind) -> ForeignKind {
+                    kind
+                }
+            "#,
+        )
+        .expect("write model source");
+        fs::write(
+            session_src.join("lib.rs"),
+            r#"
+                pub use model_api::{ForeignKind, ForeignUser};
+
+                #[boltffi::data]
+                #[derive(Clone)]
+                pub struct ForeignSession {
+                    pub user: ForeignUser,
+                    pub kind: ForeignKind,
+                }
+
+                #[boltffi::export]
+                pub fn session_make(user: ForeignUser, kind: ForeignKind) -> ForeignSession {
+                    ForeignSession { user, kind }
+                }
+            "#,
+        )
+        .expect("write session source");
+        fs::write(
+            root_src.join("lib.rs"),
+            r#"
+                use session_api::{ForeignKind, ForeignSession, ForeignUser, session_make};
+
+                #[boltffi::export]
+                pub fn root_echo_kind(kind: ForeignKind) -> ForeignKind {
+                    kind
+                }
+
+                #[boltffi::export]
+                pub fn root_make_session(user: ForeignUser, kind: ForeignKind) -> ForeignSession {
+                    session_make(user, kind)
+                }
+            "#,
+        )
+        .expect("write root source");
+
+        let module = scan_crate_with_pointer_width(&root_crate, "root_api", None)
+            .expect("transitive multi-crate scan should succeed");
+        fs::remove_dir_all(&temp_root).expect("cleanup");
+
+        assert!(module.find_enum("ForeignKind").is_some());
+        assert!(module.find_record("ForeignUser").is_some());
+        assert!(module.find_record("ForeignSession").is_some());
+
+        let root_echo_kind = module
+            .functions
+            .iter()
+            .find(|function| function.name == "root_echo_kind")
+            .expect("root_echo_kind should be exported");
+        assert!(matches!(
+            root_echo_kind.inputs.first().map(|param| &param.param_type),
+            Some(MType::Enum(name)) if name == "ForeignKind"
+        ));
+        assert_eq!(
+            root_echo_kind.returns,
+            ReturnType::value(MType::Enum("ForeignKind".to_string()))
+        );
+
+        let root_make_session = module
+            .functions
+            .iter()
+            .find(|function| function.name == "root_make_session")
+            .expect("root_make_session should be exported");
+        assert!(matches!(
+            root_make_session.inputs.first().map(|param| &param.param_type),
+            Some(MType::Record(name)) if name == "ForeignUser"
+        ));
+        assert!(matches!(
+            root_make_session.inputs.get(1).map(|param| &param.param_type),
+            Some(MType::Enum(name)) if name == "ForeignKind"
+        ));
+        assert_eq!(
+            root_make_session.returns,
+            ReturnType::value(MType::Record("ForeignSession".to_string()))
+        );
     }
 
     #[test]

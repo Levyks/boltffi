@@ -125,6 +125,19 @@ impl Direction {
     }
 
     #[demo_bench_macros::demo_case(
+        "enums.c_style.direction.should_return_method_parameter_value",
+        justification = "Ensure a Direction method accepts a Direction parameter and returns a Direction value.",
+        directions = "Call `enums::c_style::Direction::horizontal_or` through the generated binding and assert a Direction parameter and Direction return value cross the method boundary."
+    )]
+    pub fn horizontal_or(&self, fallback: Direction) -> Direction {
+        if self.is_horizontal() {
+            *self
+        } else {
+            fallback
+        }
+    }
+
+    #[demo_bench_macros::demo_case(
         "enums.c_style.direction.should_identify_horizontal_values",
         justification = "Ensure Direction::is_horizontal returns true for East and West.",
         directions = "Call `enums::c_style::Direction::is_horizontal` through the generated binding and assert Direction::is_horizontal returns true for East and West."
@@ -187,12 +200,7 @@ pub fn opposite_direction(d: Direction) -> Direction {
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.should_return_degrees",
     justification = "Ensure direction_to_degrees maps Direction variants to compass degrees.",
-    directions = "Call `enums::c_style::direction_to_degrees` through the generated binding and assert direction_to_degrees maps Direction variants to compass degrees.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports C-style enum parameters and primitive returns, but the demo suite has no assertion for direction_to_degrees yet."
-    )
+    directions = "Call `enums::c_style::direction_to_degrees` through the generated binding and assert direction_to_degrees maps Direction variants to compass degrees."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]

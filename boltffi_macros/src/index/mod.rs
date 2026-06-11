@@ -51,7 +51,10 @@ impl CrateIndex {
                 &indexed_sources,
                 path_resolver.clone(),
             )?,
-            data_types: data_types::build_data_type_registry(&indexed_sources)?,
+            data_types: data_types::build_data_type_registry(
+                &indexed_sources,
+                path_resolver.clone(),
+            )?,
             callback_traits: callback_traits::build_callback_trait_registry(&indexed_sources)?,
             path_resolver,
         };

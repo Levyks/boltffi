@@ -28,6 +28,9 @@ export async function run() {
   assert.equal(demo.Direction.fromDegrees(90), demo.Direction.East);
   globalThis.demoCase("case:enums.c_style.direction.should_return_opposite_from_method");
   assert.equal(demo.Direction.opposite(demo.Direction.East), demo.Direction.West);
+  globalThis.demoCase("case:enums.c_style.direction.should_return_method_parameter_value");
+  assert.equal(demo.Direction.horizontalOr(demo.Direction.North, demo.Direction.West), demo.Direction.West);
+  assert.equal(demo.Direction.horizontalOr(demo.Direction.East, demo.Direction.West), demo.Direction.East);
   globalThis.demoCase("case:enums.c_style.direction.should_identify_horizontal_values");
   assert.equal(demo.Direction.isHorizontal(demo.Direction.East), true);
   globalThis.demoCase("case:enums.c_style.direction.should_render_compass_label");

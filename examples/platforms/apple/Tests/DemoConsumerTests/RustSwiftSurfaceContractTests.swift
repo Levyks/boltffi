@@ -576,6 +576,7 @@ private let rustToSwiftCoverageFile: [String: String] = [
     "enums/complex_variants.rs": "enums/ComplexVariantsEnumsTests.swift",
     "enums/data_enum.rs": "enums/DataEnumTests.swift",
     "enums/repr_int.rs": "enums/ReprIntEnumsTests.swift",
+    "multicrate/mod.rs": "multicrate/MultiCrateTests.swift",
     "options/complex.rs": "options/ComplexOptionsTests.swift",
     "options/primitives.rs": "options/PrimitivesOptionsTests.swift",
     "primitives/scalars.rs": "primitives/ScalarsTests.swift",

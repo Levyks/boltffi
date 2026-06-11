@@ -49,7 +49,6 @@ impl TypePathKey {
     }
 
     pub fn has_suffix(&self, suffix: &[String]) -> bool {
-        self.segments.len() >= suffix.len()
-            && self.segments[self.segments.len() - suffix.len()..] == *suffix
+        self.segments.ends_with(suffix)
     }
 }

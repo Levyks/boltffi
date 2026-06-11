@@ -49,6 +49,7 @@ public static class DemoTest
             TestOptions();
             TestOptionsInRecords();
             TestOptionsWithVec();
+            TestMultiCrateExports();
             TestClasses();
             TestResultFunctions();
             TestResultClassMethods();
@@ -253,6 +254,93 @@ public static class DemoTest
         Require(echoedDts.Length == 3, "EchoDatetimes length");
         Require(echoedDts[0] == dts[0] && echoedDts[1] == dts[1] && echoedDts[2] == dts[2],
             "EchoDatetimes roundtrip (blittable)");
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    private static void TestMultiCrateExports()
+    {
+        Console.WriteLine("Testing multi-crate exports...");
+
+        ForeignUser user = new ForeignUser("Ada", 37u);
+        ForeignSession session = new ForeignSession(7u, user, ForeignKind.Express);
+        ForeignLabeler labeler = new ForeignLabelerImpl();
+
+        Require(MultiEchoKind(ForeignKind.Archive) == ForeignKind.Archive, "MultiEchoKind");
+        Require(MultiKindLabel(ForeignKind.Express) == "express", "MultiKindLabel");
+        Require(MultiShiftPoint(new ForeignPoint(1.0, 2.0), 3.0, 4.0) == new ForeignPoint(4.0, 6.0), "MultiShiftPoint");
+        Require(Math.Abs(MultiPointSum(new ForeignPoint(2.0, 5.0)) - 7.0) < 0.0000001, "MultiPointSum");
+        Require(MultiUserSummary(user) == "Ada#37", "MultiUserSummary");
+        Require(MultiEchoCode("mc-7") == "mc-7", "MultiEchoCode");
+        Require(MultiCodeValue("mc-7") == "mc-7", "MultiCodeValue");
+        Require(MultiStateSummary(new ForeignState.Ready()) == "ready", "MultiStateSummary Ready");
+        Require(MultiStateSummary(new ForeignState.Busy("sync")) == "busy:sync", "MultiStateSummary Busy");
+        Require(MultiMakeSession(7u, user, ForeignKind.Express) == session, "MultiMakeSession");
+        Require(MultiSessionSummary(session) == "7#Ada#37#express", "MultiSessionSummary");
+        Require(MultiTotalAge(new[]
+        {
+            session,
+            new ForeignSession(8u, new ForeignUser("Grace", 41u), ForeignKind.Archive)
+        }) == 78u, "MultiTotalAge");
+        Require(MultiOptionalUserName(session) == "Ada", "MultiOptionalUserName some");
+        Require(MultiOptionalUserName(null) is null, "MultiOptionalUserName none");
+        Require(MultiEventSummary(new SessionEvent.Started(session)) == "started:7#Ada#37#express", "MultiEventSummary Started");
+        Require(MultiEventSummary(new SessionEvent.Stopped()) == "stopped", "MultiEventSummary Stopped");
+        Require(MultiTrySession(9u, user, ForeignKind.Archive) == new ForeignSession(9u, user, ForeignKind.Archive), "MultiTrySession ok");
+        try
+        {
+            MultiTrySession(0u, user, ForeignKind.Standard);
+            Require(false, "MultiTrySession should throw");
+        }
+        catch (BoltException error)
+        {
+            Require(error.Message.Contains("session id must be positive"), "MultiTrySession error message");
+        }
+        Require(MultiBorrowedSummary(user, session, ForeignKind.Archive) == "Ada#37#7#express#archive", "MultiBorrowedSummary");
+        Require(MultiFormatWithLabeler(labeler, user, ForeignKind.Express) == "label:Ada:express", "MultiFormatWithLabeler");
+
+        Require(ModelEchoKind(ForeignKind.Standard) == ForeignKind.Standard, "ModelEchoKind");
+        Require(ModelKindLabel(ForeignKind.Archive) == "archive", "ModelKindLabel");
+        Require(ModelShiftPoint(new ForeignPoint(2.0, 3.0), 5.0, 7.0) == new ForeignPoint(7.0, 10.0), "ModelShiftPoint");
+        Require(Math.Abs(ModelPointSum(new ForeignPoint(4.0, 6.0)) - 10.0) < 0.0000001, "ModelPointSum");
+        Require(ModelUserSummary(user) == "Ada#37", "ModelUserSummary");
+        Require(ModelEchoCode("dep") == "dep", "ModelEchoCode");
+        Require(ModelCodeValue("dep") == "dep", "ModelCodeValue");
+        Require(ModelStateSummary(new ForeignState.Busy("dep")) == "busy:dep", "ModelStateSummary");
+        Require(ModelFormatWithLabeler(labeler, user, ForeignKind.Archive) == "label:Ada:archive", "ModelFormatWithLabeler");
+
+        Require(SessionMake(7u, user, ForeignKind.Express) == session, "SessionMake");
+        Require(SessionSummary(session) == "7#Ada#37#express", "SessionSummary");
+        Require(SessionTotalAge(new[] { session }) == 37u, "SessionTotalAge");
+        Require(SessionOptionalUserName(session) == "Ada", "SessionOptionalUserName some");
+        Require(SessionOptionalUserName(null) is null, "SessionOptionalUserName none");
+        Require(SessionEventSummary(new SessionEvent.Started(session)) == "started:7#Ada#37#express", "SessionEventSummary");
+        Require(SessionTryMake(7u, user, ForeignKind.Standard) == new ForeignSession(7u, user, ForeignKind.Standard), "SessionTryMake");
+        Require(SessionApplyLabeler(labeler, user, ForeignKind.Standard) == "label:Ada:standard", "SessionApplyLabeler");
+
+        using (ForeignCounter counter = new ForeignCounter(10))
+        {
+            Require(counter.Add(5) == 15, "ForeignCounter.Add");
+            Require(counter.Get() == 15, "ForeignCounter.Get");
+            Require(counter.SummarizeUser(user, ForeignKind.Standard) == "Ada#37#standard#15", "ForeignCounter.SummarizeUser");
+        }
+
+        using (SessionBook emptyBook = new SessionBook())
+        {
+            Require(emptyBook.Count() == 0u, "SessionBook.Count empty");
+            Require(emptyBook.SummarizeFirst(ForeignKind.Archive) == "empty#archive", "SessionBook.SummarizeFirst empty");
+        }
+
+        using (SessionBook book = SessionBook.WithSession(session))
+        {
+            Require(book.Count() == 1u, "SessionBook.Count");
+            Require(book.AddSession(new ForeignSession(8u, new ForeignUser("Grace", 41u), ForeignKind.Archive)) == 2u, "SessionBook.AddSession");
+            Require(book.SummarizeFirst(ForeignKind.Standard) == "7#Ada#37#express", "SessionBook.SummarizeFirst");
+            Require(book.SummarizeBorrowed(user, session, ForeignKind.Archive) == "Ada#37#7#express#archive", "SessionBook.SummarizeBorrowed");
+            ForeignMetrics metrics = book.MetricsForPoints(new[] { new ForeignPoint(1.0, 2.0), new ForeignPoint(3.0, 4.0) });
+            Require(Math.Abs(metrics.Score - 10.0) < 0.0001, "SessionBook.MetricsForPoints Score");
+            Require(metrics.Count == 2u, "SessionBook.MetricsForPoints Count");
+        }
 
         Console.WriteLine("  PASS\n");
     }
@@ -591,6 +679,9 @@ public static class DemoTest
         // Extension methods generated on the Methods companion class.
         DemoCase("case:enums.c_style.direction.should_return_opposite_from_method");
         Require(Direction.North.Opposite() == Direction.South, "North.Opposite()");
+        DemoCase("case:enums.c_style.direction.should_return_method_parameter_value");
+        Require(Direction.North.HorizontalOr(Direction.West) == Direction.West, "North.HorizontalOr(West)");
+        Require(Direction.East.HorizontalOr(Direction.West) == Direction.East, "East.HorizontalOr(West)");
         DemoCase("case:enums.c_style.direction.should_identify_horizontal_values");
         Require(Direction.East.IsHorizontal(), "East.IsHorizontal()");
         Require(!Direction.North.IsHorizontal(), "!North.IsHorizontal()");
@@ -3054,6 +3145,19 @@ public static class DemoTest
         }
 
         return received;
+    }
+
+    private sealed class ForeignLabelerImpl : ForeignLabeler
+    {
+        public string Label(ForeignUser user, ForeignKind kind) => $"label:{user.Name}:{KindName(kind)}";
+
+        private static string KindName(ForeignKind kind) => kind switch
+        {
+            ForeignKind.Standard => "standard",
+            ForeignKind.Express => "express",
+            ForeignKind.Archive => "archive",
+            _ => throw new InvalidOperationException($"unknown ForeignKind: {kind}"),
+        };
     }
 
     private sealed class ValueCallbackImpl : ValueCallback
