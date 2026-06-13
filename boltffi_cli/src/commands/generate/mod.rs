@@ -68,10 +68,6 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
                 run_generator::<JavaGenerator>(&request, options.experimental)?;
             }
 
-            if config.should_process(Target::Header, options.experimental) {
-                run_generator::<HeaderGenerator>(&request, options.experimental)?;
-            }
-
             if config.should_process(Target::TypeScript, options.experimental) {
                 run_generator::<TypeScriptGenerator>(&request, options.experimental)?;
             }

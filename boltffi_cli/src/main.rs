@@ -106,7 +106,7 @@ enum Commands {
 
     #[command(
         about = "Generate bindings",
-        long_about = "Generate bindings.\n\nExamples:\n  boltffi generate\n  boltffi generate swift\n  boltffi generate kotlin\n  boltffi generate kmp --experimental\n  boltffi generate header\n  boltffi generate python --experimental\n"
+        long_about = "Generate bindings.\n\nExamples:\n  boltffi generate\n  boltffi generate swift\n  boltffi generate kotlin\n  boltffi generate kmp --experimental\n  boltffi generate python --experimental\n"
     )]
     Generate {
         #[arg(value_enum)]
@@ -172,8 +172,6 @@ enum GenerateTargetArg {
     Kmp,
     #[value(help = "Generate Java bindings + JNI glue")]
     Java,
-    #[value(help = "Generate C header")]
-    Header,
     #[value(help = "Generate TypeScript bindings for WASM")]
     Typescript,
     #[value(help = "Generate experimental Dart bindings")]
@@ -508,7 +506,6 @@ fn execute_command(
                         GenerateTargetArg::Kotlin => GenerateTarget::Kotlin,
                         GenerateTargetArg::Kmp => GenerateTarget::KotlinMultiplatform,
                         GenerateTargetArg::Java => GenerateTarget::Java,
-                        GenerateTargetArg::Header => GenerateTarget::Header,
                         GenerateTargetArg::Typescript => GenerateTarget::Typescript,
                         GenerateTargetArg::Dart => GenerateTarget::Dart,
                         GenerateTargetArg::Python => GenerateTarget::Python,
