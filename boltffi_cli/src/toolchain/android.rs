@@ -62,22 +62,33 @@ impl AndroidToolchain {
         let ar = self.ndk.llvm_ar();
         let triple_env_upper = cargo_env_triple_upper(target.triple());
         let triple_env_lower = cargo_env_triple_lower(target.triple());
-        let sysroot = self.ndk.sysroot();
 
         cargo.env(format!("CARGO_TARGET_{}_LINKER", triple_env_upper), &linker);
         cargo.env(format!("CARGO_TARGET_{}_AR", triple_env_upper), &ar);
         cargo.env(format!("CC_{}", triple_env_lower), &linker);
         cargo.env(format!("AR_{}", triple_env_lower), &ar);
-        cargo.env(
-            format!("BINDGEN_EXTRA_CLANG_ARGS_{}", triple_env_lower),
-            format!(
-                "--sysroot={} -isystem {}/usr/include -isystem {}/usr/include/{}",
-                sysroot.display(),
-                sysroot.display(),
-                sysroot.display(),
-                abi.clang_prefix(),
-            ),
+
+        let sysroot = self.ndk.sysroot();
+        let include_target = android_sysroot_target(target.triple());
+
+        let bindgen_key = format!("BINDGEN_EXTRA_CLANG_ARGS_{}", triple_env_lower);
+        let bindgen_args = format!(
+            "--sysroot={} -isystem {}/usr/include -isystem {}/usr/include/{}",
+            sysroot.display(),
+            sysroot.display(),
+            sysroot.display(),
+            include_target,
         );
+        let bindgen_clang_args = bindgen_args.replace('\\', "/");
+
+        let merged_args = match std::env::var(&bindgen_key) {
+            Ok(existing) if !existing.trim().is_empty() => {
+                format!("{bindgen_clang_args} {existing}")
+            }
+            _ => bindgen_clang_args,
+        };
+
+        cargo.env(bindgen_key, merged_args);
 
         Ok(())
     }
@@ -311,5 +322,12 @@ fn preferred_prebuilt_tags() -> Vec<&'static str> {
         ("linux", "aarch64") => vec!["linux-aarch64", "linux-x86_64"],
         ("windows", "x86_64") => vec!["windows-x86_64"],
         _ => Vec::new(),
+    }
+}
+
+fn android_sysroot_target(triple: &str) -> &str {
+    match triple {
+        "armv7-linux-androideabi" => "arm-linux-androideabi",
+        _ => triple,
     }
 }
