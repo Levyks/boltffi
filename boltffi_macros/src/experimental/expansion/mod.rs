@@ -2059,11 +2059,11 @@ mod tests {
                     }
                 }
 
-                fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                     value.0
                 }
 
-                fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                     Ok(Timestamp(value))
                 }
 
@@ -2099,11 +2099,11 @@ mod tests {
                     }
                 }
 
-                fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                     value.0
                 }
 
-                fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                     Ok(Timestamp(value))
                 }
 
@@ -2189,11 +2189,11 @@ mod tests {
         syn::parse2::<syn::File>(quote! {
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -5084,11 +5084,11 @@ mod tests {
             #[derive(Clone)]
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -5138,11 +5138,11 @@ mod tests {
             #[derive(Clone)]
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -5188,11 +5188,11 @@ mod tests {
             #[derive(Clone)]
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -5655,11 +5655,11 @@ mod tests {
         syn::parse2::<syn::File>(quote! {
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -5686,11 +5686,11 @@ mod tests {
             quote! {
                 pub struct Timestamp(i64);
 
-                fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                     value.0
                 }
 
-                fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                     Ok(Timestamp(value))
                 }
 
@@ -5726,11 +5726,11 @@ mod tests {
         syn::parse2::<syn::File>(quote! {
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
