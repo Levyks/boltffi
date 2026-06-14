@@ -1,8 +1,7 @@
 use boltffi_ast::{FieldDef, MethodDef, Path as SourcePath, RecordDef, TypeExpr};
 use boltffi_binding::{
-    CanonicalName, CodecNode, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, ExecutionDecl,
-    ExportedCallable, ExportedMethodDecl, FieldKey, InitializerDecl, NativeSymbol, Receive,
-    RecordDecl, SurfaceLower, WritePlan,
+    CanonicalName, CodecNode, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl,
+    ExportedCallable, FieldKey, Receive, RecordDecl, SurfaceLower, WritePlan,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -13,7 +12,7 @@ use crate::experimental::{
     expansion::{DeclarationPair, Expansion},
     rust_api,
     target::{DirectRecordCrossing, Target},
-    wrapper::{self, Render, encoded, export, names},
+    wrapper::{self, Render, associated_fn, encoded, export, names},
 };
 
 /// A record declaration renderer for one target surface.
@@ -51,28 +50,14 @@ struct EncodedFieldTokens {
     initializer: Ident,
 }
 
-struct RecordExports<'expansion, 'lowered, S: Target> {
+struct RecordOwner<'lowered> {
     source: &'lowered RecordDef,
     record: Ident,
-    initializers: &'lowered [InitializerDecl<S>],
-    methods: &'lowered [ExportedMethodDecl<S, NativeSymbol>],
     receiver: ReceiverKind<'lowered>,
-    expansion: &'expansion Expansion<'lowered, S>,
-}
-
-struct RecordExport<'expansion, 'lowered, S: Target> {
-    source: &'lowered RecordDef,
-    record: Ident,
-    source_method: &'lowered MethodDef,
-    symbol: &'lowered NativeSymbol,
-    callable: &'lowered ExportedCallable<S>,
-    receiver: ReceiverKind<'lowered>,
-    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 #[derive(Clone, Copy)]
 enum ReceiverKind<'lowered> {
-    None,
     Direct,
     Encoded { codec: &'lowered WritePlan },
 }
@@ -131,6 +116,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
 
 impl<'expansion, 'lowered, S> Direct<'expansion, 'lowered, S>
 where
+    'lowered: 'expansion,
     S: Target,
     wrapper::arguments::SyncRenderer: Render<
             S,
@@ -158,14 +144,16 @@ where
         let record = record_ident(self.source)?;
         let size = layout_size(self.binding.layout().size().get())?;
         let alignment = layout_size(self.binding.layout().alignment().get())?;
-        let exports = RecordExports {
-            source: self.source,
-            record: record.clone(),
-            initializers: self.binding.initializers(),
-            methods: self.binding.methods(),
-            receiver: ReceiverKind::Direct,
-            expansion: self.expansion,
-        }
+        let exports = associated_fn::Renderer::new(
+            RecordOwner {
+                source: self.source,
+                record: record.clone(),
+                receiver: ReceiverKind::Direct,
+            },
+            self.binding.initializers(),
+            self.binding.methods(),
+            self.expansion,
+        )
         .render()?;
         Ok(quote! {
             const _: [(); #size] = [(); ::core::mem::size_of::<#record>()];
@@ -282,16 +270,18 @@ where
             .iter()
             .map(|field| &field.initializer)
             .collect::<Vec<_>>();
-        let exports = RecordExports {
-            source: self.source,
-            record: record.clone(),
-            initializers: self.binding.initializers(),
-            methods: self.binding.methods(),
-            receiver: ReceiverKind::Encoded {
-                codec: self.binding.write(),
+        let exports = associated_fn::Renderer::new(
+            RecordOwner {
+                source: self.source,
+                record: record.clone(),
+                receiver: ReceiverKind::Encoded {
+                    codec: self.binding.write(),
+                },
             },
-            expansion: self.expansion,
-        }
+            self.binding.initializers(),
+            self.binding.methods(),
+            self.expansion,
+        )
         .render()?;
 
         Ok(quote! {
@@ -491,23 +481,13 @@ impl<'expansion, 'lowered, S: Target> EncodedField<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S> RecordExports<'expansion, 'lowered, S>
+impl<'expansion, 'lowered, S> associated_fn::Owner<'expansion, 'lowered, S>
+    for RecordOwner<'lowered>
 where
+    'lowered: 'expansion,
     S: Target,
-    wrapper::arguments::SyncRenderer: Render<
-            S,
-            wrapper::arguments::Input<'expansion, 'lowered, S>,
-            Output = wrapper::arguments::Tokens,
-        >,
     wrapper::returns::Failure:
         Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
-    wrapper::returns::Renderer: Render<
-            S,
-            wrapper::returns::Input<'expansion, 'lowered, S>,
-            Output = wrapper::returns::Tokens,
-        >,
-    wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
     wrapper::param::encoded::Renderer: Render<
@@ -516,113 +496,28 @@ where
             Output = wrapper::param::Tokens,
         >,
 {
-    fn render(self) -> Result<TokenStream, Error> {
-        let initializers = self
-            .initializers
-            .iter()
-            .map(|initializer| {
-                let source_method = self.source_method(initializer.name())?;
-                RecordExport {
-                    source: self.source,
-                    record: self.record.clone(),
-                    source_method,
-                    symbol: initializer.symbol(),
-                    callable: initializer.callable(),
-                    receiver: ReceiverKind::None,
-                    expansion: self.expansion,
-                }
-                .render()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let methods = self
-            .methods
-            .iter()
-            .map(|method| {
-                let source_method = self.source_method(method.name())?;
-                RecordExport {
-                    source: self.source,
-                    record: self.record.clone(),
-                    source_method,
-                    symbol: method.target(),
-                    callable: method.callable(),
-                    receiver: self.receiver,
-                    expansion: self.expansion,
-                }
-                .render()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(quote! {
-            #(#initializers)*
-            #(#methods)*
-        })
+    fn declarations(&self) -> rust_api::MethodDeclarations<'lowered> {
+        rust_api::MethodDeclarations::record(self.source)
     }
 
-    fn source_method(&self, name: &CanonicalName) -> Result<&'lowered MethodDef, Error> {
-        rust_api::MethodDeclarations::record(self.source).resolve(name)
+    fn source_callable(&self, method: &'lowered MethodDef) -> rust_api::Callable<'lowered> {
+        rust_api::Callable::record_method(method, self.source)
     }
-}
 
-impl<'expansion, 'lowered, S> RecordExport<'expansion, 'lowered, S>
-where
-    S: Target,
-    wrapper::arguments::SyncRenderer: Render<
-            S,
-            wrapper::arguments::Input<'expansion, 'lowered, S>,
-            Output = wrapper::arguments::Tokens,
-        >,
-    wrapper::returns::Failure:
-        Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
-    wrapper::returns::Renderer: Render<
-            S,
-            wrapper::returns::Input<'expansion, 'lowered, S>,
-            Output = wrapper::returns::Tokens,
-        >,
-    wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
-    wrapper::param::direct::Record:
-        Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-    wrapper::param::encoded::Renderer: Render<
-            S,
-            wrapper::param::encoded::Input<'expansion, 'lowered, S>,
-            Output = wrapper::param::Tokens,
-        >,
-{
-    fn render(self) -> Result<TokenStream, Error> {
-        let method = method_ident(self.source_method)?;
-        let (receiver, rust_call) = self.receiver.render(
+    fn receiver(
+        &self,
+        callable: &'lowered ExportedCallable<S>,
+        method: Ident,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Result<(export::ReceiverTokens, export::RustCall), Error> {
+        self.receiver.render(
             self.source,
             &self.record,
-            self.callable,
-            self.callable.receiver(),
+            callable,
+            callable.receiver(),
             method,
-            self.expansion,
-        )?;
-        let source_signature = rust_api::Callable::record_method(self.source_method, self.source);
-        if matches!(self.callable.execution(), ExecutionDecl::Asynchronous(_)) {
-            return <wrapper::async_call::Renderer as Render<S, _>>::render(
-                wrapper::async_call::Renderer,
-                wrapper::async_call::Input::exported(
-                    self.symbol,
-                    self.callable,
-                    source_signature,
-                    rust_call,
-                    receiver,
-                    rust_api::VisibilityTokens::new(&self.source_method.source.visibility)
-                        .into_tokens()?,
-                    self.expansion,
-                ),
-            );
-        }
-        export::Renderer::new(
-            self.symbol,
-            self.callable,
-            source_signature,
-            rust_call,
-            receiver,
-            rust_api::VisibilityTokens::new(&self.source_method.source.visibility).into_tokens()?,
-            self.expansion,
+            expansion,
         )
-        .render()
     }
 }
 
@@ -652,13 +547,6 @@ impl<'receiver> ReceiverKind<'receiver> {
             >,
     {
         match (self, receive) {
-            (Self::None, None) => Ok((
-                export::ReceiverTokens::none(),
-                export::RustCall::associated(quote! { #record }, method),
-            )),
-            (Self::None, Some(_)) => Err(Error::SourceSyntaxMismatch(
-                "initializer binding unexpectedly has a receiver",
-            )),
             (Self::Direct, Some(receive)) => {
                 if receive == Receive::ByMutRef
                     && matches!(S::DIRECT_RECORD_PARAMS, DirectRecordCrossing::Value)
@@ -756,11 +644,6 @@ impl<'receiver> ReceiverKind<'receiver> {
 fn record_ident(source: &RecordDef) -> Result<Ident, Error> {
     parse_str(source.name.spelling())
         .map_err(|_| Error::SourceSyntaxMismatch("source record name is not a Rust identifier"))
-}
-
-fn method_ident(source: &MethodDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source method name is not a Rust identifier"))
 }
 
 fn record_type(source: &RecordDef) -> Result<Type, Error> {

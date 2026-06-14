@@ -2105,6 +2105,8 @@ mod tests {
         assert!(rendered.contains("impl :: boltffi :: __private :: VecTransport for Status"));
         assert!(rendered.contains("Status :: Ready as i32"));
         assert!(rendered.contains("Status :: Failed as i32"));
+        assert!(rendered.contains("Ok (Status :: Ready)"));
+        assert!(rendered.contains("Ok (Status :: Failed)"));
         assert!(rendered.contains("InvalidWireValue :: EnumTag"));
     }
 

@@ -117,6 +117,10 @@ where
             .iter()
             .map(|variant| variant.discriminant_arm(&enumeration, &repr))
             .collect::<Result<Vec<_>, _>>()?;
+        let decode_arms = variants
+            .iter()
+            .map(|variant| variant.decode_arm(&enumeration, &repr))
+            .collect::<Result<Vec<_>, _>>()?;
         let repr_arms = variants
             .iter()
             .map(|variant| variant.repr_arm(&enumeration, &repr))
@@ -182,7 +186,7 @@ where
                     let (value, used) =
                         <#repr as ::boltffi::__private::wire::WireDecode>::decode_from(buffer)?;
                     match value {
-                        #(#discriminant_arms,)*
+                        #(#decode_arms,)*
                         _ => Err(::boltffi::__private::wire::DecodeError::InvalidValue(
                             ::boltffi::__private::wire::InvalidWireValue::EnumTag
                         )),
@@ -775,6 +779,13 @@ impl CStyleVariant<'_> {
         let variant = source_variant_ident(self.source)?;
         Ok(quote! {
             value if value == #enumeration::#variant as #repr => #enumeration::#variant
+        })
+    }
+
+    fn decode_arm(&self, enumeration: &Ident, repr: &Type) -> Result<TokenStream, Error> {
+        let variant = source_variant_ident(self.source)?;
+        Ok(quote! {
+            value if value == #enumeration::#variant as #repr => Ok(#enumeration::#variant)
         })
     }
 

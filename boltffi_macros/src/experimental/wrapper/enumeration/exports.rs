@@ -12,7 +12,7 @@ use crate::experimental::{
     expansion::Expansion,
     rust_api,
     target::Target,
-    wrapper::{self, Render, export, names},
+    wrapper::{self, Render, associated_fn, export, names},
 };
 
 pub struct Renderer<'expansion, 'lowered, S: Target> {
@@ -24,14 +24,10 @@ pub struct Renderer<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct EnumExport<'expansion, 'lowered, S: Target> {
+struct EnumOwner<'lowered> {
     source: &'lowered EnumDef,
     enumeration: Ident,
     receiver: Receiver<'lowered>,
-    source_method: &'lowered MethodDef,
-    symbol: &'lowered NativeSymbol,
-    callable: &'lowered ExportedCallable<S>,
-    expansion: &'expansion Expansion<'lowered, S>,
 }
 
 #[derive(Clone)]
@@ -83,63 +79,26 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
                 Output = wrapper::param::Tokens,
             >,
     {
-        let declarations = rust_api::MethodDeclarations::enumeration(self.source);
-        let initializers = self
-            .initializers
-            .iter()
-            .map(|initializer| {
-                EnumExport {
-                    source: self.source,
-                    enumeration: self.enumeration.clone(),
-                    receiver: self.receiver.clone(),
-                    source_method: declarations.resolve(initializer.name())?,
-                    symbol: initializer.symbol(),
-                    callable: initializer.callable(),
-                    expansion: self.expansion,
-                }
-                .render()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let methods = self
-            .methods
-            .iter()
-            .map(|method| {
-                EnumExport {
-                    source: self.source,
-                    enumeration: self.enumeration.clone(),
-                    receiver: self.receiver.clone(),
-                    source_method: declarations.resolve(method.name())?,
-                    symbol: method.target(),
-                    callable: method.callable(),
-                    expansion: self.expansion,
-                }
-                .render()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(quote! {
-            #(#initializers)*
-            #(#methods)*
-        })
+        associated_fn::Renderer::new(
+            EnumOwner {
+                source: self.source,
+                enumeration: self.enumeration,
+                receiver: self.receiver,
+            },
+            self.initializers,
+            self.methods,
+            self.expansion,
+        )
+        .render()
     }
 }
 
-impl<'expansion, 'lowered, S> EnumExport<'expansion, 'lowered, S>
+impl<'expansion, 'lowered, S> associated_fn::Owner<'expansion, 'lowered, S> for EnumOwner<'lowered>
 where
+    'lowered: 'expansion,
     S: Target,
-    wrapper::arguments::SyncRenderer: Render<
-            S,
-            wrapper::arguments::Input<'expansion, 'lowered, S>,
-            Output = wrapper::arguments::Tokens,
-        >,
     wrapper::returns::Failure:
         Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
-    wrapper::returns::Renderer: Render<
-            S,
-            wrapper::returns::Input<'expansion, 'lowered, S>,
-            Output = wrapper::returns::Tokens,
-        >,
-    wrapper::async_call::Renderer:
-        Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
     for<'ty> wrapper::param::direct::Renderer:
         Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
     wrapper::param::encoded::Renderer: Render<
@@ -148,42 +107,21 @@ where
             Output = wrapper::param::Tokens,
         >,
 {
-    fn render(self) -> Result<TokenStream, Error> {
-        let method = method_ident(self.source_method)?;
-        let (receiver, rust_call) = self.receiver(method.clone())?;
-        let source_signature = rust_api::Callable::enum_method(self.source_method, self.source);
-        if matches!(
-            self.callable.execution(),
-            boltffi_binding::ExecutionDecl::Asynchronous(_)
-        ) {
-            return <wrapper::async_call::Renderer as Render<S, _>>::render(
-                wrapper::async_call::Renderer,
-                wrapper::async_call::Input::exported(
-                    self.symbol,
-                    self.callable,
-                    source_signature,
-                    rust_call,
-                    receiver,
-                    rust_api::VisibilityTokens::new(&self.source_method.source.visibility)
-                        .into_tokens()?,
-                    self.expansion,
-                ),
-            );
-        }
-        export::Renderer::new(
-            self.symbol,
-            self.callable,
-            source_signature,
-            rust_call,
-            receiver,
-            rust_api::VisibilityTokens::new(&self.source_method.source.visibility).into_tokens()?,
-            self.expansion,
-        )
-        .render()
+    fn declarations(&self) -> rust_api::MethodDeclarations<'lowered> {
+        rust_api::MethodDeclarations::enumeration(self.source)
     }
 
-    fn receiver(&self, method: Ident) -> Result<(export::ReceiverTokens, export::RustCall), Error> {
-        match self.callable.receiver() {
+    fn source_callable(&self, method: &'lowered MethodDef) -> rust_api::Callable<'lowered> {
+        rust_api::Callable::enum_method(method, self.source)
+    }
+
+    fn receiver(
+        &self,
+        callable: &'lowered ExportedCallable<S>,
+        method: Ident,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Result<(export::ReceiverTokens, export::RustCall), Error> {
+        match callable.receiver() {
             None => {
                 let enumeration = &self.enumeration;
                 Ok((
@@ -191,13 +129,11 @@ where
                     export::RustCall::associated(quote! { #enumeration }, method),
                 ))
             }
-            Some(receive) => self.receiver.clone().render(
-                self.source,
-                self.callable,
-                receive,
-                method,
-                self.expansion,
-            ),
+            Some(receive) => {
+                self.receiver
+                    .clone()
+                    .render(self.source, callable, receive, method, expansion)
+            }
         }
     }
 }
@@ -326,9 +262,4 @@ impl<'lowered> Receiver<'lowered> {
 fn enum_type(source: &EnumDef) -> Result<Type, Error> {
     parse_str(source.name.spelling())
         .map_err(|_| Error::SourceSyntaxMismatch("source enum name is not a Rust type"))
-}
-
-fn method_ident(source: &MethodDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source method name is not a Rust identifier"))
 }
