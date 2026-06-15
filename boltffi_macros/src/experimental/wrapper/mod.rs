@@ -15,6 +15,7 @@ pub mod handle;
 pub mod param;
 pub mod record;
 pub mod returns;
+pub mod stream;
 pub mod type_ref;
 
 mod closure;

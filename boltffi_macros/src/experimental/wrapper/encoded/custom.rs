@@ -3,7 +3,7 @@ use boltffi_binding::{
 };
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Expr, ExprPath, parse_str};
+use syn::{Expr, ExprPath, Index, parse_str};
 
 use crate::experimental::{
     error::Error,
@@ -53,6 +53,19 @@ impl IncomingConversion {
     pub const fn changed(&self) -> bool {
         self.changed
     }
+
+    fn value_or_return_error(&self) -> TokenStream {
+        let tokens = self.tokens();
+        match self.fallible {
+            true => quote! {
+                match #tokens {
+                    Ok(value) => value,
+                    Err(error) => return Err(error),
+                }
+            },
+            false => quote! { #tokens },
+        }
+    }
 }
 
 impl<'expansion, 'lowered, S: Target> Incoming<'expansion, 'lowered, S> {
@@ -98,21 +111,8 @@ impl<'expansion, 'lowered, S: Target> Incoming<'expansion, 'lowered, S> {
                 fallible: false,
                 changed: false,
             }),
-            CodecNode::Tuple(elements) => {
-                let custom = contains_any(elements.iter(), self.expansion)?;
-                Err(match custom {
-                    true => Error::UnsupportedExpansion("custom conversion inside tuple codec"),
-                    false => Error::UnsupportedExpansion("tuple codec conversion"),
-                })
-            }
-            CodecNode::Map { key, value } => Err(
-                match contains_custom(key, self.expansion)?
-                    || contains_custom(value, self.expansion)?
-                {
-                    true => Error::UnsupportedExpansion("custom conversion inside map codec"),
-                    false => Error::UnsupportedExpansion("map codec conversion"),
-                },
-            ),
+            CodecNode::Tuple(elements) => self.convert_tuple(elements, value),
+            CodecNode::Map { key, value: item } => self.convert_map(key, item, value),
             _ => Ok(IncomingConversion {
                 tokens: value,
                 fallible: false,
@@ -207,6 +207,81 @@ impl<'expansion, 'lowered, S: Target> Incoming<'expansion, 'lowered, S> {
             changed: ok.changed || err.changed,
         })
     }
+
+    fn convert_tuple(
+        &self,
+        elements: &[CodecNode],
+        value: TokenStream,
+    ) -> Result<IncomingConversion, Error> {
+        let elements = elements
+            .iter()
+            .enumerate()
+            .map(|(index, element)| {
+                let index = Index::from(index);
+                self.convert_node(element, quote! { (#value).#index })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let fallible = elements.iter().any(IncomingConversion::fallible);
+        let changed = elements.iter().any(IncomingConversion::changed);
+        let values = elements
+            .iter()
+            .map(IncomingConversion::value_or_return_error)
+            .collect::<Vec<_>>();
+        Ok(match fallible {
+            true => IncomingConversion {
+                tokens: quote! {
+                    (|| {
+                        Ok((#(#values,)*))
+                    })()
+                },
+                fallible: true,
+                changed,
+            },
+            false => IncomingConversion {
+                tokens: quote! { (#(#values,)*) },
+                fallible: false,
+                changed,
+            },
+        })
+    }
+
+    fn convert_map(
+        &self,
+        key: &CodecNode,
+        item: &CodecNode,
+        value: TokenStream,
+    ) -> Result<IncomingConversion, Error> {
+        let key = self.convert_node(key, quote! { key })?;
+        let item = self.convert_node(item, quote! { value })?;
+        let key_value = key.value_or_return_error();
+        let item_value = item.value_or_return_error();
+        let fallible = key.fallible() || item.fallible();
+        let changed = key.changed() || item.changed();
+        Ok(match fallible {
+            true => IncomingConversion {
+                tokens: quote! {
+                    #value
+                        .into_iter()
+                        .map(|(key, value)| {
+                            Ok((#key_value, #item_value))
+                        })
+                        .collect::<Result<_, _>>()
+                },
+                fallible: true,
+                changed,
+            },
+            false => IncomingConversion {
+                tokens: quote! {
+                    #value
+                        .into_iter()
+                        .map(|(key, value)| (#key_value, #item_value))
+                        .collect::<_>()
+                },
+                fallible: false,
+                changed,
+            },
+        })
+    }
 }
 
 impl<'expansion, 'lowered, S: Target> Outgoing<'expansion, 'lowered, S> {
@@ -256,23 +331,42 @@ impl<'expansion, 'lowered, S: Target> Outgoing<'expansion, 'lowered, S> {
                 })
             }
             CodecNode::EncodedRecord(_) => Ok(value),
-            CodecNode::Tuple(elements) => {
-                let custom = contains_any(elements.iter(), self.expansion)?;
-                Err(match custom {
-                    true => Error::UnsupportedExpansion("custom conversion inside tuple codec"),
-                    false => Error::UnsupportedExpansion("tuple codec conversion"),
-                })
-            }
-            CodecNode::Map { key, value } => Err(
-                match contains_custom(key, self.expansion)?
-                    || contains_custom(value, self.expansion)?
-                {
-                    true => Error::UnsupportedExpansion("custom conversion inside map codec"),
-                    false => Error::UnsupportedExpansion("map codec conversion"),
-                },
-            ),
+            CodecNode::Tuple(elements) => self.convert_tuple(elements, value),
+            CodecNode::Map { key, value: item } => self.convert_map(key, item, value),
             _ => Ok(value),
         }
+    }
+
+    fn convert_tuple(
+        &self,
+        elements: &[CodecNode],
+        value: TokenStream,
+    ) -> Result<TokenStream, Error> {
+        let values = elements
+            .iter()
+            .enumerate()
+            .map(|(index, element)| {
+                let index = Index::from(index);
+                self.convert_node(element, quote! { (#value).#index })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(quote! { (#(#values,)*) })
+    }
+
+    fn convert_map(
+        &self,
+        key: &CodecNode,
+        item: &CodecNode,
+        value: TokenStream,
+    ) -> Result<TokenStream, Error> {
+        let key = self.convert_node(key, quote! { key })?;
+        let item = self.convert_node(item, quote! { value })?;
+        Ok(quote! {
+            #value
+                .into_iter()
+                .map(|(key, value)| (#key, #item))
+                .collect::<Vec<_>>()
+        })
     }
 }
 
@@ -323,23 +417,42 @@ impl<'expansion, 'lowered, S: Target> BorrowedOutgoing<'expansion, 'lowered, S> 
                 })
             }
             CodecNode::EncodedRecord(_) => Ok(value),
-            CodecNode::Tuple(elements) => {
-                let custom = contains_any(elements.iter(), self.expansion)?;
-                Err(match custom {
-                    true => Error::UnsupportedExpansion("custom conversion inside tuple codec"),
-                    false => Error::UnsupportedExpansion("tuple codec conversion"),
-                })
-            }
-            CodecNode::Map { key, value } => Err(
-                match contains_custom(key, self.expansion)?
-                    || contains_custom(value, self.expansion)?
-                {
-                    true => Error::UnsupportedExpansion("custom conversion inside map codec"),
-                    false => Error::UnsupportedExpansion("map codec conversion"),
-                },
-            ),
+            CodecNode::Tuple(elements) => self.convert_tuple(elements, value),
+            CodecNode::Map { key, value: item } => self.convert_map(key, item, value),
             _ => Ok(value),
         }
+    }
+
+    fn convert_tuple(
+        &self,
+        elements: &[CodecNode],
+        value: TokenStream,
+    ) -> Result<TokenStream, Error> {
+        let values = elements
+            .iter()
+            .enumerate()
+            .map(|(index, element)| {
+                let index = Index::from(index);
+                self.convert_node(element, quote! { &(#value).#index })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(quote! { (#(#values,)*) })
+    }
+
+    fn convert_map(
+        &self,
+        key: &CodecNode,
+        item: &CodecNode,
+        value: TokenStream,
+    ) -> Result<TokenStream, Error> {
+        let key = self.convert_node(key, quote! { key })?;
+        let item = self.convert_node(item, quote! { value })?;
+        Ok(quote! {
+            #value
+                .iter()
+                .map(|(key, value)| (#key, #item))
+                .collect::<Vec<_>>()
+        })
     }
 }
 
@@ -437,6 +550,18 @@ fn representation_type<S: Target>(
             let ok = representation_type(ok, expansion)?;
             let err = representation_type(err, expansion)?;
             Ok(quote! { Result<#ok, #err> })
+        }
+        CodecNode::Tuple(elements) => {
+            let elements = elements
+                .iter()
+                .map(|element| representation_type(element, expansion))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(quote! { (#(#elements,)*) })
+        }
+        CodecNode::Map { key, value } => {
+            let key = representation_type(key, expansion)?;
+            let value = representation_type(value, expansion)?;
+            Ok(quote! { Vec<(#key, #value)> })
         }
         CodecNode::EncodedRecord(_) => Err(Error::UnsupportedExpansion(
             "encoded record representation type",

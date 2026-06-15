@@ -1,4 +1,4 @@
-use boltffi_ast::{ClassId, StreamDef, StreamId, StreamMode};
+use boltffi_ast::{ClassId, StreamDef, StreamId, StreamMode, TypeExpr};
 use syn::spanned::Spanned;
 
 use crate::attributes::Attributes;
@@ -24,6 +24,12 @@ pub fn scan(
 pub(super) struct Attribute {
     item: syn::Type,
     mode: StreamMode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StreamItem {
+    boundary: TypeExpr,
+    storage: TypeExpr,
 }
 
 impl Attribute {
@@ -146,13 +152,12 @@ fn method_stream(
     if !impl_methods::exported_method(&method.attrs, &method.vis, "stream method")? {
         return Err(Attribute::invalid_placement("stream method"));
     }
-    validate(method, owner.as_str(), scope, scanner, &attribute)?;
-    let item_type = scanner.scan(attribute.item())?;
+    let item_type = validate(method, owner.as_str(), scope, scanner, &attribute)?;
     let stream_name = method.sig.ident.to_string();
     let mut stream = StreamDef::new(
         StreamId::new(format!("{}::{stream_name}", owner.as_str())),
         name::source(&method.sig.ident),
-        item_type,
+        item_type.into_boundary(),
     );
     let attrs = Attributes::new(&method.attrs, scanner);
     stream.owner = Some(owner.clone());
@@ -171,7 +176,7 @@ fn validate(
     scope: &ModuleScope,
     scanner: &Scanner<'_>,
     attribute: &Attribute,
-) -> Result<(), ScanError> {
+) -> Result<StreamItem, ScanError> {
     let item = format!("stream {owner}::{}", method.sig.ident);
     unsupported::generics(&method.sig.generics, &item)?;
     unsupported::unsafety(method.sig.unsafety.as_ref(), &item)?;
@@ -185,16 +190,51 @@ fn validate(
         )));
     }
     let returned = subscription_item(&method.sig.output, scope, &item)?;
-    let declared_item = scanner.scan(attribute.item())?;
+    let declared_item = StreamItem::from_boundary(scanner.scan(attribute.item())?);
     let returned_item = scanner.scan(returned)?;
-    if declared_item != returned_item {
+    if declared_item.storage() != &returned_item {
         return Err(Attribute::invalid(format!(
             "`{item}` declares item `{}` but returns `{}`",
             spelling::ty(attribute.item()),
             spelling::ty(returned)
         )));
     }
-    Ok(())
+    Ok(declared_item)
+}
+
+impl StreamItem {
+    fn from_boundary(boundary: TypeExpr) -> Self {
+        let storage = Self::storage_type(&boundary);
+        Self { boundary, storage }
+    }
+
+    fn storage(&self) -> &TypeExpr {
+        &self.storage
+    }
+
+    fn into_boundary(self) -> TypeExpr {
+        self.boundary
+    }
+
+    fn storage_type(boundary: &TypeExpr) -> TypeExpr {
+        match boundary {
+            TypeExpr::Str => TypeExpr::String,
+            TypeExpr::Slice(element) | TypeExpr::Vec(element) => {
+                TypeExpr::vec(Self::storage_type(element))
+            }
+            TypeExpr::Option(inner) => TypeExpr::option(Self::storage_type(inner)),
+            TypeExpr::Result { ok, err } => {
+                TypeExpr::result(Self::storage_type(ok), Self::storage_type(err))
+            }
+            TypeExpr::Tuple(elements) => {
+                TypeExpr::tuple(elements.iter().map(Self::storage_type).collect())
+            }
+            TypeExpr::Map { kind, key, value } => {
+                TypeExpr::map(*kind, Self::storage_type(key), Self::storage_type(value))
+            }
+            _ => boundary.clone(),
+        }
+    }
 }
 
 fn has_shared_receiver_only(method: &syn::ImplItemFn) -> bool {
@@ -311,7 +351,7 @@ mod tests {
         let scope = ModuleScope::root("demo");
         let scanner = Scanner::new(&declared_types, &scope);
         let attribute = Attribute::scan(&method.attrs)?.expect("stream attribute");
-        validate(method, owner, &scope, &scanner, &attribute)
+        validate(method, owner, &scope, &scanner, &attribute).map(|_| ())
     }
 
     #[test]
@@ -494,6 +534,59 @@ mod tests {
 
         assert_eq!(streams.len(), 1);
         assert_eq!(streams[0].item_type, TypeExpr::Primitive(Primitive::I32));
+    }
+
+    #[test]
+    fn scans_str_stream_items_with_string_storage() {
+        let source = crate::source_tree::SourceTree::in_memory(
+            "demo",
+            syn::parse_str::<syn::File>(
+                "use std::sync::Arc; \
+                 use boltffi::EventSubscription; \
+                 pub struct Engine; \
+                 #[export] impl Engine { \
+                    #[ffi_stream(item = str)] \
+                    pub fn lines(&self) -> Arc<EventSubscription<String>> { todo!() } \
+                 }",
+            )
+            .expect("file")
+            .items,
+        )
+        .expect("source tree");
+        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
+        let streams = scan(marked.classes(), &declared_types).expect("streams");
+
+        assert_eq!(streams.len(), 1);
+        assert_eq!(streams[0].item_type, TypeExpr::Str);
+    }
+
+    #[test]
+    fn scans_slice_stream_items_with_vec_storage() {
+        let source = crate::source_tree::SourceTree::in_memory(
+            "demo",
+            syn::parse_str::<syn::File>(
+                "use std::sync::Arc; \
+                 use boltffi::EventSubscription; \
+                 pub struct Engine; \
+                 #[export] impl Engine { \
+                    #[ffi_stream(item = [u8])] \
+                    pub fn chunks(&self) -> Arc<EventSubscription<Vec<u8>>> { todo!() } \
+                 }",
+            )
+            .expect("file")
+            .items,
+        )
+        .expect("source tree");
+        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
+        let streams = scan(marked.classes(), &declared_types).expect("streams");
+
+        assert_eq!(streams.len(), 1);
+        assert_eq!(
+            streams[0].item_type,
+            TypeExpr::slice(TypeExpr::Primitive(Primitive::U8))
+        );
     }
 
     #[test]

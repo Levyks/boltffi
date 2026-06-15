@@ -1,6 +1,6 @@
 use boltffi_ast::{ClassDef, MethodDef};
 use boltffi_binding::{
-    ClassDecl, ClassId, ClassThreadSafety, ExecutionDecl, ExportedCallable, HandleTarget,
+    ClassDecl, ClassId, ClassThreadSafety, Decl, ExecutionDecl, ExportedCallable, HandleTarget,
     IncomingParam, IntoRust, NativeSymbol, OutOfRust, ParamPlan, Receive, ReturnPlan,
 };
 use proc_macro2::TokenStream;
@@ -381,6 +381,7 @@ impl ClassHandleOperations {
                 operations.with_callable(class.id(), callable)
             })
             .with_class_receivers(class)
+            .with_class_streams(class, expansion)
     }
 
     const fn shared(self) -> bool {
@@ -409,6 +410,19 @@ impl ClassHandleOperations {
         class.methods().iter().fold(self, |operations, method| {
             operations.with_receiver(method.callable())
         })
+    }
+
+    fn with_class_streams<S: Target>(
+        mut self,
+        class: &ClassDecl<S>,
+        expansion: &Expansion<'_, S>,
+    ) -> Self {
+        if expansion.bindings().decls().iter().any(|declaration| {
+            matches!(declaration, Decl::Stream(stream) if stream.owner() == Some(class.id()))
+        }) {
+            self.shared = true;
+        }
+        self
     }
 
     fn with_receiver<S: Target>(mut self, callable: &ExportedCallable<S>) -> Self {

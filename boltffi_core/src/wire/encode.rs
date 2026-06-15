@@ -5,7 +5,10 @@ use crate::wire::temporal::{DurationWireValue, EpochTimestampWireValue};
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
 
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::{Duration, SystemTime},
+};
 
 #[cfg(feature = "uuid")]
 use uuid::Uuid;
@@ -444,6 +447,50 @@ impl<T: WireEncode> WireEncode for [T] {
     }
 }
 
+impl<K: WireEncode, V: WireEncode> WireEncode for HashMap<K, V> {
+    #[inline]
+    fn wire_size(&self) -> usize {
+        VEC_COUNT_SIZE
+            + self
+                .iter()
+                .map(|(key, value)| key.wire_size() + value.wire_size())
+                .sum::<usize>()
+    }
+
+    #[inline]
+    fn encode_to(&self, buffer: &mut [u8]) -> usize {
+        let mut writer = WireWriter::new(buffer);
+        writer.write_count(self.len());
+        self.iter().for_each(|(key, value)| {
+            writer.write_value(key);
+            writer.write_value(value);
+        });
+        writer.finish()
+    }
+}
+
+impl<K: WireEncode, V: WireEncode> WireEncode for BTreeMap<K, V> {
+    #[inline]
+    fn wire_size(&self) -> usize {
+        VEC_COUNT_SIZE
+            + self
+                .iter()
+                .map(|(key, value)| key.wire_size() + value.wire_size())
+                .sum::<usize>()
+    }
+
+    #[inline]
+    fn encode_to(&self, buffer: &mut [u8]) -> usize {
+        let mut writer = WireWriter::new(buffer);
+        writer.write_count(self.len());
+        self.iter().for_each(|(key, value)| {
+            writer.write_value(key);
+            writer.write_value(value);
+        });
+        writer.finish()
+    }
+}
+
 impl<T: WireEncode, E: WireEncode> WireEncode for Result<T, E> {
     #[inline]
     fn wire_size(&self) -> usize {
@@ -469,6 +516,37 @@ impl<T: WireEncode, E: WireEncode> WireEncode for Result<T, E> {
         writer.finish()
     }
 }
+
+macro_rules! impl_wire_tuple {
+    ($($name:ident : $index:tt),+ $(,)?) => {
+        impl<$($name: WireEncode),+> WireEncode for ($($name,)+) {
+            #[inline]
+            fn wire_size(&self) -> usize {
+                0 $(+ self.$index.wire_size())+
+            }
+
+            #[inline]
+            fn encode_to(&self, buffer: &mut [u8]) -> usize {
+                let mut writer = WireWriter::new(buffer);
+                $(writer.write_value(&self.$index);)+
+                writer.finish()
+            }
+        }
+    };
+}
+
+impl_wire_tuple!(A: 0);
+impl_wire_tuple!(A: 0, B: 1);
+impl_wire_tuple!(A: 0, B: 1, C: 2);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10);
+impl_wire_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11);
 
 impl WireEncode for () {
     #[inline]

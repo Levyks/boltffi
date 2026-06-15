@@ -477,7 +477,7 @@ impl<'expansion, 'lowered, S: Target> Return<'expansion, 'lowered, S> {
     where
         returns::encoded::Renderer: Render<
                 S,
-                returns::encoded::Input<'expansion, 'lowered, S>,
+                returns::encoded::Input<'expansion, 'lowered, 'lowered, S>,
                 Output = returns::encoded::Tokens,
             > + Render<S, returns::encoded::Empty<S>, Output = returns::encoded::Tokens>,
     {

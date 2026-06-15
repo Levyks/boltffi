@@ -31,10 +31,8 @@ fn uses_runtime_wire(codec: &CodecNode) -> bool {
             uses_runtime_wire(inner)
         }
         CodecNode::Result { ok, err } => uses_runtime_wire(ok) && uses_runtime_wire(err),
-        CodecNode::Tuple(_)
-        | CodecNode::Map { .. }
-        | CodecNode::ClassHandle(_)
-        | CodecNode::CallbackHandle(_)
-        | _ => false,
+        CodecNode::Tuple(elements) => elements.iter().all(uses_runtime_wire),
+        CodecNode::Map { key, value } => uses_runtime_wire(key) && uses_runtime_wire(value),
+        CodecNode::ClassHandle(_) | CodecNode::CallbackHandle(_) | _ => false,
     }
 }

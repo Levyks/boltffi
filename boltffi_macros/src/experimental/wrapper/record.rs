@@ -605,7 +605,7 @@ impl<'receiver> ReceiverKind<'receiver> {
                     wrapper::param::encoded::Input::new(
                         codec,
                         <S as SurfaceLower>::encoded_param_shape(),
-                        rust_api::DecodeTarget::received(receive, &source_type)?,
+                        rust_api::DecodeTarget::by_value(&source_type)?,
                         receiver.clone(),
                         failure.render()?,
                         expansion,

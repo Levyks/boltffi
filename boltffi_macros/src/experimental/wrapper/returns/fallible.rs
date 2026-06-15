@@ -71,7 +71,7 @@ impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
     S: Target,
-    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>
+    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>
         + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
     Success: Render<S, SuccessInput<'expansion, 'lowered, S>, Output = SuccessTokens>,
     handle::Value: Render<
@@ -138,7 +138,7 @@ impl<'expansion, 'lowered, S: Target> EncodedError<'expansion, 'lowered, S> {
 
     fn tokens(self) -> Result<Tokens, Error>
     where
-        encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>
+        encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>
             + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         Success: Render<S, SuccessInput<'expansion, 'lowered, S>, Output = SuccessTokens>,
         handle::Value: Render<
@@ -219,7 +219,8 @@ impl<'expansion, 'lowered, S: Target> EncodedError<'expansion, 'lowered, S> {
 impl<'expansion, 'lowered, S> Render<S, SuccessInput<'expansion, 'lowered, S>> for Success
 where
     S: Target,
-    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
+    encoded::Renderer:
+        Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
     closure::Write:
         Render<S, closure::WriteInput<'expansion, 'lowered, S>, Output = closure::WriteTokens>,
     handle::Value: Render<

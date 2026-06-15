@@ -92,6 +92,10 @@ impl DecodeTarget {
         Self::new(passing, receive, type_expr)
     }
 
+    pub fn by_value(type_expr: &TypeExpr) -> Result<Self, Error> {
+        Self::new(ParameterPassing::Value, Receive::ByValue, type_expr)
+    }
+
     pub fn parameter(&self) -> &Type {
         &self.parameter
     }

@@ -184,7 +184,7 @@ impl<'expansion, 'lowered, S> AsyncExports<'expansion, 'lowered, S>
 where
     S: Target,
     for<'plan> encoded::Renderer:
-        Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
+        Render<S, encoded::Input<'expansion, 'plan, 'lowered, S>, Output = encoded::Tokens>,
     encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
     for<'plan> closure::Write:
         Render<S, closure::WriteInput<'expansion, 'plan, S>, Output = closure::WriteTokens>,
@@ -511,7 +511,7 @@ impl Complete {
     ) -> Result<Self, Error>
     where
         encoded::Renderer:
-            Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
+            Render<S, encoded::Input<'expansion, 'plan, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         closure::Write:
             Render<S, closure::WriteInput<'expansion, 'plan, S>, Output = closure::WriteTokens>,
@@ -570,7 +570,7 @@ impl PlainComplete {
     ) -> Result<Self, Error>
     where
         encoded::Renderer:
-            Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
+            Render<S, encoded::Input<'expansion, 'plan, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         direct_vec::Renderer: Render<S, direct_vec::Input, Output = wrapper::returns::Tokens>
             + Render<S, direct_vec::Empty, Output = wrapper::returns::Tokens>,
@@ -765,7 +765,7 @@ impl FallibleComplete {
     ) -> Result<Self, Error>
     where
         encoded::Renderer:
-            Render<S, encoded::Input<'expansion, 'plan, S>, Output = encoded::Tokens>,
+            Render<S, encoded::Input<'expansion, 'plan, 'plan, S>, Output = encoded::Tokens>,
         encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
         closure::Write:
             Render<S, closure::WriteInput<'expansion, 'plan, S>, Output = closure::WriteTokens>,

@@ -4,8 +4,12 @@ use crate::wire::temporal::{DurationWireValue, EpochTimestampWireValue};
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
 
-use std::mem::{ManuallyDrop, MaybeUninit};
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::Hash,
+    mem::{ManuallyDrop, MaybeUninit},
+    time::{Duration, SystemTime},
+};
 
 #[cfg(feature = "uuid")]
 use uuid::Uuid;
@@ -23,6 +27,7 @@ pub enum InvalidWireValue {
     Url,
     DateTimeUtc,
     CustomConversion,
+    DuplicateMapKey,
 }
 
 impl std::fmt::Display for InvalidWireValue {
@@ -36,6 +41,7 @@ impl std::fmt::Display for InvalidWireValue {
             Self::Url => write!(formatter, "Url"),
             Self::DateTimeUtc => write!(formatter, "DateTimeUtc"),
             Self::CustomConversion => write!(formatter, "CustomConversion"),
+            Self::DuplicateMapKey => write!(formatter, "DuplicateMapKey"),
         }
     }
 }
@@ -390,6 +396,73 @@ impl<T: WireDecode + WireEncode> WireDecode for Vec<T> {
     }
 }
 
+impl<K, V> WireDecode for HashMap<K, V>
+where
+    K: Eq + Hash + WireDecode,
+    V: WireDecode,
+{
+    fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
+        let mut reader = WireReader::new(buf);
+        let count = reader.read_value::<u32>()? as usize;
+        let values = (0..count).try_fold(HashMap::with_capacity(count), |mut values, _| {
+            let key = reader.read_value::<K>()?;
+            let value = reader.read_value::<V>()?;
+            if values.insert(key, value).is_some() {
+                return Err(DecodeError::InvalidValue(InvalidWireValue::DuplicateMapKey));
+            }
+            Ok::<_, DecodeError>(values)
+        })?;
+        reader.finish(values)
+    }
+}
+
+impl<K, V> WireDecode for BTreeMap<K, V>
+where
+    K: Ord + WireDecode,
+    V: WireDecode,
+{
+    fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
+        let mut reader = WireReader::new(buf);
+        let count = reader.read_value::<u32>()? as usize;
+        let values = (0..count).try_fold(BTreeMap::new(), |mut values, _| {
+            let key = reader.read_value::<K>()?;
+            let value = reader.read_value::<V>()?;
+            if values.insert(key, value).is_some() {
+                return Err(DecodeError::InvalidValue(InvalidWireValue::DuplicateMapKey));
+            }
+            Ok::<_, DecodeError>(values)
+        })?;
+        reader.finish(values)
+    }
+}
+
+macro_rules! impl_wire_tuple_decode {
+    ($($name:ident),+ $(,)?) => {
+        impl<$($name: WireDecode),+> WireDecode for ($($name,)+) {
+            fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
+                let mut reader = WireReader::new(buf);
+                let value = ($(
+                    reader.read_value::<$name>()?,
+                )+);
+                reader.finish(value)
+            }
+        }
+    };
+}
+
+impl_wire_tuple_decode!(A);
+impl_wire_tuple_decode!(A, B);
+impl_wire_tuple_decode!(A, B, C);
+impl_wire_tuple_decode!(A, B, C, D);
+impl_wire_tuple_decode!(A, B, C, D, E);
+impl_wire_tuple_decode!(A, B, C, D, E, F);
+impl_wire_tuple_decode!(A, B, C, D, E, F, G);
+impl_wire_tuple_decode!(A, B, C, D, E, F, G, H);
+impl_wire_tuple_decode!(A, B, C, D, E, F, G, H, I);
+impl_wire_tuple_decode!(A, B, C, D, E, F, G, H, I, J);
+impl_wire_tuple_decode!(A, B, C, D, E, F, G, H, I, J, K);
+impl_wire_tuple_decode!(A, B, C, D, E, F, G, H, I, J, K, L);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +537,67 @@ mod tests {
     }
 
     #[test]
+    fn decode_tuple() {
+        let mut buf = [0u8; 64];
+        let original = (7u32, "seven".to_string());
+
+        let written = original.encode_to(&mut buf);
+        let (decoded, size) = <(u32, String)>::decode_from(&buf).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(size, written);
+    }
+
+    #[test]
+    fn decode_hash_map() {
+        let mut buf = [0u8; 128];
+        let original = HashMap::from([(String::from("one"), 1u32), (String::from("two"), 2u32)]);
+
+        let written = original.encode_to(&mut buf);
+        let (decoded, size) = HashMap::<String, u32>::decode_from(&buf).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(size, written);
+    }
+
+    #[test]
+    fn decode_btree_map() {
+        let mut buf = [0u8; 128];
+        let original = BTreeMap::from([(String::from("one"), 1u32), (String::from("two"), 2u32)]);
+
+        let written = original.encode_to(&mut buf);
+        let (decoded, size) = BTreeMap::<String, u32>::decode_from(&buf).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(size, written);
+    }
+
+    #[test]
+    fn decode_hash_map_rejects_duplicate_keys() {
+        let mut buffer = [0u8; 128];
+        let size = duplicate_key_map_buffer(&mut buffer);
+
+        let error =
+            HashMap::<String, u32>::decode_from(&buffer[..size]).expect_err("duplicate key");
+
+        assert_eq!(
+            error,
+            DecodeError::InvalidValue(InvalidWireValue::DuplicateMapKey)
+        );
+    }
+
+    #[test]
+    fn decode_btree_map_rejects_duplicate_keys() {
+        let mut buffer = [0u8; 128];
+        let size = duplicate_key_map_buffer(&mut buffer);
+
+        let error =
+            BTreeMap::<String, u32>::decode_from(&buffer[..size]).expect_err("duplicate key");
+
+        assert_eq!(
+            error,
+            DecodeError::InvalidValue(InvalidWireValue::DuplicateMapKey)
+        );
+    }
+
+    #[test]
     fn roundtrip_complex() {
         let mut buf = [0u8; 128];
 
@@ -474,6 +608,17 @@ mod tests {
         let (decoded, size) = Vec::<Option<String>>::decode_from(&buf).unwrap();
         assert_eq!(decoded, original);
         assert_eq!(size, written);
+    }
+
+    fn duplicate_key_map_buffer(buffer: &mut [u8]) -> usize {
+        let mut offset = 0;
+        buffer[..4].copy_from_slice(&2u32.to_le_bytes());
+        offset += 4;
+        offset += String::from("one").encode_to(&mut buffer[offset..]);
+        offset += 1u32.encode_to(&mut buffer[offset..]);
+        offset += String::from("one").encode_to(&mut buffer[offset..]);
+        offset += 2u32.encode_to(&mut buffer[offset..]);
+        offset
     }
 
     mod unit_type {

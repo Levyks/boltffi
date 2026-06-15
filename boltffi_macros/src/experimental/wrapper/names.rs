@@ -52,6 +52,14 @@ impl Wrapper {
     pub fn success_out(&self) -> Ident {
         Ident::new("__boltffi_success_out", self.span)
     }
+
+    pub fn stream_items(&self) -> Ident {
+        Ident::new("__boltffi_stream_items", self.span)
+    }
+
+    pub fn stream_output_slots(&self) -> Ident {
+        Ident::new("__boltffi_stream_output_slots", self.span)
+    }
 }
 
 impl<'source> Class<'source> {

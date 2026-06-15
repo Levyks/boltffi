@@ -135,7 +135,8 @@ impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Rend
 where
     S: Target,
     closure::Renderer: Render<S, closure::Input<'expansion, 'lowered, S>, Output = Tokens>,
-    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
+    encoded::Renderer:
+        Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
     direct_vec::Renderer: Render<S, direct_vec::Input, Output = Tokens>,
     fallible::Renderer: Render<S, fallible::Input<'expansion, 'lowered, S>, Output = Tokens>,
     handle::Value: Render<
@@ -372,7 +373,8 @@ where
     S: Target,
     direct_vec::Failure: Render<S, direct_vec::FailureInput, Output = TokenStream>,
     encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
-    encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
+    encoded::Renderer:
+        Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
     handle::Failure: Render<S, handle::FailureInput<S::HandleCarrier>, Output = TokenStream>,
     scalar_option::Failure: Render<S, scalar_option::FailureInput, Output = TokenStream>,
 {
@@ -449,7 +451,7 @@ impl<'expansion, 'lowered, S: Target> ErrorFailure<'expansion, 'lowered, S> {
     fn tokens(self) -> Result<TokenStream, Error>
     where
         encoded::Renderer:
-            Render<S, encoded::Input<'expansion, 'lowered, S>, Output = encoded::Tokens>,
+            Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
     {
         match self.error {
             ErrorDecl::EncodedViaReturnSlot { codec, shape, .. }

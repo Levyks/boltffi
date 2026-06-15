@@ -1,10 +1,10 @@
 mod index;
 mod pair;
 
-use boltffi_ast::{ClassDef, EnumDef, FunctionDef, RecordDef, TraitDef};
+use boltffi_ast::{ClassDef, EnumDef, FunctionDef, RecordDef, StreamDef, TraitDef};
 use boltffi_binding::{
     CallbackDecl, CallbackId, ClassDecl, CustomTypeDecl, CustomTypeId, EncodedRecordDecl, EnumDecl,
-    FunctionDecl, LoweredBindings, RecordDecl, RecordId, Surface,
+    FunctionDecl, LoweredBindings, RecordDecl, RecordId, StreamDecl, Surface,
 };
 
 use self::index::ExpansionIndex;
@@ -107,6 +107,20 @@ impl<'lowered, S: Surface> Expansion<'lowered, S> {
         }
     }
 
+    /// Returns the lowered stream declaration paired with the scanned source stream.
+    pub fn stream(
+        &self,
+        source: &'lowered StreamDef,
+    ) -> Result<DeclarationPair<'lowered, StreamDef, StreamDecl<S>>, Error> {
+        match self
+            .index
+            .paired(self.lowered, SourceDeclaration::Stream(source))?
+        {
+            PairedDeclaration::Stream(pair) => Ok(pair),
+            _ => Err(Error::WrongDeclaration),
+        }
+    }
+
     /// Returns the lowered function declaration paired with the scanned source function.
     pub fn function(
         &self,
@@ -134,8 +148,8 @@ mod tests {
         CustomTypeConverters, CustomTypeDef, CustomTypeId, EnumDef, EnumId, ExecutionKind,
         FieldDef, FnSig, FnTrait, FnTraitKind, FunctionDef, FunctionId, MethodDef, MethodId,
         PackageInfo, ParameterDef, ParameterPassing, Path, Primitive, Receiver, RecordDef,
-        RecordId, ReprAttr, ReprItem, ReturnDef, Source, SourceContract, SourceName, TraitDef,
-        TraitId, TypeExpr, VariantDef, VariantPayload, Visibility,
+        RecordId, ReprAttr, ReprItem, ReturnDef, Source, SourceContract, SourceName, StreamDef,
+        StreamId, TraitDef, TraitId, TypeExpr, VariantDef, VariantPayload, Visibility,
     };
     use boltffi_binding::{Native, Wasm32, lower_with_declarations};
     use proc_macro2::TokenStream;
@@ -201,6 +215,37 @@ mod tests {
             );
         }
 
+        fn check_target(&self, target_triple: &str) {
+            if cfg!(miri) {
+                return;
+            }
+            assert!(
+                target_installed(target_triple),
+                "rust target {target_triple} is not installed"
+            );
+            let output = Command::new(cargo())
+                .arg("check")
+                .arg("--quiet")
+                .arg("--target")
+                .arg(target_triple)
+                .arg("--manifest-path")
+                .arg(self.root.join("Cargo.toml"))
+                .env(
+                    "CARGO_TARGET_DIR",
+                    workspace_root()
+                        .join("target")
+                        .join("experimental-wrapper-checks-target"),
+                )
+                .output()
+                .expect("run cargo target check for generated crate");
+            assert!(
+                output.status.success(),
+                "generated crate failed to check for {target_triple}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
         fn manifest(&self) -> String {
             format!(
                 "[package]\nname = \"generated_wrapper_check\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[dependencies]\nboltffi = {{ path = \"{}\" }}\n",
@@ -215,6 +260,12 @@ mod tests {
         generated_crate.check();
     }
 
+    fn assert_generated_crate_checks_target(name: &str, target_triple: &str, code: TokenStream) {
+        let generated_crate = GeneratedCrate::create(name);
+        generated_crate.write(code);
+        generated_crate.check_target(target_triple);
+    }
+
     fn workspace_root() -> PathBuf {
         FsPath::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -224,6 +275,21 @@ mod tests {
 
     fn cargo() -> OsString {
         std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"))
+    }
+
+    fn target_installed(target_triple: &str) -> bool {
+        Command::new("rustup")
+            .arg("target")
+            .arg("list")
+            .arg("--installed")
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .any(|installed| installed == target_triple)
+            })
     }
 
     fn expand_function<'lowered, S>(
@@ -385,6 +451,37 @@ mod tests {
         wrapper::class::Renderer::new(expansion.class(source)?, expansion).render()
     }
 
+    fn expand_stream<'expansion, 'lowered, S>(
+        expansion: &'expansion Expansion<'lowered, S>,
+        stream: &'lowered StreamDef,
+        owner: &'lowered ClassDef,
+    ) -> Result<TokenStream, Error>
+    where
+        S: Target,
+        wrapper::handle::Carrier: wrapper::Render<
+                S,
+                wrapper::handle::CarrierInput<S::HandleCarrier>,
+                Output = wrapper::handle::CarrierTokens,
+            >,
+        wrapper::returns::encoded::Renderer: wrapper::Render<
+                S,
+                wrapper::returns::encoded::Empty<S>,
+                Output = wrapper::returns::encoded::Tokens,
+            >,
+        wrapper::returns::encoded::Renderer: for<'codec> wrapper::Render<
+                S,
+                wrapper::returns::encoded::Input<'expansion, 'codec, 'lowered, S>,
+                Output = wrapper::returns::encoded::Tokens,
+            >,
+    {
+        wrapper::stream::Renderer::new(
+            expansion.stream(stream)?,
+            expansion.class(owner)?,
+            expansion,
+        )
+        .render()
+    }
+
     fn source_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::answer"),
@@ -444,6 +541,10 @@ mod tests {
 
     fn record(name: &str) -> TypeExpr {
         TypeExpr::record(RecordId::new(format!("demo::{name}")), path(name))
+    }
+
+    fn enumeration(name: &str) -> TypeExpr {
+        TypeExpr::enumeration(EnumId::new(format!("demo::{name}")), path(name))
     }
 
     fn class(name: &str) -> TypeExpr {
@@ -754,6 +855,47 @@ mod tests {
         let mut class = engine_class();
         class.methods.push(method);
         class
+    }
+
+    fn stream(name: &str, item_type: TypeExpr) -> StreamDef {
+        let mut stream = StreamDef::new(
+            StreamId::new(format!("demo::Engine::{name}")),
+            CanonicalName::single(name),
+            item_type,
+        );
+        stream.owner = Some(ClassId::new("demo::Engine"));
+        stream
+    }
+
+    fn engine_stream_contract(stream: StreamDef) -> SourceContract {
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.classes.push(engine_class());
+        source.streams.push(stream);
+        source
+    }
+
+    fn profile_stream_contract() -> SourceContract {
+        let mut source = engine_stream_contract(stream("profiles", record("Profile")));
+        source.records.push(profile_record());
+        source
+    }
+
+    fn point_stream_contract() -> SourceContract {
+        let mut source = engine_stream_contract(stream("points", record("Point")));
+        source.records.push(point_record());
+        source
+    }
+
+    fn status_stream_contract() -> SourceContract {
+        let mut source = engine_stream_contract(stream("statuses", enumeration("Status")));
+        source.enums.push(status_enum());
+        source
+    }
+
+    fn timestamp_stream_contract() -> SourceContract {
+        let mut source = engine_stream_contract(stream("timestamps", custom_timestamp()));
+        source.customs.push(timestamp_custom_def());
+        source
     }
 
     fn listener_trait() -> TraitDef {
@@ -1617,6 +1759,43 @@ mod tests {
         source
     }
 
+    fn custom_tuple_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::tuple_year"),
+            CanonicalName::single("tuple_year"),
+        );
+        function.parameters = vec![parameter(
+            "value",
+            TypeExpr::tuple(vec![
+                custom_timestamp(),
+                TypeExpr::Primitive(Primitive::U32),
+            ]),
+        )];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
+        source.functions.push(function);
+        source
+    }
+
+    fn custom_map_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::map_years"),
+            CanonicalName::single("map_years"),
+        );
+        function.parameters = vec![parameter(
+            "values",
+            TypeExpr::hash_map(TypeExpr::String, custom_timestamp()),
+        )];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
+        source.functions.push(function);
+        source
+    }
+
     fn custom_return_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::stamp"),
@@ -1856,6 +2035,84 @@ mod tests {
     }
 
     #[test]
+    fn native_custom_tuple_param_expansion_decodes_repr_and_calls_try_from_ffi() {
+        let source = custom_tuple_param_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn tuple_year(value: (Timestamp, u32)) -> u32 {
+                value.0.year() + value.1
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_generated_crate_checks(
+            "native_custom_tuple_param",
+            quote! {
+                pub struct Timestamp(i64);
+
+                impl Timestamp {
+                    fn year(&self) -> u32 {
+                        self.0 as u32
+                    }
+                }
+
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                    value.0
+                }
+
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                    Ok(Timestamp(value))
+                }
+
+                #tokens
+            },
+        );
+    }
+
+    #[test]
+    fn native_custom_map_param_expansion_decodes_repr_and_calls_try_from_ffi() {
+        let source = custom_map_param_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn map_years(values: HashMap<String, Timestamp>) -> u32 {
+                values.into_values().map(|value| value.year()).sum()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_generated_crate_checks(
+            "native_custom_map_param",
+            quote! {
+                use std::collections::HashMap;
+
+                pub struct Timestamp(i64);
+
+                impl Timestamp {
+                    fn year(&self) -> u32 {
+                        self.0 as u32
+                    }
+                }
+
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                    value.0
+                }
+
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                    Ok(Timestamp(value))
+                }
+
+                #tokens
+            },
+        );
+    }
+
+    #[test]
     fn native_direct_record_expansion_emits_raw_memory_traits() {
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.records.push(direct_point_record());
@@ -1932,11 +2189,11 @@ mod tests {
         syn::parse2::<syn::File>(quote! {
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -1998,6 +2255,89 @@ mod tests {
         let rendered = tokens.to_string();
         assert!(rendered.contains("fn boltffi_init_record_demo_point_new"));
         assert!(rendered.contains("Point :: new (x)"));
+    }
+
+    #[test]
+    fn native_direct_record_expansion_emits_static_method_wrapper() {
+        let method = record_method(
+            "origin_x",
+            Receiver::None,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::F64)),
+        );
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        syn::parse2::<syn::File>(quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub fn origin_x() -> f64 {
+                    0.0
+                }
+            }
+
+            #tokens
+        })
+        .expect("direct record static method expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_method_record_demo_point_origin_x"));
+        assert!(!rendered.contains("fn boltffi_init_record_demo_point_origin_x"));
+        assert!(!rendered.contains("__boltffi_receiver"));
+        assert!(rendered.contains("Point :: origin_x ()"));
+    }
+
+    #[test]
+    fn native_direct_record_expansion_emits_async_initializer_wrapper() {
+        let mut initializer = record_method(
+            "load",
+            Receiver::None,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::SelfType),
+        );
+        initializer.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source
+            .records
+            .push(direct_point_record_with_method(initializer));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        let generated = quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub async fn load() -> Self {
+                    Self { x: 1.0 }
+                }
+            }
+
+            #tokens
+        };
+        syn::parse2::<syn::File>(generated.clone())
+            .expect("direct record async initializer parses");
+        assert_generated_crate_checks("native_direct_record_async_initializer", generated);
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_init_record_demo_point_load"));
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { Point :: load () . await })"
+        ));
+        assert!(rendered.contains("fn boltffi_async_init_record_demo_point_load_poll"));
+        assert!(rendered.contains("fn boltffi_async_init_record_demo_point_load_complete"));
     }
 
     #[test]
@@ -2105,6 +2445,48 @@ mod tests {
     }
 
     #[test]
+    fn wasm_direct_record_expansion_emits_async_instance_method_wrapper() {
+        let mut method = record_method(
+            "compute",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::Primitive(Primitive::F64)),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        syn::parse2::<syn::File>(quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub async fn compute(&self) -> f64 {
+                    self.x
+                }
+            }
+
+            #tokens
+        })
+        .expect("wasm direct record async method expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
+        assert!(rendered.contains("fn boltffi_method_record_demo_point_compute"));
+        assert!(rendered.contains("__boltffi_receiver : * const u8"));
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { __boltffi_receiver . compute () . await })"
+        ));
+        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_compute_poll_sync"));
+    }
+
+    #[test]
     fn native_direct_record_expansion_rejects_mutable_receiver_without_writeback() {
         let method = record_method(
             "shift",
@@ -2190,9 +2572,50 @@ mod tests {
         assert!(rendered.contains("fn boltffi_method_record_demo_profile_display_name"));
         assert!(rendered.contains("__boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("__boltffi_receiver_len : usize"));
-        assert!(rendered.contains("let __boltffi_receiver_storage : Profile ="));
-        assert!(rendered.contains("let __boltffi_receiver = & __boltffi_receiver_storage ;"));
+        assert!(rendered.contains("let __boltffi_receiver : Profile ="));
+        assert!(!rendered.contains("__boltffi_receiver_storage"));
         assert!(rendered.contains("__boltffi_receiver . display_name ()"));
+    }
+
+    #[test]
+    fn native_encoded_record_expansion_emits_async_instance_method_wrapper() {
+        let mut method = record_method(
+            "display_name",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::String),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(profile_record_with_method(method));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        let generated = quote! {
+            pub struct Profile {
+                pub name: String,
+            }
+
+            impl Profile {
+                pub async fn display_name(&self) -> String {
+                    self.name.clone()
+                }
+            }
+
+            #tokens
+        };
+        syn::parse2::<syn::File>(generated.clone())
+            .expect("encoded record async method expansion parses");
+        assert_generated_crate_checks("native_encoded_record_async_method", generated);
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_method_record_demo_profile_display_name"));
+        assert!(rendered.contains("fn boltffi_async_method_record_demo_profile_display_name_poll"));
+        assert!(
+            rendered
+                .contains(":: boltffi :: __private :: rustfuture :: rust_future_new (async move")
+        );
     }
 
     #[test]
@@ -2503,9 +2926,96 @@ mod tests {
         assert!(rendered.contains("fn boltffi_method_enum_demo_event_label"));
         assert!(rendered.contains("__boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("__boltffi_receiver_len : usize"));
-        assert!(rendered.contains("let __boltffi_receiver_storage : Event ="));
-        assert!(rendered.contains("let __boltffi_receiver = & __boltffi_receiver_storage ;"));
+        assert!(rendered.contains("let __boltffi_receiver : Event ="));
+        assert!(!rendered.contains("__boltffi_receiver_storage"));
         assert!(rendered.contains("__boltffi_receiver . label ()"));
+    }
+
+    #[test]
+    fn native_data_enum_expansion_emits_async_instance_method_wrapper() {
+        let mut method = record_method(
+            "label",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::String),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.enums.push(event_enum_with_method(method));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_enumeration(&expansion, &source.enums[0]).expect("expanded enum");
+
+        let generated = quote! {
+            pub enum Event {
+                Empty,
+                Count(u32),
+                Named { name: String },
+            }
+
+            impl Event {
+                pub async fn label(&self) -> String {
+                    String::new()
+                }
+            }
+
+            #tokens
+        };
+        syn::parse2::<syn::File>(generated.clone())
+            .expect("data enum async method expansion parses");
+        assert_generated_crate_checks("native_data_enum_async_method", generated);
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_method_enum_demo_event_label"));
+        assert!(rendered.contains("fn boltffi_async_method_enum_demo_event_label_poll"));
+        assert!(
+            rendered
+                .contains(":: boltffi :: __private :: rustfuture :: rust_future_new (async move")
+        );
+    }
+
+    #[test]
+    fn wasm_data_enum_expansion_emits_async_instance_method_wrapper() {
+        let mut method = record_method(
+            "label",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::String),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.enums.push(event_enum_with_method(method));
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_enumeration(&expansion, &source.enums[0]).expect("expanded enum");
+
+        syn::parse2::<syn::File>(quote! {
+            pub enum Event {
+                Empty,
+                Count(u32),
+                Named { name: String },
+            }
+
+            impl Event {
+                pub async fn label(&self) -> String {
+                    String::new()
+                }
+            }
+
+            #tokens
+        })
+        .expect("wasm data enum async method expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
+        assert!(rendered.contains("fn boltffi_method_enum_demo_event_label"));
+        assert!(rendered.contains("__boltffi_receiver_ptr : * const u8"));
+        assert!(rendered.contains("__boltffi_receiver_len : usize"));
+        assert!(
+            rendered
+                .contains(":: boltffi :: __private :: rustfuture :: rust_future_new (async move")
+        );
+        assert!(rendered.contains("fn boltffi_async_method_enum_demo_event_label_poll_sync"));
     }
 
     #[test]
@@ -4237,6 +4747,529 @@ mod tests {
     }
 
     #[test]
+    fn native_class_stream_expansion_emits_direct_batch_protocol() {
+        let source = engine_stream_contract(stream("values", TypeExpr::Primitive(Primitive::I32)));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            pub struct Engine {
+                producer: StreamProducer<i32>,
+            }
+
+            impl Engine {
+                pub fn values(&self) -> Arc<EventSubscription<i32>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("stream expansion parses");
+        assert_generated_crate_checks("native_direct_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("fn boltffi_stream_demo_engine_values_subscribe"));
+        assert!(rendered.contains("fn boltffi_stream_demo_engine_values_pop_batch"));
+        assert!(rendered.contains(") -> u64"));
+        assert!(rendered.contains("subscription_handle : u64"));
+        assert!(
+            rendered.contains(
+                "output_ptr : * mut < i32 as :: boltffi :: __private :: Passable > :: Out"
+            )
+        );
+        assert!(rendered.contains("subscription . pop_batch_into (__boltffi_stream_output_slots)"));
+        assert!(rendered.contains("Passable < Out = StreamItem >"));
+        assert!(!rendered.contains("< i32 as :: boltffi :: __private :: Passable > :: pack"));
+        assert!(rendered.contains("Arc :: from_raw"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_emits_direct_record_batch_protocol() {
+        let source = point_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let record_tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<Point>,
+            }
+
+            impl Engine {
+                pub fn points(&self) -> Arc<EventSubscription<Point>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #record_tokens
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("direct record stream expansion parses");
+        assert_generated_crate_checks("native_direct_record_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains(
+            "output_ptr : * mut < Point as :: boltffi :: __private :: Passable > :: Out"
+        ));
+        assert!(rendered.contains("subscription_handle : u64"));
+        assert!(rendered.contains("subscription . pop_batch_into (__boltffi_stream_output_slots)"));
+        assert!(rendered.contains("Passable < Out = StreamItem >"));
+        assert!(!rendered.contains("< Point as :: boltffi :: __private :: Passable > :: pack"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_packs_direct_enum_items() {
+        let source = status_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let enum_tokens = expand_enumeration(&expansion, &source.enums[0]).expect("expanded enum");
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[repr(i32)]
+            #[derive(Clone, Copy)]
+            pub enum Status {
+                Ready = 0,
+                Failed = 1,
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<Status>,
+            }
+
+            impl Engine {
+                pub fn statuses(&self) -> Arc<EventSubscription<Status>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #enum_tokens
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("direct enum stream expansion parses");
+        assert_generated_crate_checks("native_direct_enum_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("< Status as :: boltffi :: __private :: Passable > :: pack"));
+        assert!(!rendered.contains("subscription . pop_batch_into"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_emits_encoded_batch_protocol() {
+        let source = profile_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let record_tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[derive(Clone)]
+            pub struct Profile {
+                pub name: String,
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<Profile>,
+            }
+
+            impl Engine {
+                pub fn profiles(&self) -> Arc<EventSubscription<Profile>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #record_tokens
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("encoded stream expansion parses");
+        assert_generated_crate_checks("native_encoded_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("max_count : usize"));
+        assert!(rendered.contains("-> :: boltffi :: __private :: FfiBuf"));
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_stream_items)"
+        ));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_uses_owned_storage_for_str_items() {
+        let source = engine_stream_contract(stream("lines", TypeExpr::Str));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            pub struct Engine {
+                producer: StreamProducer<String>,
+            }
+
+            impl Engine {
+                pub fn lines(&self) -> Arc<EventSubscription<String>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("str stream expansion parses");
+        assert_generated_crate_checks("native_str_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("EventSubscription < String >"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_uses_owned_storage_for_slice_items() {
+        let source = engine_stream_contract(stream(
+            "byte_chunks",
+            TypeExpr::slice(TypeExpr::Primitive(Primitive::U8)),
+        ));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            pub struct Engine {
+                producer: StreamProducer<Vec<u8>>,
+            }
+
+            impl Engine {
+                pub fn byte_chunks(&self) -> Arc<EventSubscription<Vec<u8>>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("slice stream expansion parses");
+        assert_generated_crate_checks("native_slice_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("EventSubscription < Vec < u8 > >"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_emits_tuple_batches() {
+        let source = engine_stream_contract(stream(
+            "points",
+            TypeExpr::tuple(vec![TypeExpr::Primitive(Primitive::I32), TypeExpr::String]),
+        ));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            pub struct Engine {
+                producer: StreamProducer<(i32, String)>,
+            }
+
+            impl Engine {
+                pub fn points(&self) -> Arc<EventSubscription<(i32, String)>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("tuple stream expansion parses");
+        assert_generated_crate_checks("native_tuple_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("FfiBuf :: wire_encode (& __boltffi_stream_items)"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_emits_map_batches() {
+        let source = engine_stream_contract(stream(
+            "counts",
+            TypeExpr::hash_map(TypeExpr::String, TypeExpr::Primitive(Primitive::U32)),
+        ));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::collections::HashMap;
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            pub struct Engine {
+                producer: StreamProducer<HashMap<String, u32>>,
+            }
+
+            impl Engine {
+                pub fn counts(&self) -> Arc<EventSubscription<HashMap<String, u32>>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("map stream expansion parses");
+        assert_generated_crate_checks("native_map_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("FfiBuf :: wire_encode (& __boltffi_stream_items)"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_converts_custom_items_before_encoding() {
+        let source = timestamp_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[derive(Clone)]
+            pub struct Timestamp(i64);
+
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                value.0
+            }
+
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                Ok(Timestamp(value))
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<Timestamp>,
+            }
+
+            impl Engine {
+                pub fn timestamps(&self) -> Arc<EventSubscription<Timestamp>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("custom stream expansion parses");
+        assert_generated_crate_checks("native_custom_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(
+            rendered.contains(". into_iter () . map (| value | (timestamp_into_ffi) (& value))")
+        );
+        assert!(rendered.contains("FfiBuf :: wire_encode (& __boltffi_wire)"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_converts_custom_tuple_items_before_encoding() {
+        let mut source = engine_stream_contract(stream(
+            "events",
+            TypeExpr::tuple(vec![
+                custom_timestamp(),
+                TypeExpr::Primitive(Primitive::I32),
+            ]),
+        ));
+        source.customs.push(timestamp_custom_def());
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[derive(Clone)]
+            pub struct Timestamp(i64);
+
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                value.0
+            }
+
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                Ok(Timestamp(value))
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<(Timestamp, i32)>,
+            }
+
+            impl Engine {
+                pub fn events(&self) -> Arc<EventSubscription<(Timestamp, i32)>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("custom tuple stream expansion parses");
+        assert_generated_crate_checks("native_custom_tuple_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("timestamp_into_ffi"));
+        assert!(rendered.contains("FfiBuf :: wire_encode (& __boltffi_wire)"));
+    }
+
+    #[test]
+    fn native_class_stream_expansion_converts_custom_map_items_before_encoding() {
+        let mut source = engine_stream_contract(stream(
+            "timeline",
+            TypeExpr::hash_map(TypeExpr::String, custom_timestamp()),
+        ));
+        source.customs.push(timestamp_custom_def());
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::collections::HashMap;
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[derive(Clone)]
+            pub struct Timestamp(i64);
+
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                value.0
+            }
+
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                Ok(Timestamp(value))
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<HashMap<String, Timestamp>>,
+            }
+
+            impl Engine {
+                pub fn timeline(&self) -> Arc<EventSubscription<HashMap<String, Timestamp>>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("custom map stream expansion parses");
+        assert_generated_crate_checks("native_custom_map_stream", generated);
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("timestamp_into_ffi"));
+        assert!(rendered.contains("FfiBuf :: wire_encode (& __boltffi_wire)"));
+    }
+
+    #[test]
+    fn wasm_class_stream_expansion_packs_encoded_batches() {
+        let source = profile_stream_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let record_tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+        let class_tokens = expand_class(&expansion, &source.classes[0]).expect("expanded class");
+        let stream_tokens = expand_stream(&expansion, &source.streams[0], &source.classes[0])
+            .expect("expanded stream");
+
+        let generated = quote! {
+            use std::sync::Arc;
+            use boltffi::{EventSubscription, StreamProducer};
+
+            #[derive(Clone)]
+            pub struct Profile {
+                pub name: String,
+            }
+
+            pub struct Engine {
+                producer: StreamProducer<Profile>,
+            }
+
+            impl Engine {
+                pub fn profiles(&self) -> Arc<EventSubscription<Profile>> {
+                    self.producer.subscribe()
+                }
+            }
+
+            #record_tokens
+            #class_tokens
+            #stream_tokens
+        };
+        syn::parse2::<syn::File>(generated.clone()).expect("wasm stream expansion parses");
+        assert_generated_crate_checks_target(
+            "wasm_encoded_stream",
+            "wasm32-unknown-unknown",
+            generated,
+        );
+        let rendered = stream_tokens.to_string();
+        assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
+        assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_pop_batch"));
+        assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_subscribe"));
+        assert!(rendered.contains(") -> u32"));
+        assert!(rendered.contains("subscription_handle : u32"));
+        assert!(rendered.contains(") -> u64"));
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_stream_items)"
+        ));
+        assert!(rendered.contains("into_packed ()"));
+    }
+
+    #[test]
     fn native_class_expansion_emits_initializer_and_static_method_wrappers() {
         let initializer = record_method(
             "new",
@@ -4622,11 +5655,11 @@ mod tests {
         syn::parse2::<syn::File>(quote! {
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 
@@ -4653,11 +5686,11 @@ mod tests {
             quote! {
                 pub struct Timestamp(i64);
 
-                fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                     value.0
                 }
 
-                fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                     Ok(Timestamp(value))
                 }
 
@@ -4693,11 +5726,11 @@ mod tests {
         syn::parse2::<syn::File>(quote! {
             pub struct Timestamp(i64);
 
-            fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
                 value.0
             }
 
-            fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
                 Ok(Timestamp(value))
             }
 

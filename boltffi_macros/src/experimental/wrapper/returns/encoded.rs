@@ -1,4 +1,4 @@
-use boltffi_binding::{Native, ReadPlan, Wasm32, native, wasm32};
+use boltffi_binding::{CodecNode, Native, ReadPlan, Wasm32, native, wasm32};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -11,22 +11,22 @@ use crate::experimental::{
 
 pub struct Renderer;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
-    codec: &'lowered ReadPlan,
+pub struct Input<'expansion, 'codec, 'lowered, S: Target> {
+    codec: &'codec CodecNode,
     shape: S::BufferShape,
     value: syn::Ident,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'codec, 'lowered, S: Target> Input<'expansion, 'codec, 'lowered, S> {
     pub fn new(
-        codec: &'lowered ReadPlan,
+        codec: &'codec ReadPlan,
         shape: S::BufferShape,
         value: syn::Ident,
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
-            codec,
+            codec: codec.root(),
             shape,
             value,
             expansion,
@@ -34,7 +34,16 @@ impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     }
 
     pub fn string(
-        codec: &'lowered ReadPlan,
+        codec: &'codec ReadPlan,
+        shape: S::BufferShape,
+        value: syn::Ident,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
+        Self::new(codec, shape, value, expansion)
+    }
+
+    pub fn root(
+        codec: &'codec CodecNode,
         shape: S::BufferShape,
         value: syn::Ident,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -78,28 +87,16 @@ impl<S: Target> Empty<S> {
     }
 }
 
-impl<'expansion, 'lowered> Render<Native, Input<'expansion, 'lowered, Native>> for Renderer {
+impl<'expansion, 'codec, 'lowered> Render<Native, Input<'expansion, 'codec, 'lowered, Native>>
+    for Renderer
+{
     type Output = Tokens;
 
-    fn render(self, input: Input<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
-        let value = input.value;
-        match input.shape {
-            native::BufferShape::Buffer => {
-                let value = encoded::outgoing::Value::new(input.codec.root(), input.expansion)
-                    .buffer(quote! { #value })?;
-                Ok(Tokens {
-                    value_type: quote! { ::boltffi::__private::FfiBuf },
-                    return_type: quote! { -> ::boltffi::__private::FfiBuf },
-                    value,
-                })
-            }
-            native::BufferShape::Slice | native::BufferShape::BufferPointer => {
-                Err(Error::UnsupportedExpansion("native encoded return shape"))
-            }
-            _ => Err(Error::UnsupportedExpansion(
-                "unknown native encoded return shape",
-            )),
-        }
+    fn render(
+        self,
+        input: Input<'expansion, 'codec, 'lowered, Native>,
+    ) -> Result<Self::Output, Error> {
+        self.render_native(input.codec, input.shape, input.value, input.expansion)
     }
 }
 
@@ -123,29 +120,16 @@ impl Render<Native, Empty<Native>> for Renderer {
     }
 }
 
-impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> for Renderer {
+impl<'expansion, 'codec, 'lowered> Render<Wasm32, Input<'expansion, 'codec, 'lowered, Wasm32>>
+    for Renderer
+{
     type Output = Tokens;
 
-    fn render(self, input: Input<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
-        let value = input.value;
-
-        match input.shape {
-            wasm32::BufferShape::Packed => {
-                let buffer = encoded::outgoing::Value::new(input.codec.root(), input.expansion)
-                    .buffer(quote! { #value })?;
-                Ok(Tokens {
-                    value_type: quote! { u64 },
-                    return_type: quote! { -> u64 },
-                    value: quote! { #buffer.into_packed() },
-                })
-            }
-            wasm32::BufferShape::Slice => {
-                Err(Error::UnsupportedExpansion("wasm encoded return shape"))
-            }
-            _ => Err(Error::UnsupportedExpansion(
-                "unknown wasm encoded return shape",
-            )),
-        }
+    fn render(
+        self,
+        input: Input<'expansion, 'codec, 'lowered, Wasm32>,
+    ) -> Result<Self::Output, Error> {
+        self.render_wasm(input.codec, input.shape, input.value, input.expansion)
     }
 }
 
@@ -159,6 +143,60 @@ impl Render<Wasm32, Empty<Wasm32>> for Renderer {
                 return_type: quote! { -> u64 },
                 value: quote! { ::boltffi::__private::FfiBuf::default().into_packed() },
             }),
+            wasm32::BufferShape::Slice => {
+                Err(Error::UnsupportedExpansion("wasm encoded return shape"))
+            }
+            _ => Err(Error::UnsupportedExpansion(
+                "unknown wasm encoded return shape",
+            )),
+        }
+    }
+}
+
+impl Renderer {
+    fn render_native(
+        self,
+        codec: &CodecNode,
+        shape: native::BufferShape,
+        value: syn::Ident,
+        expansion: &Expansion<'_, Native>,
+    ) -> Result<Tokens, Error> {
+        match shape {
+            native::BufferShape::Buffer => {
+                let value =
+                    encoded::outgoing::Value::new(codec, expansion).buffer(quote! { #value })?;
+                Ok(Tokens {
+                    value_type: quote! { ::boltffi::__private::FfiBuf },
+                    return_type: quote! { -> ::boltffi::__private::FfiBuf },
+                    value,
+                })
+            }
+            native::BufferShape::Slice | native::BufferShape::BufferPointer => {
+                Err(Error::UnsupportedExpansion("native encoded return shape"))
+            }
+            _ => Err(Error::UnsupportedExpansion(
+                "unknown native encoded return shape",
+            )),
+        }
+    }
+
+    fn render_wasm(
+        self,
+        codec: &CodecNode,
+        shape: wasm32::BufferShape,
+        value: syn::Ident,
+        expansion: &Expansion<'_, Wasm32>,
+    ) -> Result<Tokens, Error> {
+        match shape {
+            wasm32::BufferShape::Packed => {
+                let buffer =
+                    encoded::outgoing::Value::new(codec, expansion).buffer(quote! { #value })?;
+                Ok(Tokens {
+                    value_type: quote! { u64 },
+                    return_type: quote! { -> u64 },
+                    value: quote! { #buffer.into_packed() },
+                })
+            }
             wasm32::BufferShape::Slice => {
                 Err(Error::UnsupportedExpansion("wasm encoded return shape"))
             }
