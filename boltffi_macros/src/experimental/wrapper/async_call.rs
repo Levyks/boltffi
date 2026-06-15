@@ -11,7 +11,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{
         self, Render, export, names,
         returns::{closure, direct_vec, encoded, fallible, handle, scalar_option},
@@ -20,7 +20,7 @@ use crate::experimental::{
 
 pub struct Renderer;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     symbol: &'lowered NativeSymbol,
     callable: &'lowered ExportedCallable<S>,
     source: rust_api::Callable<'lowered>,
@@ -30,7 +30,7 @@ pub struct Input<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         function: &'lowered FunctionDecl<S>,
         source: rust_api::Callable<'lowered>,
@@ -168,7 +168,7 @@ impl<'expansion, 'lowered> WasmAsync<'expansion, 'lowered> {
     }
 }
 
-struct AsyncExports<'expansion, 'lowered, S: Target> {
+struct AsyncExports<'expansion, 'lowered, S: RenderSurface> {
     symbol: &'lowered NativeSymbol,
     callable: &'lowered ExportedCallable<S>,
     source: rust_api::Callable<'lowered>,
@@ -182,7 +182,7 @@ struct AsyncExports<'expansion, 'lowered, S: Target> {
 
 impl<'expansion, 'lowered, S> AsyncExports<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     for<'plan> encoded::Renderer:
         Render<S, encoded::Input<'expansion, 'plan, 'lowered, S>, Output = encoded::Tokens>,
     encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
@@ -303,11 +303,11 @@ where
     }
 }
 
-struct AsyncParameters<'lowered, S: Target> {
+struct AsyncParameters<'lowered, S: RenderSurface> {
     params: &'lowered [ParamDecl<S, IntoRust>],
 }
 
-impl<'lowered, S: Target> AsyncParameters<'lowered, S> {
+impl<'lowered, S: RenderSurface> AsyncParameters<'lowered, S> {
     fn new(params: &'lowered [ParamDecl<S, IntoRust>]) -> Self {
         Self { params }
     }
@@ -357,20 +357,32 @@ impl<'lowered, S: Target> AsyncParameters<'lowered, S> {
 }
 
 trait AsyncProtocol {
-    fn poll<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
-    fn complete<S: Target>(
+    fn poll<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream;
+    fn complete<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
         complete: Complete,
     ) -> TokenStream;
-    fn panic_message<S: Target>(
+    fn panic_message<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream;
-    fn cancel<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
-    fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream;
+    fn cancel<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream;
+    fn free<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream;
 }
 
 struct NativeProtocol<'symbols> {
@@ -382,7 +394,11 @@ struct NativeProtocol<'symbols> {
 }
 
 impl AsyncProtocol for NativeProtocol<'_> {
-    fn poll<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
+    fn poll<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream {
         let cfg = S::cfg_attr();
         let ident = symbol_ident(self.poll);
         quote! {
@@ -404,7 +420,7 @@ impl AsyncProtocol for NativeProtocol<'_> {
         }
     }
 
-    fn complete<S: Target>(
+    fn complete<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
@@ -413,7 +429,7 @@ impl AsyncProtocol for NativeProtocol<'_> {
         complete.tokens::<S>(visibility, symbol_ident(self.complete), rust_return_type)
     }
 
-    fn panic_message<S: Target>(
+    fn panic_message<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
@@ -425,11 +441,19 @@ impl AsyncProtocol for NativeProtocol<'_> {
         )
     }
 
-    fn cancel<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
+    fn cancel<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream {
         cancel::<S>(visibility, symbol_ident(self.cancel), rust_return_type)
     }
 
-    fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
+    fn free<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream {
         free::<S>(visibility, symbol_ident(self.free), rust_return_type)
     }
 }
@@ -443,7 +467,11 @@ struct WasmProtocol<'symbols> {
 }
 
 impl AsyncProtocol for WasmProtocol<'_> {
-    fn poll<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
+    fn poll<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream {
         let cfg = S::cfg_attr();
         let ident = symbol_ident(self.poll_sync);
         quote! {
@@ -459,7 +487,7 @@ impl AsyncProtocol for WasmProtocol<'_> {
         }
     }
 
-    fn complete<S: Target>(
+    fn complete<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
@@ -468,7 +496,7 @@ impl AsyncProtocol for WasmProtocol<'_> {
         complete.tokens::<S>(visibility, symbol_ident(self.complete), rust_return_type)
     }
 
-    fn panic_message<S: Target>(
+    fn panic_message<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
@@ -480,11 +508,19 @@ impl AsyncProtocol for WasmProtocol<'_> {
         )
     }
 
-    fn cancel<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
+    fn cancel<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream {
         cancel::<S>(visibility, symbol_ident(self.cancel), rust_return_type)
     }
 
-    fn free<S: Target>(&self, visibility: &TokenStream, rust_return_type: &Type) -> TokenStream {
+    fn free<S: RenderSurface>(
+        &self,
+        visibility: &TokenStream,
+        rust_return_type: &Type,
+    ) -> TokenStream {
         free::<S>(visibility, symbol_ident(self.free), rust_return_type)
     }
 }
@@ -502,7 +538,7 @@ struct PlainComplete {
 }
 
 impl Complete {
-    fn new<'expansion, 'plan, S: Target>(
+    fn new<'expansion, 'plan, S: RenderSurface>(
         symbol: &'plan NativeSymbol,
         callable: &'plan ExportedCallable<S>,
         source: rust_api::Return<'plan>,
@@ -548,7 +584,7 @@ impl Complete {
         PlainComplete::new(callable, source, rust_return_type, expansion).map(Self::Plain)
     }
 
-    fn tokens<S: Target>(
+    fn tokens<S: RenderSurface>(
         self,
         visibility: &TokenStream,
         ident: syn::Ident,
@@ -562,7 +598,7 @@ impl Complete {
 }
 
 impl PlainComplete {
-    fn new<'expansion, 'plan, S: Target>(
+    fn new<'expansion, 'plan, S: RenderSurface>(
         callable: &'plan ExportedCallable<S>,
         source: rust_api::Return<'plan>,
         rust_return_type: &Type,
@@ -706,7 +742,7 @@ impl PlainComplete {
         }
     }
 
-    fn tokens<S: Target>(
+    fn tokens<S: RenderSurface>(
         self,
         visibility: &TokenStream,
         ident: syn::Ident,
@@ -756,7 +792,7 @@ struct FallibleComplete {
 }
 
 impl FallibleComplete {
-    fn new<'expansion, 'plan, S: Target>(
+    fn new<'expansion, 'plan, S: RenderSurface>(
         symbol: &'plan NativeSymbol,
         callable: &'plan ExportedCallable<S>,
         source: rust_api::Fallible<'plan>,
@@ -841,7 +877,7 @@ impl FallibleComplete {
         })
     }
 
-    fn tokens<S: Target>(self, visibility: &TokenStream, ident: syn::Ident) -> TokenStream {
+    fn tokens<S: RenderSurface>(self, visibility: &TokenStream, ident: syn::Ident) -> TokenStream {
         let cfg = S::cfg_attr();
         let Self {
             ffi_parameters,
@@ -862,7 +898,7 @@ impl FallibleComplete {
     }
 }
 
-fn panic_message<S: Target>(
+fn panic_message<S: RenderSurface>(
     visibility: &TokenStream,
     ident: syn::Ident,
     rust_return_type: &Type,
@@ -882,7 +918,7 @@ fn panic_message<S: Target>(
     }
 }
 
-fn cancel<S: Target>(
+fn cancel<S: RenderSurface>(
     visibility: &TokenStream,
     ident: syn::Ident,
     rust_return_type: &Type,
@@ -899,7 +935,7 @@ fn cancel<S: Target>(
     }
 }
 
-fn free<S: Target>(
+fn free<S: RenderSurface>(
     visibility: &TokenStream,
     ident: syn::Ident,
     rust_return_type: &Type,

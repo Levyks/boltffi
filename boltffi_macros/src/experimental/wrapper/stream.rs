@@ -10,13 +10,14 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+/// A stream protocol renderer for one target surface.
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     stream: DeclarationPair<'lowered, StreamDef, StreamDecl<S>>,
-    owner: DeclarationPair<'lowered, ClassDef, ClassDecl<S>>,
+    subscription: Subscription<'lowered, S>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
@@ -30,11 +31,8 @@ struct StreamSymbols<'lowered> {
 }
 
 struct SubscribeExport<'stream> {
-    class: &'stream Ident,
     method: &'stream Ident,
-    handle_type: &'stream Ident,
     receiver: &'stream Ident,
-    receiver_handle: &'stream Ident,
     stream_handle_type: &'stream TokenStream,
     stream_handle_zero: &'stream TokenStream,
 }
@@ -43,7 +41,13 @@ struct StreamItemType<'source> {
     source: &'source TypeExpr,
 }
 
-impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
+enum Subscription<'lowered, S: RenderSurface> {
+    Function,
+    Method(DeclarationPair<'lowered, ClassDef, ClassDecl<S>>),
+}
+
+impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
+    /// Creates a renderer for a class-owned stream method.
     pub fn new(
         stream: DeclarationPair<'lowered, StreamDef, StreamDecl<S>>,
         owner: DeclarationPair<'lowered, ClassDef, ClassDecl<S>>,
@@ -51,11 +55,24 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
     ) -> Self {
         Self {
             stream,
-            owner,
+            subscription: Subscription::Method(owner),
             expansion,
         }
     }
 
+    /// Creates a renderer for a top-level stream function.
+    pub fn function(
+        stream: DeclarationPair<'lowered, StreamDef, StreamDecl<S>>,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
+        Self {
+            stream,
+            subscription: Subscription::Function,
+            expansion,
+        }
+    }
+
+    /// Renders the exported stream protocol functions.
     pub fn render(self) -> Result<TokenStream, Error>
     where
         wrapper::handle::Carrier: Render<
@@ -74,14 +91,11 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
                 Output = wrapper::returns::encoded::Tokens,
             >,
     {
-        self.validate_owner()?;
+        self.validate_subscription()?;
         let cfg = S::cfg_attr();
-        let class = class_ident(self.owner.source())?;
         let method = method_ident(self.stream.source())?;
-        let handle_type = names::Class::new(&class).handle();
         let wrapper_names = names::Wrapper::new(method.span());
         let receiver = wrapper_names.receiver();
-        let receiver_handle = names::Parameter::new(&receiver).handle();
         let item_type = StreamItemType::new(&self.stream.source().item_type).into_type()?;
         let stream_handle = <wrapper::handle::Carrier as Render<S, _>>::render(
             wrapper::handle::Carrier,
@@ -91,11 +105,8 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
         let stream_handle_zero = stream_handle.zero();
         let symbols = StreamSymbols::new(self.stream.binding().protocol());
         let subscribe = self.subscribe(SubscribeExport {
-            class: &class,
             method: &method,
-            handle_type: &handle_type,
             receiver: &receiver,
-            receiver_handle: &receiver_handle,
             stream_handle_type,
             stream_handle_zero,
         })?;
@@ -183,18 +194,30 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
         })
     }
 
-    fn validate_owner(&self) -> Result<(), Error> {
-        if self.stream.source().owner.as_ref() != Some(&self.owner.source().id) {
-            return Err(Error::SourceSyntaxMismatch(
-                "source stream owner does not match source class",
-            ));
+    fn validate_subscription(&self) -> Result<(), Error> {
+        match &self.subscription {
+            Subscription::Function => {
+                if self.stream.source().owner.is_some() || self.stream.binding().owner().is_some() {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "stream subscription source does not match ownerless stream",
+                    ));
+                }
+                Ok(())
+            }
+            Subscription::Method(owner) => {
+                if self.stream.source().owner.as_ref() != Some(&owner.source().id) {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "source stream owner does not match source class",
+                    ));
+                }
+                if self.stream.binding().owner() != Some(owner.binding().id()) {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "lowered stream owner does not match lowered class",
+                    ));
+                }
+                Ok(())
+            }
         }
-        if self.stream.binding().owner() != Some(self.owner.binding().id()) {
-            return Err(Error::SourceSyntaxMismatch(
-                "lowered stream owner does not match lowered class",
-            ));
-        }
-        Ok(())
     }
 
     fn subscribe(&self, subscribe: SubscribeExport<'_>) -> Result<TokenStream, Error>
@@ -206,36 +229,46 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
             >,
     {
         let symbol = StreamSymbols::new(self.stream.binding().protocol()).subscribe();
-        let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
-            wrapper::handle::Carrier,
-            wrapper::handle::CarrierInput::new(self.owner.binding().handle()),
-        )?;
-        let ffi_type = carrier.ty();
-        let zero = carrier.zero();
         let SubscribeExport {
-            class,
             method,
-            handle_type,
             receiver,
-            receiver_handle,
             stream_handle_type,
             stream_handle_zero,
         } = subscribe;
-        Ok(quote! {
-            #symbol(
-                #receiver: #ffi_type,
-            ) -> #stream_handle_type {
-                if #receiver == #zero {
-                    return #stream_handle_zero;
+        match &self.subscription {
+            Subscription::Function => Ok(quote! {
+                #symbol() -> #stream_handle_type {
+                    let subscription = #method();
+                    ::std::sync::Arc::into_raw(subscription) as usize as #stream_handle_type
                 }
-                let #receiver_handle = #receiver as usize as *mut #handle_type;
-                let #receiver: &#class = unsafe {
-                    #handle_type::shared(#receiver_handle)
-                };
-                let subscription = #receiver.#method();
-                ::std::sync::Arc::into_raw(subscription) as usize as #stream_handle_type
+            }),
+            Subscription::Method(owner) => {
+                let class = class_ident(owner.source())?;
+                let handle_type = names::Class::new(&class).handle();
+                let receiver_handle = names::Parameter::new(receiver).handle();
+                let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
+                    wrapper::handle::Carrier,
+                    wrapper::handle::CarrierInput::new(owner.binding().handle()),
+                )?;
+                let ffi_type = carrier.ty();
+                let zero = carrier.zero();
+                Ok(quote! {
+                    #symbol(
+                        #receiver: #ffi_type,
+                    ) -> #stream_handle_type {
+                        if #receiver == #zero {
+                            return #stream_handle_zero;
+                        }
+                        let #receiver_handle = #receiver as usize as *mut #handle_type;
+                        let #receiver: &#class = unsafe {
+                            #handle_type::shared(#receiver_handle)
+                        };
+                        let subscription = #receiver.#method();
+                        ::std::sync::Arc::into_raw(subscription) as usize as #stream_handle_type
+                    }
+                })
             }
-        })
+        }
     }
 
     fn pop_batch(

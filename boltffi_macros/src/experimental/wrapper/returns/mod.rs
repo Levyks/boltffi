@@ -7,7 +7,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
@@ -57,7 +57,7 @@ impl RustInvocation {
     }
 }
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     returns: &'lowered ReturnDecl<S, OutOfRust>,
     error: &'lowered ErrorDecl<S, OutOfRust>,
     source: rust_api::Return<'lowered>,
@@ -66,7 +66,7 @@ pub struct Input<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         returns: &'lowered ReturnDecl<S, OutOfRust>,
         error: &'lowered ErrorDecl<S, OutOfRust>,
@@ -93,13 +93,13 @@ pub struct Tokens {
     body: TokenStream,
 }
 
-pub struct FailureInput<'expansion, 'lowered, S: Target> {
+pub struct FailureInput<'expansion, 'lowered, S: RenderSurface> {
     returns: &'lowered ReturnDecl<S, OutOfRust>,
     error: &'lowered ErrorDecl<S, OutOfRust>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> FailureInput<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> FailureInput<'expansion, 'lowered, S> {
     pub fn new(
         returns: &'lowered ReturnDecl<S, OutOfRust>,
         error: &'lowered ErrorDecl<S, OutOfRust>,
@@ -133,7 +133,7 @@ impl Tokens {
 
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
-    S: Target,
+    S: RenderSurface,
     closure::Renderer: Render<S, closure::Input<'expansion, 'lowered, S>, Output = Tokens>,
     encoded::Renderer:
         Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
@@ -253,10 +253,14 @@ where
                     "binding encoded return requires a source return type",
                 ))?;
                 let result = locals.result();
-                let encoded = <encoded::Renderer as Render<S, _>>::render(
-                    encoded::Renderer,
-                    encoded::Input::new(codec, *shape, result.clone(), input.expansion),
-                )?;
+                let encoded_input = match input.source.borrowed_constant() {
+                    true => {
+                        encoded::Input::borrowed(codec, *shape, result.clone(), input.expansion)
+                    }
+                    false => encoded::Input::new(codec, *shape, result.clone(), input.expansion),
+                };
+                let encoded =
+                    <encoded::Renderer as Render<S, _>>::render(encoded::Renderer, encoded_input)?;
                 let return_type = encoded.return_type().clone();
                 let value = encoded.value();
                 Ok(Tokens {
@@ -370,7 +374,7 @@ where
 
 impl<'expansion, 'lowered, S> Render<S, FailureInput<'expansion, 'lowered, S>> for Failure
 where
-    S: Target,
+    S: RenderSurface,
     direct_vec::Failure: Render<S, direct_vec::FailureInput, Output = TokenStream>,
     encoded::Renderer: Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
     encoded::Renderer:
@@ -435,12 +439,12 @@ where
     }
 }
 
-struct ErrorFailure<'expansion, 'lowered, S: Target> {
+struct ErrorFailure<'expansion, 'lowered, S: RenderSurface> {
     error: &'lowered ErrorDecl<S, OutOfRust>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> ErrorFailure<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> ErrorFailure<'expansion, 'lowered, S> {
     fn new(
         error: &'lowered ErrorDecl<S, OutOfRust>,
         expansion: &'expansion Expansion<'lowered, S>,

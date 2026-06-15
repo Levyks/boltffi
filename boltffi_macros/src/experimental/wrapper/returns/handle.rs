@@ -7,14 +7,14 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render},
 };
 
 pub struct Value;
 pub struct Failure;
 
-pub struct ValueInput<'expansion, 'lowered, S: Target, C> {
+pub struct ValueInput<'expansion, 'lowered, S: RenderSurface, C> {
     expansion: &'expansion Expansion<'lowered, S>,
     target: &'lowered HandleTarget,
     carrier: C,
@@ -23,7 +23,7 @@ pub struct ValueInput<'expansion, 'lowered, S: Target, C> {
     handle_return: rust_api::HandleReturn,
 }
 
-impl<'expansion, 'lowered, S: Target, C> ValueInput<'expansion, 'lowered, S, C> {
+impl<'expansion, 'lowered, S: RenderSurface, C> ValueInput<'expansion, 'lowered, S, C> {
     pub fn new(
         expansion: &'expansion Expansion<'lowered, S>,
         target: &'lowered HandleTarget,
@@ -319,7 +319,7 @@ impl<C> HandleFailure<C> {
     fn tokens<S>(self) -> Result<TokenStream, Error>
     where
         C: Copy,
-        S: crate::experimental::target::Target<HandleCarrier = C>,
+        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
     {

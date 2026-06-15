@@ -12,7 +12,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, encoded, names},
 };
 
@@ -20,7 +20,7 @@ use super::Tokens;
 
 pub struct Renderer;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     closure: ForeignClosure<'lowered, S>,
     source: rust_api::Closure<'lowered>,
     ident: Ident,
@@ -28,7 +28,7 @@ pub struct Input<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         closure: &'lowered ClosureParameter<S, IntoRust>,
         source: rust_api::Closure<'lowered>,
@@ -63,12 +63,12 @@ impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
 }
 
 #[derive(Clone, Copy)]
-enum ForeignClosure<'lowered, S: Target> {
+enum ForeignClosure<'lowered, S: RenderSurface> {
     Parameter(&'lowered ClosureParameter<S, IntoRust>),
     Return(&'lowered ClosureReturn<S, IntoRust>),
 }
 
-impl<'lowered, S: Target> ForeignClosure<'lowered, S> {
+impl<'lowered, S: RenderSurface> ForeignClosure<'lowered, S> {
     fn form(self) -> ClosureForm {
         match self {
             Self::Parameter(closure) => closure.form(),
@@ -312,14 +312,14 @@ impl<'expansion, 'lowered> WasmClosure<'expansion, 'lowered> {
     }
 }
 
-struct ClosureInvoke<'expansion, 'lowered, 'rust, S: Target> {
+struct ClosureInvoke<'expansion, 'lowered, 'rust, S: RenderSurface> {
     callable: &'lowered ImportedCallable<S>,
     source: &'lowered FnSig,
     closure_binding: &'rust ClosureBinding,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, 'rust, S: Target> ClosureInvoke<'expansion, 'lowered, 'rust, S> {
+impl<'expansion, 'lowered, 'rust, S: RenderSurface> ClosureInvoke<'expansion, 'lowered, 'rust, S> {
     fn new(
         callable: &'lowered ImportedCallable<S>,
         source: &'lowered FnSig,
@@ -379,7 +379,7 @@ impl<'expansion, 'lowered, 'rust, S: Target> ClosureInvoke<'expansion, 'lowered,
     }
 }
 
-struct InvokeParameterInput<'expansion, 'lowered, 'rust, S: Target> {
+struct InvokeParameterInput<'expansion, 'lowered, 'rust, S: RenderSurface> {
     index: usize,
     payload: &'lowered OutgoingParam<S>,
     source: &'lowered TypeExpr,
@@ -387,7 +387,9 @@ struct InvokeParameterInput<'expansion, 'lowered, 'rust, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, 'rust, S: Target> InvokeParameterInput<'expansion, 'lowered, 'rust, S> {
+impl<'expansion, 'lowered, 'rust, S: RenderSurface>
+    InvokeParameterInput<'expansion, 'lowered, 'rust, S>
+{
     fn new(
         index: usize,
         payload: &'lowered OutgoingParam<S>,
@@ -499,7 +501,7 @@ impl From<Vec<InvokeParameterTokens>> for InvokeParameters {
     }
 }
 
-struct ForeignClosureReturn<'expansion, 'lowered, 'rust, S: Target> {
+struct ForeignClosureReturn<'expansion, 'lowered, 'rust, S: RenderSurface> {
     plan: &'lowered ReturnPlan<S, IntoRust>,
     error: &'lowered ErrorDecl<S, IntoRust>,
     source: &'lowered ReturnDef,
@@ -507,7 +509,9 @@ struct ForeignClosureReturn<'expansion, 'lowered, 'rust, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, 'rust, S: Target> ForeignClosureReturn<'expansion, 'lowered, 'rust, S> {
+impl<'expansion, 'lowered, 'rust, S: RenderSurface>
+    ForeignClosureReturn<'expansion, 'lowered, 'rust, S>
+{
     fn new(
         plan: &'lowered ReturnPlan<S, IntoRust>,
         error: &'lowered ErrorDecl<S, IntoRust>,
@@ -576,8 +580,10 @@ impl<'expansion, 'lowered, 'rust, S: Target> ForeignClosureReturn<'expansion, 'l
     fn rust_fallible_return(&self) -> Result<RustFallibleReturn, Error> {
         let fallible = rust_api::Return::new(self.source).fallible()?;
         Ok(RustFallibleReturn {
-            ok: fallible.ok_written_type()?,
-            err: fallible.error_written_type()?,
+            ok_type: fallible.ok_written_type()?,
+            error_type: fallible.error_written_type()?,
+            ok_source: fallible.ok().clone(),
+            error_source: fallible.error().clone(),
         })
     }
 
@@ -585,13 +591,9 @@ impl<'expansion, 'lowered, 'rust, S: Target> ForeignClosureReturn<'expansion, 'l
         &self,
         codec: &'lowered WritePlan,
         rust_type: &Type,
+        source_type: &TypeExpr,
         bytes: TokenStream,
     ) -> Result<TokenStream, Error> {
-        let ReturnDef::Value(source_type) = self.source else {
-            return Err(Error::SourceSyntaxMismatch(
-                "closure encoded return requires source return type",
-            ));
-        };
         encoded::incoming::Value::new(codec.root(), self.expansion).expression(
             encoded::incoming::Bytes::new(
                 rust_type,
@@ -635,10 +637,11 @@ impl<'expansion, 'lowered, 'rust>
                     wrapper::type_ref::Renderer,
                     &ty,
                 )?;
-                let error_type = input.rust_fallible_return()?.err;
+                let result = input.rust_fallible_return()?;
                 let error = input.encoded_expression(
                     codec,
-                    &error_type,
+                    &result.error_type,
+                    &result.error_source,
                     quote! { __boltffi_error_bytes },
                 )?;
                 Ok(ForeignClosureReturnTokens::NativeFallibleDirectPrimitive { ffi_type, error })
@@ -654,11 +657,12 @@ impl<'expansion, 'lowered, 'rust>
                 let result = input.rust_fallible_return()?;
                 let error = input.encoded_expression(
                     codec,
-                    &result.err,
+                    &result.error_type,
+                    &result.error_source,
                     quote! { __boltffi_error_bytes },
                 )?;
                 Ok(ForeignClosureReturnTokens::NativeFallibleDirectPassable {
-                    ok_type: result.ok,
+                    ok_type: result.ok_type,
                     error,
                 })
             }
@@ -677,16 +681,18 @@ impl<'expansion, 'lowered, 'rust>
                 let result = input.rust_fallible_return()?;
                 let ok = input.encoded_expression(
                     ok_codec,
-                    &result.ok,
+                    &result.ok_type,
+                    &result.ok_source,
                     quote! { __boltffi_success_bytes },
                 )?;
                 let error = input.encoded_expression(
                     error_codec,
-                    &result.err,
+                    &result.error_type,
+                    &result.error_source,
                     quote! { __boltffi_error_bytes },
                 )?;
                 Ok(ForeignClosureReturnTokens::NativeFallibleEncoded {
-                    ok_type: result.ok,
+                    ok_type: result.ok_type,
                     ok,
                     error,
                 })
@@ -699,10 +705,11 @@ impl<'expansion, 'lowered, 'rust>
                     ..
                 },
             ) => {
-                let error_type = input.rust_fallible_return()?.err;
+                let result = input.rust_fallible_return()?;
                 let error = input.encoded_expression(
                     codec,
-                    &error_type,
+                    &result.error_type,
+                    &result.error_source,
                     quote! { __boltffi_error_bytes },
                 )?;
                 Ok(ForeignClosureReturnTokens::NativeFallibleVoid { error })
@@ -718,9 +725,15 @@ impl<'expansion, 'lowered, 'rust>
                 let rust_type = input.rust_type.ok_or(Error::SourceSyntaxMismatch(
                     "closure invoke encoded return requires source return type",
                 ))?;
+                let ReturnDef::Value(source_type) = input.source else {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "closure encoded return requires source return type",
+                    ));
+                };
                 let value = input.encoded_expression(
                     codec,
                     rust_type,
+                    source_type,
                     quote! { __boltffi_result_bytes },
                 )?;
                 Ok(ForeignClosureReturnTokens::NativeEncoded { value })
@@ -773,7 +786,7 @@ impl<'expansion, 'lowered, 'rust>
                     ..
                 },
             ) => Ok(ForeignClosureReturnTokens::WasmFallibleDirectPassable {
-                ok_type: input.rust_fallible_return()?.ok,
+                ok_type: input.rust_fallible_return()?.ok_type,
             }),
             (
                 ReturnPlan::EncodedViaOutPointer {
@@ -787,7 +800,7 @@ impl<'expansion, 'lowered, 'rust>
                     ..
                 },
             ) => Ok(ForeignClosureReturnTokens::WasmFalliblePackedString {
-                ok_type: input.rust_fallible_return()?.ok,
+                ok_type: input.rust_fallible_return()?.ok_type,
             }),
             (
                 ReturnPlan::Void,
@@ -1106,8 +1119,10 @@ impl ForeignClosureReturnTokens<'_> {
 }
 
 struct RustFallibleReturn {
-    ok: Type,
-    err: Type,
+    ok_type: Type,
+    error_type: Type,
+    ok_source: TypeExpr,
+    error_source: TypeExpr,
 }
 
 enum ClosureBinding {

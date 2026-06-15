@@ -116,7 +116,7 @@ impl<'lowered, C> ClassParam<'lowered, C> {
     fn tokens<S>(self) -> Result<Tokens, Error>
     where
         C: Copy,
-        S: crate::experimental::target::Target<HandleCarrier = C>,
+        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
         for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
@@ -133,7 +133,7 @@ impl<'lowered, C> ClassParam<'lowered, C> {
     fn class_tokens<S>(self) -> Result<Tokens, Error>
     where
         C: Copy,
-        S: crate::experimental::target::Target<HandleCarrier = C>,
+        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
         for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
@@ -164,7 +164,7 @@ impl<'lowered, C> ClassParam<'lowered, C> {
     fn callback_tokens<S>(self) -> Result<Tokens, Error>
     where
         C: Copy,
-        S: crate::experimental::target::Target<HandleCarrier = C>,
+        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
         for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
@@ -272,7 +272,7 @@ impl<'lowered, C> ClassParam<'lowered, C> {
 impl rust_api::CallbackObject {
     fn conversion<S>(&self, ident: &Ident, failure: &TokenStream) -> Result<TokenStream, Error>
     where
-        S: crate::experimental::target::Target,
+        S: crate::experimental::surface::RenderSurface,
         for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
     {
         let handle = names::Parameter::new(ident).handle();

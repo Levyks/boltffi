@@ -42,7 +42,7 @@ pub use closure_registration::ClosureCrossings;
 ///     }
 /// }
 /// ```
-pub trait Target:
+pub trait RenderSurface:
     SurfaceLower + BufferCrossings + HandleCrossings + ClosureCrossings + AsyncLifecycle
 {
     /// Crossing used for optional scalar parameters and returns.
@@ -73,7 +73,7 @@ pub enum DirectRecordCrossing {
     Pointer,
 }
 
-impl Target for Native {
+impl RenderSurface for Native {
     const SCALAR_OPTION: ScalarOptionCrossing = ScalarOptionCrossing::WireEncoded;
     const DIRECT_RECORD_PARAMS: DirectRecordCrossing = DirectRecordCrossing::Value;
 
@@ -82,7 +82,7 @@ impl Target for Native {
     }
 }
 
-impl Target for Wasm32 {
+impl RenderSurface for Wasm32 {
     const SCALAR_OPTION: ScalarOptionCrossing = ScalarOptionCrossing::NanBoxedF64;
     const DIRECT_RECORD_PARAMS: DirectRecordCrossing = DirectRecordCrossing::Pointer;
 

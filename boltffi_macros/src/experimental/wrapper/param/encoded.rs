@@ -7,7 +7,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{Render, encoded, names},
 };
 
@@ -15,7 +15,7 @@ use super::Tokens;
 
 pub struct Renderer;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     codec: &'lowered WritePlan,
     shape: S::BufferShape,
     target: rust_api::DecodeTarget,
@@ -24,7 +24,7 @@ pub struct Input<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         codec: &'lowered WritePlan,
         shape: S::BufferShape,
@@ -76,7 +76,7 @@ impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> f
     }
 }
 
-struct Slice<'expansion, 'lowered, S: Target> {
+struct Slice<'expansion, 'lowered, S: RenderSurface> {
     codec: &'lowered WritePlan,
     target: rust_api::DecodeTarget,
     ident: Ident,
@@ -86,7 +86,7 @@ struct Slice<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> From<Input<'expansion, 'lowered, S>>
+impl<'expansion, 'lowered, S: RenderSurface> From<Input<'expansion, 'lowered, S>>
     for Slice<'expansion, 'lowered, S>
 {
     fn from(input: Input<'expansion, 'lowered, S>) -> Self {
@@ -94,7 +94,7 @@ impl<'expansion, 'lowered, S: Target> From<Input<'expansion, 'lowered, S>>
     }
 }
 
-impl<'expansion, 'lowered, S: Target> Slice<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Slice<'expansion, 'lowered, S> {
     fn new(input: Input<'expansion, 'lowered, S>) -> Self {
         let ident = input.ident;
         let locals = names::Parameter::new(&ident);

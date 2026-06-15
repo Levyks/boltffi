@@ -9,21 +9,21 @@ use syn::{Expr, ExprPath, Index, parse_str};
 use crate::experimental::{
     error::Error,
     expansion::Expansion,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render},
 };
 
-pub struct Incoming<'expansion, 'lowered, S: Target> {
+pub struct Incoming<'expansion, 'lowered, S: RenderSurface> {
     codec: &'lowered CodecNode,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct Outgoing<'expansion, 'lowered, S: Target> {
+pub struct Outgoing<'expansion, 'lowered, S: RenderSurface> {
     codec: &'lowered CodecNode,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct BorrowedOutgoing<'expansion, 'lowered, S: Target> {
+pub struct BorrowedOutgoing<'expansion, 'lowered, S: RenderSurface> {
     codec: &'lowered CodecNode,
     expansion: &'expansion Expansion<'lowered, S>,
 }
@@ -69,7 +69,7 @@ impl IncomingConversion {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> Incoming<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Incoming<'expansion, 'lowered, S> {
     pub const fn new(
         codec: &'lowered CodecNode,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -285,7 +285,7 @@ impl<'expansion, 'lowered, S: Target> Incoming<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> Outgoing<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Outgoing<'expansion, 'lowered, S> {
     pub const fn new(
         codec: &'lowered CodecNode,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -371,7 +371,7 @@ impl<'expansion, 'lowered, S: Target> Outgoing<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> BorrowedOutgoing<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> BorrowedOutgoing<'expansion, 'lowered, S> {
     pub const fn new(
         codec: &'lowered CodecNode,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -518,7 +518,7 @@ impl<'lowered> PathRenderer<'lowered> {
     }
 }
 
-fn representation_type<S: Target>(
+fn representation_type<S: RenderSurface>(
     codec: &CodecNode,
     source: &TypeExpr,
     expansion: &Expansion<'_, S>,
@@ -621,7 +621,7 @@ fn representation_type<S: Target>(
     }
 }
 
-fn contains_custom<S: Target>(
+fn contains_custom<S: RenderSurface>(
     codec: &CodecNode,
     expansion: &Expansion<'_, S>,
 ) -> Result<bool, Error> {
@@ -642,7 +642,7 @@ fn contains_custom<S: Target>(
     }
 }
 
-fn contains_any<'lowered, S: Target>(
+fn contains_any<'lowered, S: RenderSurface>(
     mut codecs: impl Iterator<Item = &'lowered CodecNode>,
     expansion: &Expansion<'_, S>,
 ) -> Result<bool, Error> {

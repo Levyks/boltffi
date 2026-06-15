@@ -438,6 +438,13 @@ impl<'source> Return<'source> {
         }
     }
 
+    pub fn borrowed_constant(self) -> bool {
+        matches!(
+            self.definition,
+            CallableReturn::Constant(TypeExpr::Str | TypeExpr::Slice(_))
+        )
+    }
+
     pub fn value_type(self) -> Result<Cow<'source, TypeExpr>, Error> {
         let self_type = self.owner.map(CallableOwner::self_type);
         match self.definition {

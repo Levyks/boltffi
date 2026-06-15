@@ -7,7 +7,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
@@ -16,7 +16,7 @@ use super::{RustInvocation, Tokens, closure, encoded, handle};
 pub struct Renderer;
 pub struct Success;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     returns: &'lowered ReturnDecl<S, OutOfRust>,
     error: &'lowered ErrorDecl<S, OutOfRust>,
     source: rust_api::Return<'lowered>,
@@ -24,7 +24,7 @@ pub struct Input<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct SuccessInput<'expansion, 'lowered, S: Target> {
+pub struct SuccessInput<'expansion, 'lowered, S: RenderSurface> {
     returns: &'lowered ReturnDecl<S, OutOfRust>,
     source: rust_api::Fallible<'lowered>,
     owner: Ident,
@@ -32,7 +32,7 @@ pub struct SuccessInput<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> SuccessInput<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> SuccessInput<'expansion, 'lowered, S> {
     pub fn new(
         returns: &'lowered ReturnDecl<S, OutOfRust>,
         source: rust_api::Fallible<'lowered>,
@@ -50,7 +50,7 @@ impl<'expansion, 'lowered, S: Target> SuccessInput<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         returns: &'lowered ReturnDecl<S, OutOfRust>,
         error: &'lowered ErrorDecl<S, OutOfRust>,
@@ -70,7 +70,7 @@ impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
 
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
-    S: Target,
+    S: RenderSurface,
     encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>
         + Render<S, encoded::Empty<S>, Output = encoded::Tokens>,
     Success: Render<S, SuccessInput<'expansion, 'lowered, S>, Output = SuccessTokens>,
@@ -108,7 +108,7 @@ where
     }
 }
 
-struct EncodedError<'expansion, 'lowered, S: Target> {
+struct EncodedError<'expansion, 'lowered, S: RenderSurface> {
     returns: &'lowered ReturnDecl<S, OutOfRust>,
     error_codec: &'lowered ReadPlan,
     error_shape: S::BufferShape,
@@ -117,7 +117,7 @@ struct EncodedError<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> EncodedError<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> EncodedError<'expansion, 'lowered, S> {
     fn new(
         returns: &'lowered ReturnDecl<S, OutOfRust>,
         error_codec: &'lowered ReadPlan,
@@ -218,7 +218,7 @@ impl<'expansion, 'lowered, S: Target> EncodedError<'expansion, 'lowered, S> {
 
 impl<'expansion, 'lowered, S> Render<S, SuccessInput<'expansion, 'lowered, S>> for Success
 where
-    S: Target,
+    S: RenderSurface,
     encoded::Renderer:
         Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
     closure::Write:

@@ -5,20 +5,21 @@ use quote::quote;
 use crate::experimental::{
     error::Error,
     expansion::Expansion,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{Render, encoded},
 };
 
 pub struct Renderer;
 
-pub struct Input<'expansion, 'codec, 'lowered, S: Target> {
+pub struct Input<'expansion, 'codec, 'lowered, S: RenderSurface> {
     codec: &'codec CodecNode,
     shape: S::BufferShape,
     value: syn::Ident,
+    value_binding: RustValueBinding,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'codec, 'lowered, S: Target> Input<'expansion, 'codec, 'lowered, S> {
+impl<'expansion, 'codec, 'lowered, S: RenderSurface> Input<'expansion, 'codec, 'lowered, S> {
     pub fn new(
         codec: &'codec ReadPlan,
         shape: S::BufferShape,
@@ -29,6 +30,7 @@ impl<'expansion, 'codec, 'lowered, S: Target> Input<'expansion, 'codec, 'lowered
             codec: codec.root(),
             shape,
             value,
+            value_binding: RustValueBinding::Owned,
             expansion,
         }
     }
@@ -42,6 +44,21 @@ impl<'expansion, 'codec, 'lowered, S: Target> Input<'expansion, 'codec, 'lowered
         Self::new(codec, shape, value, expansion)
     }
 
+    pub fn borrowed(
+        codec: &'codec ReadPlan,
+        shape: S::BufferShape,
+        value: syn::Ident,
+        expansion: &'expansion Expansion<'lowered, S>,
+    ) -> Self {
+        Self {
+            codec: codec.root(),
+            shape,
+            value,
+            value_binding: RustValueBinding::Borrowed,
+            expansion,
+        }
+    }
+
     pub fn root(
         codec: &'codec CodecNode,
         shape: S::BufferShape,
@@ -52,6 +69,7 @@ impl<'expansion, 'codec, 'lowered, S: Target> Input<'expansion, 'codec, 'lowered
             codec,
             shape,
             value,
+            value_binding: RustValueBinding::Owned,
             expansion,
         }
     }
@@ -77,11 +95,11 @@ impl Tokens {
     }
 }
 
-pub struct Empty<S: Target> {
+pub struct Empty<S: RenderSurface> {
     shape: S::BufferShape,
 }
 
-impl<S: Target> Empty<S> {
+impl<S: RenderSurface> Empty<S> {
     pub fn new(shape: S::BufferShape) -> Self {
         Self { shape }
     }
@@ -96,7 +114,13 @@ impl<'expansion, 'codec, 'lowered> Render<Native, Input<'expansion, 'codec, 'low
         self,
         input: Input<'expansion, 'codec, 'lowered, Native>,
     ) -> Result<Self::Output, Error> {
-        self.render_native(input.codec, input.shape, input.value, input.expansion)
+        self.render_native(
+            input.codec,
+            input.shape,
+            input.value,
+            input.value_binding,
+            input.expansion,
+        )
     }
 }
 
@@ -129,7 +153,13 @@ impl<'expansion, 'codec, 'lowered> Render<Wasm32, Input<'expansion, 'codec, 'low
         self,
         input: Input<'expansion, 'codec, 'lowered, Wasm32>,
     ) -> Result<Self::Output, Error> {
-        self.render_wasm(input.codec, input.shape, input.value, input.expansion)
+        self.render_wasm(
+            input.codec,
+            input.shape,
+            input.value,
+            input.value_binding,
+            input.expansion,
+        )
     }
 }
 
@@ -159,12 +189,12 @@ impl Renderer {
         codec: &CodecNode,
         shape: native::BufferShape,
         value: syn::Ident,
+        value_binding: RustValueBinding,
         expansion: &Expansion<'_, Native>,
     ) -> Result<Tokens, Error> {
         match shape {
             native::BufferShape::Buffer => {
-                let value =
-                    encoded::outgoing::Value::new(codec, expansion).buffer(quote! { #value })?;
+                let value = value_binding.buffer(codec, expansion, value)?;
                 Ok(Tokens {
                     value_type: quote! { ::boltffi::__private::FfiBuf },
                     return_type: quote! { -> ::boltffi::__private::FfiBuf },
@@ -185,12 +215,12 @@ impl Renderer {
         codec: &CodecNode,
         shape: wasm32::BufferShape,
         value: syn::Ident,
+        value_binding: RustValueBinding,
         expansion: &Expansion<'_, Wasm32>,
     ) -> Result<Tokens, Error> {
         match shape {
             wasm32::BufferShape::Packed => {
-                let buffer =
-                    encoded::outgoing::Value::new(codec, expansion).buffer(quote! { #value })?;
+                let buffer = value_binding.buffer(codec, expansion, value)?;
                 Ok(Tokens {
                     value_type: quote! { u64 },
                     return_type: quote! { -> u64 },
@@ -203,6 +233,29 @@ impl Renderer {
             _ => Err(Error::UnsupportedExpansion(
                 "unknown wasm encoded return shape",
             )),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RustValueBinding {
+    Owned,
+    Borrowed,
+}
+
+impl RustValueBinding {
+    fn buffer<S: RenderSurface>(
+        self,
+        codec: &CodecNode,
+        expansion: &Expansion<'_, S>,
+        value: syn::Ident,
+    ) -> Result<TokenStream, Error> {
+        let value = quote! { #value };
+        match self {
+            Self::Owned => encoded::outgoing::Value::new(codec, expansion).buffer(value),
+            Self::Borrowed => {
+                encoded::outgoing::Value::new(codec, expansion).borrowed_buffer(value)
+            }
         }
     }
 }

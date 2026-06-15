@@ -5,7 +5,7 @@ use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
@@ -38,7 +38,7 @@ impl<'lowered> Input<'lowered> {
 
 impl<'lowered, S> Render<S, Input<'lowered>> for Renderer
 where
-    S: Target,
+    S: RenderSurface,
     for<'ty> wrapper::type_ref::Renderer: Render<S, &'ty TypeRef, Output = TokenStream>,
 {
     type Output = Tokens;
@@ -69,7 +69,7 @@ impl PrimitiveVec {
 
     fn tokens<S>(self) -> Result<Tokens, Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'ty> wrapper::type_ref::Renderer: Render<S, &'ty TypeRef, Output = TokenStream>,
     {
         let ident = &self.ident;

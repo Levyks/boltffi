@@ -173,7 +173,7 @@ mod tests {
     use syn::ItemFn;
 
     use super::Expansion;
-    use crate::experimental::target::Target;
+    use crate::experimental::surface::RenderSurface;
     use crate::experimental::{error::Error, wrapper};
 
     struct GeneratedCrate {
@@ -314,7 +314,7 @@ mod tests {
         syntax: ItemFn,
     ) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'expansion> wrapper::arguments::SyncRenderer: wrapper::Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -349,14 +349,22 @@ mod tests {
         expansion: &Expansion<'lowered, Native>,
         source: &'lowered TraitDef,
     ) -> Result<TokenStream, Error> {
-        wrapper::callback::Renderer::new(expansion.callback_trait(source)?, expansion).render()
+        let callback = wrapper::callback::Trait::new(expansion.callback_trait(source)?, expansion);
+        <wrapper::callback::Renderer as wrapper::Render<Native, _>>::render(
+            wrapper::callback::Renderer,
+            callback,
+        )
     }
 
     fn expand_wasm_callback<'lowered>(
         expansion: &Expansion<'lowered, Wasm32>,
         source: &'lowered TraitDef,
     ) -> Result<TokenStream, Error> {
-        wrapper::callback::Renderer::new(expansion.callback_trait(source)?, expansion).render()
+        let callback = wrapper::callback::Trait::new(expansion.callback_trait(source)?, expansion);
+        <wrapper::callback::Renderer as wrapper::Render<Wasm32, _>>::render(
+            wrapper::callback::Renderer,
+            callback,
+        )
     }
 
     fn expand_record<'lowered, S>(
@@ -364,7 +372,7 @@ mod tests {
         source: &'lowered RecordDef,
     ) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'expansion> wrapper::arguments::SyncRenderer: wrapper::Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -400,7 +408,7 @@ mod tests {
         source: &'lowered EnumDef,
     ) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'expansion> wrapper::arguments::SyncRenderer: wrapper::Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -437,7 +445,7 @@ mod tests {
         source: &'lowered ClassDef,
     ) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::handle::Carrier: wrapper::Render<
                 S,
                 wrapper::handle::CarrierInput<S::HandleCarrier>,
@@ -473,7 +481,7 @@ mod tests {
         owner: &'lowered ClassDef,
     ) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::handle::Carrier: wrapper::Render<
                 S,
                 wrapper::handle::CarrierInput<S::HandleCarrier>,
@@ -503,7 +511,7 @@ mod tests {
         source: &'lowered ConstantDef,
     ) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'expansion> wrapper::arguments::SyncRenderer: wrapper::Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -1213,6 +1221,26 @@ mod tests {
         source
     }
 
+    fn fallible_custom_sequence_closure_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::apply"),
+            CanonicalName::single("apply"),
+        );
+        function.parameters = vec![ParameterDef::value(
+            CanonicalName::single("callback"),
+            impl_closure(
+                Vec::<TypeExpr>::new(),
+                result_return(TypeExpr::vec(custom_timestamp()), TypeExpr::String),
+            ),
+        )];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
+        source.functions.push(function);
+        source
+    }
+
     fn fallible_i32_closure_param_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::apply"),
@@ -1875,6 +1903,22 @@ mod tests {
         source
     }
 
+    fn custom_map_key_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::map_years"),
+            CanonicalName::single("map_years"),
+        );
+        function.returns = ReturnDef::value(TypeExpr::hash_map(
+            custom_timestamp(),
+            TypeExpr::Primitive(Primitive::U32),
+        ));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
+        source.functions.push(function);
+        source
+    }
+
     fn floating_point_map_key_param_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::sum_values"),
@@ -2021,6 +2065,42 @@ mod tests {
         assert!(rendered.contains(") -> u64"));
         assert!(rendered.contains("let __boltffi_result : & [u8] = MAGIC"));
         assert!(rendered.contains("into_packed"));
+    }
+
+    #[test]
+    fn native_custom_slice_constant_expansion_borrows_elements_before_conversion() {
+        let mut source = constant_contract(
+            "demo::TIMES",
+            "TIMES",
+            TypeExpr::slice(custom_timestamp()),
+            ConstExpr::Raw("& []".to_owned()),
+        );
+        source.customs.push(timestamp_custom_def());
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_constant(&expansion, &source.constants[0]).expect("expanded constant");
+        let generated = quote! {
+            pub struct Timestamp(i64);
+
+            pub const TIMES: &[Timestamp] = &[];
+
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                value.0
+            }
+
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                Ok(Timestamp(value))
+            }
+
+            #tokens
+        };
+
+        assert_generated_crate_checks("native_custom_slice_constant", generated);
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("let __boltffi_result : & [Timestamp] = TIMES"));
+        assert!(rendered.contains("(timestamp_into_ffi) (value)"));
+        assert!(!rendered.contains("(timestamp_into_ffi) (& value)"));
     }
 
     #[test]
@@ -2316,6 +2396,26 @@ mod tests {
         let syntax = syn::parse_quote! {
             pub fn map_years(values: HashMap<Timestamp, u32>) -> u32 {
                 values.into_values().sum()
+            }
+        };
+
+        let error = expand_function(&expansion, &source.functions[0], syntax)
+            .expect_err("custom map keys must reject");
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedExpansion("custom encoded map key")
+        ));
+    }
+
+    #[test]
+    fn native_custom_map_key_return_expansion_rejects_identity_losing_conversion() {
+        let source = custom_map_key_return_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn map_years() -> HashMap<Timestamp, u32> {
+                HashMap::new()
             }
         };
 
@@ -6858,6 +6958,50 @@ mod tests {
         ));
         assert!(rendered.contains("(timestamp_try_from_ffi) (__boltffi_decoded)"));
         assert!(!rendered.contains("wire :: decode :: < Timestamp >"));
+    }
+
+    #[test]
+    fn native_closure_param_expansion_decodes_fallible_custom_sequence_return_through_repr() {
+        let source = fallible_custom_sequence_closure_param_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn apply(callback: impl Fn() -> Result<Vec<Timestamp>, String>) -> u32 {
+                callback()
+                    .map(|values| values.into_iter().map(|value| value.year()).sum())
+                    .unwrap_or_default()
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let generated = quote! {
+            pub struct Timestamp(i64);
+
+            impl Timestamp {
+                fn year(&self) -> u32 {
+                    self.0 as u32
+                }
+            }
+
+            pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                value.0
+            }
+
+            pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                Ok(Timestamp(value))
+            }
+
+            #tokens
+        };
+
+        assert_generated_crate_checks("native_custom_sequence_closure_param", generated);
+        let rendered = tokens.to_string();
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: wire :: decode :: < Vec < i64 > > (__boltffi_success_bytes)"
+        ));
+        assert!(rendered.contains("(timestamp_try_from_ffi) (value)"));
+        assert!(!rendered.contains("wire :: decode :: < Vec < Timestamp > >"));
     }
 
     #[test]

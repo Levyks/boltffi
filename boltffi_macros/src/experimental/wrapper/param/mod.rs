@@ -5,7 +5,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::{DirectRecordCrossing, Target},
+    surface::{DirectRecordCrossing, RenderSurface},
     wrapper::Render,
 };
 
@@ -18,7 +18,7 @@ mod scalar_option;
 
 pub struct Renderer;
 
-pub fn requires_failure_return<S: Target>(param: &ParamDecl<S, IntoRust>) -> bool {
+pub fn requires_failure_return<S: RenderSurface>(param: &ParamDecl<S, IntoRust>) -> bool {
     match param.payload() {
         IncomingParam::Value(ParamPlan::Direct { ty, .. }) => {
             matches!(S::DIRECT_RECORD_PARAMS, DirectRecordCrossing::Pointer)
@@ -33,14 +33,14 @@ pub fn requires_failure_return<S: Target>(param: &ParamDecl<S, IntoRust>) -> boo
     }
 }
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     param: &'lowered ParamDecl<S, IntoRust>,
     source: rust_api::Parameter<'lowered>,
     failure: TokenStream,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         param: &'lowered ParamDecl<S, IntoRust>,
         source: rust_api::Parameter<'lowered>,
@@ -93,7 +93,7 @@ impl Tokens {
 
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
-    S: Target,
+    S: RenderSurface,
     direct::Renderer: Render<S, direct::Input<'lowered>, Output = Tokens>,
     direct_vec::Renderer: Render<S, direct_vec::Input<'lowered>, Output = Tokens>,
     closure::Renderer: Render<S, closure::Input<'expansion, 'lowered, S>, Output = Tokens>,

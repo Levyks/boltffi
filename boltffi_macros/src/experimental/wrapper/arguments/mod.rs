@@ -5,21 +5,21 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render},
 };
 
 pub struct SyncRenderer;
 pub struct AsyncRenderer;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     callable: &'lowered ExportedCallable<S>,
     source: rust_api::Callable<'lowered>,
     failure: TokenStream,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         callable: &'lowered ExportedCallable<S>,
         source: rust_api::Callable<'lowered>,
@@ -123,7 +123,7 @@ impl Tokens {
 
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for SyncRenderer
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::param::Renderer:
         Render<S, wrapper::param::Input<'expansion, 'lowered, S>, Output = wrapper::param::Tokens>,
 {
@@ -144,7 +144,7 @@ where
 
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for AsyncRenderer
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::param::Renderer:
         Render<S, wrapper::param::Input<'expansion, 'lowered, S>, Output = wrapper::param::Tokens>,
 {

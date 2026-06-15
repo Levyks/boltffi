@@ -17,18 +17,18 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render},
 };
 
-/// A callback-trait protocol renderer for one target surface.
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+/// A callback trait declaration prepared for wrapper rendering.
+pub struct Trait<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, TraitDef, CallbackDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
-    /// Creates a renderer for one paired callback declaration.
+impl<'expansion, 'lowered, S: RenderSurface> Trait<'expansion, 'lowered, S> {
+    /// Creates a callback trait from a paired source and lowered declaration.
     pub fn new(
         pair: DeclarationPair<'lowered, TraitDef, CallbackDecl<S>>,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -37,17 +37,32 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered> Renderer<'expansion, 'lowered, Native> {
-    /// Renders the native callback protocol items.
-    pub fn render(self) -> Result<TokenStream, Error> {
-        NativeProtocol::new(self.pair.source(), self.pair.binding(), self.expansion).tokens()
+/// A callback trait wrapper renderer.
+pub struct Renderer;
+
+impl<'expansion, 'lowered> Render<Native, Trait<'expansion, 'lowered, Native>> for Renderer {
+    type Output = TokenStream;
+
+    fn render(self, wrapper: Trait<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
+        NativeProtocol::new(
+            wrapper.pair.source(),
+            wrapper.pair.binding(),
+            wrapper.expansion,
+        )
+        .tokens()
     }
 }
 
-impl<'expansion, 'lowered> Renderer<'expansion, 'lowered, Wasm32> {
-    /// Renders the wasm callback protocol items.
-    pub fn render(self) -> Result<TokenStream, Error> {
-        WasmProtocol::new(self.pair.source(), self.pair.binding(), self.expansion).tokens()
+impl<'expansion, 'lowered> Render<Wasm32, Trait<'expansion, 'lowered, Wasm32>> for Renderer {
+    type Output = TokenStream;
+
+    fn render(self, wrapper: Trait<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
+        WasmProtocol::new(
+            wrapper.pair.source(),
+            wrapper.pair.binding(),
+            wrapper.expansion,
+        )
+        .tokens()
     }
 }
 
@@ -699,17 +714,17 @@ impl<'expansion, 'lowered> WasmProtocol<'expansion, 'lowered> {
     }
 }
 
-struct MethodPair<'lowered, S: Target, TargetName> {
+struct MethodPair<'lowered, S: RenderSurface, TargetName> {
     source: &'lowered MethodDef,
     binding: &'lowered ImportedMethodDecl<S, TargetName>,
     local: Option<&'lowered CallbackLocalMethodDecl<S>>,
 }
 
-struct CallbackMethods<'lowered, S: Target, TargetName> {
+struct CallbackMethods<'lowered, S: RenderSurface, TargetName> {
     methods: Vec<MethodPair<'lowered, S, TargetName>>,
 }
 
-impl<'lowered, S: Target, TargetName> CallbackMethods<'lowered, S, TargetName> {
+impl<'lowered, S: RenderSurface, TargetName> CallbackMethods<'lowered, S, TargetName> {
     fn new(
         source: &'lowered [MethodDef],
         binding: &'lowered [ImportedMethodDecl<S, TargetName>],
@@ -795,7 +810,7 @@ impl<'lowered, S: Target, TargetName> CallbackMethods<'lowered, S, TargetName> {
     }
 }
 
-struct MethodAbi<'expansion, 'lowered, S: Target> {
+struct MethodAbi<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered MethodDef,
     callable: &'lowered ImportedCallable<S>,
     local_callable: Option<&'lowered ExportedCallable<S>>,
@@ -1161,7 +1176,7 @@ impl<'expansion, 'lowered> MethodAbi<'expansion, 'lowered, Wasm32> {
     }
 }
 
-struct MethodParameter<'expansion, 'lowered, S: Target> {
+struct MethodParameter<'expansion, 'lowered, S: RenderSurface> {
     binding: &'lowered ParamDecl<S, OutOfRust>,
     local: Option<&'lowered ParamDecl<S, IntoRust>>,
     source: &'lowered ParameterDef,
@@ -2923,7 +2938,7 @@ where
     }
 }
 
-trait CallbackMethodSurface: Target {
+trait CallbackMethodSurface: RenderSurface {
     fn handle_carrier(
         carrier: Self::HandleCarrier,
     ) -> Result<wrapper::handle::CarrierTokens, Error>;
@@ -3645,7 +3660,7 @@ impl CallbackEncodedError {
         }
     }
 
-    fn decode<S: Target>(
+    fn decode<S: RenderSurface>(
         &self,
         value: TokenStream,
         codec: &boltffi_binding::CodecNode,
@@ -3728,7 +3743,7 @@ impl CallbackEncodedReturn {
         }
     }
 
-    fn foreign_body<S: Target>(
+    fn foreign_body<S: RenderSurface>(
         &self,
         call: TokenStream,
         codec: &boltffi_binding::CodecNode,
@@ -3791,7 +3806,7 @@ impl CallbackEncodedReturn {
         }
     }
 
-    fn local_proxy_body<S: Target>(
+    fn local_proxy_body<S: RenderSurface>(
         &self,
         call: TokenStream,
         codec: &boltffi_binding::CodecNode,
@@ -3839,7 +3854,7 @@ impl CallbackEncodedReturn {
         }
     }
 
-    fn local_body<S: Target>(
+    fn local_body<S: RenderSurface>(
         &self,
         call: TokenStream,
         codec: &boltffi_binding::CodecNode,
@@ -3910,7 +3925,7 @@ struct CallbackNames {
 }
 
 impl CallbackNames {
-    fn new<S: Target>(
+    fn new<S: RenderSurface>(
         source: &TraitDef,
         local_protocol: Option<&CallbackLocalProtocol<S>>,
     ) -> Result<Self, Error> {
@@ -3954,7 +3969,7 @@ struct LocalCallbackNames {
 }
 
 impl LocalCallbackNames {
-    fn new<S: Target>(
+    fn new<S: RenderSurface>(
         protocol: &CallbackLocalProtocol<S>,
         trait_ident: &Ident,
         uppercase: &str,
@@ -3984,7 +3999,7 @@ fn local_function_name(function: &CallbackLocalFunction) -> Result<&str, Error> 
         ))
 }
 
-fn packed_encoded_value<S: Target>(
+fn packed_encoded_value<S: RenderSurface>(
     packed: TokenStream,
     codec: &boltffi_binding::CodecNode,
     rust_type: Type,

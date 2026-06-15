@@ -7,7 +7,7 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render},
 };
 
@@ -17,14 +17,14 @@ use super::export;
 ///
 /// The renderer receives a paired source and binding declaration, then renders only the
 /// generated extern wrapper. The original Rust function item remains owned by the caller.
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, FunctionDef, FunctionDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
 impl<'expansion, 'lowered, S> Renderer<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,

@@ -11,7 +11,7 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::{DirectRecordCrossing, Target},
+    surface::{DirectRecordCrossing, RenderSurface},
     wrapper::{self, Render, associated_fn, encoded, export, names},
 };
 
@@ -20,24 +20,24 @@ use crate::experimental::{
 /// The renderer emits the runtime trait implementations that make a scanned Rust
 /// record usable by generated wrappers. The record shape comes from the lowered
 /// `RecordDecl`, so the generated code cannot reclassify the source struct.
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, RecordDef, RecordDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct Direct<'expansion, 'lowered, S: Target> {
+struct Direct<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered RecordDef,
     binding: &'lowered DirectRecordDecl<S>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct Encoded<'expansion, 'lowered, S: Target> {
+struct Encoded<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered RecordDef,
     binding: &'lowered EncodedRecordDecl<S>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct EncodedField<'expansion, 'lowered, S: Target> {
+struct EncodedField<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered FieldDef,
     binding: &'lowered EncodedFieldDecl,
     expansion: &'expansion Expansion<'lowered, S>,
@@ -62,7 +62,7 @@ enum ReceiverKind<'lowered> {
     Encoded { codec: &'lowered WritePlan },
 }
 
-impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     /// Creates a renderer for one paired record declaration.
     pub fn new(
         pair: DeclarationPair<'lowered, RecordDef, RecordDecl<S>>,
@@ -74,7 +74,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
     /// Renders the runtime trait implementations for the record.
     pub fn render(self) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::arguments::SyncRenderer: Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -117,7 +117,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
 impl<'expansion, 'lowered, S> Direct<'expansion, 'lowered, S>
 where
     'lowered: 'expansion,
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -230,7 +230,7 @@ where
 
 impl<'expansion, 'lowered, S> Encoded<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -353,7 +353,7 @@ where
     }
 }
 
-impl<'expansion, 'lowered, S: Target> EncodedField<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> EncodedField<'expansion, 'lowered, S> {
     fn tokens(self) -> Result<EncodedFieldTokens, Error> {
         self.validate_key()?;
         let field = field_ident(self.source)?;
@@ -498,7 +498,7 @@ impl<'expansion, 'lowered, S> associated_fn::Owner<'expansion, 'lowered, S>
     for RecordOwner<'lowered>
 where
     'lowered: 'expansion,
-    S: Target,
+    S: RenderSurface,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
     wrapper::param::encoded::Renderer: Render<
@@ -543,7 +543,7 @@ impl<'receiver> ReceiverKind<'receiver> {
         expansion: &'expansion Expansion<'receiver, S>,
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::param::direct::Record:
             Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
         wrapper::param::encoded::Renderer: Render<

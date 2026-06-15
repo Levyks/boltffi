@@ -5,10 +5,10 @@ use quote::quote;
 use syn::{Ident, Type};
 
 use crate::experimental::{
-    error::Error, expansion::Expansion, rust_api, target::Target, wrapper::names,
+    error::Error, expansion::Expansion, rust_api, surface::RenderSurface, wrapper::names,
 };
 
-pub struct Value<'expansion, 'lowered, S: Target> {
+pub struct Value<'expansion, 'lowered, S: RenderSurface> {
     codec: &'lowered CodecNode,
     expansion: &'expansion Expansion<'lowered, S>,
 }
@@ -28,7 +28,7 @@ pub struct Bytes<'rust> {
     failure: TokenStream,
 }
 
-impl<'expansion, 'lowered, S: Target> Value<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Value<'expansion, 'lowered, S> {
     pub const fn new(
         codec: &'lowered CodecNode,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -126,7 +126,7 @@ impl<'decode> Input<'decode> {
         }
     }
 
-    fn reference<'lowered, S: Target>(
+    fn reference<'lowered, S: RenderSurface>(
         &self,
         codec: &CodecNode,
         borrow: rust_api::DecodeBorrow,
@@ -148,7 +148,7 @@ impl<'decode> Input<'decode> {
         })
     }
 
-    fn owned<'lowered, S: Target>(
+    fn owned<'lowered, S: RenderSurface>(
         &self,
         codec: &CodecNode,
         rust_type: &Type,

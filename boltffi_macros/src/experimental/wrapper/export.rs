@@ -6,11 +6,11 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render},
 };
 
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     symbol: &'lowered NativeSymbol,
     callable: &'lowered ExportedCallable<S>,
     source: rust_api::Callable<'lowered>,
@@ -59,7 +59,7 @@ pub enum ClassReceiverBinding {
 
 impl<'expansion, 'lowered, S> Renderer<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,

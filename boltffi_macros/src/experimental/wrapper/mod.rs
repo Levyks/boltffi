@@ -1,5 +1,5 @@
 use super::error::Error;
-use super::target::Target;
+use super::surface::RenderSurface;
 
 mod names;
 
@@ -24,7 +24,7 @@ mod export;
 
 /// A render rule for one typed expansion input.
 ///
-/// The `(S, Input)` pair selects the implementation. Generic `S: Target`
+/// The `(S, Input)` pair selects the implementation. Generic `S: RenderSurface`
 /// implementations represent ABI behavior shared by all targets; concrete
 /// `Native` or `Wasm32` implementations represent surface-specific ABI behavior.
 ///
@@ -49,7 +49,7 @@ mod export;
 ///     }
 /// }
 /// ```
-pub trait Render<S: Target, Input> {
+pub trait Render<S: RenderSurface, Input> {
     /// The token fragment or typed intermediate value produced by the rule.
     type Output;
 

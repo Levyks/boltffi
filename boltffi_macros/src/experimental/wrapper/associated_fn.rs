@@ -9,11 +9,11 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, export},
 };
 
-pub trait Owner<'expansion, 'lowered, S: Target> {
+pub trait Owner<'expansion, 'lowered, S: RenderSurface> {
     fn declarations(&self) -> rust_api::MethodDeclarations<'lowered>;
 
     fn source_callable(&self, method: &'lowered MethodDef) -> rust_api::Callable<'lowered>;
@@ -24,7 +24,7 @@ pub trait Owner<'expansion, 'lowered, S: Target> {
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>;
 }
 
-pub struct ReceiverExport<'expansion, 'lowered, S: Target> {
+pub struct ReceiverExport<'expansion, 'lowered, S: RenderSurface> {
     callable: &'lowered ExportedCallable<S>,
     method: Ident,
     failure: ReceiverFailure<'expansion, 'lowered, S>,
@@ -32,20 +32,20 @@ pub struct ReceiverExport<'expansion, 'lowered, S: Target> {
 }
 
 #[derive(Clone, Copy)]
-pub struct ReceiverFailure<'expansion, 'lowered, S: Target> {
+pub struct ReceiverFailure<'expansion, 'lowered, S: RenderSurface> {
     callable: &'lowered ExportedCallable<S>,
     source: rust_api::Callable<'lowered>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct Renderer<'expansion, 'lowered, S: Target, O> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface, O> {
     owner: O,
     initializers: &'lowered [InitializerDecl<S>],
     methods: &'lowered [ExportedMethodDecl<S, NativeSymbol>],
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct Export<'lowered, S: Target> {
+struct Export<'lowered, S: RenderSurface> {
     kind: ExportKind,
     symbol: &'lowered NativeSymbol,
     callable: &'lowered ExportedCallable<S>,
@@ -58,7 +58,7 @@ enum ExportKind {
     Method,
 }
 
-impl<'expansion, 'lowered, S: Target, O> Renderer<'expansion, 'lowered, S, O> {
+impl<'expansion, 'lowered, S: RenderSurface, O> Renderer<'expansion, 'lowered, S, O> {
     pub fn new(
         owner: O,
         initializers: &'lowered [InitializerDecl<S>],
@@ -114,7 +114,7 @@ impl<'expansion, 'lowered, S: Target, O> Renderer<'expansion, 'lowered, S, O> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> ReceiverExport<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> ReceiverExport<'expansion, 'lowered, S> {
     pub fn new(
         callable: &'lowered ExportedCallable<S>,
         method: Ident,
@@ -146,7 +146,7 @@ impl<'expansion, 'lowered, S: Target> ReceiverExport<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> ReceiverFailure<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> ReceiverFailure<'expansion, 'lowered, S> {
     pub fn new(
         callable: &'lowered ExportedCallable<S>,
         source: rust_api::Callable<'lowered>,
@@ -187,7 +187,7 @@ impl<'expansion, 'lowered, S: Target> ReceiverFailure<'expansion, 'lowered, S> {
     }
 }
 
-impl<'lowered, S: Target> Export<'lowered, S> {
+impl<'lowered, S: RenderSurface> Export<'lowered, S> {
     fn initializer(
         initializer: &'lowered InitializerDecl<S>,
         source_method: &'lowered MethodDef,

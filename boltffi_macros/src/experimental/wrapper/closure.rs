@@ -11,7 +11,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names, returns},
 };
 
@@ -51,14 +51,14 @@ impl Signature {
     }
 }
 
-pub struct Invoke<'expansion, 'lowered, S: Target> {
+pub struct Invoke<'expansion, 'lowered, S: RenderSurface> {
     callable: &'lowered ExportedCallable<S>,
     source: &'lowered FnSig,
     signature: &'lowered Signature,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Invoke<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Invoke<'expansion, 'lowered, S> {
     pub fn new(
         callable: &'lowered ExportedCallable<S>,
         source: &'lowered FnSig,
@@ -144,7 +144,7 @@ impl<'expansion, 'lowered> Invoke<'expansion, 'lowered, Wasm32> {
 
 struct ParameterRenderer;
 
-struct Parameter<'expansion, 'lowered, S: Target> {
+struct Parameter<'expansion, 'lowered, S: RenderSurface> {
     index: usize,
     payload: &'lowered IncomingParam<S>,
     source: &'lowered TypeExpr,
@@ -153,7 +153,7 @@ struct Parameter<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Parameter<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Parameter<'expansion, 'lowered, S> {
     fn direct_tokens(&self) -> Result<Option<ParameterTokens>, Error>
     where
         for<'direct> wrapper::param::direct::Renderer:
@@ -383,7 +383,7 @@ impl From<Vec<ParameterTokens>> for InvokeParameters {
 
 struct ReturnRenderer;
 
-struct Return<'expansion, 'lowered, S: Target> {
+struct Return<'expansion, 'lowered, S: RenderSurface> {
     plan: &'lowered ReturnPlan<S, OutOfRust>,
     error: &'lowered ErrorDecl<S, OutOfRust>,
     source: &'lowered ReturnDef,
@@ -391,7 +391,7 @@ struct Return<'expansion, 'lowered, S: Target> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Return<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Return<'expansion, 'lowered, S> {
     fn new(
         plan: &'lowered ReturnPlan<S, OutOfRust>,
         error: &'lowered ErrorDecl<S, OutOfRust>,
@@ -408,7 +408,7 @@ impl<'expansion, 'lowered, S: Target> Return<'expansion, 'lowered, S> {
         }
     }
 
-    fn direct_tokens<T: Target>(&self) -> Result<Option<InvokeReturn>, Error>
+    fn direct_tokens<T: RenderSurface>(&self) -> Result<Option<InvokeReturn>, Error>
     where
         for<'ty> wrapper::type_ref::Renderer: Render<T, &'ty TypeRef, Output = TokenStream>,
     {

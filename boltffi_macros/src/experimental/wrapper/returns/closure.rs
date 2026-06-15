@@ -9,7 +9,7 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
@@ -18,14 +18,14 @@ use super::{RustInvocation, Tokens};
 pub struct Renderer;
 pub struct Write;
 
-pub struct Input<'expansion, 'lowered, S: Target> {
+pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     closure: &'lowered ClosureReturn<S, OutOfRust>,
     source: rust_api::Closure<'lowered>,
     invocation: RustInvocation,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct WriteInput<'expansion, 'lowered, S: Target> {
+pub struct WriteInput<'expansion, 'lowered, S: RenderSurface> {
     closure: &'lowered ClosureReturn<S, OutOfRust>,
     source: rust_api::Closure<'lowered>,
     value: Ident,
@@ -47,7 +47,7 @@ pub struct WriteTokens {
     body: TokenStream,
 }
 
-impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         closure: &'lowered ClosureReturn<S, OutOfRust>,
         source: rust_api::Closure<'lowered>,
@@ -63,7 +63,7 @@ impl<'expansion, 'lowered, S: Target> Input<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> WriteInput<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> WriteInput<'expansion, 'lowered, S> {
     pub fn returned(
         closure: &'lowered ClosureReturn<S, OutOfRust>,
         source: rust_api::Closure<'lowered>,
@@ -136,7 +136,7 @@ impl WriteTokens {
 
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
-    S: Target,
+    S: RenderSurface,
     Write: Render<S, WriteInput<'expansion, 'lowered, S>, Output = WriteTokens>,
 {
     type Output = Tokens;
@@ -432,7 +432,7 @@ struct ReturnedClosure {
 }
 
 impl ReturnedClosure {
-    fn new<S: Target>(
+    fn new<S: RenderSurface>(
         source: rust_api::Closure<'_>,
         closure: &ClosureReturn<S, OutOfRust>,
     ) -> Result<Self, Error> {

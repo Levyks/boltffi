@@ -7,18 +7,18 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, export},
 };
 
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, ConstantDef, ConstantDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
 impl<'expansion, 'lowered, S> Renderer<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,

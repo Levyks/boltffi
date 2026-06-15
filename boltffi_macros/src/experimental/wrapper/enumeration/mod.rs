@@ -11,30 +11,30 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
 mod exports;
 
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, EnumDef, EnumDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct CStyle<'expansion, 'lowered, S: Target> {
+struct CStyle<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered EnumDef,
     binding: &'lowered CStyleEnumDecl<S>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct Data<'expansion, 'lowered, S: Target> {
+struct Data<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered EnumDef,
     binding: &'lowered DataEnumDecl<S>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     pub fn new(
         pair: DeclarationPair<'lowered, EnumDef, EnumDecl<S>>,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -44,7 +44,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
 
     pub fn render(self) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::arguments::SyncRenderer: Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -86,7 +86,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
 
 impl<'expansion, 'lowered, S> CStyle<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -228,7 +228,7 @@ where
 
 impl<'expansion, 'lowered, S> Data<'expansion, 'lowered, S>
 where
-    S: Target,
+    S: RenderSurface,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -341,13 +341,13 @@ where
     }
 }
 
-struct DataVariant<'expansion, 'lowered, S: Target> {
+struct DataVariant<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered VariantDef,
     binding: &'lowered DataVariantDecl,
     fields: Vec<DataField<'expansion, 'lowered, S>>,
 }
 
-struct DataField<'expansion, 'lowered, S: Target> {
+struct DataField<'expansion, 'lowered, S: RenderSurface> {
     source: FieldSource<'lowered>,
     binding: &'lowered EncodedFieldDecl,
     expansion: &'expansion Expansion<'lowered, S>,
@@ -369,7 +369,7 @@ enum FieldSource<'lowered> {
     Struct(&'lowered FieldDef),
 }
 
-impl<'expansion, 'lowered, S: Target> DataVariant<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> DataVariant<'expansion, 'lowered, S> {
     fn wire_size_arm(&self, enumeration: &Ident) -> Result<TokenStream, Error> {
         let variant = source_variant_ident(self.source)?;
         let fields = self
@@ -480,7 +480,7 @@ impl<'expansion, 'lowered, S: Target> DataVariant<'expansion, 'lowered, S> {
     }
 }
 
-impl<'expansion, 'lowered, S: Target> DataField<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> DataField<'expansion, 'lowered, S> {
     fn tokens(&self) -> Result<DataFieldTokens, Error> {
         self.source.validate_key(self.binding.key())?;
         let binding = self.source.binding()?;
@@ -682,7 +682,7 @@ impl FieldNames<'_> {
     }
 }
 
-fn data_variants<'expansion, 'lowered, S: Target>(
+fn data_variants<'expansion, 'lowered, S: RenderSurface>(
     source: &'lowered EnumDef,
     binding: &'lowered DataEnumDecl<S>,
     expansion: &'expansion Expansion<'lowered, S>,
@@ -712,7 +712,7 @@ fn data_variants<'expansion, 'lowered, S: Target>(
         .collect()
 }
 
-fn data_fields<'expansion, 'lowered, S: Target>(
+fn data_fields<'expansion, 'lowered, S: RenderSurface>(
     source: &'lowered VariantDef,
     binding: &'lowered DataVariantDecl,
     expansion: &'expansion Expansion<'lowered, S>,

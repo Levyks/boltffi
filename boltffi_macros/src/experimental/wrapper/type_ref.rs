@@ -2,11 +2,11 @@ use boltffi_binding::{Primitive, TypeRef};
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::experimental::{error::Error, target::Target, wrapper::Render};
+use crate::experimental::{error::Error, surface::RenderSurface, wrapper::Render};
 
 pub struct Renderer;
 
-impl<S: Target> Render<S, &TypeRef> for Renderer {
+impl<S: RenderSurface> Render<S, &TypeRef> for Renderer {
     type Output = TokenStream;
 
     fn render(self, ty: &TypeRef) -> Result<Self::Output, Error> {

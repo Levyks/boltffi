@@ -10,11 +10,11 @@ use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, associated_fn, export, names},
 };
 
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     source: &'lowered EnumDef,
     enumeration: Ident,
     receiver: Receiver<'lowered>,
@@ -35,7 +35,7 @@ pub enum Receiver<'lowered> {
     Encoded { codec: &'lowered WritePlan },
 }
 
-impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     pub fn new(
         source: &'lowered EnumDef,
         enumeration: Ident,
@@ -56,7 +56,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
 
     pub fn render(self) -> Result<TokenStream, Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::arguments::SyncRenderer: Render<
                 S,
                 wrapper::arguments::Input<'expansion, 'lowered, S>,
@@ -95,7 +95,7 @@ impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
 impl<'expansion, 'lowered, S> associated_fn::Owner<'expansion, 'lowered, S> for EnumOwner<'lowered>
 where
     'lowered: 'expansion,
-    S: Target,
+    S: RenderSurface,
     for<'ty> wrapper::param::direct::Renderer:
         Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
     wrapper::param::encoded::Renderer: Render<
@@ -147,7 +147,7 @@ impl<'lowered> Receiver<'lowered> {
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'ty> wrapper::param::direct::Renderer:
             Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
         wrapper::param::encoded::Renderer: Render<
@@ -172,7 +172,7 @@ impl<'lowered> Receiver<'lowered> {
         method: Ident,
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
-        S: Target,
+        S: RenderSurface,
         for<'ty> wrapper::param::direct::Renderer:
             Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
     {
@@ -213,7 +213,7 @@ impl<'lowered> Receiver<'lowered> {
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
-        S: Target,
+        S: RenderSurface,
         wrapper::param::encoded::Renderer: Render<
                 S,
                 wrapper::param::encoded::Input<'expansion, 'lowered, S>,

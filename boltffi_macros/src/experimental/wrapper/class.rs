@@ -11,11 +11,11 @@ use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
-    target::Target,
+    surface::RenderSurface,
     wrapper::{self, Render, associated_fn, export, names},
 };
 
-pub struct Renderer<'expansion, 'lowered, S: Target> {
+pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, ClassDef, ClassDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
@@ -37,7 +37,7 @@ struct ClassHandleOperations {
     retained_mutable: bool,
 }
 
-impl<'expansion, 'lowered, S: Target> Renderer<'expansion, 'lowered, S> {
+impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     pub fn new(
         pair: DeclarationPair<'lowered, ClassDef, ClassDecl<S>>,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -331,7 +331,7 @@ impl<'expansion, 'lowered, S> associated_fn::Owner<'expansion, 'lowered, S>
     for ClassOwner<'lowered, S::HandleCarrier>
 where
     'lowered: 'expansion,
-    S: Target,
+    S: RenderSurface,
     wrapper::handle::Carrier: Render<
             S,
             wrapper::handle::CarrierInput<S::HandleCarrier>,
@@ -371,7 +371,7 @@ where
 }
 
 impl ClassHandleOperations {
-    fn new<S: Target>(class: &ClassDecl<S>, expansion: &Expansion<'_, S>) -> Self {
+    fn new<S: RenderSurface>(class: &ClassDecl<S>, expansion: &Expansion<'_, S>) -> Self {
         expansion
             .bindings()
             .decls()
@@ -396,7 +396,11 @@ impl ClassHandleOperations {
         self.retained_shared || self.retained_mutable
     }
 
-    fn with_callable<S: Target>(self, class_id: ClassId, callable: &ExportedCallable<S>) -> Self {
+    fn with_callable<S: RenderSurface>(
+        self,
+        class_id: ClassId,
+        callable: &ExportedCallable<S>,
+    ) -> Self {
         callable.params().iter().fold(
             self.with_return(class_id, callable.returns().plan()),
             |operations, param| match param.payload() {
@@ -406,13 +410,13 @@ impl ClassHandleOperations {
         )
     }
 
-    fn with_class_receivers<S: Target>(self, class: &ClassDecl<S>) -> Self {
+    fn with_class_receivers<S: RenderSurface>(self, class: &ClassDecl<S>) -> Self {
         class.methods().iter().fold(self, |operations, method| {
             operations.with_receiver(method.callable())
         })
     }
 
-    fn with_class_streams<S: Target>(
+    fn with_class_streams<S: RenderSurface>(
         mut self,
         class: &ClassDecl<S>,
         expansion: &Expansion<'_, S>,
@@ -425,7 +429,7 @@ impl ClassHandleOperations {
         self
     }
 
-    fn with_receiver<S: Target>(mut self, callable: &ExportedCallable<S>) -> Self {
+    fn with_receiver<S: RenderSurface>(mut self, callable: &ExportedCallable<S>) -> Self {
         match (callable.execution(), callable.receiver()) {
             (ExecutionDecl::Synchronous(_), Some(Receive::ByRef)) => self.shared = true,
             (ExecutionDecl::Synchronous(_), Some(Receive::ByMutRef)) => self.mutable = true,
@@ -438,7 +442,11 @@ impl ClassHandleOperations {
         self
     }
 
-    fn with_param<S: Target>(mut self, class_id: ClassId, plan: &ParamPlan<S, IntoRust>) -> Self {
+    fn with_param<S: RenderSurface>(
+        mut self,
+        class_id: ClassId,
+        plan: &ParamPlan<S, IntoRust>,
+    ) -> Self {
         let ParamPlan::Handle {
             target, receive, ..
         } = plan
@@ -457,7 +465,7 @@ impl ClassHandleOperations {
         self
     }
 
-    fn with_return<S: Target>(
+    fn with_return<S: RenderSurface>(
         mut self,
         class_id: ClassId,
         plan: &ReturnPlan<S, OutOfRust>,
@@ -484,7 +492,7 @@ impl<'lowered, C: Copy> ClassOwner<'lowered, C> {
         failure: associated_fn::ReceiverFailure<'expansion, 'lowered, S>,
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
-        S: Target<HandleCarrier = C>,
+        S: RenderSurface<HandleCarrier = C>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
         wrapper::returns::Failure: Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
@@ -521,7 +529,7 @@ impl<'lowered, C: Copy> ClassOwner<'lowered, C> {
         &self,
         receiver: &Ident,
         receiver_handle: &Ident,
-        execution: &ExecutionDecl<impl Target<HandleCarrier = C>>,
+        execution: &ExecutionDecl<impl RenderSurface<HandleCarrier = C>>,
         zero: &TokenStream,
         failure: TokenStream,
     ) -> TokenStream {
@@ -561,7 +569,7 @@ impl<'lowered, C: Copy> ClassOwner<'lowered, C> {
     fn binding(
         &self,
         receiver_handle: &Ident,
-        execution: &ExecutionDecl<impl Target<HandleCarrier = C>>,
+        execution: &ExecutionDecl<impl RenderSurface<HandleCarrier = C>>,
     ) -> export::ClassReceiverBinding {
         match execution {
             ExecutionDecl::Synchronous(_) => {
