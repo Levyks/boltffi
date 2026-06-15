@@ -1,11 +1,12 @@
 use boltffi_ast::{ClassDef, SourceContract, StreamDef};
-use boltffi_binding::{Native, Wasm32};
+use boltffi_binding::{Native, SerializedBindings, Wasm32};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 use crate::experimental::{
     error::Error,
     expansion::Expansion,
+    metadata,
     surface::RenderSurface,
     wrapper::{self, Render},
 };
@@ -35,7 +36,13 @@ impl<'lowered> Expander<'lowered> {
         &self,
         expansion: &'expansion Expansion<'lowered, Native>,
     ) -> Result<TokenStream, Error> {
-        SurfaceExpander::new(self.source, expansion).expand()
+        let wrappers = SurfaceExpander::new(self.source, expansion).expand()?;
+        let metadata = metadata::render(SerializedBindings::native(expansion.bindings().clone()))?;
+
+        Ok(quote! {
+            #wrappers
+            #metadata
+        })
     }
 
     /// Expands wrappers for the wasm32 surface.
@@ -43,7 +50,13 @@ impl<'lowered> Expander<'lowered> {
         &self,
         expansion: &'expansion Expansion<'lowered, Wasm32>,
     ) -> Result<TokenStream, Error> {
-        SurfaceExpander::new(self.source, expansion).expand()
+        let wrappers = SurfaceExpander::new(self.source, expansion).expand()?;
+        let metadata = metadata::render(SerializedBindings::wasm32(expansion.bindings().clone()))?;
+
+        Ok(quote! {
+            #wrappers
+            #metadata
+        })
     }
 
     /// Expands wrappers for native and wasm32 in one token stream.
@@ -52,13 +65,36 @@ impl<'lowered> Expander<'lowered> {
         native: &'native Expansion<'lowered, Native>,
         wasm32: &'wasm32 Expansion<'lowered, Wasm32>,
     ) -> Result<TokenStream, Error> {
-        let native = self.native(native)?;
-        let wasm32 = self.wasm32(wasm32)?;
+        let native = Self::surface_module(
+            format_ident!("__boltffi_native"),
+            quote! { #[cfg(not(target_arch = "wasm32"))] },
+            self.native(native)?,
+        );
+        let wasm32 = Self::surface_module(
+            format_ident!("__boltffi_wasm32"),
+            quote! { #[cfg(target_arch = "wasm32")] },
+            self.wasm32(wasm32)?,
+        );
 
         Ok(quote! {
             #native
             #wasm32
         })
+    }
+
+    fn surface_module(
+        module: proc_macro2::Ident,
+        cfg: TokenStream,
+        tokens: TokenStream,
+    ) -> TokenStream {
+        quote! {
+            #cfg
+            mod #module {
+                use super::*;
+
+                #tokens
+            }
+        }
     }
 }
 
@@ -253,7 +289,9 @@ mod tests {
         Primitive, Receiver, RecordDef, ReprAttr, ReprItem, ReturnDef, SourceContract, SourceName,
         StreamDef, StreamId, TraitDef, TraitId, TypeExpr, VariantDef,
     };
-    use boltffi_binding::{Native, Wasm32, lower_with_declarations};
+    use boltffi_binding::{
+        BindingMetadataSection, Native, SerializedBindings, Wasm32, lower_with_declarations,
+    };
     use proc_macro2::TokenStream;
     use quote::quote;
 
@@ -303,7 +341,7 @@ mod tests {
 
     #[test]
     fn expands_native_and_wasm_surfaces_together() {
-        let source = ownerless_stream_contract();
+        let source = source_contract();
         let native_lowered = lower_with_declarations::<Native>(&source).expect("native lowers");
         let wasm32_lowered = lower_with_declarations::<Wasm32>(&source).expect("wasm lowers");
         let native = Expansion::new(&native_lowered);
@@ -316,7 +354,81 @@ mod tests {
 
         assert!(rendered.contains("# [cfg (not (target_arch = \"wasm32\"))]"));
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert_generated_crate_checks("expander_all_surfaces", ownerless_stream_crate(tokens));
+        assert!(rendered.contains("mod __boltffi_native"));
+        assert!(rendered.contains("mod __boltffi_wasm32"));
+        assert_generated_crate_checks("expander_all_surfaces", full_contract_crate(tokens));
+    }
+
+    #[test]
+    fn native_expander_emits_binding_metadata_static() {
+        let source = ownerless_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("native lowers");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expander::Expander::new(&source)
+            .native(&expansion)
+            .expect("native expands");
+        let rendered = tokens.to_string();
+
+        assert!(rendered.contains("boltffi_metadata"));
+        assert!(rendered.contains("not (target_arch = \"wasm32\")"));
+        assert!(rendered.contains(&format!(
+            "unsafe (link_section = {:?})",
+            BindingMetadataSection::MachO.link_section()
+        )));
+        assert!(rendered.contains(&format!(
+            "unsafe (link_section = {:?})",
+            BindingMetadataSection::Object.link_section()
+        )));
+        assert!(rendered.contains("# [used]"));
+        assert!(rendered.contains("const _ : ()"));
+        assert!(rendered.contains("static __BOLTFFI_BINDINGS"));
+    }
+
+    #[test]
+    fn wasm32_expander_emits_binding_metadata_static() {
+        let source = ownerless_stream_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("wasm lowers");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expander::Expander::new(&source)
+            .wasm32(&expansion)
+            .expect("wasm expands");
+        let rendered = tokens.to_string();
+
+        assert!(rendered.contains("boltffi_metadata"));
+        assert!(rendered.contains("target_arch = \"wasm32\""));
+        assert!(rendered.contains(&format!(
+            "unsafe (link_section = {:?})",
+            BindingMetadataSection::MachO.link_section()
+        )));
+        assert!(rendered.contains(&format!(
+            "unsafe (link_section = {:?})",
+            BindingMetadataSection::Object.link_section()
+        )));
+        assert!(rendered.contains("# [used]"));
+        assert!(rendered.contains("const _ : ()"));
+        assert!(rendered.contains("static __BOLTFFI_BINDINGS"));
+    }
+
+    #[test]
+    fn repeated_metadata_emission_checks_with_metadata_cfg_enabled() {
+        let source = ownerless_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("native lowers");
+        let metadata =
+            super::metadata::render(SerializedBindings::native(lowered.bindings().clone()))
+                .expect("metadata renders");
+
+        assert_generated_crate_checks_with_rustflags(
+            "expander_repeated_metadata",
+            quote! {
+                #![deny(warnings)]
+
+                #metadata
+                #metadata
+            },
+            "--cfg boltffi_metadata",
+        );
     }
 
     fn source_contract() -> SourceContract {
@@ -487,6 +599,16 @@ mod tests {
         generated_crate.check();
     }
 
+    fn assert_generated_crate_checks_with_rustflags(
+        name: &str,
+        code: TokenStream,
+        rustflags: &str,
+    ) {
+        let generated_crate = GeneratedCrate::create(name);
+        generated_crate.write(code);
+        generated_crate.check_with_rustflags(rustflags);
+    }
+
     struct GeneratedCrate {
         root: PathBuf,
     }
@@ -526,6 +648,32 @@ mod tests {
                 .arg("--quiet")
                 .arg("--manifest-path")
                 .arg(self.root.join("Cargo.toml"))
+                .env(
+                    "CARGO_TARGET_DIR",
+                    workspace_root()
+                        .join("target")
+                        .join("experimental-expander-checks-target"),
+                )
+                .output()
+                .expect("run cargo check for generated crate");
+            assert!(
+                output.status.success(),
+                "generated crate failed to check\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        fn check_with_rustflags(&self, rustflags: &str) {
+            if cfg!(miri) {
+                return;
+            }
+            let output = Command::new(cargo())
+                .arg("check")
+                .arg("--quiet")
+                .arg("--manifest-path")
+                .arg(self.root.join("Cargo.toml"))
+                .env("RUSTFLAGS", rustflags)
                 .env(
                     "CARGO_TARGET_DIR",
                     workspace_root()

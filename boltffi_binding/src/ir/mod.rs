@@ -95,7 +95,11 @@ pub use callable::{
     ParamDirection, ParamPlan, Receive, ReturnDecl, ReturnPlan,
 };
 pub use codec::{CodecNode, CodecPlan, ReadPlan, WritePlan};
-pub use contract::{Bindings, ContractVersion, PackageInfo, SerializedBindings};
+pub use contract::{
+    BindingMetadataEnvelope, BindingMetadataError, BindingMetadataFormat, BindingMetadataHash,
+    BindingMetadataSection, BindingMetadataSectionBytes, BindingMetadataSurface, Bindings,
+    ContractVersion, PackageInfo, SerializedBindings,
+};
 pub use custom::{
     CustomConverterExpression, CustomConverterPath, CustomConverterPathRoot, CustomTypeConverter,
     CustomTypeConverters,
