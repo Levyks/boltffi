@@ -378,6 +378,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use boltffi_ast::{PackageInfo, SourceContract};
@@ -690,12 +691,14 @@ mod tests {
     }
 
     fn temp_root(prefix: &str) -> PathBuf {
+        static TEMP_ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
         std::env::temp_dir().join(format!(
-            "{prefix}-{}",
+            "{prefix}-{}-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("system time after unix epoch")
-                .as_nanos()
+                .as_nanos(),
+            TEMP_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))
     }
 

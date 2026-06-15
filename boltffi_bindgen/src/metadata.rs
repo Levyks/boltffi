@@ -1,6 +1,7 @@
 //! Builds a Rust crate and reads embedded BoltFFI binding metadata.
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -40,7 +41,8 @@ impl BindingMetadataBuild {
     /// Runs Cargo and returns the validated metadata envelopes.
     pub fn read(&self) -> Result<Vec<BindingMetadataEnvelope>, BindingMetadataBuildError> {
         let output = CargoBuild::new(self).output()?;
-        let artifacts = output.artifacts(&self.manifest_path)?;
+        let manifest = CargoManifest::new(&self.manifest_path)?;
+        let artifacts = output.artifacts(&manifest)?;
         BindingMetadataReader::new(artifacts.into_paths())
             .read_required()
             .map_err(BindingMetadataBuildError::Metadata)
@@ -71,6 +73,14 @@ pub enum BindingMetadataBuildError {
         line: String,
         /// JSON parse error.
         source: serde_json::Error,
+    },
+    /// The requested manifest path could not be resolved.
+    #[error("resolve cargo manifest path `{path}`: {source}")]
+    ManifestPath {
+        /// Manifest path passed to Cargo.
+        path: PathBuf,
+        /// Filesystem error.
+        source: std::io::Error,
     },
     /// Cargo did not report a readable compiled artifact.
     #[error("cargo build for `{manifest_path}` did not report compiled library artifacts")]
@@ -107,6 +117,30 @@ impl std::fmt::Display for CargoStatus {
         self.code
             .map(|code| write!(formatter, "{code}"))
             .unwrap_or_else(|| formatter.write_str("terminated by signal"))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CargoManifest {
+    path: PathBuf,
+}
+
+impl CargoManifest {
+    fn new(path: &Path) -> Result<Self, BindingMetadataBuildError> {
+        fs::canonicalize(path)
+            .map(|path| Self { path })
+            .map_err(|source| BindingMetadataBuildError::ManifestPath {
+                path: path.to_path_buf(),
+                source,
+            })
+    }
+
+    fn matches(&self, path: &Path) -> bool {
+        fs::canonicalize(path).is_ok_and(|path| path == self.path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -177,7 +211,7 @@ impl CargoOutput {
 
     fn artifacts(
         &self,
-        manifest_path: &Path,
+        manifest: &CargoManifest,
     ) -> Result<MetadataArtifacts, BindingMetadataBuildError> {
         let artifacts = self
             .stdout
@@ -186,11 +220,11 @@ impl CargoOutput {
             .map(CargoMessage::parse)
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .flat_map(CargoMessage::filenames)
+            .flat_map(|message| message.filenames(manifest))
             .filter_map(MetadataArtifact::from_cargo_filename)
             .collect::<Vec<_>>();
 
-        MetadataArtifacts::new(manifest_path, artifacts)
+        MetadataArtifacts::new(manifest.path(), artifacts)
     }
 }
 
@@ -250,6 +284,7 @@ impl MetadataArtifact {
 #[serde(tag = "reason", rename_all = "kebab-case")]
 enum CargoMessage {
     CompilerArtifact {
+        manifest_path: PathBuf,
         filenames: Vec<PathBuf>,
     },
     #[serde(other)]
@@ -264,10 +299,14 @@ impl CargoMessage {
         })
     }
 
-    fn filenames(self) -> Vec<PathBuf> {
+    fn filenames(self, manifest: &CargoManifest) -> Vec<PathBuf> {
         match self {
-            Self::CompilerArtifact { filenames } => filenames,
+            Self::CompilerArtifact {
+                manifest_path,
+                filenames,
+            } if manifest.matches(&manifest_path) => filenames,
             Self::Other => Vec::new(),
+            Self::CompilerArtifact { .. } => Vec::new(),
         }
     }
 }
@@ -324,7 +363,8 @@ impl MetadataRustflags {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use boltffi_ast::{PackageInfo, SourceContract};
@@ -342,8 +382,25 @@ mod tests {
             return;
         }
 
-        let expected = metadata_envelope();
+        let expected = metadata_envelope("metadata_fixture");
         let fixture = FixtureCrate::with_metadata(&expected);
+
+        let envelopes = BindingMetadataBuild::new(fixture.manifest())
+            .read()
+            .expect("cargo metadata build reads");
+
+        assert_eq!(envelopes, vec![expected]);
+    }
+
+    #[test]
+    fn cargo_build_ignores_dependency_metadata_artifacts() {
+        if cfg!(miri) {
+            return;
+        }
+
+        let expected = metadata_envelope("metadata_fixture");
+        let dependency = metadata_envelope("metadata_dependency");
+        let fixture = FixtureCrate::with_metadata_dependency(&expected, &dependency);
 
         let envelopes = BindingMetadataBuild::new(fixture.manifest())
             .read()
@@ -377,25 +434,33 @@ mod tests {
 
     impl FixtureCrate {
         fn with_metadata(envelope: &BindingMetadataEnvelope) -> Self {
-            Self::write(Source::with_metadata(envelope))
+            Self::write(Source::with_metadata(envelope), Dependency::None)
+        }
+
+        fn with_metadata_dependency(
+            envelope: &BindingMetadataEnvelope,
+            dependency: &BindingMetadataEnvelope,
+        ) -> Self {
+            Self::write(
+                Source::with_dependency_metadata(envelope),
+                Dependency::Metadata(dependency),
+            )
         }
 
         fn without_metadata() -> Self {
-            Self::write(Source::without_metadata())
+            Self::write(Source::without_metadata(), Dependency::None)
         }
 
-        fn write(source: Source) -> Self {
+        fn write(source: Source, dependency: Dependency<'_>) -> Self {
             let root = temp_root("boltffi-bindgen-cargo-metadata");
             let source_dir = root.join("src");
             let manifest = root.join("Cargo.toml");
             fs::create_dir_all(&source_dir).expect("create metadata fixture source dir");
-            fs::write(
-                &manifest,
-                "[package]\nname = \"metadata_fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/lib.rs\"\n",
-            )
-            .expect("write metadata fixture manifest");
+            fs::write(&manifest, dependency.root_manifest())
+                .expect("write metadata fixture manifest");
             fs::write(source_dir.join("lib.rs"), source.into_string())
                 .expect("write metadata fixture lib");
+            dependency.write(&root);
             Self { root, manifest }
         }
 
@@ -410,12 +475,61 @@ mod tests {
         }
     }
 
+    enum Dependency<'envelope> {
+        Metadata(&'envelope BindingMetadataEnvelope),
+        None,
+    }
+
+    impl Dependency<'_> {
+        fn root_manifest(&self) -> String {
+            let dependency = match self {
+                Self::Metadata(_) => {
+                    "\n[dependencies]\nmetadata_dependency = { path = \"metadata_dependency\" }\n"
+                }
+                Self::None => "",
+            };
+            format!(
+                "[package]\nname = \"metadata_fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/lib.rs\"\n{dependency}"
+            )
+        }
+
+        fn write(self, root: &Path) {
+            if let Self::Metadata(envelope) = self {
+                let package = root.join("metadata_dependency");
+                let source = package.join("src");
+                fs::create_dir_all(&source).expect("create metadata dependency source dir");
+                fs::write(
+                    package.join("Cargo.toml"),
+                    "[package]\nname = \"metadata_dependency\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+                )
+                .expect("write metadata dependency manifest");
+                fs::write(
+                    source.join("lib.rs"),
+                    Source::with_metadata_and_body(envelope, "pub fn value() -> u32 { 7 }\n")
+                        .into_string(),
+                )
+                .expect("write metadata dependency lib");
+            }
+        }
+    }
+
     struct Source {
         code: String,
     }
 
     impl Source {
         fn with_metadata(envelope: &BindingMetadataEnvelope) -> Self {
+            Self::with_metadata_and_body(envelope, "pub fn exported() -> u32 { 1 }\n")
+        }
+
+        fn with_dependency_metadata(envelope: &BindingMetadataEnvelope) -> Self {
+            Self::with_metadata_and_body(
+                envelope,
+                "pub fn exported() -> u32 { metadata_dependency::value() }\n",
+            )
+        }
+
+        fn with_metadata_and_body(envelope: &BindingMetadataEnvelope, body: &str) -> Self {
             let section_bytes = envelope.to_section_bytes().expect("metadata section bytes");
             let length = section_bytes.len();
             let bytes = section_bytes
@@ -427,7 +541,7 @@ mod tests {
             let object_section = BindingMetadataSection::Object.link_section();
             Self {
                 code: format!(
-                    "#![allow(unexpected_cfgs)]\n#[cfg(boltffi_metadata)]\n#[cfg_attr(target_vendor = \"apple\", unsafe(link_section = \"{mach_o_section}\"))]\n#[cfg_attr(not(target_vendor = \"apple\"), unsafe(link_section = \"{object_section}\"))]\n#[used]\nstatic BOLTFFI_METADATA: [u8; {length}] = [{bytes}];\npub fn exported() -> u32 {{ 1 }}\n"
+                    "#![allow(unexpected_cfgs)]\n#[cfg(boltffi_metadata)]\n#[cfg_attr(target_vendor = \"apple\", unsafe(link_section = \"{mach_o_section}\"))]\n#[cfg_attr(not(target_vendor = \"apple\"), unsafe(link_section = \"{object_section}\"))]\n#[used]\nstatic BOLTFFI_METADATA: [u8; {length}] = [{bytes}];\n{body}"
                 ),
             }
         }
@@ -443,20 +557,22 @@ mod tests {
         }
     }
 
-    fn metadata_envelope() -> BindingMetadataEnvelope {
-        let source = SourceContract::new(PackageInfo::new("demo", None));
+    fn metadata_envelope(package: &str) -> BindingMetadataEnvelope {
+        let source = SourceContract::new(PackageInfo::new(package, None));
         let lowered = lower_with_declarations::<Native>(&source).expect("empty source lowers");
         BindingMetadataEnvelope::new(SerializedBindings::native(lowered.into_bindings()))
             .expect("metadata envelope")
     }
 
     fn temp_root(prefix: &str) -> PathBuf {
+        static TEMP_ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
         std::env::temp_dir().join(format!(
-            "{prefix}-{}",
+            "{prefix}-{}-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("system time after unix epoch")
-                .as_nanos()
+                .as_nanos(),
+            TEMP_ROOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))
     }
 }
