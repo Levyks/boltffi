@@ -20,5 +20,8 @@ boltffi_ffi_rules.workspace = true
 boltffi_ast.workspace = true
 boltffi_binding.workspace = true
 
+[dev-dependencies]
+boltffi_bindgen.workspace = true
+
 [lints]
 workspace = true

@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+pub mod artifact;
 pub mod ir;
 pub mod model;
 pub mod render;

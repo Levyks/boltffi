@@ -29,6 +29,7 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 walkdir = "2.4"
 rstest = "0.26"
 tokio = "1"
+object = "0.39"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

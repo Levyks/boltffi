@@ -289,8 +289,10 @@ mod tests {
         Primitive, Receiver, RecordDef, ReprAttr, ReprItem, ReturnDef, SourceContract, SourceName,
         StreamDef, StreamId, TraitDef, TraitId, TypeExpr, VariantDef,
     };
+    use boltffi_bindgen::artifact::BindingMetadataReader;
     use boltffi_binding::{
-        BindingMetadataSection, Native, SerializedBindings, Wasm32, lower_with_declarations,
+        BindingMetadataSection, BindingMetadataSurface, Native, SerializedBindings, Wasm32,
+        lower_with_declarations,
     };
     use proc_macro2::TokenStream;
     use quote::quote;
@@ -429,6 +431,32 @@ mod tests {
             },
             "--cfg boltffi_metadata",
         );
+    }
+
+    #[test]
+    fn native_expander_metadata_is_read_from_compiled_artifact() {
+        if cfg!(miri) {
+            return;
+        }
+        let source = ownerless_stream_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("native lowers");
+        let expected_bindings = SerializedBindings::native(lowered.bindings().clone());
+        let expansion = Expansion::new(&lowered);
+        let tokens = expander::Expander::new(&source)
+            .native(&expansion)
+            .expect("native expands");
+        let generated_crate = GeneratedCrate::static_library("expander_metadata_artifact");
+        generated_crate.write(ownerless_stream_crate(tokens));
+
+        let artifact = generated_crate.build_staticlib_with_rustflags("--cfg boltffi_metadata");
+        let envelopes = BindingMetadataReader::new([artifact])
+            .read_required()
+            .expect("compiled metadata reads");
+
+        assert_eq!(envelopes.len(), 1);
+        assert_eq!(envelopes[0].surface(), BindingMetadataSurface::Native);
+        assert_eq!(envelopes[0].package().name().as_path_string(), "demo");
+        assert_eq!(envelopes[0].bindings(), &expected_bindings);
     }
 
     fn source_contract() -> SourceContract {
@@ -611,13 +639,23 @@ mod tests {
 
     struct GeneratedCrate {
         root: PathBuf,
+        output: GeneratedCrateOutput,
     }
 
     impl GeneratedCrate {
         fn create(name: &str) -> Self {
+            Self::new(name, GeneratedCrateOutput::Library)
+        }
+
+        fn static_library(name: &str) -> Self {
+            Self::new(name, GeneratedCrateOutput::StaticLibrary)
+        }
+
+        fn new(name: &str, output: GeneratedCrateOutput) -> Self {
             if cfg!(miri) {
                 return Self {
                     root: PathBuf::new(),
+                    output,
                 };
             }
             let root = workspace_root()
@@ -628,7 +666,7 @@ mod tests {
                 fs::remove_dir_all(&root).expect("remove old generated crate");
             }
             fs::create_dir_all(root.join("src")).expect("create generated crate");
-            Self { root }
+            Self { root, output }
         }
 
         fn write(&self, code: TokenStream) {
@@ -690,11 +728,74 @@ mod tests {
             );
         }
 
+        fn build_staticlib_with_rustflags(&self, rustflags: &str) -> PathBuf {
+            if cfg!(miri) {
+                return PathBuf::new();
+            }
+            let target = workspace_root()
+                .join("target")
+                .join("experimental-expander-artifacts");
+            let output = Command::new(cargo())
+                .arg("build")
+                .arg("--quiet")
+                .arg("--release")
+                .arg("--manifest-path")
+                .arg(self.root.join("Cargo.toml"))
+                .env("RUSTFLAGS", rustflags)
+                .env("CARGO_TARGET_DIR", &target)
+                .output()
+                .expect("run cargo build for generated staticlib");
+            assert!(
+                output.status.success(),
+                "generated staticlib failed to build\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            self.staticlib_artifact(&target)
+        }
+
+        fn staticlib_artifact(&self, target: &FsPath) -> PathBuf {
+            let release = target.join("release");
+            let extension = if cfg!(target_os = "windows") {
+                "lib"
+            } else {
+                "a"
+            };
+            fs::read_dir(&release)
+                .expect("read generated staticlib output directory")
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| {
+                    path.extension().is_some_and(|actual| actual == extension)
+                        && path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .is_some_and(|stem| stem.contains("generated_expander_check"))
+                })
+                .expect("generated staticlib artifact exists")
+        }
+
         fn manifest(&self) -> String {
+            let crate_type = self.output.manifest_section();
             format!(
-                "[package]\nname = \"generated_expander_check\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[dependencies]\nboltffi = {{ path = \"{}\" }}\n",
+                "[package]\nname = \"generated_expander_check\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n{crate_type}\n[dependencies]\nboltffi = {{ path = \"{}\" }}\n",
                 workspace_root().join("boltffi").display()
             )
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum GeneratedCrateOutput {
+        Library,
+        StaticLibrary,
+    }
+
+    impl GeneratedCrateOutput {
+        const fn manifest_section(self) -> &'static str {
+            match self {
+                Self::Library => "\n",
+                Self::StaticLibrary => "\n[lib]\ncrate-type = [\"staticlib\"]\n",
+            }
         }
     }
 

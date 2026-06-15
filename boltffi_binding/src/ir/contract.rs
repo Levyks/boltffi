@@ -334,7 +334,9 @@ impl SerializedBindings {
 
 const BINDING_METADATA_MAGIC: &str = "boltffi.bindings";
 const BINDING_METADATA_RECORD_MAGIC: &[u8; 8] = b"BFFIMD01";
-const BINDING_METADATA_RECORD_HEADER_LEN: usize = 16;
+const BINDING_METADATA_RECORD_LENGTH_LEN: usize = std::mem::size_of::<u64>();
+const BINDING_METADATA_RECORD_HEADER_LEN: usize =
+    BINDING_METADATA_RECORD_MAGIC.len() + BINDING_METADATA_RECORD_LENGTH_LEN;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -515,10 +517,15 @@ impl BindingMetadataEnvelope {
     /// record.
     pub fn to_section_bytes(&self) -> Result<Vec<u8>, BindingMetadataError> {
         let payload = self.to_bytes()?;
+        let length = u64::try_from(payload.len()).map_err(|_| {
+            BindingMetadataError::SectionRecordPayloadTooLarge {
+                length: payload.len(),
+            }
+        })?;
         Ok(BINDING_METADATA_RECORD_MAGIC
             .iter()
             .copied()
-            .chain((payload.len() as u64).to_le_bytes())
+            .chain(length.to_le_bytes())
             .chain(payload)
             .collect())
     }
@@ -695,6 +702,12 @@ pub enum BindingMetadataError {
         /// Hash computed from the payload.
         actual: BindingMetadataHash,
     },
+    /// An envelope payload is too large to frame for linker-section
+    /// storage.
+    SectionRecordPayloadTooLarge {
+        /// Payload length in bytes.
+        length: usize,
+    },
     /// A linker-section record does not start with the BoltFFI record
     /// marker.
     InvalidSectionRecordMagic {
@@ -772,6 +785,12 @@ impl fmt::Display for BindingMetadataError {
                 write!(
                     formatter,
                     "binding metadata hash mismatch: expected {expected}, actual {actual}"
+                )
+            }
+            Self::SectionRecordPayloadTooLarge { length } => {
+                write!(
+                    formatter,
+                    "binding metadata payload is too large for a section record: {length} bytes"
                 )
             }
             Self::InvalidSectionRecordMagic { offset } => {
