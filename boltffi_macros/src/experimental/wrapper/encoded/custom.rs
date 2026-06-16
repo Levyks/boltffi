@@ -533,6 +533,13 @@ fn representation_type<S: RenderSurface>(
         }
         CodecNode::String => Ok(quote! { String }),
         CodecNode::Bytes => Ok(quote! { Vec<u8> }),
+        CodecNode::Builtin(kind) => {
+            let ty = boltffi_binding::TypeRef::Builtin(*kind);
+            <wrapper::type_ref::Renderer as Render<S, &boltffi_binding::TypeRef>>::render(
+                wrapper::type_ref::Renderer,
+                &ty,
+            )
+        }
         CodecNode::Custom(id) => {
             let custom = expansion.custom_type(*id)?;
             <wrapper::type_ref::Renderer as Render<S, &boltffi_binding::TypeRef>>::render(

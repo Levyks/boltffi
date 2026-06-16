@@ -311,9 +311,14 @@ fn matches_path(scope: &ModuleScope, path: &syn::Path, qualified: &[&str]) -> bo
         PathExpansion::Imported { path, .. } | PathExpansion::Qualified(path) => {
             qualified.iter().any(|candidate| path == *candidate)
         }
-        PathExpansion::Relative(_) | PathExpansion::Ambiguous | PathExpansion::Unsupported => {
-            raw_path(path).is_some_and(|path| qualified.iter().any(|candidate| path == *candidate))
-        }
+        PathExpansion::Relative(_) => raw_path(path).is_some_and(|path| {
+            qualified.iter().any(|candidate| path == *candidate)
+                || scope
+                    .glob_candidates_for_segments(&[path])
+                    .iter()
+                    .any(|path| qualified.iter().any(|candidate| path == candidate))
+        }),
+        PathExpansion::Ambiguous | PathExpansion::Unsupported => false,
     }
 }
 

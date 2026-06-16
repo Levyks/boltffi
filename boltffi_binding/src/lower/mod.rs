@@ -194,15 +194,19 @@ impl From<BindingError> for LowerError {
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        CanonicalName as SourceName, DeclarationId as SourceDeclarationId,
+        BuiltinType, CanonicalName as SourceName, DeclarationId as SourceDeclarationId,
         FunctionDef as SourceFunction, FunctionId as SourceFunctionId,
-        PackageInfo as SourcePackage, Primitive as SourcePrimitive, ReturnDef as SourceReturn,
-        SourceContract, TypeExpr as SourceType,
+        PackageInfo as SourcePackage, ParameterDef as SourceParameter,
+        Primitive as SourcePrimitive, ReturnDef as SourceReturn, SourceContract,
+        TypeExpr as SourceType,
     };
 
-    use crate::{DeclarationId, FunctionId, Native};
+    use crate::{
+        CanonicalName, CodecNode, Decl, DeclarationId, FunctionId, Native, ParamPlan, ReadPlan,
+        ReturnPlan, TypeRef, ValueRef, WritePlan, native,
+    };
 
-    use super::lower_with_declarations;
+    use super::{lower, lower_with_declarations};
 
     fn source_contract() -> SourceContract {
         let mut function = SourceFunction::new(
@@ -228,6 +232,49 @@ mod tests {
                     "demo::answer"
                 ))),
             Some(DeclarationId::Function(FunctionId::from_raw(0)))
+        );
+    }
+
+    #[test]
+    fn lowers_builtin_values_as_encoded_wire_values() {
+        let mut function = SourceFunction::new(
+            SourceFunctionId::new("demo::echo_duration"),
+            SourceName::single("echo_duration"),
+        );
+        function.parameters = vec![SourceParameter::value(
+            SourceName::single("value"),
+            SourceType::builtin(BuiltinType::Duration),
+        )];
+        function.returns = SourceReturn::value(SourceType::builtin(BuiltinType::Duration));
+
+        let mut source = SourceContract::new(SourcePackage::new("demo", None));
+        source.functions.push(function);
+
+        let bindings = lower::<Native>(&source).expect("lowered bindings");
+        let function = match bindings.decls().first() {
+            Some(Decl::Function(function)) => function,
+            other => panic!("expected function declaration, got {other:?}"),
+        };
+
+        assert_eq!(
+            function.callable().params()[0].as_value().unwrap(),
+            &ParamPlan::Encoded {
+                ty: TypeRef::Builtin(BuiltinType::Duration),
+                codec: WritePlan::new(
+                    ValueRef::named(CanonicalName::single("value")),
+                    CodecNode::Builtin(BuiltinType::Duration)
+                ),
+                shape: native::BufferShape::Slice,
+                receive: crate::Receive::ByValue,
+            }
+        );
+        assert_eq!(
+            function.callable().returns().plan(),
+            &ReturnPlan::EncodedViaReturnSlot {
+                ty: TypeRef::Builtin(BuiltinType::Duration),
+                codec: ReadPlan::new(CodecNode::Builtin(BuiltinType::Duration)),
+                shape: native::BufferShape::Buffer,
+            }
         );
     }
 }

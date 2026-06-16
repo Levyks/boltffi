@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use boltffi_ast::{
-    AdditionalBound, BaseTrait, ConstExpr, CustomTypeId, FnSig, FnTrait, FnTraitKind,
+    AdditionalBound, BaseTrait, BuiltinType, ConstExpr, CustomTypeId, FnSig, FnTrait, FnTraitKind,
     GenericArgument, MapKind, NamePart, Path, PathRoot, PathSegment, Primitive, ReturnDef,
     TraitBounds, TypeExpr,
 };
@@ -114,6 +114,7 @@ impl<'a> Scanner<'a> {
                 .single_type_argument(segment, source)
                 .and_then(|argument| self.scan(argument))
                 .map(TypeExpr::arc),
+            StandardType::Builtin(kind) => Ok(TypeExpr::builtin(kind)),
         }
     }
 
@@ -132,6 +133,9 @@ impl<'a> Scanner<'a> {
             .declared_types
             .resolve_type_in_scope(self.scope, &type_path.path)?
         {
+            SourceType::Declared(_) if matches!(standard_type, StandardType::Builtin(_)) => {
+                Ok(None)
+            }
             SourceType::Declared(DeclaredType::Record(_))
             | SourceType::Declared(DeclaredType::Enum(_))
             | SourceType::Declared(DeclaredType::Trait(_))
@@ -563,6 +567,7 @@ enum StandardType {
     BTreeMap,
     Box,
     Arc,
+    Builtin(BuiltinType),
 }
 
 impl StandardType {
@@ -576,6 +581,10 @@ impl StandardType {
             "BTreeMap" => Self::BTreeMap,
             "Box" => Self::Box,
             "Arc" => Self::Arc,
+            "Duration" => Self::Builtin(BuiltinType::Duration),
+            "SystemTime" => Self::Builtin(BuiltinType::SystemTime),
+            "Uuid" => Self::Builtin(BuiltinType::Uuid),
+            "Url" => Self::Builtin(BuiltinType::Url),
             _ => return None,
         })
     }
@@ -598,6 +607,12 @@ impl StandardType {
             ],
             Self::Box => &["Box", "std::boxed::Box", "alloc::boxed::Box"],
             Self::Arc => &["std::sync::Arc", "alloc::sync::Arc"],
+            Self::Builtin(BuiltinType::Duration) => {
+                &["Duration", "std::time::Duration", "core::time::Duration"]
+            }
+            Self::Builtin(BuiltinType::SystemTime) => &["SystemTime", "std::time::SystemTime"],
+            Self::Builtin(BuiltinType::Uuid) => &["Uuid", "uuid::Uuid"],
+            Self::Builtin(BuiltinType::Url) => &["Url", "url::Url"],
         }
     }
 }
@@ -652,15 +667,20 @@ enum TraitBoundPart {
 #[cfg(test)]
 mod tests {
     use boltffi_ast::{
-        AdditionalBound, BaseTrait, ClassId, Primitive, RecordId, TraitBounds, TraitId,
+        AdditionalBound, BaseTrait, BuiltinType, ClassId, Primitive, RecordId, TraitBounds, TraitId,
     };
 
     use super::*;
     use crate::ModuleScope;
     use crate::declared_types::DeclaredTypes;
+    use crate::path::ModulePath;
 
     fn ty(source: &str) -> syn::Type {
         syn::parse_str(source).expect("valid type")
+    }
+
+    fn item(source: &str) -> syn::Item {
+        syn::parse_str(source).expect("valid item")
     }
 
     fn scan(source: &str) -> Result<TypeExpr, ScanError> {
@@ -702,6 +722,53 @@ mod tests {
             Ok(TypeExpr::option(TypeExpr::vec(TypeExpr::Primitive(
                 Primitive::U8
             ))))
+        );
+    }
+
+    #[test]
+    fn scans_legacy_builtin_value_types() {
+        assert_eq!(
+            scan("Duration"),
+            Ok(TypeExpr::builtin(BuiltinType::Duration))
+        );
+        assert_eq!(
+            scan("std::time::Duration"),
+            Ok(TypeExpr::builtin(BuiltinType::Duration))
+        );
+        assert_eq!(
+            scan("SystemTime"),
+            Ok(TypeExpr::builtin(BuiltinType::SystemTime))
+        );
+        assert_eq!(scan("Uuid"), Ok(TypeExpr::builtin(BuiltinType::Uuid)));
+        assert_eq!(scan("url::Url"), Ok(TypeExpr::builtin(BuiltinType::Url)));
+    }
+
+    #[test]
+    fn declared_types_named_like_builtins_win_over_builtin_leaf_names() {
+        let mut declared_types = DeclaredTypes::new();
+        declared_types.register_record(RecordId::new("demo::Duration"));
+        let module = ModuleScope::root("demo");
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Duration")),
+            Ok(TypeExpr::record(
+                RecordId::new("demo::Duration"),
+                Path::single("Duration")
+            ))
+        );
+    }
+
+    #[test]
+    fn external_imports_do_not_fall_back_to_builtin_leaf_names() {
+        let items = [item("use time::Duration;")];
+        let module = ModuleScope::new(ModulePath::root("demo"), &items);
+        let declared_types = DeclaredTypes::new();
+        let scanner = Scanner::new(&declared_types, &module);
+
+        assert_eq!(
+            scanner.scan(&ty("Duration")),
+            Err(ScanError::unsupported_type(&ty("Duration")))
         );
     }
 

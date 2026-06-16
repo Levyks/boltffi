@@ -34,6 +34,8 @@ pub enum TypeExpr {
     String,
     /// The borrowed `str` type.
     Str,
+    /// A BoltFFI-owned builtin value type.
+    Builtin(BuiltinType),
     /// A struct exported as a BoltFFI record.
     Record {
         /// Declaration this reference resolves to.
@@ -123,6 +125,11 @@ impl TypeExpr {
         Self::Custom { id, path }
     }
 
+    /// Builds a builtin type expression.
+    pub const fn builtin(kind: BuiltinType) -> Self {
+        Self::Builtin(kind)
+    }
+
     /// Builds a `dyn Trait` expression for a declared callback trait.
     pub fn dyn_trait(id: TraitId, path: Path) -> Self {
         Self::Dyn(TraitBounds::named(id, path))
@@ -202,6 +209,50 @@ impl TypeExpr {
             kind,
             key: Box::new(key),
             value: Box::new(value),
+        }
+    }
+}
+
+/// A BoltFFI-owned value type with fixed cross-language semantics.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum BuiltinType {
+    /// `std::time::Duration`.
+    Duration,
+    /// `std::time::SystemTime`.
+    SystemTime,
+    /// `uuid::Uuid`.
+    Uuid,
+    /// `url::Url`.
+    Url,
+}
+
+impl BuiltinType {
+    /// Returns the canonical Rust path for this builtin.
+    pub const fn rust_path(self) -> &'static str {
+        match self {
+            Self::Duration => "std::time::Duration",
+            Self::SystemTime => "std::time::SystemTime",
+            Self::Uuid => "uuid::Uuid",
+            Self::Url => "url::Url",
+        }
+    }
+
+    /// Returns the canonical type id used in generated contracts.
+    pub const fn type_id(self) -> &'static str {
+        match self {
+            Self::Duration => "Duration",
+            Self::SystemTime => "SystemTime",
+            Self::Uuid => "Uuid",
+            Self::Url => "Url",
+        }
+    }
+
+    /// Returns the fixed encoded byte size when the builtin is fixed-size.
+    pub const fn fixed_wire_size(self) -> Option<u64> {
+        match self {
+            Self::Duration | Self::SystemTime => Some(12),
+            Self::Uuid => Some(16),
+            Self::Url => None,
         }
     }
 }

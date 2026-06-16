@@ -298,6 +298,31 @@ mod tests {
     }
 
     #[test]
+    fn explicit_import_resolves_type_reexported_through_glob() {
+        let contract = scan(
+            "pub mod enums { \
+                 pub mod repr_int { #[data] pub enum Priority { Low, High } } \
+                 pub use repr_int::*; \
+             } \
+             pub mod records { \
+                 use crate::enums::Priority; \
+                 #[data] pub struct Task { pub priority: Priority } \
+             }",
+        );
+
+        let task = contract
+            .records
+            .iter()
+            .find(|record| record.id == RecordId::new("demo::records::Task"))
+            .expect("Task record");
+
+        assert_eq!(
+            task.fields[0].type_expr,
+            enumeration("demo::enums::repr_int::Priority", "Priority")
+        );
+    }
+
+    #[test]
     fn scans_marked_items_nested_several_modules_deep() {
         let contract = scan(
             "pub mod a { pub mod b { \

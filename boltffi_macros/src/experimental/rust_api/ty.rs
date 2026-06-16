@@ -244,6 +244,12 @@ pub fn tokens(type_expr: &TypeExpr) -> Result<TokenStream, Error> {
         TypeExpr::Unit => quote! { () },
         TypeExpr::String => quote! { String },
         TypeExpr::Str => quote! { str },
+        TypeExpr::Builtin(kind) => match kind {
+            boltffi_ast::BuiltinType::Duration => quote! { ::std::time::Duration },
+            boltffi_ast::BuiltinType::SystemTime => quote! { ::std::time::SystemTime },
+            boltffi_ast::BuiltinType::Uuid => quote! { ::uuid::Uuid },
+            boltffi_ast::BuiltinType::Url => quote! { ::url::Url },
+        },
         TypeExpr::Record { path, .. }
         | TypeExpr::Enum { path, .. }
         | TypeExpr::Class { path, .. }

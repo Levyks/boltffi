@@ -800,6 +800,7 @@ impl<'lowered, S: RenderSurface, TargetName> CallbackMethods<'lowered, S, Target
             | TypeExpr::Unit
             | TypeExpr::String
             | TypeExpr::Str
+            | TypeExpr::Builtin(_)
             | TypeExpr::Record { .. }
             | TypeExpr::Enum { .. }
             | TypeExpr::Class { .. }

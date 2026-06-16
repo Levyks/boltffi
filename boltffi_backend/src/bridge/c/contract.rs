@@ -947,9 +947,11 @@ impl Names {
     fn type_ref(&self, ty: &TypeRef) -> Result<Type> {
         match ty {
             TypeRef::Primitive(primitive) => Type::primitive(*primitive),
-            TypeRef::String | TypeRef::Bytes | TypeRef::Sequence(_) | TypeRef::Optional(_) => {
-                Ok(Type::Buffer)
-            }
+            TypeRef::String
+            | TypeRef::Bytes
+            | TypeRef::Builtin(_)
+            | TypeRef::Sequence(_)
+            | TypeRef::Optional(_) => Ok(Type::Buffer),
             TypeRef::Record(id) => self.record(*id).map(Type::Named),
             TypeRef::Enum(id) => self.enumeration(*id).map(Type::Named),
             TypeRef::Class(id) => {

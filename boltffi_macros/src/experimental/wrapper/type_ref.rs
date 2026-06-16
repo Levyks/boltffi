@@ -1,4 +1,4 @@
-use boltffi_binding::{Primitive, TypeRef};
+use boltffi_binding::{BuiltinType, Primitive, TypeRef};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -14,6 +14,7 @@ impl<S: RenderSurface> Render<S, &TypeRef> for Renderer {
             TypeRef::Primitive(primitive) => self.primitive(*primitive),
             TypeRef::String => Ok(quote! { String }),
             TypeRef::Bytes => Ok(quote! { Vec<u8> }),
+            TypeRef::Builtin(kind) => self.builtin(*kind),
             TypeRef::Optional(inner) => {
                 let inner = <Renderer as Render<S, &TypeRef>>::render(Renderer, inner.as_ref())?;
                 Ok(quote! { Option<#inner> })
@@ -50,6 +51,15 @@ impl Renderer {
             Primitive::F32 => quote! { f32 },
             Primitive::F64 => quote! { f64 },
             _ => return Err(Error::UnsupportedExpansion("unknown primitive")),
+        })
+    }
+
+    fn builtin(self, kind: BuiltinType) -> Result<TokenStream, Error> {
+        Ok(match kind {
+            BuiltinType::Duration => quote! { ::std::time::Duration },
+            BuiltinType::SystemTime => quote! { ::std::time::SystemTime },
+            BuiltinType::Uuid => quote! { ::uuid::Uuid },
+            BuiltinType::Url => quote! { ::url::Url },
         })
     }
 }

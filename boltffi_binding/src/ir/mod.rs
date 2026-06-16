@@ -89,6 +89,7 @@ mod surface;
 mod symbol;
 mod types;
 
+pub use boltffi_ast::BuiltinType;
 pub use callable::{
     CallableDecl, ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, ErrorDecl,
     ExecutionDecl, ExportedCallable, ImportedCallable, IncomingParam, OutgoingParam, ParamDecl,

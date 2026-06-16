@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use boltffi_ast::{ClassId, CustomRemoteType, CustomTypeId, EnumId, RecordId, TraitId};
 
@@ -328,6 +328,7 @@ impl DeclaredKind {
 struct TypeNamespace {
     by_path: HashMap<String, TypeBinding>,
     by_module: HashMap<String, HashMap<String, TypeBinding>>,
+    scopes: HashMap<String, ModuleScope>,
 }
 
 impl TypeNamespace {
@@ -336,6 +337,7 @@ impl TypeNamespace {
             .modules()
             .iter()
             .fold(Self::default(), |mut namespace, module| {
+                namespace.insert_scope(module);
                 module
                     .items()
                     .iter()
@@ -383,7 +385,12 @@ impl TypeNamespace {
         }
         match self.by_path.get(&path) {
             Some(TypeBinding::Ambiguous) => TypeResolution::Ambiguous,
-            Some(TypeBinding::Unique(_)) | None => TypeResolution::Known(path),
+            Some(TypeBinding::Unique(path)) => TypeResolution::Known(path.clone()),
+            None => match self.resolve_reexported(&path) {
+                TypeResolution::Known(path) => TypeResolution::Known(path),
+                TypeResolution::Ambiguous => TypeResolution::Ambiguous,
+                TypeResolution::Unknown => TypeResolution::Known(path),
+            },
         }
     }
 
@@ -401,14 +408,18 @@ impl TypeNamespace {
             .skip(scope.path().segments().len())
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
-        let matches = scope
-            .glob_candidates_for_segments(&segments)
+        let matches = self
+            .glob_candidate_paths(scope, &segments)
             .into_iter()
             .try_fold(Vec::new(), |mut matches, candidate| {
                 match self.by_path.get(&candidate) {
                     Some(TypeBinding::Unique(path)) => matches.push(path.clone()),
                     Some(TypeBinding::Ambiguous) => return Err(TypeResolution::Ambiguous),
-                    None => {}
+                    None => match self.resolve_reexported(&candidate) {
+                        TypeResolution::Known(path) => matches.push(path),
+                        TypeResolution::Ambiguous => return Err(TypeResolution::Ambiguous),
+                        TypeResolution::Unknown => {}
+                    },
                 }
                 Ok(matches)
             });
@@ -422,6 +433,77 @@ impl TypeNamespace {
             [path] => TypeResolution::Known(path.clone()),
             [] => TypeResolution::Unknown,
             _ => TypeResolution::Ambiguous,
+        }
+    }
+
+    fn resolve_reexported(&self, path: &str) -> TypeResolution {
+        self.resolve_reexported_with_visited(path, &mut HashSet::new())
+    }
+
+    fn resolve_reexported_with_visited(
+        &self,
+        path: &str,
+        visited: &mut HashSet<String>,
+    ) -> TypeResolution {
+        if !visited.insert(path.to_owned()) {
+            return TypeResolution::Unknown;
+        }
+        let segments = path.split("::").map(ToOwned::to_owned).collect::<Vec<_>>();
+        let Some((name, module_segments)) = segments.split_last() else {
+            return TypeResolution::Unknown;
+        };
+        let module_path = module_segments.join("::");
+        let Some(scope) = self.scopes.get(&module_path) else {
+            return TypeResolution::Unknown;
+        };
+        let segments = [name.clone()];
+        let matches = self
+            .glob_candidate_paths(scope, &segments)
+            .into_iter()
+            .try_fold(Vec::new(), |mut matches, candidate| {
+                match self.by_path.get(&candidate) {
+                    Some(TypeBinding::Unique(path)) => matches.push(path.clone()),
+                    Some(TypeBinding::Ambiguous) => return Err(TypeResolution::Ambiguous),
+                    None => match self.resolve_reexported_with_visited(&candidate, visited) {
+                        TypeResolution::Known(path) => matches.push(path),
+                        TypeResolution::Ambiguous => return Err(TypeResolution::Ambiguous),
+                        TypeResolution::Unknown => {}
+                    },
+                }
+                Ok(matches)
+            });
+        let mut matches = match matches {
+            Ok(matches) => matches,
+            Err(resolution) => return resolution,
+        };
+        matches.sort();
+        matches.dedup();
+        match matches.as_slice() {
+            [path] => TypeResolution::Known(path.clone()),
+            [] => TypeResolution::Unknown,
+            _ => TypeResolution::Ambiguous,
+        }
+    }
+
+    fn glob_candidate_paths(&self, scope: &ModuleScope, segments: &[String]) -> Vec<String> {
+        scope
+            .glob_candidates_for_segments(segments)
+            .into_iter()
+            .flat_map(|candidate| {
+                let qualified = self.module_qualified_candidate(scope, &candidate);
+                match qualified == candidate {
+                    true => vec![candidate],
+                    false => vec![candidate, qualified],
+                }
+            })
+            .collect()
+    }
+
+    fn module_qualified_candidate(&self, scope: &ModuleScope, candidate: &str) -> String {
+        let root = scope.path().segments().first().map(String::as_str);
+        match candidate.split("::").next() == root {
+            true => candidate.to_owned(),
+            false => format!("{}::{candidate}", scope.path().segments().join("::")),
         }
     }
 
@@ -446,6 +528,13 @@ impl TypeNamespace {
             .entry(name)
             .and_modify(TypeBinding::mark_ambiguous)
             .or_insert(TypeBinding::Unique(path));
+    }
+
+    fn insert_scope(&mut self, module: &SourceModule) {
+        self.scopes.insert(
+            module.scope().path().segments().join("::"),
+            module.scope().clone(),
+        );
     }
 
     fn insert_path(&mut self, path: String) {

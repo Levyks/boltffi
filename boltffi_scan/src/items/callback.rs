@@ -25,7 +25,7 @@ fn build(
     let item_name = format!("trait {}", item.ident);
     unsupported::generics(&item.generics, &item_name)?;
     unsupported::unsafety(item.unsafety.as_ref(), &item_name)?;
-    unsupported::supertraits(&item.supertraits, &item_name)?;
+    supertraits(&item.supertraits, &item_name)?;
 
     let id = TraitId::new(scope.path().qualified(&item.ident.to_string()));
     let mut callback = TraitDef::new(id, name::source(&item.ident));
@@ -57,6 +57,32 @@ fn methods(
             other => Some(Err(unsupported_trait_item(other, &trait_name))),
         })
         .collect()
+}
+
+fn supertraits(
+    bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+    item: &str,
+) -> Result<(), ScanError> {
+    bounds
+        .iter()
+        .all(|bound| match bound {
+            syn::TypeParamBound::Trait(bound) => is_auto_supertrait(bound),
+            _ => false,
+        })
+        .then_some(())
+        .ok_or_else(|| ScanError::UnsupportedSupertraits {
+            item: item.to_owned(),
+        })
+}
+
+fn is_auto_supertrait(bound: &syn::TraitBound) -> bool {
+    matches!(bound.modifier, syn::TraitBoundModifier::None)
+        && bound.lifetimes.is_none()
+        && bound
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| matches!(segment.ident.to_string().as_str(), "Send" | "Sync"))
 }
 
 fn is_exported_method(method: &syn::TraitItemFn) -> Result<bool, ScanError> {
@@ -172,6 +198,14 @@ mod tests {
     }
 
     #[test]
+    fn accepts_send_sync_callback_supertraits() {
+        let callback = scan("trait Listener: Send + Sync { fn call(&self); }").expect("scan");
+
+        assert_eq!(callback.id, TraitId::new("demo::Listener"));
+        assert_eq!(callback.methods.len(), 1);
+    }
+
+    #[test]
     fn skips_explicitly_skipped_callback_methods() {
         let callback =
             scan("trait Listener { #[skip] fn local(&self); fn remote(&self); }").expect("scan");
@@ -203,7 +237,7 @@ mod tests {
         let unsafe_trait =
             scan("unsafe trait Listener { fn call(&self); }").expect_err("unsafe rejected");
         let supertrait =
-            scan("trait Listener: Send { fn call(&self); }").expect_err("supertrait rejected");
+            scan("trait Listener: Display { fn call(&self); }").expect_err("supertrait rejected");
 
         assert_eq!(
             generic,
