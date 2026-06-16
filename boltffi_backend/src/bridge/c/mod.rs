@@ -22,19 +22,23 @@ mod tests {
 
     use super::CBridge;
 
-    fn header(source: &str) -> String {
+    fn bindings(source: &str) -> boltffi_binding::Bindings<Native> {
         let file = syn::parse_str(source).expect("valid source fixture");
         let source = boltffi_scan::scan_file(file, PackageInfo::new("demo", None))
             .expect("fixture should scan");
-        let bindings = lower::<Native>(&source).expect("fixture should lower");
+        lower::<Native>(&source).expect("fixture should lower")
+    }
+
+    fn header(source: &str) -> String {
+        let bindings = bindings(source);
         let bridge = CBridge::default_header().expect("header bridge");
         let contract = bridge.build_contract(&bindings).expect("C bridge contract");
-        let emitted = bridge
+        let output = bridge
             .render_bridge(&bindings, &contract)
             .expect("C header render");
-        let fragments = emitted.file_fragments();
-        assert_eq!(fragments.len(), 1);
-        fragments[0].text().to_owned()
+        let files = output.files();
+        assert_eq!(files.len(), 1);
+        files[0].contents().to_owned()
     }
 
     #[test]

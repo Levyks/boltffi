@@ -1,6 +1,8 @@
 use boltffi_binding::{Bindings, Native};
 
-use crate::core::{Emitted, FilePath, Fragment, Result, bridge, contract::sealed};
+use crate::core::{
+    Emitted, FileLayout, FilePath, GeneratedOutput, Result, bridge, contract::sealed,
+};
 
 use super::{contract::CBridgeContract, template};
 
@@ -39,9 +41,13 @@ impl bridge::BridgeBackend for CBridge {
         CBridgeContract::from_bindings(input)
     }
 
-    fn render_bridge(&self, _input: &Self::Input, contract: &Self::Contract) -> Result<Emitted> {
+    fn render_bridge(
+        &self,
+        _input: &Self::Input,
+        contract: &Self::Contract,
+    ) -> Result<GeneratedOutput> {
         let header = template::Header::new(contract).render()?;
-        Ok(Emitted::fragment(Fragment::new(self.path.clone(), header)))
+        FileLayout::single(self.path.clone()).assemble([Emitted::primary(header)])
     }
 }
 

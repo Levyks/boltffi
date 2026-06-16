@@ -19,7 +19,9 @@ pub mod core;
 pub mod target;
 
 pub use core::{
-    BackendError, BindingCapability, BridgeCapabilities, BridgeCapability, CapabilityRequirements,
-    CapabilitySet, CapabilityStatus, Diagnostic, Emitted, Error, FileLayout, FilePath, Fragment,
-    GeneratedFile, GeneratedOutput, HostCapabilities, RenderContext, Result, Target,
+    AllDeclarations, AuxChunk, BackendError, BindingCapability, BridgeCapabilities,
+    BridgeCapability, CapabilityRequirements, CapabilitySet, CapabilityStatus, Diagnostic, Emitted,
+    Error, FallbackPolicy, FileAssembler, FileGroup, FileLayout, FilePath, FilePlan, GeneratedFile,
+    GeneratedOutput, HelperId, HelperPolicy, HostCapabilities, ImportDirective, RenderContext,
+    RenderedDeclaration, Result, Target, TextChunk,
 };

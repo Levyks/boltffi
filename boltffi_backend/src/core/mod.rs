@@ -25,7 +25,9 @@ pub use context::RenderContext;
 pub use contract::BridgeContract;
 pub use error::{BackendError, Error, Result};
 pub use files::{
-    Diagnostic, Emitted, FileLayout, FilePath, Fragment, GeneratedFile, GeneratedOutput,
+    AllDeclarations, AuxChunk, Diagnostic, Emitted, FallbackPolicy, FileAssembler, FileGroup,
+    FileLayout, FilePath, FilePlan, GeneratedFile, GeneratedOutput, HelperId, HelperPolicy,
+    ImportDirective, RenderedDeclaration, TextChunk,
 };
 pub use host::HostBackend;
 pub use target::{BridgeLayer, Target};

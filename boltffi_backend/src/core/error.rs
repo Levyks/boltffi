@@ -35,6 +35,15 @@ pub enum BackendError {
     /// A generated file path was empty.
     #[error("generated file path cannot be empty")]
     EmptyFilePath,
+    /// Anonymous output was assembled with a layout that does not name exactly one file.
+    #[error("anonymous emitted output requires a single-file layout")]
+    AnonymousOutputNeedsSingleFile,
+    /// A rendered declaration did not match any generated file plan.
+    #[error("no generated file plan matched {declaration}")]
+    UnmatchedFilePlan {
+        /// Declaration kind that had no matching file plan.
+        declaration: &'static str,
+    },
     /// The C ABI bridge cannot render the supplied binding shape.
     #[error("C ABI bridge cannot render {shape}")]
     UnsupportedCAbi {

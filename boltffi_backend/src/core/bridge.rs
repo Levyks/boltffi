@@ -8,7 +8,7 @@
 
 use boltffi_binding::{Bindings, Surface};
 
-use crate::core::{BridgeContract, Emitted, Result, contract::sealed};
+use crate::core::{BridgeContract, GeneratedOutput, Result, contract::sealed};
 
 /// Backend for one bridge layer.
 #[allow(private_bounds)]
@@ -24,7 +24,11 @@ pub trait BridgeBackend: sealed::BridgeBackend {
     fn build_contract(&self, input: &Self::Input) -> Result<Self::Contract>;
 
     /// Renders files owned by this bridge layer.
-    fn render_bridge(&self, input: &Self::Input, contract: &Self::Contract) -> Result<Emitted>;
+    fn render_bridge(
+        &self,
+        input: &Self::Input,
+        contract: &Self::Contract,
+    ) -> Result<GeneratedOutput>;
 }
 
 /// A fully composed bridge stack.
@@ -43,13 +47,13 @@ pub trait BridgeStack: sealed::BridgeStack {
 #[non_exhaustive]
 pub struct BridgeOutput<C> {
     contract: C,
-    emitted: Emitted,
+    output: GeneratedOutput,
 }
 
 impl<C> BridgeOutput<C> {
     /// Creates bridge stack output.
-    pub fn new(contract: C, emitted: Emitted) -> Self {
-        Self { contract, emitted }
+    pub fn new(contract: C, output: GeneratedOutput) -> Self {
+        Self { contract, output }
     }
 
     /// Returns the produced bridge contract.
@@ -58,12 +62,12 @@ impl<C> BridgeOutput<C> {
     }
 
     /// Returns files emitted by bridge layers.
-    pub const fn emitted(&self) -> &Emitted {
-        &self.emitted
+    pub const fn output(&self) -> &GeneratedOutput {
+        &self.output
     }
 
     /// Splits this output into contract and rendered fragments.
-    pub fn into_parts(self) -> (C, Emitted) {
-        (self.contract, self.emitted)
+    pub fn into_parts(self) -> (C, GeneratedOutput) {
+        (self.contract, self.output)
     }
 }

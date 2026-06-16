@@ -1,8 +1,8 @@
 use boltffi_binding::{Bindings, Decl, DeclarationRef, Surface};
 
 use crate::core::{
-    BridgeContract, CapabilityRequirements, Emitted, GeneratedOutput, RenderContext, Result,
-    bridge, contract::sealed, host,
+    BridgeContract, CapabilityRequirements, GeneratedOutput, RenderContext, RenderedDeclaration,
+    Result, bridge, contract::sealed, host,
 };
 
 /// A bridge layer stacked above another bridge stack.
@@ -50,8 +50,8 @@ where
         bindings: &Bindings<Self::Surface>,
     ) -> Result<bridge::BridgeOutput<Self::Contract>> {
         let contract = self.build_contract(bindings)?;
-        let emitted = self.render_bridge(bindings, &contract)?;
-        Ok(bridge::BridgeOutput::new(contract, emitted))
+        let output = self.render_bridge(bindings, &contract)?;
+        Ok(bridge::BridgeOutput::new(contract, output))
     }
 }
 
@@ -75,10 +75,10 @@ where
         bindings: &Bindings<Self::Surface>,
     ) -> Result<bridge::BridgeOutput<Self::Contract>> {
         let lower = self.lower.build(bindings)?;
-        let (lower_contract, mut emitted) = lower.into_parts();
+        let (lower_contract, mut output) = lower.into_parts();
         let contract = self.upper.build_contract(&lower_contract)?;
-        emitted.append(self.upper.render_bridge(&lower_contract, &contract)?);
-        Ok(bridge::BridgeOutput::new(contract, emitted))
+        output.append(self.upper.render_bridge(&lower_contract, &contract)?);
+        Ok(bridge::BridgeOutput::new(contract, output))
     }
 }
 
@@ -113,7 +113,7 @@ where
     /// Renders a binding contract through the paired bridge and host.
     pub fn render(&self, bindings: &Bindings<S::Surface>) -> Result<GeneratedOutput> {
         let bridge = self.stack.build(bindings)?;
-        let (contract, bridge_emitted) = bridge.into_parts();
+        let (contract, mut output) = bridge.into_parts();
         let binding_requirements = CapabilityRequirements::from_bindings(bindings);
         self.host
             .binding_capabilities()
@@ -127,19 +127,23 @@ where
             .iter()
             .map(|decl| self.render_declaration(decl, &contract, &context))
             .collect::<Result<Vec<_>>>()
-            .map(Emitted::combine)?;
-        let mut emitted = bridge_emitted;
-        emitted.append(host_emitted);
-        Ok(self.host.file_layout(bindings).assemble(emitted))
+            .and_then(|emitted| {
+                self.host
+                    .file_layout(bindings)
+                    .assemble_declarations(emitted)
+            })?;
+        output.append(host_emitted);
+        Ok(output)
     }
 
-    fn render_declaration(
+    fn render_declaration<'decl>(
         &self,
-        decl: &Decl<S::Surface>,
+        decl: &'decl Decl<S::Surface>,
         bridge: &S::Contract,
         context: &RenderContext<S::Surface>,
-    ) -> Result<Emitted> {
-        match DeclarationRef::from(decl) {
+    ) -> Result<RenderedDeclaration<'decl, S::Surface>> {
+        let declaration = DeclarationRef::from(decl);
+        let emitted = match declaration {
             DeclarationRef::Record(record) => self.host.record(record, bridge, context),
             DeclarationRef::Enum(enumeration) => {
                 self.host.enumeration(enumeration, bridge, context)
@@ -152,7 +156,8 @@ where
             DeclarationRef::CustomType(custom_type) => {
                 self.host.custom_type(custom_type, bridge, context)
             }
-        }
+        }?;
+        Ok(RenderedDeclaration::new(declaration, emitted))
     }
 }
 
@@ -162,7 +167,8 @@ mod tests {
 
     use crate::core::{
         BridgeCapabilities, BridgeCapability, BridgeContract, CapabilityRequirements, Emitted,
-        FileLayout, HostCapabilities, RenderContext, Result, bridge, contract::sealed, host,
+        FileLayout, GeneratedOutput, HostCapabilities, RenderContext, Result, bridge,
+        contract::sealed, files::AllDeclarations, host,
     };
 
     #[derive(Clone)]
@@ -198,8 +204,8 @@ mod tests {
             &self,
             _input: &Self::Input,
             _contract: &Self::Contract,
-        ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+        ) -> Result<GeneratedOutput> {
+            Ok(GeneratedOutput::empty())
         }
     }
 
@@ -211,6 +217,7 @@ mod tests {
     impl host::HostBackend for SwiftHost {
         type Surface = Native;
         type Bridge = NativeContract;
+        type Files = AllDeclarations;
 
         fn name(&self) -> &'static str {
             "swift"
@@ -296,7 +303,7 @@ mod tests {
             Ok(Emitted::empty())
         }
 
-        fn file_layout(&self, _bindings: &Bindings<Self::Surface>) -> FileLayout {
+        fn file_layout(&self, _bindings: &Bindings<Self::Surface>) -> FileLayout<Self::Files> {
             FileLayout::new()
         }
     }

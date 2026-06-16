@@ -12,7 +12,7 @@ use boltffi_binding::{
 };
 
 use crate::core::{
-    BridgeCapability, BridgeContract, CapabilityRequirements, Emitted, FileLayout,
+    BridgeCapability, BridgeContract, CapabilityRequirements, Emitted, FileGroup, FileLayout,
     HostCapabilities, RenderContext, Result, contract::sealed,
 };
 
@@ -23,6 +23,8 @@ pub trait HostBackend: sealed::HostBackend {
     type Surface: Surface;
     /// Bridge contract this host accepts.
     type Bridge: BridgeContract<Surface = Self::Surface>;
+    /// File grouping rule used by this host layout.
+    type Files: FileGroup;
 
     /// Returns the target name used in diagnostics.
     fn name(&self) -> &'static str;
@@ -98,5 +100,5 @@ pub trait HostBackend: sealed::HostBackend {
     ) -> Result<Emitted>;
 
     /// Returns the file layout for this host.
-    fn file_layout(&self, bindings: &Bindings<Self::Surface>) -> FileLayout;
+    fn file_layout(&self, bindings: &Bindings<Self::Surface>) -> FileLayout<Self::Files>;
 }
