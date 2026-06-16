@@ -1,7 +1,10 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <float.h>
+#include <limits.h>
+#include <string.h>
 
-#include "boltffi.h"
+#include "{{ c_header }}"
 
 #ifdef _WIN32
 #include <windows.h>

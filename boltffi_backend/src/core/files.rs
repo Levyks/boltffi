@@ -150,7 +150,7 @@ impl Diagnostic {
 }
 
 /// Rendered backend output before final file assembly.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Emitted {
     primary: TextChunk,
@@ -159,11 +159,6 @@ pub struct Emitted {
 }
 
 impl Emitted {
-    /// Creates empty rendered output.
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
     /// Creates rendered output from primary source text.
     pub fn primary(primary: impl Into<TextChunk>) -> Self {
         Self {
@@ -219,16 +214,6 @@ impl Emitted {
         self.primary.text.push_str(other.primary.as_str());
         self.aux.extend(other.aux);
         self.diagnostics.extend(other.diagnostics);
-    }
-
-    /// Combines multiple rendered output values.
-    pub fn combine(outputs: impl IntoIterator<Item = Self>) -> Self {
-        outputs
-            .into_iter()
-            .fold(Self::empty(), |mut combined, output| {
-                combined.append(output);
-                combined
-            })
     }
 
     /// Splits this value into primary source, auxiliary source, and diagnostics.

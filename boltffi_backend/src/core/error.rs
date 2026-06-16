@@ -50,11 +50,25 @@ pub enum BackendError {
         /// Binding shape that has no C ABI rendering.
         shape: &'static str,
     },
+    /// A host target cannot render the supplied binding shape.
+    #[error("{target} target cannot render {shape}")]
+    UnsupportedTarget {
+        /// Host target name.
+        target: &'static str,
+        /// Binding shape that has no target rendering.
+        shape: &'static str,
+    },
     /// A generated C identifier was invalid.
     #[error("invalid C identifier `{identifier}`")]
     InvalidCIdentifier {
         /// Invalid identifier text.
         identifier: String,
+    },
+    /// A generated C include path was invalid.
+    #[error("invalid C include path `{path}`")]
+    InvalidCIncludePath {
+        /// Invalid include path text.
+        path: String,
     },
     /// A generated CPython method name was invalid.
     #[error("invalid CPython method name `{name}`")]

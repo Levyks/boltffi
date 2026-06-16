@@ -48,7 +48,7 @@ impl bridge::BridgeBackend for PythonCExtBridge {
     type Contract = PythonCExtBridgeContract;
 
     fn build_contract(&self, input: &Self::Input) -> Result<Self::Contract> {
-        PythonCExtBridgeContract::from_c_bridge(self.module.clone(), input)
+        PythonCExtBridgeContract::from_c_bridge(self.module.clone(), self.path.clone(), input)
     }
 
     fn render_bridge(

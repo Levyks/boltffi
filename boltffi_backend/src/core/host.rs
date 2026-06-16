@@ -12,8 +12,8 @@ use boltffi_binding::{
 };
 
 use crate::core::{
-    BridgeCapability, BridgeContract, CapabilityRequirements, Emitted, FileGroup, FileLayout,
-    HostCapabilities, RenderContext, Result, contract::sealed,
+    BridgeCapability, BridgeContract, CapabilityRequirements, Emitted, GeneratedOutput,
+    HostCapabilities, RenderContext, RenderedDeclaration, Result, contract::sealed,
 };
 
 /// Host renderer for one target language.
@@ -23,8 +23,6 @@ pub trait HostBackend: sealed::HostBackend {
     type Surface: Surface;
     /// Bridge contract this host accepts.
     type Bridge: BridgeContract<Surface = Self::Surface>;
-    /// File grouping rule used by this host layout.
-    type Files: FileGroup;
 
     /// Returns the target name used in diagnostics.
     fn name(&self) -> &'static str;
@@ -99,6 +97,12 @@ pub trait HostBackend: sealed::HostBackend {
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted>;
 
-    /// Returns the file layout for this host.
-    fn file_layout(&self, bindings: &Bindings<Self::Surface>) -> FileLayout<Self::Files>;
+    /// Assembles collected declaration fragments into generated host files.
+    fn assemble(
+        &self,
+        bindings: &Bindings<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+        declarations: Vec<RenderedDeclaration<'_, Self::Surface>>,
+    ) -> Result<GeneratedOutput>;
 }

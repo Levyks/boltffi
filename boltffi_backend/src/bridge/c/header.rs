@@ -38,7 +38,7 @@ impl bridge::BridgeBackend for CBridge {
     type Contract = CBridgeContract;
 
     fn build_contract(&self, input: &Self::Input) -> Result<Self::Contract> {
-        CBridgeContract::from_bindings(input)
+        CBridgeContract::from_bindings(input, self.path.clone())
     }
 
     fn render_bridge(
