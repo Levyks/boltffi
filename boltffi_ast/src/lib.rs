@@ -56,6 +56,6 @@ pub use source::{Source, SourceFile, SourceSpan, Visibility};
 pub use stream::{StreamDef, StreamMode};
 pub use trait_def::TraitDef;
 pub use type_expr::{
-    AdditionalBound, BaseTrait, FnSig, FnTrait, FnTraitKind, MapKind, TraitBounds, TypeExpr,
-    TypeParameter,
+    AdditionalBound, BaseTrait, BuiltinType, FnSig, FnTrait, FnTraitKind, MapKind, TraitBounds,
+    TypeExpr, TypeParameter,
 };

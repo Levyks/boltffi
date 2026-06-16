@@ -1,3 +1,4 @@
+use boltffi_ast::BuiltinType;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -122,6 +123,8 @@ pub enum CodecNode {
     CallbackHandle(CallbackId),
     /// Custom type carried through its selected representation.
     Custom(CustomTypeId),
+    /// Builtin value carried through its BoltFFI wire representation.
+    Builtin(BuiltinType),
     /// Optional value with a presence marker followed by the inner value.
     Optional(Box<CodecNode>),
     /// Repeated values prefixed by an element count.

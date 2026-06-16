@@ -654,6 +654,7 @@ pub(super) fn substitute_self_type(
         | TypeExpr::Unit
         | TypeExpr::String
         | TypeExpr::Str
+        | TypeExpr::Builtin(_)
         | TypeExpr::Record { .. }
         | TypeExpr::Enum { .. }
         | TypeExpr::Class { .. }

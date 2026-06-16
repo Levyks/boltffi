@@ -145,6 +145,7 @@ impl fmt::Display for ClosureTypeSignature<'_> {
             ),
             TypeExpr::String => formatter.write_str("String"),
             TypeExpr::Str => formatter.write_str("Str"),
+            TypeExpr::Builtin(kind) => formatter.write_str(kind.type_id()),
             TypeExpr::Parameter(parameter) => formatter.write_str(&parameter.name),
         }
     }

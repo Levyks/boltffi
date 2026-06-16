@@ -17,6 +17,7 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
         TypeExpr::Primitive(primitive) => TypeRef::Primitive(Primitive::from(*primitive)),
         TypeExpr::String => TypeRef::String,
         TypeExpr::Str => TypeRef::String,
+        TypeExpr::Builtin(kind) => TypeRef::Builtin(*kind),
         TypeExpr::Vec(inner) | TypeExpr::Slice(inner) if is_byte_primitive(inner) => TypeRef::Bytes,
         TypeExpr::Record { id, .. } => TypeRef::Record(ids.record(id)?),
         TypeExpr::Enum { id, .. } => TypeRef::Enum(ids.enumeration(id)?),

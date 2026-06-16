@@ -1,3 +1,4 @@
+use boltffi_ast::BuiltinType;
 use serde::{Deserialize, Serialize};
 
 use crate::{CallbackId, ClassId, CustomTypeId, EnumId, Primitive, RecordId, StreamId};
@@ -33,6 +34,8 @@ pub enum TypeRef {
     Callback(CallbackId),
     /// Custom type reference.
     Custom(CustomTypeId),
+    /// Builtin value reference.
+    Builtin(BuiltinType),
     /// Optional value.
     Optional(Box<TypeRef>),
     /// Sequence value.

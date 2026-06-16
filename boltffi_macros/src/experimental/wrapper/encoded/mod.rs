@@ -37,7 +37,8 @@ impl<'codec> RuntimeWireCodec<'codec> {
             | CodecNode::EncodedRecord(_)
             | CodecNode::CStyleEnum(_)
             | CodecNode::DataEnum(_)
-            | CodecNode::Custom(_) => Ok(()),
+            | CodecNode::Custom(_)
+            | CodecNode::Builtin(_) => Ok(()),
             CodecNode::Optional(inner) | CodecNode::Sequence { element: inner, .. } => {
                 self.require_supported_codec(inner)
             }

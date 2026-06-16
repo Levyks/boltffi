@@ -336,6 +336,7 @@ impl<'a> CallbackValueType<'a> {
             | TypeExpr::Unit
             | TypeExpr::String
             | TypeExpr::Str
+            | TypeExpr::Builtin(_)
             | TypeExpr::Record { .. }
             | TypeExpr::Enum { .. }
             | TypeExpr::Class { .. }
