@@ -127,10 +127,9 @@ where
             .iter()
             .map(|decl| self.render_declaration(decl, &contract, &context))
             .collect::<Result<Vec<_>>>()
-            .and_then(|emitted| {
+            .and_then(|declarations| {
                 self.host
-                    .file_layout(bindings)
-                    .assemble_declarations(emitted)
+                    .assemble(bindings, &contract, &context, declarations)
             })?;
         output.append(host_emitted);
         Ok(output)
@@ -167,8 +166,8 @@ mod tests {
 
     use crate::core::{
         BridgeCapabilities, BridgeCapability, BridgeContract, CapabilityRequirements, Emitted,
-        FileLayout, GeneratedOutput, HostCapabilities, RenderContext, Result, bridge,
-        contract::sealed, files::AllDeclarations, host,
+        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, bridge,
+        contract::sealed, host,
     };
 
     #[derive(Clone)]
@@ -214,10 +213,15 @@ mod tests {
     #[derive(Clone, Copy)]
     struct SwiftHost;
 
+    impl Emitted {
+        fn placeholder() -> Self {
+            Self::primary("placeholder\n")
+        }
+    }
+
     impl host::HostBackend for SwiftHost {
         type Surface = Native;
         type Bridge = NativeContract;
-        type Files = AllDeclarations;
 
         fn name(&self) -> &'static str {
             "swift"
@@ -237,7 +241,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn enumeration(
@@ -246,7 +250,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn function(
@@ -255,7 +259,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn class(
@@ -264,7 +268,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn callback(
@@ -273,7 +277,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn stream(
@@ -282,7 +286,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn constant(
@@ -291,7 +295,7 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
         fn custom_type(
@@ -300,11 +304,17 @@ mod tests {
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
         ) -> Result<Emitted> {
-            Ok(Emitted::empty())
+            Ok(Emitted::placeholder())
         }
 
-        fn file_layout(&self, _bindings: &Bindings<Self::Surface>) -> FileLayout<Self::Files> {
-            FileLayout::new()
+        fn assemble(
+            &self,
+            _bindings: &Bindings<Self::Surface>,
+            _bridge: &Self::Bridge,
+            _context: &RenderContext<Self::Surface>,
+            _declarations: Vec<RenderedDeclaration<'_, Self::Surface>>,
+        ) -> Result<GeneratedOutput> {
+            Ok(GeneratedOutput::empty())
         }
     }
 

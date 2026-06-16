@@ -10,7 +10,7 @@ use boltffi_binding::{
 };
 
 use crate::core::{
-    BridgeCapabilities, BridgeCapability, BridgeContract, Error, Result, contract::sealed,
+    BridgeCapabilities, BridgeCapability, BridgeContract, Error, FilePath, Result, contract::sealed,
 };
 
 use super::name;
@@ -20,6 +20,7 @@ use super::name;
 #[non_exhaustive]
 pub struct CBridgeContract {
     capabilities: BridgeCapabilities,
+    header_path: FilePath,
     support: SupportFunctions,
     records: Vec<Record>,
     enums: Vec<Enum>,
@@ -205,7 +206,7 @@ impl<'protocol> PollHandleSymbols<'protocol> {
 
 impl CBridgeContract {
     /// Builds the C ABI contract for native bindings.
-    pub fn from_bindings(bindings: &Bindings<Native>) -> Result<Self> {
+    pub fn from_bindings(bindings: &Bindings<Native>, header_path: FilePath) -> Result<Self> {
         let names = Names::new(bindings);
         let records = bindings
             .decls()
@@ -266,12 +267,18 @@ impl CBridgeContract {
 
         Ok(Self {
             capabilities: BridgeCapabilities::new().stable(BridgeCapability::CAbi),
+            header_path,
             support: SupportFunctions::new(),
             records,
             enums,
             callbacks,
             functions,
         })
+    }
+
+    /// Returns the generated C header path.
+    pub fn header_path(&self) -> &FilePath {
+        &self.header_path
     }
 
     /// Returns C record declarations.
@@ -454,7 +461,7 @@ impl Enum {
     fn c_style(enumeration: &CStyleEnumDecl<Native>, names: &Names) -> Result<Self> {
         Ok(Self {
             name: names.enumeration(enumeration.id())?,
-            repr: Type::integer(enumeration.repr().primitive())?,
+            repr: Type::primitive(enumeration.repr().primitive())?,
             variants: enumeration
                 .variants()
                 .iter()
@@ -824,7 +831,8 @@ impl Parameter {
 }
 
 impl Type {
-    fn integer(primitive: Primitive) -> Result<Self> {
+    /// Creates the C ABI type for a primitive scalar.
+    pub fn primitive(primitive: Primitive) -> Result<Self> {
         match primitive {
             Primitive::Bool => Ok(Self::Bool),
             Primitive::I8 => Ok(Self::Int8),
@@ -938,7 +946,7 @@ impl Names {
 
     fn type_ref(&self, ty: &TypeRef) -> Result<Type> {
         match ty {
-            TypeRef::Primitive(primitive) => Type::integer(*primitive),
+            TypeRef::Primitive(primitive) => Type::primitive(*primitive),
             TypeRef::String | TypeRef::Bytes | TypeRef::Sequence(_) | TypeRef::Optional(_) => {
                 Ok(Type::Buffer)
             }
@@ -1309,7 +1317,7 @@ impl<'names> Signature<'names> {
         D::Opposite: ParamDirection<Native>,
     {
         match error {
-            ErrorDecl::StatusViaReturnSlot { repr } => Type::integer(repr.primitive()),
+            ErrorDecl::StatusViaReturnSlot { repr } => Type::primitive(repr.primitive()),
             ErrorDecl::EncodedViaReturnSlot { shape, .. } => self.encoded_return(*shape),
             ErrorDecl::None(_)
             | ErrorDecl::StatusViaOutPointer { .. }

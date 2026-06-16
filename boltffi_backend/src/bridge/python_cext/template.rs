@@ -11,6 +11,7 @@ use crate::{
 #[derive(AskamaTemplate)]
 #[template(path = "bridge/python_cext/loader.c", escape = "none")]
 struct LoaderTemplate {
+    c_header: String,
     loader_function: String,
     free_function: String,
     functions: Vec<FunctionView>,
@@ -34,6 +35,7 @@ impl<'contract> Loader<'contract> {
 
     pub fn render(self) -> Result<String> {
         Ok(LoaderTemplate {
+            c_header: self.contract.c_header().as_str().to_owned(),
             loader_function: self.contract.loader_method().c_function().to_owned(),
             free_function: self.contract.symbols().free_function().to_owned(),
             functions: self

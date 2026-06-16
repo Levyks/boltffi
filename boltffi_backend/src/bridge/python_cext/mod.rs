@@ -9,13 +9,15 @@ mod extension;
 mod template;
 
 pub use contract::{
-    ExtensionMethod, LoadedFunction, MethodFlags, ModuleSymbols, PythonCExtBridgeContract,
-    PythonExtensionName,
+    CHeaderInclude, ExtensionMethod, LoadedFunction, MethodFlags, ModuleSymbols,
+    PythonCExtBridgeContract, PythonExtensionName,
 };
 pub use extension::PythonCExtBridge;
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use boltffi_ast::PackageInfo;
     use boltffi_binding::{Native, lower};
 
@@ -39,6 +41,19 @@ mod tests {
         let stack = BridgeLayer::new(
             CBridge::default_header().expect("C header bridge"),
             PythonCExtBridge::native_module().expect("CPython extension bridge"),
+        );
+        stack.build(&bindings).expect("Python C extension stack")
+    }
+
+    fn bridge_with_paths(
+        source: &str,
+        header: &str,
+        extension: &str,
+    ) -> BridgeOutput<PythonCExtBridgeContract> {
+        let bindings = bindings(source);
+        let stack = BridgeLayer::new(
+            CBridge::new(header).expect("C header bridge"),
+            PythonCExtBridge::new("_native", extension).expect("CPython extension bridge"),
         );
         stack.build(&bindings).expect("Python C extension stack")
     }
@@ -133,5 +148,54 @@ mod tests {
 
         assert!(extension.contains("boltffi_create_callback_demo_listener"));
         assert!(extension.contains("boltffi_register_callback_demo_listener"));
+    }
+
+    #[test]
+    fn python_cext_bridge_includes_selected_c_header() {
+        let output = bridge_with_paths(
+            r#"
+            #[export]
+            pub fn add(left: i32, right: i32) -> i32 {
+                left + right
+            }
+            "#,
+            "include/my_abi.h",
+            "_native.c",
+        );
+        let extension = output
+            .output()
+            .files()
+            .iter()
+            .find(|file| file.path().as_path() == Path::new("_native.c"))
+            .map(|file| file.contents())
+            .expect("CPython extension file");
+
+        assert!(extension.contains("#include \"include/my_abi.h\""));
+        assert!(!extension.contains("#include \"boltffi.h\""));
+        assert_eq!(output.contract().c_header().as_str(), "include/my_abi.h");
+    }
+
+    #[test]
+    fn python_cext_bridge_includes_header_relative_to_nested_extension() {
+        let output = bridge_with_paths(
+            r#"
+            #[export]
+            pub fn add(left: i32, right: i32) -> i32 {
+                left + right
+            }
+            "#,
+            "pkg/boltffi.h",
+            "pkg/_native.c",
+        );
+        let extension = output
+            .output()
+            .files()
+            .iter()
+            .find(|file| file.path().as_path() == Path::new("pkg/_native.c"))
+            .map(|file| file.contents())
+            .expect("CPython extension file");
+
+        assert!(extension.contains("#include \"boltffi.h\""));
+        assert_eq!(output.contract().c_header().as_str(), "boltffi.h");
     }
 }
