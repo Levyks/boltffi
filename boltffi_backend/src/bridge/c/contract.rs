@@ -22,7 +22,8 @@ pub struct CBridgeContract {
     capabilities: BridgeCapabilities,
     header_path: FilePath,
     support: SupportFunctions,
-    records: Vec<Record>,
+    direct_records: Vec<Record>,
+    source_direct_records: BTreeMap<RecordId, Record>,
     enums: Vec<Enum>,
     callbacks: Vec<Callback>,
     functions: Vec<Function>,
@@ -208,24 +209,32 @@ impl CBridgeContract {
     /// Builds the C ABI contract for native bindings.
     pub fn from_bindings(bindings: &Bindings<Native>, header_path: FilePath) -> Result<Self> {
         let names = Names::new(bindings);
-        let records = bindings
-            .decls()
-            .iter()
-            .filter_map(|decl| match DeclarationRef::from(decl) {
-                DeclarationRef::Record(record) => Some(record),
-                DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|record| Record::from_decl(record, &names))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+        let source_direct_records =
+            bindings
+                .decls()
+                .iter()
+                .try_fold(BTreeMap::new(), |mut records, decl| {
+                    match DeclarationRef::from(decl) {
+                        DeclarationRef::Record(RecordDecl::Direct(record)) => {
+                            records.insert(record.id(), Record::direct(record, &names)?);
+                        }
+                        DeclarationRef::Record(RecordDecl::Encoded(_)) => {}
+                        DeclarationRef::Record(_) => {
+                            return Err(Error::UnsupportedCAbi {
+                                shape: "unknown record declaration",
+                            });
+                        }
+                        DeclarationRef::Enum(_)
+                        | DeclarationRef::Function(_)
+                        | DeclarationRef::Class(_)
+                        | DeclarationRef::Callback(_)
+                        | DeclarationRef::Stream(_)
+                        | DeclarationRef::Constant(_)
+                        | DeclarationRef::CustomType(_) => {}
+                    }
+                    Ok(records)
+                })?;
+        let direct_records = source_direct_records.values().cloned().collect();
         let enums = bindings
             .decls()
             .iter()
@@ -269,7 +278,8 @@ impl CBridgeContract {
             capabilities: BridgeCapabilities::new().stable(BridgeCapability::CAbi),
             header_path,
             support: SupportFunctions::new(),
-            records,
+            direct_records,
+            source_direct_records,
             enums,
             callbacks,
             functions,
@@ -281,9 +291,19 @@ impl CBridgeContract {
         &self.header_path
     }
 
-    /// Returns C record declarations.
-    pub fn records(&self) -> &[Record] {
-        &self.records
+    /// Returns C typedefs for direct source records.
+    pub fn direct_records(&self) -> &[Record] {
+        &self.direct_records
+    }
+
+    /// Returns the C typedef selected for a direct source record.
+    pub fn source_direct_record(&self, record: RecordId) -> Option<&Record> {
+        self.source_direct_records.get(&record)
+    }
+
+    /// Returns C typedefs keyed by direct source record id.
+    pub fn source_direct_records(&self) -> &BTreeMap<RecordId, Record> {
+        &self.source_direct_records
     }
 
     /// Returns C ABI support functions.
@@ -330,16 +350,6 @@ impl Record {
 }
 
 impl Record {
-    fn from_decl(record: &RecordDecl<Native>, names: &Names) -> Result<Option<Self>> {
-        match record {
-            RecordDecl::Direct(record) => Self::direct(record, names).map(Some),
-            RecordDecl::Encoded(_) => Ok(None),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown record declaration",
-            }),
-        }
-    }
-
     fn direct(record: &DirectRecordDecl<Native>, names: &Names) -> Result<Self> {
         let name = names.record(record.id())?;
         let fields = record

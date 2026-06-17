@@ -62,7 +62,7 @@ impl<'abi> Header<'abi> {
                 .collect::<Result<_>>()?,
             records: self
                 .abi
-                .records()
+                .direct_records()
                 .iter()
                 .map(RecordView::from_record)
                 .collect::<Result<_>>()?,
