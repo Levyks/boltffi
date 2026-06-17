@@ -70,17 +70,18 @@ impl Request {
         let scan = boltffi_scan::scan_package(
             &ScanInput::new(&self.source, self.package).with_manifest_dir(&self.root),
         )?;
-        let source = scan.complete();
-        let expander = Expander::new(source);
+        let root = scan.root();
+        let complete = scan.complete();
+        let expander = Expander::new(root);
 
         match requested_surface()? {
             BindingMetadataSurface::Native => {
-                let lowered = lower_with_declarations::<Native>(source)?;
+                let lowered = lower_with_declarations::<Native>(complete)?;
                 let expansion = Expansion::new(&lowered);
                 expander.native(&expansion).map_err(Into::into)
             }
             BindingMetadataSurface::Wasm32 => {
-                let lowered = lower_with_declarations::<Wasm32>(source)?;
+                let lowered = lower_with_declarations::<Wasm32>(complete)?;
                 let expansion = Expansion::new(&lowered);
                 expander.wasm32(&expansion).map_err(Into::into)
             }

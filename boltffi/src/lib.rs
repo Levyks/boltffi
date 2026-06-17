@@ -8,11 +8,11 @@ pub use boltffi_core::{
 #[doc(hidden)]
 pub mod __private {
     pub use boltffi_core::{
-        ArcFromCallbackHandle, BoxFromCallbackHandle, CallbackForeignType, CallbackHandle,
-        EventSubscription, FfiBuf, FfiSpan, FfiStatus, NativeCallbackOwner, Passable,
-        RustFutureContinuationCallback, RustFutureHandle, StreamContinuationCallback,
-        StreamPollResult, SubscriptionHandle, VecTransport, WaitResult, WirePassable, rustfuture,
-        set_last_error, take_last_error, wire,
+        ArcFromCallbackHandle, AsyncCallback, AsyncCallbackString, AsyncCallbackVoid,
+        BoxFromCallbackHandle, CallbackForeignType, CallbackHandle, EventSubscription, FfiBuf,
+        FfiSpan, FfiStatus, NativeCallbackOwner, Passable, RustFutureContinuationCallback,
+        RustFutureHandle, StreamContinuationCallback, StreamPollResult, SubscriptionHandle,
+        VecTransport, WaitResult, WirePassable, rustfuture, set_last_error, take_last_error, wire,
     };
     #[cfg(target_arch = "wasm32")]
     pub use boltffi_core::{

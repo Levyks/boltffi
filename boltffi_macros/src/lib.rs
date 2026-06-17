@@ -43,7 +43,11 @@ fn expand_or_experimental(
             let item = proc_macro2::TokenStream::from(strip_boltffi_attrs(item));
             return TokenStream::from(quote! {
                 #item
-                #tokens
+                mod __boltffi_ir_expansion {
+                    use crate::*;
+
+                    #tokens
+                }
             });
         }
         experimental::expansion_build::Item::Error(tokens) => return TokenStream::from(tokens),
