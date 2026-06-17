@@ -251,7 +251,7 @@ where
         let visibility = &self.visibility;
         let start_ident = format_ident!("{}", self.symbol.name().as_str());
         let rust_return_type = &self.rust_return_type;
-        AsyncParameters::new(self.callable.params()).validate()?;
+        CapturedParameters::new(self.callable.params()).validate()?;
         if !self.receiver.writebacks().is_empty() {
             return Err(Error::UnsupportedExpansion("async receiver writeback"));
         }
@@ -303,11 +303,11 @@ where
     }
 }
 
-struct AsyncParameters<'lowered, S: RenderSurface> {
+struct CapturedParameters<'lowered, S: RenderSurface> {
     params: &'lowered [ParamDecl<S, IntoRust>],
 }
 
-impl<'lowered, S: RenderSurface> AsyncParameters<'lowered, S> {
+impl<'lowered, S: RenderSurface> CapturedParameters<'lowered, S> {
     fn new(params: &'lowered [ParamDecl<S, IntoRust>]) -> Self {
         Self { params }
     }
@@ -328,13 +328,7 @@ impl<'lowered, S: RenderSurface> AsyncParameters<'lowered, S> {
                 target, receive, ..
             }) => {
                 self.validate_receive(*receive)?;
-                match target {
-                    HandleTarget::Class(_) => Ok(()),
-                    HandleTarget::Callback(_) => Err(Error::UnsupportedExpansion(
-                        "async callback handle parameter",
-                    )),
-                    _ => Err(Error::UnsupportedExpansion("async handle parameter")),
-                }
+                self.validate_handle_target(target)
             }
             IncomingParam::Value(ParamPlan::ScalarOption { .. })
             | IncomingParam::Value(ParamPlan::DirectVec { .. }) => Ok(()),
@@ -352,6 +346,13 @@ impl<'lowered, S: RenderSurface> AsyncParameters<'lowered, S> {
                 Err(Error::UnsupportedExpansion("async reference parameter"))
             }
             _ => Err(Error::UnsupportedExpansion("async receive mode")),
+        }
+    }
+
+    fn validate_handle_target(&self, target: &HandleTarget) -> Result<(), Error> {
+        match target {
+            HandleTarget::Class(_) | HandleTarget::Callback(_) => Ok(()),
+            _ => Err(Error::UnsupportedExpansion("async handle parameter")),
         }
     }
 }
