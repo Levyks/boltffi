@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
 use boltffi_binding::{
-    Bindings, CStyleEnumDecl, CallableDecl, CallbackDecl, ClassDecl, ClassId, ConstantDecl,
-    ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl, Direction, EnumDecl,
-    EnumId, ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable, ImportedMethodDecl,
-    InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl, ParamDirection,
-    ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, RustBody, StreamDecl, StreamItemPlan,
-    TypeRef, VTableSlot, native,
+    Bindings, CStyleEnumDecl, CallableDecl, CallbackDecl, CallbackId, ClassDecl, ClassId,
+    ConstantDecl, ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl,
+    Direction, EnumDecl, EnumId, ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable,
+    ImportedMethodDecl, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl,
+    ParamDirection, ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, RustBody, StreamDecl,
+    StreamItemPlan, TypeRef, VTableSlot, native,
 };
 
 use crate::core::{
@@ -74,6 +74,7 @@ pub struct EnumVariant {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Callback {
+    id: CallbackId,
     vtable: Record,
     register: Function,
     create_handle: Function,
@@ -537,6 +538,11 @@ impl EnumVariant {
 }
 
 impl Callback {
+    /// Returns the source callback trait id.
+    pub const fn id(&self) -> CallbackId {
+        self.id
+    }
+
     /// Returns the callback vtable record.
     pub fn vtable(&self) -> &Record {
         &self.vtable
@@ -594,6 +600,7 @@ impl Callback {
             Type::CallbackHandle,
         );
         Ok(Self {
+            id: callback.id(),
             vtable,
             register,
             create_handle,

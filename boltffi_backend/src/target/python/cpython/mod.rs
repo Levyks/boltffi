@@ -40,10 +40,7 @@ impl host::HostBackend for PythonCExtHost {
             .stable(BindingCapability::Enums)
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Classes)
-            .unsupported(
-                BindingCapability::Callbacks,
-                "Python callbacks are not migrated yet",
-            )
+            .stable(BindingCapability::Callbacks)
             .unsupported(
                 BindingCapability::Streams,
                 "Python streams are not migrated yet",
@@ -100,14 +97,11 @@ impl host::HostBackend for PythonCExtHost {
 
     fn callback(
         &self,
-        _decl: &CallbackDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        decl: &CallbackDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        _: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Error::UnsupportedTarget {
-            target: self.name(),
-            shape: "callback",
-        })
+        render::CallbackWrapper::from_declaration(decl, bridge)?.render()
     }
 
     fn stream(
@@ -485,6 +479,50 @@ mod tests {
         assert!(stub.contains("def reset(self) -> None: ..."));
         assert!(stub.contains("def marker(self) -> Marker: ..."));
         assert!(stub.contains("def make_marker(value: int) -> Marker: ..."));
+    }
+
+    #[test]
+    fn python_target_renders_primitive_callback_handles() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub trait ValueCallback {
+                    fn on_value(&self, value: i32) -> i32;
+                }
+
+                #[export]
+                pub fn invoke_value_callback(callback: impl ValueCallback, input: i32) -> i32 {
+                    callback.on_value(input)
+                }
+                "#,
+            ))
+            .expect("Python target should render callback handles");
+        let extension = extension(&output);
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains(
+            "static ___ValueCallbackVTable boltffi_python_callback_value_callback_vtable"
+        ));
+        assert!(extension.contains(".free = boltffi_python_callback_value_callback_free"));
+        assert!(extension.contains(".clone = boltffi_python_callback_value_callback_clone"));
+        assert!(extension.contains(".on_value = boltffi_python_callback_value_callback_on_value"));
+        assert!(extension.contains("static int boltffi_python_bind_callback_value_callback"));
+        assert!(extension.contains("boltffi_python_boltffi_register_callback_demo_value_callback(&boltffi_python_callback_value_callback_vtable)"));
+        assert!(extension.contains("static int boltffi_python_parse_callback_value_callback"));
+        assert!(extension.contains(
+            "boltffi_python_boltffi_create_callback_demo_value_callback((uint64_t)(uintptr_t)value)"
+        ));
+        assert!(extension.contains("BoltFFICallbackHandle callback;"));
+        assert!(
+            extension.contains("boltffi_python_parse_callback_value_callback(args[0], &callback)")
+        );
+        assert!(extension.contains(
+            "boltffi_python_boltffi_function_demo_invoke_value_callback(callback, input)"
+        ));
+        assert!(
+            stub.contains("def invoke_value_callback(callback: object, input: int) -> int: ...")
+        );
     }
 
     #[test]

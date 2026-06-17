@@ -1,8 +1,9 @@
 mod argument;
+mod callback;
 mod class;
+mod class_handle;
 mod enumeration;
 mod function;
-mod handle;
 mod method;
 mod module;
 mod package;
@@ -10,6 +11,7 @@ mod primitive;
 mod record;
 mod result;
 
+pub use callback::Wrapper as CallbackWrapper;
 pub use class::Wrapper as ClassWrapper;
 pub use enumeration::Wrapper as EnumWrapper;
 pub use function::Wrapper;

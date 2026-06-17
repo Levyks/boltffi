@@ -24,6 +24,7 @@ static void *boltffi_python_library_handle = NULL;
 #endif
 
 static void boltffi_python_release_host_state(void);
+static int boltffi_python_bind_host_state(void);
 
 static void boltffi_python_clear_symbols(void) {
 {%- for function in functions %}
@@ -111,6 +112,9 @@ static PyObject *{{ loader_function }}(PyObject *self, PyObject *library_path) {
         return NULL;
     }
     if (!boltffi_python_bind_symbols()) {
+        return NULL;
+    }
+    if (!boltffi_python_bind_host_state()) {
         return NULL;
     }
     Py_RETURN_NONE;

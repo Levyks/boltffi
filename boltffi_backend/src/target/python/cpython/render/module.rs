@@ -9,7 +9,7 @@ use crate::{
         Emitted, Error, FileLayout, GeneratedOutput, RenderContext, RenderedDeclaration, Result,
     },
     target::python::cpython::render::{
-        class, enumeration, function, method, primitive, record, result,
+        callback, class, enumeration, function, method, primitive, record, result,
     },
 };
 
@@ -25,6 +25,8 @@ struct NativeModuleTemplate {
     direct_records: Vec<String>,
     enums: Vec<String>,
     classes: Vec<String>,
+    callbacks: Vec<String>,
+    host_bindings: Vec<String>,
     functions: Vec<String>,
     methods: Vec<method::Entry>,
     cleanup: Vec<String>,
@@ -54,6 +56,7 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
         let direct_records = self.direct_records()?;
         let enums = self.enums()?;
         let classes = self.classes()?;
+        let callbacks = self.callbacks()?;
         let functions = self.functions()?;
         let methods = self
             .bridge
@@ -70,6 +73,7 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             direct_records.iter().map(|record| &record.wrapper),
             enums.iter().map(|enumeration| &enumeration.wrapper),
             classes.iter().map(|class| &class.wrapper),
+            callbacks.iter().map(|callback| &callback.wrapper),
             functions.iter().map(|function| &function.wrapper),
         )?;
         let source = NativeModuleTemplate {
@@ -88,6 +92,14 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
                 .map(|enumeration| enumeration.source.clone())
                 .collect(),
             classes: classes.iter().map(|class| class.source.clone()).collect(),
+            callbacks: callbacks
+                .iter()
+                .map(|callback| callback.source.clone())
+                .collect(),
+            host_bindings: callbacks
+                .iter()
+                .map(|callback| callback.wrapper.binding().to_owned())
+                .collect(),
             functions: functions
                 .into_iter()
                 .map(|function| function.source)
@@ -200,6 +212,29 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             })
             .collect()
     }
+
+    fn callbacks(&self) -> Result<Vec<RenderedCallback>> {
+        self.declarations
+            .iter()
+            .filter_map(|declaration| match declaration.declaration() {
+                DeclarationRef::Callback(callback) => Some((callback, declaration.emitted())),
+                DeclarationRef::Record(_)
+                | DeclarationRef::Enum(_)
+                | DeclarationRef::Function(_)
+                | DeclarationRef::Class(_)
+                | DeclarationRef::Stream(_)
+                | DeclarationRef::Constant(_)
+                | DeclarationRef::CustomType(_) => None,
+            })
+            .map(|(declaration, emitted)| {
+                let wrapper = callback::Wrapper::from_declaration(declaration, self.bridge)?;
+                Ok(RenderedCallback {
+                    wrapper,
+                    source: emitted.primary_chunk().as_str().to_owned(),
+                })
+            })
+            .collect()
+    }
 }
 
 struct RenderedFunction {
@@ -222,6 +257,11 @@ struct RenderedClass {
     source: String,
 }
 
+struct RenderedCallback {
+    wrapper: callback::Wrapper,
+    source: String,
+}
+
 struct ModuleSupport {
     primitives: Vec<primitive::Support>,
     free_buffer: String,
@@ -234,21 +274,24 @@ struct ModuleSupport {
 }
 
 impl ModuleSupport {
-    fn new<'record, 'enumeration, 'class, 'function>(
+    fn new<'record, 'enumeration, 'class, 'callback, 'function>(
         bridge: &PythonCExtBridgeContract,
         records: impl Iterator<Item = &'record record::Wrapper>,
         enums: impl Iterator<Item = &'enumeration enumeration::Wrapper>,
         classes: impl Iterator<Item = &'class class::Wrapper>,
+        callbacks: impl Iterator<Item = &'callback callback::Wrapper>,
         functions: impl Iterator<Item = &'function function::Wrapper>,
     ) -> Result<Self> {
         let records = records.collect::<Vec<_>>();
         let enums = enums.collect::<Vec<_>>();
         let classes = classes.collect::<Vec<_>>();
+        let callbacks = callbacks.collect::<Vec<_>>();
         let functions = functions.collect::<Vec<_>>();
         let primitives = functions
             .iter()
             .flat_map(|function| function.primitives())
             .chain(classes.iter().flat_map(|class| class.primitives()))
+            .chain(callbacks.iter().flat_map(|callback| callback.primitives()))
             .chain(records.iter().flat_map(|record| record.primitives()))
             .chain(enums.iter().map(|enumeration| enumeration.primitive()))
             .collect::<BTreeSet<_>>()

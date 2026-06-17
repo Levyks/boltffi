@@ -1,13 +1,16 @@
 use boltffi_binding::{
-    EnumId, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native, ParamDecl, ParamPlan,
-    Receive, RecordId, TypeRef, native,
+    CallbackId, EnumId, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native, ParamDecl,
+    ParamPlan, Receive, RecordId, TypeRef, native,
 };
 
 use crate::{
-    bridge::{c::identifier::Identifier, python_cext::PythonCExtBridgeContract},
+    bridge::{
+        c::{Type, identifier::Identifier, syntax::TypeSyntax},
+        python_cext::PythonCExtBridgeContract,
+    },
     core::{Error, RenderContext, Result},
     target::python::{
-        cpython::render::{enumeration, handle, primitive, record},
+        cpython::render::{callback, class_handle, enumeration, primitive, record},
         name_style::Name,
     },
 };
@@ -57,6 +60,12 @@ impl Conversion {
                 presence: HandlePresence::Required,
                 receive: Receive::ByValue,
             }) => Self::from_handle(index, parameter, *carrier),
+            IncomingParam::Value(ParamPlan::Handle {
+                target: HandleTarget::Callback(callback),
+                carrier: native::HandleCarrier::CallbackHandle,
+                presence,
+                receive: Receive::ByValue,
+            }) => Self::from_callback(index, parameter, *callback, *presence, bridge, context),
             IncomingParam::Closure(_) => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "closure parameter",
@@ -222,7 +231,7 @@ impl Conversion {
         carrier: native::HandleCarrier,
     ) -> Result<Self> {
         let name = name.into();
-        let carrier = handle::Carrier::new(carrier)?;
+        let carrier = class_handle::Carrier::new(carrier)?;
         Ok(Self {
             index,
             name,
@@ -231,6 +240,27 @@ impl Conversion {
                 parser: carrier.parser()?.to_owned(),
             }),
             primitive: Some(carrier.primitive()),
+        })
+    }
+
+    fn from_callback(
+        index: usize,
+        parameter: &ParamDecl<Native, IntoRust>,
+        callback: CallbackId,
+        presence: HandlePresence,
+        bridge: &PythonCExtBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        let symbols = callback::Symbols::from_callback_id(callback, bridge, context)?;
+        let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
+        Ok(Self {
+            index,
+            name,
+            kind: Kind::Direct(Direct {
+                c_type: TypeSyntax::new(&Type::CallbackHandle).anonymous()?,
+                parser: symbols.parser(presence).to_owned(),
+            }),
+            primitive: None,
         })
     }
 

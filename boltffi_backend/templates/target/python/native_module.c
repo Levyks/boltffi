@@ -531,6 +531,18 @@ static PyObject *{{ primitive.boxer }}(double value) {
 {% for class in classes %}
 {{ class }}
 {% endfor %}
+{% for callback in callbacks %}
+{{ callback }}
+{% endfor %}
+static int boltffi_python_bind_host_state(void) {
+{%- for binding in host_bindings %}
+    if (!{{ binding }}()) {
+        return 0;
+    }
+{%- endfor %}
+    return 1;
+}
+
 static void boltffi_python_release_host_state(void) {
 {%- for cleanup in cleanup %}
     {{ cleanup }};

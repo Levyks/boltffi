@@ -679,6 +679,10 @@ impl PythonTypeHint {
             } => Ok(Self {
                 annotation: package.class_name(class_id)?,
             }),
+            ParamPlan::Handle {
+                target: HandleTarget::Callback(_),
+                ..
+            } => Ok(Self::new("object")),
             ParamPlan::Encoded {
                 ty: TypeRef::String,
                 shape: native::BufferShape::Slice,
@@ -730,6 +734,10 @@ impl PythonTypeHint {
             } => Ok(Self {
                 annotation: package.class_name(class_id)?,
             }),
+            ReturnPlan::HandleViaReturnSlot {
+                target: HandleTarget::Callback(_),
+                ..
+            } => Ok(Self::new("object")),
             ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,
                 shape: native::BufferShape::Buffer,

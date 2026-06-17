@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
-use boltffi_binding::{EnumId, Native, NativeSymbol, RecordId};
+use boltffi_binding::{CallbackId, EnumId, Native, NativeSymbol, RecordId};
 
 use crate::{
     bridge::c::{self, CBridgeContract, Function},
@@ -23,6 +23,7 @@ pub struct PythonCExtBridgeContract {
     symbols: ModuleSymbols,
     source_direct_records: BTreeMap<RecordId, c::Record>,
     source_c_style_enums: BTreeMap<EnumId, c::Enum>,
+    source_callbacks: BTreeMap<CallbackId, c::Callback>,
     functions: Vec<LoadedFunction>,
     loader: ExtensionMethod,
 }
@@ -112,6 +113,11 @@ impl PythonCExtBridgeContract {
             c_header: CHeaderInclude::from_files(&source_path, c_bridge.header_path())?,
             source_direct_records: c_bridge.source_direct_records().clone(),
             source_c_style_enums: c_bridge.source_c_style_enums().clone(),
+            source_callbacks: c_bridge
+                .callbacks()
+                .iter()
+                .map(|callback| (callback.id(), callback.clone()))
+                .collect(),
             module,
             source_path,
         })
@@ -152,6 +158,11 @@ impl PythonCExtBridgeContract {
     /// Returns the C typedef selected for a source C-style enum.
     pub fn source_c_style_enum(&self, enumeration: EnumId) -> Option<&c::Enum> {
         self.source_c_style_enums.get(&enumeration)
+    }
+
+    /// Returns the C vtable selected for a source callback trait.
+    pub fn source_callback(&self, callback: CallbackId) -> Option<&c::Callback> {
+        self.source_callbacks.get(&callback)
     }
 
     /// Returns C identifiers reserved by the extension module.
