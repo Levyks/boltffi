@@ -422,6 +422,26 @@ pub const BINDING_METADATA_ROOT_ENV: &str = "BOLTFFI_BINDING_METADATA_ROOT";
 /// possible surface during metadata extraction.
 pub const BINDING_METADATA_SURFACE_ENV: &str = "BOLTFFI_BINDING_METADATA_SURFACE";
 
+/// Environment variable the build orchestrator sets to switch IR wrapper
+/// expansion on.
+///
+/// The variable carries no payload: its presence is the whole signal. Normal
+/// macro expansion leaves it unset, so existing legacy expansion remains the
+/// default path.
+pub const BINDING_EXPANSION_BUILD_ENV: &str = "BOLTFFI_BINDING_EXPANSION";
+
+/// Environment variable carrying the crate source root the IR wrapper build
+/// must scan.
+pub const BINDING_EXPANSION_SOURCE_ENV: &str = "BOLTFFI_BINDING_EXPANSION_SOURCE";
+
+/// Environment variable carrying the manifest directory of the crate whose IR
+/// wrappers are being compiled.
+pub const BINDING_EXPANSION_ROOT_ENV: &str = "BOLTFFI_BINDING_EXPANSION_ROOT";
+
+/// Environment variable carrying the target surface requested for IR wrapper
+/// expansion.
+pub const BINDING_EXPANSION_SURFACE_ENV: &str = "BOLTFFI_BINDING_EXPANSION_SURFACE";
+
 impl BindingMetadataSurface {
     /// Returns the stable metadata-build environment value for this surface.
     pub const fn as_str(self) -> &'static str {

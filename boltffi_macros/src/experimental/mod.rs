@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod error;
+pub mod expansion_build;
 mod metadata;
 pub mod metadata_build;
 

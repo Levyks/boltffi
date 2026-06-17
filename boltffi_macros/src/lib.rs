@@ -36,6 +36,19 @@ fn expand_or_experimental(
     item: TokenStream,
     legacy: impl FnOnce(TokenStream) -> TokenStream,
 ) -> TokenStream {
+    match experimental::expansion_build::item() {
+        experimental::expansion_build::Item::Inactive => {}
+        experimental::expansion_build::Item::Preserve => return strip_boltffi_attrs(item),
+        experimental::expansion_build::Item::Tokens(tokens) => {
+            let item = proc_macro2::TokenStream::from(strip_boltffi_attrs(item));
+            return TokenStream::from(quote! {
+                #item
+                #tokens
+            });
+        }
+        experimental::expansion_build::Item::Error(tokens) => return TokenStream::from(tokens),
+    }
+
     match experimental::metadata_build::item() {
         experimental::metadata_build::Item::Inactive => legacy(item),
         experimental::metadata_build::Item::Preserve => strip_boltffi_attrs(item),

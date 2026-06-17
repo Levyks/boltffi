@@ -97,9 +97,10 @@ pub use callable::{
 };
 pub use codec::{CodecNode, CodecPlan, ReadPlan, WritePlan};
 pub use contract::{
-    BINDING_METADATA_BUILD_ENV, BINDING_METADATA_ROOT_ENV, BINDING_METADATA_SOURCE_ENV,
-    BINDING_METADATA_SURFACE_ENV, BindingMetadataEnvelope, BindingMetadataError,
-    BindingMetadataFormat, BindingMetadataHash, BindingMetadataSection,
+    BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,
+    BINDING_EXPANSION_SURFACE_ENV, BINDING_METADATA_BUILD_ENV, BINDING_METADATA_ROOT_ENV,
+    BINDING_METADATA_SOURCE_ENV, BINDING_METADATA_SURFACE_ENV, BindingMetadataEnvelope,
+    BindingMetadataError, BindingMetadataFormat, BindingMetadataHash, BindingMetadataSection,
     BindingMetadataSectionBytes, BindingMetadataSurface, Bindings, ContractVersion, PackageInfo,
     SerializedBindings,
 };

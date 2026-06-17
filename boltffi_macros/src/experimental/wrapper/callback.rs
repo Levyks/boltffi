@@ -7,7 +7,7 @@ use boltffi_binding::{
     CanonicalName, ClosureForm, ClosureParameter, ClosureReturn, CodecNode, Direction, ErrorDecl,
     ExecutionDecl, ExportedCallable, HandlePresence, HandleTarget, ImportedCallable,
     ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl, ParamDirection,
-    ParamPlan, ReturnPlan, TypeRef, VTableSlot, Wasm32, native, wasm32,
+    ParamPlan, Primitive, ReturnPlan, TypeRef, VTableSlot, Wasm32, native, wasm32,
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
@@ -1232,6 +1232,12 @@ impl<'expansion, 'lowered, S: CallbackMethodSurface> MethodParameter<'expansion,
                 receive: (),
                 ..
             }) => self.foreign_encoded_tokens(codec, *shape),
+            OutgoingParam::Value(ParamPlan::ScalarOption { primitive }) => {
+                self.foreign_scalar_option_tokens(*primitive)
+            }
+            OutgoingParam::Value(ParamPlan::DirectVec { element }) => {
+                self.foreign_direct_vec_tokens(element)
+            }
             OutgoingParam::Value(_) => Err(Error::UnsupportedExpansion(
                 "callback method parameter shape",
             )),
@@ -1336,6 +1342,61 @@ impl<'expansion, 'lowered, S: CallbackMethodSurface> MethodParameter<'expansion,
                 quote! { #pointer },
             )
             .with_extra_ffi_parameter(quote! { usize }, quote! { #length })),
+        }
+    }
+
+    fn foreign_scalar_option_tokens(
+        &self,
+        primitive: Primitive,
+    ) -> Result<ForeignMethodParameterTokens, Error> {
+        let ident = RustIdent::new(self.source.name.spelling())?;
+        rust_api::Parameter::new(self.source).scalar_option(primitive)?;
+        S::foreign_scalar_option_parameter_tokens(primitive, ident.as_ident())
+    }
+
+    fn foreign_direct_vec_tokens(
+        &self,
+        element: &TypeRef,
+    ) -> Result<ForeignMethodParameterTokens, Error> {
+        let ident = RustIdent::new(self.source.name.spelling())?;
+        let parameter_names = wrapper::names::Parameter::new(ident.as_ident());
+        let pointer = parameter_names.pointer();
+        let length = parameter_names.length();
+        match element {
+            TypeRef::Primitive(_) => {
+                let element_type = <wrapper::type_ref::Renderer as Render<S, &TypeRef>>::render(
+                    wrapper::type_ref::Renderer,
+                    element,
+                )?;
+                Ok(ForeignMethodParameterTokens::new(
+                    quote! { *const #element_type },
+                    vec![quote! {
+                        let #pointer = #ident.as_ptr();
+                        let #length = #ident.len();
+                    }],
+                    quote! { #pointer },
+                )
+                .with_extra_ffi_parameter(quote! { usize }, quote! { #length }))
+            }
+            TypeRef::Record(_) | TypeRef::Enum(_) => {
+                let rust_element =
+                    rust_api::Parameter::new(self.source).direct_vec_element_type()?;
+                let buffer = parameter_names.buffer();
+                Ok(ForeignMethodParameterTokens::new(
+                    quote! { *const u8 },
+                    vec![quote! {
+                        let #buffer =
+                            <#rust_element as ::boltffi::__private::VecTransport>::pack_vec(#ident);
+                        let #pointer = #buffer.as_ptr();
+                        let #length = #buffer.len();
+                    }],
+                    quote! { #pointer },
+                )
+                .with_extra_ffi_parameter(quote! { usize }, quote! { #length }))
+            }
+            _ => Err(Error::UnsupportedExpansion(
+                "callback method direct-vector element",
+            )),
         }
     }
 }
@@ -3583,6 +3644,11 @@ trait CallbackMethodSurface: RenderSurface {
         shape: Self::BufferShape,
     ) -> Result<CallbackEncodedParameter, Error>;
 
+    fn foreign_scalar_option_parameter_tokens(
+        primitive: Primitive,
+        value: &Ident,
+    ) -> Result<ForeignMethodParameterTokens, Error>;
+
     fn callback_encoded_return(
         shape: Self::BufferShape,
         ty: &TypeRef,
@@ -3705,6 +3771,30 @@ impl CallbackMethodSurface for Native {
                 "unknown native callback method encoded parameter shape",
             )),
         }
+    }
+
+    fn foreign_scalar_option_parameter_tokens(
+        _primitive: Primitive,
+        value: &Ident,
+    ) -> Result<ForeignMethodParameterTokens, Error> {
+        let parameter_names = wrapper::names::Parameter::new(value);
+        let buffer = parameter_names.buffer();
+        let pointer = parameter_names.pointer();
+        let length = parameter_names.length();
+        Ok(ForeignMethodParameterTokens::new(
+            quote! { *const u8 },
+            vec![quote! {
+                let #buffer = if #value.is_some() {
+                    ::boltffi::__private::FfiBuf::wire_encode(&#value)
+                } else {
+                    ::boltffi::__private::FfiBuf::default()
+                };
+                let #pointer = #buffer.as_ptr();
+                let #length = #buffer.len();
+            }],
+            quote! { #pointer },
+        )
+        .with_extra_ffi_parameter(quote! { usize }, quote! { #length }))
     }
 
     fn callback_encoded_return(
@@ -4038,6 +4128,44 @@ impl CallbackMethodSurface for Wasm32 {
                 "unknown wasm callback method encoded parameter shape",
             )),
         }
+    }
+
+    fn foreign_scalar_option_parameter_tokens(
+        primitive: Primitive,
+        value: &Ident,
+    ) -> Result<ForeignMethodParameterTokens, Error> {
+        let encoded = wrapper::names::Parameter::new(value).packed();
+        let body = match primitive {
+            Primitive::Bool => quote! {
+                match #value {
+                    Some(value) if value => 1.0,
+                    Some(_) => 0.0,
+                    None => f64::NAN,
+                }
+            },
+            Primitive::F64 => quote! { #value.unwrap_or(f64::NAN) },
+            Primitive::I8
+            | Primitive::U8
+            | Primitive::I16
+            | Primitive::U16
+            | Primitive::I32
+            | Primitive::U32
+            | Primitive::I64
+            | Primitive::U64
+            | Primitive::ISize
+            | Primitive::USize
+            | Primitive::F32 => quote! {
+                #value.map(|value| value as f64).unwrap_or(f64::NAN)
+            },
+            _ => return Err(Error::UnsupportedExpansion("scalar option primitive")),
+        };
+        Ok(ForeignMethodParameterTokens::new(
+            quote! { f64 },
+            vec![quote! {
+                let #encoded = #body;
+            }],
+            quote! { #encoded },
+        ))
     }
 
     fn callback_encoded_return(
