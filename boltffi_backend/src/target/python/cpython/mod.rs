@@ -8,10 +8,11 @@ use boltffi_binding::{
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
     core::{
-        BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, Error,
+        BindingCapability, BridgeCapability, CapabilityRequirements, Diagnostic, Emitted, Error,
         GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result,
         contract::sealed, host,
     },
+    target::python::name_style::Name,
 };
 
 /// Python host renderer for a CPython extension bridge.
@@ -57,18 +58,18 @@ impl host::HostBackend for PythonCExtHost {
         &self,
         decl: &RecordDecl<Self::Surface>,
         bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::RecordWrapper::from_declaration(decl, bridge)?.render()
+        render::RecordWrapper::from_declaration(decl, bridge, context)?.render()
     }
 
     fn enumeration(
         &self,
         decl: &EnumDecl<Self::Surface>,
         bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::EnumWrapper::from_declaration(decl, bridge)?.render()
+        render::EnumWrapper::from_declaration(decl, bridge, context)?.render()
     }
 
     fn function(
@@ -77,6 +78,12 @@ impl host::HostBackend for PythonCExtHost {
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
+        if !render::Wrapper::supports(decl.callable()) {
+            return Ok(Emitted::diagnostic(Diagnostic::new(format!(
+                "python target skipped unsupported function {}",
+                decl.symbol().name().as_str()
+            ))));
+        }
         render::Wrapper::from_declaration(decl, bridge, context)?.render()
     }
 
@@ -95,6 +102,12 @@ impl host::HostBackend for PythonCExtHost {
         bridge: &Self::Bridge,
         _: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
+        if !render::CallbackWrapper::supports(decl, bridge) {
+            return Ok(Emitted::diagnostic(Diagnostic::new(format!(
+                "python target skipped unsupported callback {}",
+                Name::new(decl.name()).function()
+            ))));
+        }
         render::CallbackWrapper::from_declaration(decl, bridge)?.render()
     }
 
@@ -104,6 +117,12 @@ impl host::HostBackend for PythonCExtHost {
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
+        if !render::StreamWrapper::supports(decl) {
+            return Ok(Emitted::diagnostic(Diagnostic::new(format!(
+                "python target skipped unsupported stream {}",
+                Name::new(decl.name()).function()
+            ))));
+        }
         render::StreamWrapper::from_declaration(decl, bridge, context)?.render()
     }
 
@@ -135,10 +154,16 @@ impl host::HostBackend for PythonCExtHost {
         context: &RenderContext<Self::Surface>,
         declarations: Vec<RenderedDeclaration<'_, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
-        Ok(GeneratedOutput::combine([
+        let diagnostics = declarations
+            .iter()
+            .flat_map(|declaration| declaration.emitted().diagnostics().iter().cloned())
+            .collect();
+        let mut output = GeneratedOutput::combine([
             render::NativeModule::new(bridge, context, declarations).render()?,
             render::Package::new(bindings, bridge).render()?,
-        ]))
+        ]);
+        output.append(GeneratedOutput::new(Vec::new(), diagnostics));
+        Ok(output)
     }
 }
 
@@ -153,7 +178,7 @@ mod tests {
 
     use crate::{
         bridge::{c::CBridge, python_cext::PythonCExtBridge},
-        core::{BridgeLayer, Error, GeneratedOutput, Target},
+        core::{BridgeLayer, GeneratedOutput, Target},
         target::python::PythonCExtHost,
     };
 
@@ -263,7 +288,8 @@ mod tests {
         assert_eq!(file(&output, "demo/py.typed"), "");
         assert!(init.contains("from . import _native"));
         assert!(init.contains("_native._initialize_loader"));
-        assert!(init.contains("add = _native.add"));
+        assert!(init.contains("def add(left: int, right: int) -> int:"));
+        assert!(init.contains("return _native.add(left, right)"));
         assert!(init.contains("MODULE_NAME = \"demo\""));
         assert!(init.contains("PACKAGE_NAME = \"demo\""));
         assert!(init.contains("\"add\","));
@@ -317,6 +343,117 @@ mod tests {
     }
 
     #[test]
+    fn python_target_renders_direct_record_vector_function_wrapper() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[repr(C)]
+                #[data]
+                pub struct Point {
+                    pub x: f64,
+                    pub y: f64,
+                }
+
+                #[export]
+                pub fn echo_points(values: Vec<Point>) -> Vec<Point> {
+                    values
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let extension = extension(&output);
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains("static int boltffi_python_parse_vec_point"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_vec_point"));
+        assert!(extension.contains("___Point *values = NULL;"));
+        assert!(extension.contains(
+            "boltffi_python_parse_point(PySequence_Fast_GET_ITEM(sequence, index), &values[index])"
+        ));
+        assert!(extension.contains("item = boltffi_python_box_point(values[index]);"));
+        assert!(extension.contains(
+            "boltffi_python_parse_vec_point(args[0], &values_wire, &values_ptr, &values_len)"
+        ));
+        assert!(extension.contains(
+            "result = boltffi_python_decode_owned_vec_point(boltffi_python_boltffi_function_demo_echo_points(values_ptr, values_len));"
+        ));
+        assert!(stub.contains("def echo_points(values: list[Point]) -> list[Point]: ..."));
+    }
+
+    #[test]
+    fn python_target_renders_direct_record_associated_callables() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[repr(C)]
+                #[data]
+                pub struct Point {
+                    pub x: f64,
+                    pub y: f64,
+                }
+
+                #[data(impl)]
+                impl Point {
+                    pub fn origin() -> Self {
+                        Self { x: 0.0, y: 0.0 }
+                    }
+
+                    pub fn distance_to_origin(&self) -> f64 {
+                        0.0
+                    }
+
+                    pub fn midpoint_to(left: Point, right: Point) -> Point {
+                        left
+                    }
+
+                    pub fn sum_x(left: Point, right: Point) -> f64 {
+                        left.x + right.x
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_init_record_demo_point_origin"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_method_record_demo_point_distance_to_origin"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_init_record_demo_point_midpoint_to"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_method_record_demo_point_sum_x"
+        ));
+        assert!(extension.contains("boltffi_python_parse_point(args[0], &receiver)"));
+        assert!(extension.contains(
+            "boltffi_python_boltffi_method_record_demo_point_distance_to_origin(receiver)"
+        ));
+        assert!(extension.contains(
+            "{\"_boltffi_point_origin\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_init_record_demo_point_origin, METH_FASTCALL, NULL}"
+        ));
+        assert!(extension.contains(
+            "{\"_boltffi_point_distance_to_origin\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_method_record_demo_point_distance_to_origin, METH_FASTCALL, NULL}"
+        ));
+        assert!(init.contains("def origin(cls) -> \"Point\":"));
+        assert!(init.contains("return _native._boltffi_point_origin()"));
+        assert!(init.contains("def distance_to_origin(self) -> float:"));
+        assert!(init.contains("return _native._boltffi_point_distance_to_origin(self)"));
+        assert!(init.contains("def midpoint_to(cls, left: Point, right: Point) -> \"Point\":"));
+        assert!(init.contains("return _native._boltffi_point_midpoint_to(left, right)"));
+        assert!(init.contains("def sum_x(left: Point, right: Point) -> float:"));
+        assert!(init.contains("return _native._boltffi_point_sum_x(left, right)"));
+        assert!(stub.contains("def origin(cls) -> \"Point\": ..."));
+        assert!(stub.contains("def distance_to_origin(self) -> float: ..."));
+        assert!(stub.contains("def midpoint_to(cls, left: Point, right: Point) -> \"Point\": ..."));
+        assert!(stub.contains("def sum_x(left: Point, right: Point) -> float: ..."));
+    }
+
+    #[test]
     fn python_target_renders_c_style_enum_package_and_native_conversions() {
         let output = target()
             .render(&bindings(
@@ -366,6 +503,127 @@ mod tests {
         assert!(init.contains("_native._register_status(Status)"));
         assert!(stub.contains("class Status(IntEnum):"));
         assert!(stub.contains("def echo_status(value: Status) -> Status: ..."));
+    }
+
+    #[test]
+    fn python_target_renders_c_style_enum_vector_function_wrapper() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[repr(i32)]
+                #[data]
+                pub enum Status {
+                    Active = 0,
+                    Inactive = 1,
+                    Pending = 2,
+                }
+
+                #[export]
+                pub fn echo_statuses(values: Vec<Status>) -> Vec<Status> {
+                    values
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains("static int boltffi_python_wire_raw"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_raw_wire"));
+        assert!(extension.contains("PyObject *values_wire = NULL;"));
+        assert!(extension.contains("const uint8_t *values_ptr = NULL;"));
+        assert!(extension.contains("uintptr_t values_len = 0;"));
+        assert!(
+            extension.contains(
+                "boltffi_python_wire_raw(args[0], &values_wire, &values_ptr, &values_len)"
+            )
+        );
+        assert!(extension.contains(
+            "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_function_demo_echo_statuses(values_ptr, values_len));"
+        ));
+        assert!(init.contains(
+            "_boltffi_wire_sequence(values, lambda value: _boltffi_wire_i32(int(value)))"
+        ));
+        assert!(init.contains(
+            "_boltffi_read_wire(_native.echo_statuses(_boltffi_wire_sequence(values, lambda value: _boltffi_wire_i32(int(value)))), lambda reader: reader.sequence(lambda: Status(reader.i32())))"
+        ));
+        assert!(stub.contains("def echo_statuses(values: list[Status]) -> list[Status]: ..."));
+    }
+
+    #[test]
+    fn python_target_renders_c_style_enum_associated_callables() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[repr(i32)]
+                #[data]
+                pub enum Direction {
+                    North = 0,
+                    South = 1,
+                }
+
+                #[data(impl)]
+                impl Direction {
+                    pub fn north() -> Self {
+                        Self::North
+                    }
+
+                    pub fn opposite(self) -> Self {
+                        Self::South
+                    }
+
+                    pub fn choose(value: Direction) -> Direction {
+                        value
+                    }
+
+                    pub fn is_north(value: Direction) -> bool {
+                        matches!(value, Self::North)
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_init_enum_demo_direction_north"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_method_enum_demo_direction_opposite"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_init_enum_demo_direction_choose"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_method_enum_demo_direction_is_north"
+        ));
+        assert!(extension.contains("boltffi_python_parse_direction(args[0], &receiver)"));
+        assert!(
+            extension
+                .contains("boltffi_python_boltffi_method_enum_demo_direction_opposite(receiver)")
+        );
+        assert!(extension.contains(
+            "{\"_boltffi_direction_north\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_init_enum_demo_direction_north, METH_FASTCALL, NULL}"
+        ));
+        assert!(extension.contains(
+            "{\"_boltffi_direction_opposite\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_method_enum_demo_direction_opposite, METH_FASTCALL, NULL}"
+        ));
+        assert!(init.contains("class Direction(IntEnum):"));
+        assert!(init.contains("def north(cls) -> \"Direction\":"));
+        assert!(init.contains("return _native._boltffi_direction_north()"));
+        assert!(init.contains("def opposite(self) -> Direction:"));
+        assert!(init.contains("return _native._boltffi_direction_opposite(self)"));
+        assert!(init.contains("def choose(cls, value: Direction) -> \"Direction\":"));
+        assert!(init.contains("return _native._boltffi_direction_choose(value)"));
+        assert!(init.contains("def is_north(value: Direction) -> bool:"));
+        assert!(init.contains("return _native._boltffi_direction_is_north(value)"));
+        assert!(stub.contains("def north(cls) -> \"Direction\": ..."));
+        assert!(stub.contains("def opposite(self) -> Direction: ..."));
+        assert!(stub.contains("def choose(cls, value: Direction) -> \"Direction\": ..."));
+        assert!(stub.contains("def is_north(value: Direction) -> bool: ..."));
     }
 
     #[test]
@@ -501,16 +759,17 @@ mod tests {
         assert!(extension.contains(
             "boltffi_python_boltffi_create_callback_demo_value_callback((uint64_t)(uintptr_t)value)"
         ));
-        assert!(extension.contains("BoltFFICallbackHandle callback;"));
-        assert!(
-            extension.contains("boltffi_python_parse_callback_value_callback(args[0], &callback)")
-        );
-        assert!(extension.contains(
-            "boltffi_python_boltffi_function_demo_invoke_value_callback(callback, input)"
+        assert!(!extension.contains(
+            "static PyObject *boltffi_python_callable_wrapper_boltffi_function_demo_invoke_value_callback"
         ));
-        assert!(
-            stub.contains("def invoke_value_callback(callback: object, input: int) -> int: ...")
-        );
+        assert!(!extension.contains(
+            "{\"invoke_value_callback\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_function_demo_invoke_value_callback"
+        ));
+        assert!(!stub.contains("def invoke_value_callback"));
+        assert!(output.diagnostics().iter().any(|diagnostic| {
+            diagnostic.message()
+                == "python target skipped unsupported function boltffi_function_demo_invoke_value_callback"
+        }));
     }
 
     #[test]
@@ -609,8 +868,8 @@ mod tests {
     }
 
     #[test]
-    fn python_target_rejects_async_functions() {
-        let error = target()
+    fn python_target_skips_async_functions() {
+        let output = target()
             .render(&bindings(
                 r#"
                 #[export]
@@ -619,15 +878,14 @@ mod tests {
                 }
                 "#,
             ))
-            .expect_err("async Python functions must reject");
+            .expect("Python target should render without async wrapper");
+        let init = file(&output, "demo/__init__.py");
 
-        assert_eq!(
-            error,
-            Error::UnsupportedTarget {
-                target: "python",
-                shape: "async function"
-            }
-        );
+        assert!(!init.contains("def fetch"));
+        assert!(output.diagnostics().iter().any(|diagnostic| {
+            diagnostic.message()
+                == "python target skipped unsupported function boltffi_function_demo_fetch"
+        }));
     }
 
     #[test]

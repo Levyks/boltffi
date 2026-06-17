@@ -1,14 +1,14 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     ClassDecl, DeclarationRef, Native, NativeSymbol, Primitive, StreamDecl, StreamItemPlan,
-    StreamMode, TypeRef,
+    StreamMode, TypeRef, native,
 };
 
 use crate::{
     bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        cpython::render::{enumeration, primitive, record},
+        cpython::render::{enumeration, primitive, record, result},
         name_style::Name,
     },
 };
@@ -41,6 +41,18 @@ pub struct Wrapper {
 }
 
 impl Wrapper {
+    pub fn supports(declaration: &StreamDecl<Native>) -> bool {
+        matches!(declaration.mode(), StreamMode::Async | StreamMode::Batch)
+            && matches!(
+                declaration.item(),
+                StreamItemPlan::Direct { .. }
+                    | StreamItemPlan::Encoded {
+                        shape: native::BufferShape::Buffer,
+                        ..
+                    }
+            )
+    }
+
     pub fn from_declaration(
         declaration: &StreamDecl<Native>,
         bridge: &PythonCExtBridgeContract,
@@ -52,12 +64,6 @@ impl Wrapper {
                 shape: "callback-mode stream",
             });
         }
-        let StreamItemPlan::Direct { ty, .. } = declaration.item() else {
-            return Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "encoded stream item",
-            });
-        };
         let symbols = Symbols::new(declaration);
         Ok(Self {
             subscribe: Method::new(
@@ -90,7 +96,7 @@ impl Wrapper {
                 MethodFlags::FastCall,
                 bridge,
             )?,
-            item: Item::new(ty, bridge, context)?,
+            item: Item::new(declaration.item(), bridge, context)?,
             handle: primitive::Runtime::native_handle(declaration.handle())?,
             receiver: declaration
                 .owner()
@@ -142,6 +148,10 @@ impl Wrapper {
         .into_iter()
         .flatten()
         .collect()
+    }
+
+    pub fn owned_buffer(&self) -> Option<result::OwnedBuffer> {
+        self.item.owned_buffer()
     }
 }
 
@@ -215,13 +225,62 @@ impl Method {
 }
 
 struct Item {
-    c_type: String,
-    boxer: String,
+    kind: ItemKind,
     primitive: Option<primitive::Runtime>,
 }
 
 impl Item {
     fn new(
+        plan: &StreamItemPlan<Native>,
+        bridge: &PythonCExtBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        match plan {
+            StreamItemPlan::Direct { ty, .. } => Self::direct(ty, bridge, context),
+            StreamItemPlan::Encoded {
+                shape: native::BufferShape::Buffer,
+                ..
+            } => Ok(Self {
+                kind: ItemKind::Encoded,
+                primitive: None,
+            }),
+            StreamItemPlan::Encoded { .. } => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "encoded stream item shape",
+            }),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown stream item",
+            }),
+        }
+    }
+
+    fn is_direct(&self) -> bool {
+        matches!(self.kind, ItemKind::Direct { .. })
+    }
+
+    fn c_type(&self) -> &str {
+        match &self.kind {
+            ItemKind::Direct { c_type, .. } => c_type,
+            ItemKind::Encoded => "",
+        }
+    }
+
+    fn boxer(&self) -> &str {
+        match &self.kind {
+            ItemKind::Direct { boxer, .. } => boxer,
+            ItemKind::Encoded => "",
+        }
+    }
+
+    fn owned_buffer(&self) -> Option<result::OwnedBuffer> {
+        match self.kind {
+            ItemKind::Direct { .. } => None,
+            ItemKind::Encoded => Some(result::OwnedBuffer::RawWire),
+        }
+    }
+
+    fn direct(
         ty: &TypeRef,
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
@@ -230,24 +289,30 @@ impl Item {
             TypeRef::Primitive(primitive) => {
                 let primitive = primitive::Runtime::new(*primitive);
                 Ok(Self {
-                    c_type: primitive.c_type()?,
-                    boxer: primitive.boxer()?.to_owned(),
+                    kind: ItemKind::Direct {
+                        c_type: primitive.c_type()?,
+                        boxer: primitive.boxer()?.to_owned(),
+                    },
                     primitive: Some(primitive),
                 })
             }
             TypeRef::Record(record) => {
                 let symbols = record::Symbols::from_record_id(*record, bridge, context)?;
                 Ok(Self {
-                    c_type: symbols.c_type().to_owned(),
-                    boxer: symbols.boxer().to_owned(),
+                    kind: ItemKind::Direct {
+                        c_type: symbols.c_type()?.to_owned(),
+                        boxer: symbols.boxer().to_owned(),
+                    },
                     primitive: None,
                 })
             }
             TypeRef::Enum(enumeration) => {
                 let symbols = enumeration::Symbols::from_enum_id(*enumeration, bridge, context)?;
                 Ok(Self {
-                    c_type: symbols.c_type().to_owned(),
-                    boxer: symbols.boxer().to_owned(),
+                    kind: ItemKind::Direct {
+                        c_type: symbols.c_type()?.to_owned(),
+                        boxer: symbols.boxer().to_owned(),
+                    },
                     primitive: None,
                 })
             }
@@ -257,6 +322,11 @@ impl Item {
             }),
         }
     }
+}
+
+enum ItemKind {
+    Direct { c_type: String, boxer: String },
+    Encoded,
 }
 
 pub struct Symbols {

@@ -167,6 +167,17 @@ impl Runtime {
         Ok(format!("boltffi_python_decode_owned_{}", self.wire_stem()?))
     }
 
+    pub fn direct_vec_decoder(self) -> Result<String> {
+        Ok(format!(
+            "boltffi_python_decode_owned_vec_{}",
+            self.wire_stem()?
+        ))
+    }
+
+    pub fn direct_vec_parser(self) -> Result<String> {
+        Ok(format!("boltffi_python_parse_vec_{}", self.wire_stem()?))
+    }
+
     pub fn is_bool(&self) -> bool {
         matches!(self.primitive, Primitive::Bool)
     }
@@ -219,7 +230,7 @@ impl Runtime {
         matches!(self.primitive, Primitive::F64)
     }
 
-    fn wire_stem(self) -> Result<&'static str> {
+    pub fn wire_stem(self) -> Result<&'static str> {
         Ok(match self.primitive {
             Primitive::Bool => "bool",
             Primitive::I8 => "i8",

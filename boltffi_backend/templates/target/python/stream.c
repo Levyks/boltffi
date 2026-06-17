@@ -32,9 +32,11 @@ done:
 static PyObject *{{ pop_batch.wrapper }}(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
     {{ stream_handle_type }} subscription = 0;
     uintptr_t output_capacity = 0;
+{% if item.is_direct() %}
     uintptr_t item_count = 0;
     Py_ssize_t item_index = 0;
-    {{ item.c_type }} *items = NULL;
+    {{ item.c_type() }} *items = NULL;
+{% endif %}
     PyObject *list = NULL;
     PyObject *result = NULL;
     (void)self;
@@ -60,7 +62,8 @@ static PyObject *{{ pop_batch.wrapper }}(PyObject *self, PyObject *const *args, 
         result = PyList_New(0);
         goto done;
     }
-    items = PyMem_Calloc((size_t)output_capacity, sizeof({{ item.c_type }}));
+{% if item.is_direct() %}
+    items = PyMem_Calloc((size_t)output_capacity, sizeof({{ item.c_type() }}));
     if (items == NULL) {
         PyErr_NoMemory();
         goto done;
@@ -75,7 +78,7 @@ static PyObject *{{ pop_batch.wrapper }}(PyObject *self, PyObject *const *args, 
         goto done;
     }
     for (item_index = 0; item_index < (Py_ssize_t)item_count; item_index += 1) {
-        PyObject *item = {{ item.boxer }}(items[item_index]);
+        PyObject *item = {{ item.boxer() }}(items[item_index]);
         if (item == NULL) {
             goto done;
         }
@@ -83,9 +86,14 @@ static PyObject *{{ pop_batch.wrapper }}(PyObject *self, PyObject *const *args, 
     }
     result = list;
     list = NULL;
+{% else %}
+    result = boltffi_python_decode_owned_raw_wire({{ pop_batch.storage }}(subscription, output_capacity));
+{% endif %}
 done:
     Py_XDECREF(list);
+{% if item.is_direct() %}
     PyMem_Free(items);
+{% endif %}
     return result;
 }
 

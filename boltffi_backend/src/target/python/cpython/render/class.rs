@@ -5,7 +5,7 @@ use crate::{
     bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        cpython::render::{argument, function, primitive, result},
+        cpython::render::{argument, direct_vector, function, primitive, result},
         name_style::Name,
     },
 };
@@ -33,6 +33,9 @@ impl Wrapper {
     ) -> Result<Self> {
         let symbols = Symbols::new(declaration);
         let initializers = declaration.initializers().iter().map(|initializer| {
+            if !function::Wrapper::supports(initializer.callable()) {
+                return Ok(None);
+            }
             function::Wrapper::from_export(
                 symbols.initializer(initializer.name()),
                 initializer.symbol(),
@@ -41,8 +44,12 @@ impl Wrapper {
                 bridge,
                 context,
             )
+            .map(Some)
         });
         let methods = declaration.methods().iter().map(|method| {
+            if !function::Wrapper::supports(method.callable()) {
+                return Ok(None);
+            }
             let receiver = method
                 .callable()
                 .receiver()
@@ -58,10 +65,16 @@ impl Wrapper {
                 bridge,
                 context,
             )
+            .map(Some)
         });
         Ok(Self {
             release: Release::new(declaration, bridge)?,
-            callables: initializers.chain(methods).collect::<Result<Vec<_>>>()?,
+            callables: initializers
+                .chain(methods)
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect(),
         })
     }
 
@@ -108,6 +121,12 @@ impl Wrapper {
             .flat_map(function::Wrapper::wire_primitives)
     }
 
+    pub fn direct_vector_elements(&self) -> impl Iterator<Item = direct_vector::Element> + '_ {
+        self.callables
+            .iter()
+            .flat_map(function::Wrapper::direct_vector_elements)
+    }
+
     pub fn has_string_argument(&self) -> bool {
         self.callables
             .iter()
@@ -118,6 +137,12 @@ impl Wrapper {
         self.callables
             .iter()
             .any(function::Wrapper::has_bytes_argument)
+    }
+
+    pub fn has_raw_wire_argument(&self) -> bool {
+        self.callables
+            .iter()
+            .any(function::Wrapper::has_raw_wire_argument)
     }
 }
 

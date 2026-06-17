@@ -2,6 +2,7 @@ mod argument;
 mod callback;
 mod class;
 mod custom;
+mod direct_vector;
 mod enumeration;
 mod function;
 mod method;

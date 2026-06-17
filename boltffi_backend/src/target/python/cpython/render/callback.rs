@@ -40,6 +40,19 @@ pub struct Wrapper {
 }
 
 impl Wrapper {
+    pub fn supports(declaration: &CallbackDecl<Native>, bridge: &PythonCExtBridgeContract) -> bool {
+        bridge
+            .source_callback(declaration.id())
+            .is_some_and(|callback| {
+                declaration
+                    .protocol()
+                    .vtable()
+                    .methods()
+                    .iter()
+                    .all(|method| Method::supports(method, callback))
+            })
+    }
+
     pub fn from_declaration(
         declaration: &CallbackDecl<Native>,
         bridge: &PythonCExtBridgeContract,
@@ -233,6 +246,30 @@ struct Method {
 }
 
 impl Method {
+    fn supports(method: &ImportedMethodDecl<Native, VTableSlot>, c_callback: &c::Callback) -> bool {
+        if matches!(
+            method.callable().execution(),
+            ExecutionDecl::Asynchronous(_)
+        ) || !matches!(method.callable().error(), ErrorDecl::None(_))
+        {
+            return false;
+        }
+        let Some(c_field) = c_callback
+            .vtable()
+            .fields()
+            .iter()
+            .find(|field| field.name() == method.target().as_str())
+        else {
+            return false;
+        };
+        let Ok(signature) = MethodSignature::from_field(c_field) else {
+            return false;
+        };
+        signature.value_param_count() == method.callable().params().len()
+            && method.callable().params().iter().all(MethodParam::supports)
+            && MethodReturn::supports(method.callable().returns().plan())
+    }
+
     fn new(
         method: &ImportedMethodDecl<Native, VTableSlot>,
         c_callback: &c::Callback,
@@ -339,6 +376,16 @@ struct MethodParam {
 }
 
 impl MethodParam {
+    fn supports(parameter: &ParamDecl<Native, OutOfRust>) -> bool {
+        matches!(
+            parameter.payload(),
+            OutgoingParam::Value(ParamPlan::Direct {
+                ty: TypeRef::Primitive(_),
+                ..
+            })
+        )
+    }
+
     fn new(parameter: &ParamDecl<Native, OutOfRust>, c_type: &c::Type) -> Result<Self> {
         let OutgoingParam::Value(ParamPlan::Direct {
             ty: TypeRef::Primitive(primitive),
@@ -377,6 +424,16 @@ struct MethodReturn {
 }
 
 impl MethodReturn {
+    fn supports(plan: &ReturnPlan<Native, IntoRust>) -> bool {
+        matches!(
+            plan,
+            ReturnPlan::Void
+                | ReturnPlan::DirectViaReturnSlot {
+                    ty: TypeRef::Primitive(_),
+                }
+        )
+    }
+
     fn new(plan: &ReturnPlan<Native, IntoRust>, c_type: &c::Type) -> Result<Self> {
         match plan {
             ReturnPlan::Void => Ok(Self {

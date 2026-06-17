@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-{% if !direct_records.is_empty() %}
+{% if !records.is_empty() || has_data_enums %}
 from dataclasses import dataclass
 
 {% endif %}
@@ -24,11 +24,300 @@ def _shared_library_filename() -> str:
 
 _native._initialize_loader(str(Path(__file__).resolve().with_name(_shared_library_filename())))
 
-{% for record in direct_records %}
+{% if uses_wire_helpers %}
+def _boltffi_u32(value: int) -> bytes:
+    return int(value).to_bytes(4, "little", signed=False)
+
+
+def _boltffi_wire_bool(value: bool) -> bytes:
+    return b"\x01" if value else b"\x00"
+
+
+def _boltffi_wire_i8(value: int) -> bytes:
+    return int(value).to_bytes(1, "little", signed=True)
+
+
+def _boltffi_wire_u8(value: int) -> bytes:
+    return int(value).to_bytes(1, "little", signed=False)
+
+
+def _boltffi_wire_i16(value: int) -> bytes:
+    return int(value).to_bytes(2, "little", signed=True)
+
+
+def _boltffi_wire_u16(value: int) -> bytes:
+    return int(value).to_bytes(2, "little", signed=False)
+
+
+def _boltffi_wire_i32(value: int) -> bytes:
+    return int(value).to_bytes(4, "little", signed=True)
+
+
+def _boltffi_wire_u32(value: int) -> bytes:
+    return int(value).to_bytes(4, "little", signed=False)
+
+
+def _boltffi_wire_i64(value: int) -> bytes:
+    return int(value).to_bytes(8, "little", signed=True)
+
+
+def _boltffi_wire_u64(value: int) -> bytes:
+    return int(value).to_bytes(8, "little", signed=False)
+
+
+def _boltffi_wire_isize(value: int) -> bytes:
+    return _boltffi_wire_i64(value)
+
+
+def _boltffi_wire_usize(value: int) -> bytes:
+    return _boltffi_wire_u64(value)
+
+
+def _boltffi_wire_f32(value: float) -> bytes:
+    import struct
+    return struct.pack("<f", float(value))
+
+
+def _boltffi_wire_f64(value: float) -> bytes:
+    import struct
+    return struct.pack("<d", float(value))
+
+
+def _boltffi_wire_string(value: str) -> bytes:
+    payload = value.encode("utf-8")
+    return _boltffi_u32(len(payload)) + payload
+
+
+def _boltffi_wire_bytes(value: bytes) -> bytes:
+    payload = bytes(value)
+    return _boltffi_u32(len(payload)) + payload
+
+
+def _boltffi_split_duration(value: float) -> tuple[int, int]:
+    total = float(value)
+    if total < 0:
+        raise ValueError("duration must be non-negative")
+    seconds = int(total)
+    nanos = round((total - seconds) * 1_000_000_000)
+    if nanos == 1_000_000_000:
+        return seconds + 1, 0
+    return seconds, nanos
+
+
+def _boltffi_split_system_time(value: float) -> tuple[int, int]:
+    total = float(value)
+    seconds = int(total // 1)
+    nanos = round((total - seconds) * 1_000_000_000)
+    if nanos == 1_000_000_000:
+        return seconds + 1, 0
+    return seconds, nanos
+
+
+def _boltffi_wire_duration(value: float) -> bytes:
+    seconds, nanos = _boltffi_split_duration(value)
+    return seconds.to_bytes(8, "little", signed=False) + nanos.to_bytes(4, "little", signed=False)
+
+
+def _boltffi_wire_system_time(value: float) -> bytes:
+    seconds, nanos = _boltffi_split_system_time(value)
+    return seconds.to_bytes(8, "little", signed=True) + nanos.to_bytes(4, "little", signed=False)
+
+
+def _boltffi_wire_uuid(value: str) -> bytes:
+    raw = __import__("uuid").UUID(str(value)).bytes
+    high = int.from_bytes(raw[:8], "big")
+    low = int.from_bytes(raw[8:], "big")
+    return high.to_bytes(8, "little", signed=False) + low.to_bytes(8, "little", signed=False)
+
+
+def _boltffi_wire_url(value: str) -> bytes:
+    return _boltffi_wire_string(str(value))
+
+
+def _boltffi_wire_optional(value, encode) -> bytes:
+    if value is None:
+        return b"\x00"
+    return b"\x01" + encode(value)
+
+
+def _boltffi_wire_result(value, encode_ok, encode_err) -> bytes:
+    ok, payload = value
+    if ok:
+        return b"\x00" + encode_ok(payload)
+    return b"\x01" + encode_err(payload)
+
+
+def _boltffi_wire_sequence(value, encode) -> bytes:
+    items = list(value)
+    return _boltffi_u32(len(items)) + b"".join(encode(item) for item in items)
+
+
+def _boltffi_wire_map(value, encode_key, encode_value) -> bytes:
+    items = list(value.items())
+    return _boltffi_u32(len(items)) + b"".join(
+        encode_key(key) + encode_value(item) for key, item in items
+    )
+
+
+class _BoltFfiWireReader:
+    __slots__ = ("_data", "_offset")
+
+    def __init__(self, data: bytes) -> None:
+        self._data = memoryview(data)
+        self._offset = 0
+
+    def finish(self) -> None:
+        if self._offset != len(self._data):
+            raise ValueError("trailing BoltFFI wire bytes")
+
+    def read(self, count: int) -> bytes:
+        end = self._offset + count
+        if end > len(self._data):
+            raise ValueError("truncated BoltFFI wire bytes")
+        value = self._data[self._offset:end].tobytes()
+        self._offset = end
+        return value
+
+    def bool(self) -> bool:
+        value = self.read(1)[0]
+        if value > 1:
+            raise ValueError("invalid BoltFFI bool")
+        return value == 1
+
+    def i8(self) -> int:
+        return int.from_bytes(self.read(1), "little", signed=True)
+
+    def u8(self) -> int:
+        return int.from_bytes(self.read(1), "little", signed=False)
+
+    def i16(self) -> int:
+        return int.from_bytes(self.read(2), "little", signed=True)
+
+    def u16(self) -> int:
+        return int.from_bytes(self.read(2), "little", signed=False)
+
+    def i32(self) -> int:
+        return int.from_bytes(self.read(4), "little", signed=True)
+
+    def u32(self) -> int:
+        return int.from_bytes(self.read(4), "little", signed=False)
+
+    def i64(self) -> int:
+        return int.from_bytes(self.read(8), "little", signed=True)
+
+    def u64(self) -> int:
+        return int.from_bytes(self.read(8), "little", signed=False)
+
+    def isize(self) -> int:
+        return self.i64()
+
+    def usize(self) -> int:
+        return self.u64()
+
+    def f32(self) -> float:
+        import struct
+        return struct.unpack("<f", self.read(4))[0]
+
+    def f64(self) -> float:
+        import struct
+        return struct.unpack("<d", self.read(8))[0]
+
+    def string(self) -> str:
+        return self.read(self.u32()).decode("utf-8")
+
+    def bytes(self) -> bytes:
+        return self.read(self.u32())
+
+    def duration(self) -> float:
+        return self.u64() + self.u32() / 1_000_000_000
+
+    def system_time(self) -> float:
+        return self.i64() + self.u32() / 1_000_000_000
+
+    def uuid(self) -> str:
+        high = self.u64().to_bytes(8, "big", signed=False)
+        low = self.u64().to_bytes(8, "big", signed=False)
+        return str(__import__("uuid").UUID(bytes=high + low))
+
+    def url(self) -> str:
+        return self.string()
+
+    def optional(self, decode):
+        tag = self.read(1)[0]
+        if tag == 0:
+            return None
+        if tag == 1:
+            return decode()
+        raise ValueError("invalid BoltFFI option tag")
+
+    def result(self, decode_ok, decode_err):
+        tag = self.read(1)[0]
+        if tag == 0:
+            return (True, decode_ok())
+        if tag == 1:
+            return (False, decode_err())
+        raise ValueError("invalid BoltFFI result tag")
+
+    def sequence(self, decode) -> list:
+        return [decode() for _ in range(self.u32())]
+
+    def map(self, decode_key, decode_value) -> dict:
+        return {decode_key(): decode_value() for _ in range(self.u32())}
+
+
+def _boltffi_read_wire(data: bytes, decode):
+    reader = _BoltFfiWireReader(data)
+    value = decode(reader)
+    reader.finish()
+    return value
+
+{% endif %}
+{% for record in records %}
 @dataclass(frozen=True, slots=True)
 class {{ record.class_name }}:
 {%- for field in record.fields %}
     {{ field.name }}: {{ field.annotation }}
+{%- endfor %}
+{%- if let Some(wire) = record.wire %}
+
+    def _boltffi_wire(self) -> bytes:
+        return b"".join((
+{%- for field in wire.fields %}
+            {{ field.encode }},
+{%- endfor %}
+        ))
+
+    @classmethod
+    def _boltffi_from_wire(cls, data: bytes) -> "{{ record.class_name }}":
+        reader = _BoltFfiWireReader(data)
+        value = cls._boltffi_from_reader(reader)
+        reader.finish()
+        return value
+
+    @classmethod
+    def _boltffi_from_reader(cls, reader: "_BoltFfiWireReader") -> "{{ record.class_name }}":
+        return cls(
+{%- for field in wire.fields %}
+            {{ field.name }}={{ field.decode }},
+{%- endfor %}
+        )
+{%- endif %}
+{%- for constructor in record.constructors %}
+
+    @classmethod
+    def {{ constructor.python_name }}(cls{% for parameter in constructor.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> "{{ record.class_name }}":
+        {{ constructor.body }}
+{%- endfor %}
+{%- for method in record.static_methods %}
+
+    @staticmethod
+    def {{ method.python_name }}({% for parameter in method.parameters %}{{ parameter.name }}: {{ parameter.annotation }}{% if !loop.last %}, {% endif %}{% endfor %}) -> {{ method.return_annotation }}:
+        {{ method.body }}
+{%- endfor %}
+{%- for method in record.instance_methods %}
+
+    def {{ method.python_name }}(self{% for parameter in method.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> {{ method.return_annotation }}:
+        {{ method.body }}
 {%- endfor %}
 
 
@@ -36,11 +325,102 @@ _native.{{ record.register_method }}({{ record.class_name }})
 
 {% endfor %}
 {% for enumeration in enums %}
+{%- if let Some(wire) = enumeration.wire %}
+class {{ enumeration.class_name }}:
+    __slots__ = ()
+
+    @classmethod
+    def _boltffi_from_wire(cls, data: bytes) -> "{{ enumeration.class_name }}":
+        reader = _BoltFfiWireReader(data)
+        value = cls._boltffi_from_reader(reader)
+        reader.finish()
+        return value
+
+    @classmethod
+    def _boltffi_from_reader(cls, reader: "_BoltFfiWireReader") -> "{{ enumeration.class_name }}":
+        tag = reader.u32()
+{%- for variant in wire.variants %}
+        if tag == {{ variant.tag }}:
+            return {{ variant.class_name }}._boltffi_from_reader_payload(reader)
+{%- endfor %}
+        raise ValueError("invalid {{ enumeration.class_name }} tag")
+{%- for constructor in enumeration.constructors %}
+
+    @classmethod
+    def {{ constructor.python_name }}(cls{% for parameter in constructor.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> "{{ enumeration.class_name }}":
+        {{ constructor.body }}
+{%- endfor %}
+{%- for method in enumeration.static_methods %}
+
+    @staticmethod
+    def {{ method.python_name }}({% for parameter in method.parameters %}{{ parameter.name }}: {{ parameter.annotation }}{% if !loop.last %}, {% endif %}{% endfor %}) -> {{ method.return_annotation }}:
+        {{ method.body }}
+{%- endfor %}
+{%- for method in enumeration.instance_methods %}
+
+    def {{ method.python_name }}(self{% for parameter in method.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> {{ method.return_annotation }}:
+        {{ method.body }}
+{%- endfor %}
+
+{% for variant in wire.variants %}
+@dataclass(frozen=True, slots=True)
+class {{ variant.class_name }}({{ enumeration.class_name }}):
+{%- if variant.has_fields() %}
+{%- for field in variant.fields %}
+    {{ field.name }}: {{ field.annotation }}
+{%- endfor %}
+{%- else %}
+    pass
+{%- endif %}
+
+    def _boltffi_wire(self) -> bytes:
+{%- if variant.has_fields() %}
+        return _boltffi_wire_u32({{ variant.tag }}) + b"".join((
+{%- for field in variant.wire_fields %}
+            {{ field.encode }},
+{%- endfor %}
+        ))
+{%- else %}
+        return _boltffi_wire_u32({{ variant.tag }})
+{%- endif %}
+
+    @classmethod
+    def _boltffi_from_reader_payload(cls, reader: "_BoltFfiWireReader") -> "{{ variant.class_name }}":
+{%- if variant.has_fields() %}
+        return cls(
+{%- for field in variant.wire_fields %}
+            {{ field.name }}={{ field.decode }},
+{%- endfor %}
+        )
+{%- else %}
+        return cls()
+{%- endif %}
+
+{% endfor %}
+{%- else %}
 class {{ enumeration.class_name }}(IntEnum):
 {%- for variant in enumeration.variants %}
     {{ variant.name }} = {{ variant.value }}
 {%- endfor %}
+{%- for constructor in enumeration.constructors %}
 
+    @classmethod
+    def {{ constructor.python_name }}(cls{% for parameter in constructor.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> "{{ enumeration.class_name }}":
+        {{ constructor.body }}
+{%- endfor %}
+{%- for method in enumeration.static_methods %}
+
+    @staticmethod
+    def {{ method.python_name }}({% for parameter in method.parameters %}{{ parameter.name }}: {{ parameter.annotation }}{% if !loop.last %}, {% endif %}{% endfor %}) -> {{ method.return_annotation }}:
+        {{ method.body }}
+{%- endfor %}
+{%- for method in enumeration.instance_methods %}
+
+    def {{ method.python_name }}(self{% for parameter in method.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> {{ method.return_annotation }}:
+        {{ method.body }}
+{%- endfor %}
+
+{%- endif %}
 
 _native.{{ enumeration.register_method }}({{ enumeration.class_name }})
 
@@ -74,30 +454,18 @@ class {{ class.class_name }}:
 
     @classmethod
     def {{ constructor.python_name }}(cls{% for parameter in constructor.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> "{{ class.class_name }}":
-        return cls._from_handle(_native.{{ constructor.native_name }}({{ constructor.arguments }}))
+        {{ constructor.body }}
 {%- endfor %}
 {%- for method in class.static_methods %}
 
     @staticmethod
     def {{ method.python_name }}({% for parameter in method.parameters %}{{ parameter.name }}: {{ parameter.annotation }}{% if !loop.last %}, {% endif %}{% endfor %}) -> {{ method.return_annotation }}:
-{%- if method.wraps_return_handle %}
-        return {{ method.return_class }}._from_handle(_native.{{ method.native_name }}({{ method.arguments }}))
-{%- elif method.returns_value %}
-        return _native.{{ method.native_name }}({{ method.arguments }})
-{%- else %}
-        _native.{{ method.native_name }}({{ method.arguments }})
-{%- endif %}
+        {{ method.body }}
 {%- endfor %}
 {%- for method in class.instance_methods %}
 
     def {{ method.python_name }}(self{% for parameter in method.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> {{ method.return_annotation }}:
-{%- if method.wraps_return_handle %}
-        return {{ method.return_class }}._from_handle(_native.{{ method.native_name }}({{ method.arguments }}))
-{%- elif method.returns_value %}
-        return _native.{{ method.native_name }}({{ method.arguments }})
-{%- else %}
-        _native.{{ method.native_name }}({{ method.arguments }})
-{%- endif %}
+        {{ method.body }}
 {%- endfor %}
 {%- for stream in class.streams %}
 
@@ -125,7 +493,9 @@ class {{ stream.subscription_class }}:
             _native.{{ stream.free_method }}(handle)
 
     def pop_batch(self, max_count: int = 16) -> list[{{ stream.item_annotation }}]:
-        return _native.{{ stream.pop_batch_method }}(self._require_handle(), max_count)
+{%- for line in stream.pop_batch_body %}
+        {{ line }}
+{%- endfor %}
 
     def wait(self, timeout_milliseconds: int) -> int:
         return _native.{{ stream.wait_method }}(self._require_handle(), timeout_milliseconds)
@@ -145,7 +515,9 @@ class {{ stream.subscription_class }}:
 {% endfor %}
 {% endfor %}
 {% for function in functions %}
-{{ function }} = _native.{{ function }}
+def {{ function.python_name }}({% for parameter in function.parameters %}{{ parameter.name }}: {{ parameter.annotation }}{% if !loop.last %}, {% endif %}{% endfor %}) -> {{ function.return_annotation }}:
+    {{ function.body }}
+
 {%- endfor %}
 
 MODULE_NAME = {{ module_name_literal }}
@@ -156,11 +528,16 @@ __all__ = [
     "MODULE_NAME",
     "PACKAGE_NAME",
     "PACKAGE_VERSION",
-{%- for record in direct_records %}
+{%- for record in records %}
     "{{ record.class_name }}",
 {%- endfor %}
 {%- for enumeration in enums %}
     "{{ enumeration.class_name }}",
+{%- if let Some(wire) = enumeration.wire %}
+{%- for variant in wire.variants %}
+    "{{ variant.class_name }}",
+{%- endfor %}
+{%- endif %}
 {%- endfor %}
 {%- for class in classes %}
     "{{ class.class_name }}",
@@ -169,6 +546,6 @@ __all__ = [
 {%- endfor %}
 {%- endfor %}
 {%- for function in functions %}
-    "{{ function }}",
+    "{{ function.python_name }}",
 {%- endfor %}
 ]

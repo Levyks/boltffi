@@ -76,6 +76,17 @@ static int boltffi_python_wire_bytes(PyObject *value, PyObject **out_wire, const
     return ok;
 }
 {% endif %}
+{% if support.uses_raw_wire_arguments() %}
+static int boltffi_python_wire_raw(PyObject *value, PyObject **out_wire, const uint8_t **out_ptr, uintptr_t *out_len) {
+    Py_buffer view;
+    if (PyObject_GetBuffer(value, &view, PyBUF_CONTIG_RO) < 0) {
+        return 0;
+    }
+    int ok = boltffi_python_wire_fixed((const uint8_t *)view.buf, view.len, out_wire, out_ptr, out_len);
+    PyBuffer_Release(&view);
+    return ok;
+}
+{% endif %}
 {% if support.uses_owned_buffers() %}
 static uint16_t boltffi_python_read_u16_le(const uint8_t *buffer) {
     return ((uint16_t)buffer[0])
@@ -175,6 +186,18 @@ static PyObject *boltffi_python_decode_owned_bytes(FfiBuf_u8 buffer) {
         goto done;
     }
     result = PyBytes_FromStringAndSize((const char *)(buffer.ptr + 4), (Py_ssize_t)len);
+done:
+    boltffi_python_release_owned_buffer(buffer);
+    return result;
+}
+{% endif %}
+{% if support.uses_owned_raw_wire() %}
+static PyObject *boltffi_python_decode_owned_raw_wire(FfiBuf_u8 buffer) {
+    PyObject *result = NULL;
+    if (!boltffi_python_validate_owned_memory(buffer)) {
+        goto done;
+    }
+    result = PyBytes_FromStringAndSize((const char *)buffer.ptr, (Py_ssize_t)buffer.len);
 done:
     boltffi_python_release_owned_buffer(buffer);
     return result;
@@ -902,7 +925,79 @@ done:
 }
 {% endif %}
 {% endfor %}
-{% for record in direct_records %}
+{% for element in support.direct_vector_elements() %}
+static int {{ element.vector_parser() }}(PyObject *value, PyObject **out_wire, const uint8_t **out_ptr, uintptr_t *out_len) {
+    PyObject *sequence = NULL;
+    Py_ssize_t item_count = 0;
+    Py_ssize_t index = 0;
+    {{ element.c_type() }} *values = NULL;
+    sequence = PySequence_Fast(value, "expected sequence");
+    if (sequence == NULL) {
+        return 0;
+    }
+    item_count = PySequence_Fast_GET_SIZE(sequence);
+    if (item_count > PY_SSIZE_T_MAX / (Py_ssize_t)sizeof({{ element.c_type() }})) {
+        Py_DECREF(sequence);
+        PyErr_SetString(PyExc_OverflowError, "sequence is too large");
+        return 0;
+    }
+    *out_wire = PyBytes_FromStringAndSize(NULL, item_count * (Py_ssize_t)sizeof({{ element.c_type() }}));
+    if (*out_wire == NULL) {
+        Py_DECREF(sequence);
+        return 0;
+    }
+    values = ({{ element.c_type() }} *)PyBytes_AS_STRING(*out_wire);
+    for (index = 0; index < item_count; index += 1) {
+        if (!{{ element.parser() }}(PySequence_Fast_GET_ITEM(sequence, index), &values[index])) {
+            Py_DECREF(sequence);
+            Py_CLEAR(*out_wire);
+            return 0;
+        }
+    }
+    Py_DECREF(sequence);
+    *out_ptr = (const uint8_t *)values;
+    *out_len = (uintptr_t)item_count;
+    return 1;
+}
+
+static PyObject *{{ element.vector_decoder() }}(FfiBuf_u8 buffer) {
+    PyObject *result = NULL;
+    PyObject *item = NULL;
+    Py_ssize_t item_count = 0;
+    Py_ssize_t index = 0;
+    const {{ element.c_type() }} *values = NULL;
+    if (!boltffi_python_validate_owned_memory(buffer)) {
+        goto done;
+    }
+    if (buffer.len % sizeof({{ element.c_type() }}) != 0) {
+        PyErr_SetString(PyExc_RuntimeError, "native vector buffer byte length is invalid");
+        goto done;
+    }
+    if (buffer.len / sizeof({{ element.c_type() }}) > (uintptr_t)PY_SSIZE_T_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "native vector is too large");
+        goto done;
+    }
+    item_count = (Py_ssize_t)(buffer.len / sizeof({{ element.c_type() }}));
+    result = PyList_New(item_count);
+    if (result == NULL) {
+        goto done;
+    }
+    values = (const {{ element.c_type() }} *)buffer.ptr;
+    for (index = 0; index < item_count; index += 1) {
+        item = {{ element.boxer() }}(values[index]);
+        if (item == NULL) {
+            Py_CLEAR(result);
+            goto done;
+        }
+        PyList_SET_ITEM(result, index, item);
+        item = NULL;
+    }
+done:
+    boltffi_python_release_owned_buffer(buffer);
+    return result;
+}
+{% endfor %}
+{% for record in records %}
 {{ record }}
 {% endfor %}
 {% for enumeration in enums %}

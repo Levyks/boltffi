@@ -7,7 +7,7 @@ use crate::{
     bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        cpython::render::{argument, primitive, result},
+        cpython::render::{argument, direct_vector, primitive, result},
         name_style::Name,
     },
 };
@@ -34,6 +34,13 @@ pub struct Wrapper {
 }
 
 impl Wrapper {
+    pub fn supports(callable: &ExportedCallable<Native>) -> bool {
+        matches!(callable.execution(), ExecutionDecl::Synchronous(_))
+            && matches!(callable.error(), ErrorDecl::None(_))
+            && callable.params().iter().all(argument::Conversion::supports)
+            && result::Conversion::supports(callable.returns().plan())
+    }
+
     pub fn from_declaration(
         declaration: &FunctionDecl<Native>,
         bridge: &PythonCExtBridgeContract,
@@ -57,11 +64,20 @@ impl Wrapper {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        if matches!(callable.execution(), ExecutionDecl::Asynchronous(_)) {
-            return Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "async function",
-            });
+        match callable.execution() {
+            ExecutionDecl::Synchronous(_) => {}
+            ExecutionDecl::Asynchronous(_) => {
+                return Err(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "async function",
+                });
+            }
+            _ => {
+                return Err(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "unknown function execution",
+                });
+            }
         }
         if !matches!(callable.error(), ErrorDecl::None(_)) {
             return Err(Error::UnsupportedTarget {
@@ -139,6 +155,13 @@ impl Wrapper {
             .filter_map(argument::Conversion::wire_primitive)
     }
 
+    pub fn direct_vector_elements(&self) -> impl Iterator<Item = direct_vector::Element> + '_ {
+        self.params
+            .iter()
+            .filter_map(argument::Conversion::direct_vector_element)
+            .chain(self.returns.direct_vector_element())
+    }
+
     pub fn owned_buffer(&self) -> Option<result::OwnedBuffer> {
         self.returns.owned_buffer()
     }
@@ -149,5 +172,9 @@ impl Wrapper {
 
     pub fn has_bytes_argument(&self) -> bool {
         self.params.iter().any(argument::Conversion::is_bytes)
+    }
+
+    pub fn has_raw_wire_argument(&self) -> bool {
+        self.params.iter().any(argument::Conversion::is_raw_wire)
     }
 }
