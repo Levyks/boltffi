@@ -3008,7 +3008,7 @@ mod tests {
     }
 
     #[test]
-    fn native_direct_record_expansion_rejects_mutable_receiver_without_writeback() {
+    fn native_direct_record_expansion_writes_mutable_receiver_back() {
         let method = record_method(
             "shift",
             Receiver::Mutable,
@@ -3020,11 +3020,20 @@ mod tests {
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
         let expansion = Expansion::new(&lowered);
 
-        let error = expand_record(&expansion, &source.records[0]).expect_err("record rejects");
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
-        assert!(matches!(
-            error,
-            Error::UnsupportedExpansion("mutable direct record receiver without writeback")
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_method_record_demo_point_shift"));
+        assert!(rendered.contains(
+            "__boltffi_receiver : < Point as :: boltffi :: __private :: Passable > :: In"
+        ));
+        assert!(rendered.contains(
+            "__boltffi_receiver_out : * mut < Point as :: boltffi :: __private :: Passable > :: In"
+        ));
+        assert!(rendered.contains("receiver writeback pointer is null"));
+        assert!(rendered.contains("__boltffi_receiver . shift ()"));
+        assert!(rendered.contains(
+            ":: core :: ptr :: write_unaligned (__boltffi_receiver_out , :: boltffi :: __private :: Passable :: pack (__boltffi_receiver))"
         ));
     }
 
@@ -3093,8 +3102,8 @@ mod tests {
         assert!(rendered.contains("fn boltffi_method_record_demo_profile_display_name"));
         assert!(rendered.contains("__boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("__boltffi_receiver_len : usize"));
-        assert!(rendered.contains("let __boltffi_receiver : Profile ="));
-        assert!(!rendered.contains("__boltffi_receiver_storage"));
+        assert!(rendered.contains("let __boltffi_receiver_storage : Profile ="));
+        assert!(rendered.contains("let __boltffi_receiver = & __boltffi_receiver_storage ;"));
         assert!(rendered.contains("__boltffi_receiver . display_name ()"));
     }
 

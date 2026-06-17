@@ -1,4 +1,4 @@
-use boltffi_binding::{CodecNode, ErrorDecl, OutOfRust, ReturnDecl, ReturnPlan, TypeRef};
+use boltffi_binding::{CodecNode, ErrorDecl, OutOfRust, ReadPlan, ReturnDecl, ReturnPlan, TypeRef};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::Type;
@@ -96,6 +96,7 @@ pub struct Tokens {
 pub struct FailureInput<'expansion, 'lowered, S: RenderSurface> {
     returns: &'lowered ReturnDecl<S, OutOfRust>,
     error: &'lowered ErrorDecl<S, OutOfRust>,
+    source: rust_api::Return<'lowered>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
@@ -103,11 +104,13 @@ impl<'expansion, 'lowered, S: RenderSurface> FailureInput<'expansion, 'lowered, 
     pub fn new(
         returns: &'lowered ReturnDecl<S, OutOfRust>,
         error: &'lowered ErrorDecl<S, OutOfRust>,
+        source: rust_api::Return<'lowered>,
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
         Self {
             returns,
             error,
+            source,
             expansion,
         }
     }
@@ -386,7 +389,7 @@ where
 
     fn render(self, input: FailureInput<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
         if !matches!(input.error, ErrorDecl::None(_)) {
-            return ErrorFailure::new(input.error, input.expansion).tokens();
+            return ErrorFailure::new(input.error, input.source, input.expansion).tokens();
         }
 
         match input.returns.plan() {
@@ -441,15 +444,21 @@ where
 
 struct ErrorFailure<'expansion, 'lowered, S: RenderSurface> {
     error: &'lowered ErrorDecl<S, OutOfRust>,
+    source: rust_api::Return<'lowered>,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
 impl<'expansion, 'lowered, S: RenderSurface> ErrorFailure<'expansion, 'lowered, S> {
     fn new(
         error: &'lowered ErrorDecl<S, OutOfRust>,
+        source: rust_api::Return<'lowered>,
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
-        Self { error, expansion }
+        Self {
+            error,
+            source,
+            expansion,
+        }
     }
 
     fn tokens(self) -> Result<TokenStream, Error>
@@ -472,13 +481,38 @@ impl<'expansion, 'lowered, S: RenderSurface> ErrorFailure<'expansion, 'lowered, 
                     return #value;
                 })
             }
-            ErrorDecl::EncodedViaReturnSlot { .. } => Err(Error::UnsupportedExpansion(
-                "non-string encoded error failure",
-            )),
+            ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } => {
+                self.typed_encoded_error(codec, *shape)
+            }
             ErrorDecl::StatusViaReturnSlot { .. } => {
                 Err(Error::UnsupportedExpansion("status error failure"))
             }
             _ => Err(Error::UnsupportedExpansion("error failure")),
         }
+    }
+
+    fn typed_encoded_error(
+        self,
+        codec: &'lowered ReadPlan,
+        shape: S::BufferShape,
+    ) -> Result<TokenStream, Error>
+    where
+        encoded::Renderer:
+            Render<S, encoded::Input<'expansion, 'lowered, 'lowered, S>, Output = encoded::Tokens>,
+    {
+        let error = names::Wrapper::new(Span::call_site()).error();
+        let error_type = self.source.fallible()?.error_written_type()?;
+        let encoded = <encoded::Renderer as Render<S, _>>::render(
+            encoded::Renderer,
+            encoded::Input::new(codec, shape, error.clone(), self.expansion),
+        )?;
+        let value = encoded.value();
+        Ok(quote! {
+            let #error: #error_type =
+                <#error_type as ::core::convert::From<::boltffi::UnexpectedFfiCallbackError>>::from(
+                    ::boltffi::UnexpectedFfiCallbackError::new("invalid argument")
+                );
+            return #value;
+        })
     }
 }

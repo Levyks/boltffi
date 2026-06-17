@@ -5,8 +5,8 @@ use boltffi_binding::{
     ConstantDecl, ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl,
     Direction, EnumDecl, EnumId, ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable,
     ImportedMethodDecl, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl,
-    ParamDirection, ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, RustBody, StreamDecl,
-    StreamItemPlan, TypeRef, VTableSlot, native,
+    ParamDirection, ParamPlan, Primitive, Receive, RecordDecl, RecordId, ReturnPlan, RustBody,
+    StreamDecl, StreamItemPlan, TypeRef, VTableSlot, native,
 };
 
 use crate::core::{
@@ -175,6 +175,12 @@ struct Names {
 struct Signature<'names> {
     names: &'names Names,
     receiver: Vec<Parameter>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReceiverAbi {
+    input: Vec<Parameter>,
+    writeback: Option<Parameter>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -653,15 +659,12 @@ impl Function {
             RecordDecl::Direct(record) => (
                 record.initializers(),
                 record.methods(),
-                vec![Parameter::new(
-                    "receiver",
-                    Type::Named(names.record(record.id())?),
-                )],
+                ReceiverAbi::direct("receiver", Type::Named(names.record(record.id())?)),
             ),
             RecordDecl::Encoded(record) => (
                 record.initializers(),
                 record.methods(),
-                encoded_receiver("receiver"),
+                ReceiverAbi::encoded("receiver"),
             ),
             _ => {
                 return Err(Error::UnsupportedCAbi {
@@ -677,15 +680,15 @@ impl Function {
             EnumDecl::CStyle(enumeration) => (
                 enumeration.initializers(),
                 enumeration.methods(),
-                vec![Parameter::new(
+                ReceiverAbi::direct(
                     "receiver",
                     Type::Named(names.enumeration(enumeration.id())?),
-                )],
+                ),
             ),
             EnumDecl::Data(enumeration) => (
                 enumeration.initializers(),
                 enumeration.methods(),
-                encoded_receiver("receiver"),
+                ReceiverAbi::encoded("receiver"),
             ),
             _ => {
                 return Err(Error::UnsupportedCAbi {
@@ -697,10 +700,10 @@ impl Function {
     }
 
     fn class_functions(class: &ClassDecl<Native>, names: &Names) -> Result<Vec<Self>> {
-        let receiver = vec![Parameter::new(
+        let receiver = ReceiverAbi::plain([Parameter::new(
             "receiver",
             Type::handle_carrier(class.handle())?,
-        )];
+        )]);
         let release = Self::new(
             class.release().name().as_str(),
             vec![Parameter::new(
@@ -813,7 +816,7 @@ impl Function {
     fn associated_functions(
         initializers: &[InitializerDecl<Native>],
         methods: &[ExportedMethodDecl<Native, NativeSymbol>],
-        receiver: Vec<Parameter>,
+        receiver: ReceiverAbi,
         names: &Names,
     ) -> Result<Vec<Self>> {
         let initializers = initializers
@@ -835,7 +838,7 @@ impl Function {
                 let receiver = method
                     .callable()
                     .receiver()
-                    .map(|_| receiver.clone())
+                    .map(|receive| receiver.parameters(receive))
                     .unwrap_or_default();
                 Self::exported(method.target(), method.callable(), receiver, names)
             })
@@ -1587,6 +1590,47 @@ impl<'names> Signature<'names> {
                 shape: "unknown fallible async callback success",
             }),
         }
+    }
+}
+
+impl ReceiverAbi {
+    fn plain(params: impl IntoIterator<Item = Parameter>) -> Self {
+        Self {
+            input: params.into_iter().collect(),
+            writeback: None,
+        }
+    }
+
+    fn direct(name: &str, ty: Type) -> Self {
+        Self {
+            input: vec![Parameter::new(name, ty.clone())],
+            writeback: Some(Parameter::new(
+                format!("{name}_out"),
+                Type::MutPointer(Box::new(ty)),
+            )),
+        }
+    }
+
+    fn encoded(name: &str) -> Self {
+        Self {
+            input: encoded_receiver(name),
+            writeback: Some(Parameter::new(
+                format!("{name}_out"),
+                Type::MutPointer(Box::new(Type::Buffer)),
+            )),
+        }
+    }
+
+    fn parameters(&self, receive: Receive) -> Vec<Parameter> {
+        self.input
+            .iter()
+            .cloned()
+            .chain(
+                matches!(receive, Receive::ByMutRef)
+                    .then(|| self.writeback.clone())
+                    .flatten(),
+            )
+            .collect()
     }
 }
 

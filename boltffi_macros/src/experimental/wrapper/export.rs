@@ -174,6 +174,7 @@ where
                 wrapper::returns::FailureInput::new(
                     self.callable.returns(),
                     self.callable.error(),
+                    self.source.returns(),
                     self.expansion,
                 ),
             ),

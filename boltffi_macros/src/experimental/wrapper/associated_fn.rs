@@ -169,6 +169,7 @@ impl<'expansion, 'lowered, S: RenderSurface> ReceiverFailure<'expansion, 'lowere
                 wrapper::returns::FailureInput::new(
                     self.callable.returns(),
                     self.callable.error(),
+                    self.source.returns(),
                     self.expansion,
                 ),
             ),
