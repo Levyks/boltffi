@@ -201,7 +201,7 @@ mod tests {
 
     use crate::{
         bridge::{c::CBridge, python_cext::PythonCExtBridge},
-        core::{BridgeLayer, GeneratedOutput, Target},
+        core::{BridgeLayer, Error, GeneratedOutput, Target},
         target::python::PythonCExtHost,
     };
 
@@ -1095,6 +1095,110 @@ mod tests {
         assert!(extension.contains("if (!PyBool_Check(value))"));
         assert!(extension.contains("PyErr_SetString(PyExc_TypeError, \"expected bool\")"));
         assert!(extension.contains("*out = value == Py_True;"));
+    }
+
+    #[test]
+    fn python_target_rejects_records_that_shadow_int_enum_base() {
+        let error = target()
+            .render(&bindings(
+                r#"
+                #[repr(C)]
+                #[data]
+                pub struct IntEnum {
+                    pub value: i32,
+                }
+
+                #[repr(i32)]
+                #[data]
+                pub enum Status {
+                    Ready = 0,
+                }
+                "#,
+            ))
+            .expect_err("Python name collision should reject");
+
+        assert!(matches!(
+            error,
+            Error::PythonNameCollision {
+                scope,
+                name,
+                existing,
+                colliding,
+            } if scope == "python module"
+                && name == "IntEnum"
+                && existing == "imported enum base `IntEnum`"
+                && colliding == "record `IntEnum`"
+        ));
+    }
+
+    #[test]
+    fn python_target_rejects_record_field_method_name_collisions() {
+        let error = target()
+            .render(&bindings(
+                r#"
+                #[repr(C)]
+                #[data]
+                pub struct Point {
+                    pub origin: i32,
+                }
+
+                #[data(impl)]
+                impl Point {
+                    pub fn origin(&self) -> i32 {
+                        self.origin
+                    }
+                }
+                "#,
+            ))
+            .expect_err("Python record member collision should reject");
+
+        assert!(matches!(
+            error,
+            Error::PythonNameCollision {
+                scope,
+                name,
+                existing,
+                colliding,
+            } if scope == "record `Point`"
+                && name == "origin"
+                && existing == "field `origin`"
+                && colliding == "method `origin`"
+        ));
+    }
+
+    #[test]
+    fn python_target_rejects_int_enum_reserved_method_names() {
+        let error = target()
+            .render(&bindings(
+                r#"
+                #[repr(i32)]
+                #[data]
+                pub enum Status {
+                    Ready = 0,
+                }
+
+                #[data(impl)]
+                impl Status {
+                    pub fn name(&self) -> i32 {
+                        0
+                    }
+                }
+                "#,
+            ))
+            .expect_err("Python enum member collision should reject");
+
+        assert!(matches!(
+            error,
+            Error::PythonNameCollision {
+                scope,
+                name,
+                existing,
+                colliding,
+            } if scope == "enum `Status`"
+                && name == "name"
+                && existing == "reserved IntEnum property `name`"
+                && colliding == "method `name`"
+        ));
     }
 
     #[test]

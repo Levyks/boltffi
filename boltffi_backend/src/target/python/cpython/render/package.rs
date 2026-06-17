@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
@@ -95,6 +95,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             .iter()
             .map(|function| FunctionStub::from_declaration(function, &self))
             .collect::<Result<Vec<_>>>()?;
+        self.validate_names(&records, &enums, &classes, &constants, &stubs)?;
         let uses_sequence_annotations = records.iter().any(RecordClass::uses_sequence_annotations)
             || enums.iter().any(EnumClass::uses_sequence_annotations)
             || classes.iter().any(Class::uses_sequence_annotations)
@@ -468,6 +469,76 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
     fn literal(value: impl AsRef<str>) -> String {
         format!("{:?}", value.as_ref())
     }
+
+    fn validate_names(
+        &self,
+        records: &[RecordClass],
+        enums: &[EnumClass],
+        classes: &[Class],
+        constants: &[ConstantStub],
+        functions: &[FunctionStub],
+    ) -> Result<()> {
+        let scope = match enums.iter().any(EnumClass::is_int_enum) {
+            true => {
+                NameScope::new("python module").insert("IntEnum", "imported enum base `IntEnum`")?
+            }
+            false => NameScope::new("python module"),
+        };
+        scope
+            .insert_all(records.iter().map(|record| record.top_level_name()))
+            .and_then(|scope| scope.insert_all(enums.iter().map(EnumClass::top_level_name)))
+            .and_then(|scope| {
+                scope.insert_all(enums.iter().flat_map(EnumClass::data_variant_names))
+            })
+            .and_then(|scope| scope.insert_all(classes.iter().map(Class::top_level_name)))
+            .and_then(|scope| scope.insert_all(classes.iter().flat_map(Class::subscription_names)))
+            .and_then(|scope| scope.insert_all(constants.iter().map(ConstantStub::top_level_name)))
+            .and_then(|scope| scope.insert_all(functions.iter().map(FunctionStub::top_level_name)))
+            .map(|_| ())?;
+
+        records.iter().try_for_each(RecordClass::validate_names)?;
+        enums.iter().try_for_each(EnumClass::validate_names)?;
+        classes.iter().try_for_each(Class::validate_names)?;
+        functions.iter().try_for_each(FunctionStub::validate_names)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NameScope {
+    label: String,
+    names: HashMap<String, String>,
+}
+
+impl NameScope {
+    fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            names: HashMap::new(),
+        }
+    }
+
+    fn insert(mut self, name: impl Into<String>, subject: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        let subject = subject.into();
+        if let Some(existing) = self.names.insert(name.clone(), subject.clone()) {
+            return Err(Error::PythonNameCollision {
+                scope: self.label,
+                name,
+                existing,
+                colliding: subject,
+            });
+        }
+        Ok(self)
+    }
+
+    fn insert_all<I>(self, names: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        names
+            .into_iter()
+            .try_fold(self, |scope, (name, subject)| scope.insert(name, subject))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -520,6 +591,25 @@ impl FunctionStub {
             .iter()
             .any(ParameterStub::uses_sequence_annotation)
     }
+
+    fn validate_names(&self) -> Result<()> {
+        Self::parameter_scope(format!("function `{}`", self.python_name), &self.parameters)
+            .map(|_| ())
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.python_name.clone(),
+            format!("function `{}`", self.python_name),
+        )
+    }
+
+    fn parameter_scope(
+        label: impl Into<String>,
+        parameters: &[ParameterStub],
+    ) -> Result<NameScope> {
+        NameScope::new(label).insert_all(parameters.iter().map(ParameterStub::parameter_name))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -558,6 +648,13 @@ impl ConstantStub {
 
     fn uses_wire_helpers(&self) -> bool {
         self.uses_wire_helpers
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.python_name.clone(),
+            format!("constant `{}`", self.python_name),
+        )
     }
 
     fn from_inline(
@@ -705,6 +802,24 @@ impl RecordClass {
             .any(AssociatedCallable::uses_sequence_annotations)
     }
 
+    fn validate_names(&self) -> Result<()> {
+        NameScope::new(format!("record `{}`", self.class_name))
+            .insert_all(self.fields.iter().map(RecordField::field_name))
+            .and_then(|scope| {
+                scope.insert_all(self.callables().map(AssociatedCallable::member_name))
+            })
+            .map(|_| ())?;
+        self.callables()
+            .try_for_each(|callable| callable.validate_names(&self.class_name))
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.class_name.clone(),
+            format!("record `{}`", self.class_name),
+        )
+    }
+
     fn callables(&self) -> impl Iterator<Item = &AssociatedCallable> {
         self.constructors
             .iter()
@@ -800,6 +915,10 @@ impl RecordField {
             name: Self::name(field.key())?,
             annotation: PythonTypeHint::from_type_ref(field.ty(), package)?.into_string(),
         })
+    }
+
+    fn field_name(&self) -> (String, String) {
+        (self.name.clone(), format!("field `{}`", self.name))
     }
 
     fn name(key: &FieldKey) -> Result<String> {
@@ -1115,6 +1234,45 @@ impl EnumClass {
             .chain(&self.instance_methods)
     }
 
+    fn validate_names(&self) -> Result<()> {
+        let scope = match self.is_int_enum() {
+            true => NameScope::new(format!("enum `{}`", self.class_name))
+                .insert("name", "reserved IntEnum property `name`")?
+                .insert("value", "reserved IntEnum property `value`")?,
+            false => NameScope::new(format!("enum `{}`", self.class_name)),
+        };
+        scope
+            .insert_all(self.variants.iter().map(EnumVariant::member_name))
+            .and_then(|scope| {
+                scope.insert_all(self.callables().map(AssociatedCallable::member_name))
+            })
+            .map(|_| ())?;
+        self.callables()
+            .try_for_each(|callable| callable.validate_names(&self.class_name))?;
+        self.wire
+            .iter()
+            .flat_map(|wire| wire.variants.iter())
+            .try_for_each(DataEnumVariant::validate_names)
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.class_name.clone(),
+            format!("enum `{}`", self.class_name),
+        )
+    }
+
+    fn data_variant_names(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.wire
+            .iter()
+            .flat_map(|wire| wire.variants.iter())
+            .map(DataEnumVariant::top_level_name)
+    }
+
+    fn is_int_enum(&self) -> bool {
+        self.wire.is_none()
+    }
+
     fn constructors(
         initializers: &[InitializerDecl<Native>],
         symbols: &enumeration::Symbols,
@@ -1191,6 +1349,10 @@ impl EnumVariant {
             value: variant.value(),
         }
     }
+
+    fn member_name(&self) -> (String, String) {
+        (self.name.clone(), format!("enum member `{}`", self.name))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1229,6 +1391,19 @@ impl DataEnumVariant {
 
     fn has_fields(&self) -> bool {
         !self.fields.is_empty()
+    }
+
+    fn validate_names(&self) -> Result<()> {
+        NameScope::new(format!("data enum variant `{}`", self.class_name))
+            .insert_all(self.fields.iter().map(RecordField::field_name))
+            .map(|_| ())
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.class_name.clone(),
+            format!("data enum variant `{}`", self.class_name),
+        )
     }
 
     fn payload_fields(payload: &DataVariantPayload) -> Result<&[EncodedFieldDecl]> {
@@ -1321,6 +1496,26 @@ impl Class {
             .chain(&self.static_methods)
             .chain(&self.instance_methods)
     }
+
+    fn validate_names(&self) -> Result<()> {
+        NameScope::new(format!("class `{}`", self.class_name))
+            .insert_all(self.callables().map(AssociatedCallable::member_name))
+            .and_then(|scope| scope.insert_all(self.streams.iter().map(ClassStream::member_name)))
+            .map(|_| ())?;
+        self.callables()
+            .try_for_each(|callable| callable.validate_names(&self.class_name))
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.class_name.clone(),
+            format!("class `{}`", self.class_name),
+        )
+    }
+
+    fn subscription_names(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.streams.iter().map(ClassStream::top_level_name)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1367,6 +1562,20 @@ impl ClassStream {
 
     fn uses_wire_helpers(&self) -> bool {
         self.uses_wire_helpers
+    }
+
+    fn member_name(&self) -> (String, String) {
+        (
+            self.python_name.clone(),
+            format!("stream `{}`", self.python_name),
+        )
+    }
+
+    fn top_level_name(&self) -> (String, String) {
+        (
+            self.subscription_class.clone(),
+            format!("stream subscription `{}`", self.subscription_class),
+        )
     }
 }
 
@@ -1538,6 +1747,21 @@ impl AssociatedCallable {
             .any(ParameterStub::uses_sequence_annotation)
     }
 
+    fn validate_names(&self, owner: &str) -> Result<()> {
+        FunctionStub::parameter_scope(
+            format!("method `{}.{}`", owner, self.python_name),
+            &self.parameters,
+        )
+        .map(|_| ())
+    }
+
+    fn member_name(&self) -> (String, String) {
+        (
+            self.python_name.clone(),
+            format!("method `{}`", self.python_name),
+        )
+    }
+
     fn arguments(receiver: Option<&str>, parameters: &[ParameterStub]) -> String {
         receiver
             .into_iter()
@@ -1600,6 +1824,10 @@ impl ParameterStub {
 
     fn uses_sequence_annotation(&self) -> bool {
         self.uses_sequence_annotation
+    }
+
+    fn parameter_name(&self) -> (String, String) {
+        (self.name.clone(), format!("parameter `{}`", self.name))
     }
 
     fn argument(

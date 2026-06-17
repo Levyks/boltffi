@@ -82,6 +82,18 @@ pub enum BackendError {
         /// Invalid module name text.
         name: String,
     },
+    /// Two generated Python declarations require the same name in one scope.
+    #[error("python name collision in {scope}: `{name}` is used by {existing} and {colliding}")]
+    PythonNameCollision {
+        /// Python scope where the collision was found.
+        scope: String,
+        /// Generated Python name used more than once.
+        name: String,
+        /// Declaration that claimed the generated name first.
+        existing: String,
+        /// Declaration that collided with the existing name.
+        colliding: String,
+    },
     /// A backend template failed to render.
     #[error("template rendering failed: {message}")]
     Template {
