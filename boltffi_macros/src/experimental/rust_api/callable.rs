@@ -291,6 +291,7 @@ impl ClassHandle {
 pub enum CallbackCarrier {
     BoxedDyn,
     ArcDyn,
+    ImplTrait,
 }
 
 impl CallbackCarrier {
@@ -313,7 +314,7 @@ impl CallbackCarrier {
                 )),
             },
             TypeExpr::ImplTrait(bounds) if matches!(&bounds.base, BaseTrait::Named { .. }) => {
-                Err(Error::UnsupportedExpansion("impl-trait callback handles"))
+                Ok(Self::ImplTrait)
             }
             _ => Err(Error::SourceSyntaxMismatch(
                 "source type is not a callback handle",
@@ -332,12 +333,11 @@ pub struct CallbackObject {
 impl CallbackObject {
     fn new(presence: HandlePresence, type_expr: &TypeExpr) -> Result<Self, Error> {
         let form = CallbackCarrier::from_type_expr(type_expr)?;
-        let object = callback_object_inner(type_expr).ok_or(Error::SourceSyntaxMismatch(
-            "source callback handle is not a trait object container",
-        ))?;
+        let value = callback_value_type(form, type_expr)?;
+        let object = callback_conversion_type(form, type_expr)?;
         Ok(Self {
-            value: TypeTokens::new(type_expr)?.into_type(),
-            object: TypeTokens::new(object)?.into_type(),
+            value,
+            object,
             form,
             presence,
         })
@@ -373,13 +373,11 @@ pub struct CallbackReturn {
 
 impl CallbackReturn {
     fn new(presence: HandlePresence, type_expr: &TypeExpr) -> Result<Self, Error> {
-        let object = callback_object_inner(type_expr).ok_or(Error::SourceSyntaxMismatch(
-            "source callback handle is not a trait object container",
-        ))?;
+        let form = CallbackCarrier::from_type_expr(type_expr)?;
         Ok(Self {
-            form: CallbackCarrier::from_type_expr(type_expr)?,
+            form,
             presence,
-            object: TypeTokens::new(object)?.into_type(),
+            object: callback_conversion_type(form, type_expr)?,
         })
     }
 
@@ -860,6 +858,50 @@ fn callback_object_inner(source: &TypeExpr) -> Option<&TypeExpr> {
         }
         _ => None,
     }
+}
+
+fn callback_value_type(form: CallbackCarrier, source: &TypeExpr) -> Result<Type, Error> {
+    match form {
+        CallbackCarrier::BoxedDyn | CallbackCarrier::ArcDyn => {
+            TypeTokens::new(source).map(TypeTokens::into_type)
+        }
+        CallbackCarrier::ImplTrait => callback_foreign_type(source),
+    }
+}
+
+fn callback_conversion_type(form: CallbackCarrier, source: &TypeExpr) -> Result<Type, Error> {
+    match form {
+        CallbackCarrier::BoxedDyn | CallbackCarrier::ArcDyn => {
+            let object = callback_object_inner(source).ok_or(Error::SourceSyntaxMismatch(
+                "source callback handle is not a trait object container",
+            ))?;
+            TypeTokens::new(object).map(TypeTokens::into_type)
+        }
+        CallbackCarrier::ImplTrait => callback_foreign_type(source),
+    }
+}
+
+fn callback_foreign_type(source: &TypeExpr) -> Result<Type, Error> {
+    let TypeExpr::ImplTrait(bounds) = source else {
+        return Err(Error::SourceSyntaxMismatch(
+            "source callback handle is not impl Trait",
+        ));
+    };
+    let BaseTrait::Named { path, .. } = &bounds.base else {
+        return Err(Error::SourceSyntaxMismatch(
+            "source callback handle is not a named callback trait",
+        ));
+    };
+    let segment = path.last().ok_or(Error::SourceSyntaxMismatch(
+        "source callback trait path is empty",
+    ))?;
+    if !segment.arguments.is_empty() {
+        return Err(Error::UnsupportedExpansion(
+            "generic impl-trait callback handle",
+        ));
+    }
+    parse_str(&format!("Foreign{}", segment.name.as_str()))
+        .map_err(|_| Error::SourceSyntaxMismatch("callback foreign proxy type is not Rust syntax"))
 }
 
 fn option_inner(type_expr: &TypeExpr) -> Result<&TypeExpr, Error> {

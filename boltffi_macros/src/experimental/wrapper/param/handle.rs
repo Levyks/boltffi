@@ -325,6 +325,11 @@ impl rust_api::CallbackObject {
                     <#object as ::boltffi::__private::ArcFromCallbackHandle>::arc_from_callback_handle(#handle)
                 }
             }
+            rust_api::CallbackCarrier::ImplTrait => {
+                quote! {
+                    *<#object as ::boltffi::__private::BoxFromCallbackHandle>::box_from_callback_handle(#handle)
+                }
+            }
         })
     }
 }

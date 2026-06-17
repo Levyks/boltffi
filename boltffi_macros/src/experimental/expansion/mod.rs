@@ -686,6 +686,10 @@ mod tests {
         ))
     }
 
+    fn impl_listener() -> TypeExpr {
+        TypeExpr::impl_trait(TraitId::new("demo::Listener"), path("Listener"))
+    }
+
     fn arc_listener() -> TypeExpr {
         TypeExpr::arc(TypeExpr::dyn_trait(
             TraitId::new("demo::Listener"),
@@ -1744,6 +1748,19 @@ mod tests {
             CanonicalName::single("listen"),
         );
         function.parameters = vec![parameter("listener", boxed_listener())];
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.traits.push(listener_trait());
+        source.functions.push(function);
+        source
+    }
+
+    fn impl_callback_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::listen"),
+            CanonicalName::single("listen"),
+        );
+        function.parameters = vec![parameter("listener", impl_listener())];
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.traits.push(listener_trait());
@@ -6265,6 +6282,74 @@ mod tests {
                 }
             }
             .to_string()
+        );
+    }
+
+    #[test]
+    fn native_impl_trait_callback_param_expansion_recovers_foreign_proxy() {
+        let source = impl_callback_param_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn listen(listener: impl Listener) {
+                let _ = listener.on_value(1);
+            }
+        };
+
+        let function_tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let callback_tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = function_tokens.to_string();
+
+        assert!(rendered.contains("listener : :: boltffi :: __private :: CallbackHandle"));
+        assert!(rendered.contains("let listener : ForeignListener = unsafe"));
+        assert!(rendered.contains("< ForeignListener as :: boltffi :: __private :: BoxFromCallbackHandle > :: box_from_callback_handle"));
+        assert!(rendered.contains("listen (listener)"));
+        assert_generated_crate_checks(
+            "native_impl_trait_callback_param",
+            quote! {
+                pub trait Listener {
+                    fn on_value(&self, value: u32) -> u32;
+                }
+
+                #callback_tokens
+                #function_tokens
+            },
+        );
+    }
+
+    #[test]
+    fn wasm_impl_trait_callback_param_expansion_recovers_foreign_proxy() {
+        let source = impl_callback_param_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn listen(listener: impl Listener) {
+                let _ = listener.on_value(1);
+            }
+        };
+
+        let function_tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let callback_tokens =
+            expand_wasm_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = function_tokens.to_string();
+
+        assert!(rendered.contains("listener : u32"));
+        assert!(rendered.contains(":: boltffi :: __private :: CallbackHandle :: from_wasm_handle"));
+        assert!(rendered.contains("let listener : ForeignListener = unsafe"));
+        assert!(rendered.contains("< ForeignListener as :: boltffi :: __private :: BoxFromCallbackHandle > :: box_from_callback_handle"));
+        assert_generated_crate_checks(
+            "wasm_impl_trait_callback_param",
+            quote! {
+                pub trait Listener {
+                    fn on_value(&self, value: u32) -> u32;
+                }
+
+                #callback_tokens
+                #function_tokens
+            },
         );
     }
 

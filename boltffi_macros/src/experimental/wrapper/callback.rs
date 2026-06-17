@@ -3037,6 +3037,11 @@ where
                             <#object as ::boltffi::__private::ArcFromCallbackHandle>::arc_from_callback_handle(#handle)
                         }
                     },
+                    (rust_api::CallbackCarrier::ImplTrait, HandlePresence::Required) => quote! {
+                        unsafe {
+                            *<#object as ::boltffi::__private::BoxFromCallbackHandle>::box_from_callback_handle(#handle)
+                        }
+                    },
                     (rust_api::CallbackCarrier::BoxedDyn, HandlePresence::Nullable) => quote! {
                         if #handle.is_null() {
                             None
@@ -3052,6 +3057,15 @@ where
                         } else {
                             Some(unsafe {
                                 <#object as ::boltffi::__private::ArcFromCallbackHandle>::arc_from_callback_handle(#handle)
+                            })
+                        }
+                    },
+                    (rust_api::CallbackCarrier::ImplTrait, HandlePresence::Nullable) => quote! {
+                        if #handle.is_null() {
+                            None
+                        } else {
+                            Some(unsafe {
+                                *<#object as ::boltffi::__private::BoxFromCallbackHandle>::box_from_callback_handle(#handle)
                             })
                         }
                     },

@@ -188,6 +188,9 @@ impl<'expansion, 'lowered> NativeReturn<'expansion, 'lowered> {
             (rust_api::CallbackCarrier::ArcDyn, HandlePresence::Required) => quote! {
                 #local_handle(#value)
             },
+            (rust_api::CallbackCarrier::ImplTrait, HandlePresence::Required) => quote! {
+                #local_handle(::std::sync::Arc::new(#value))
+            },
             (rust_api::CallbackCarrier::BoxedDyn, HandlePresence::Nullable) => quote! {
                 #value
                     .map(|__boltffi_callback| {
@@ -198,6 +201,13 @@ impl<'expansion, 'lowered> NativeReturn<'expansion, 'lowered> {
             (rust_api::CallbackCarrier::ArcDyn, HandlePresence::Nullable) => quote! {
                 #value
                     .map(#local_handle)
+                    .unwrap_or(#zero)
+            },
+            (rust_api::CallbackCarrier::ImplTrait, HandlePresence::Nullable) => quote! {
+                #value
+                    .map(|__boltffi_callback| {
+                        #local_handle(::std::sync::Arc::new(__boltffi_callback))
+                    })
                     .unwrap_or(#zero)
             },
             _ => {
@@ -286,6 +296,9 @@ impl<'expansion, 'lowered> WasmReturn<'expansion, 'lowered> {
             (rust_api::CallbackCarrier::ArcDyn, HandlePresence::Required) => quote! {
                 #local_handle(#value).handle() as u32
             },
+            (rust_api::CallbackCarrier::ImplTrait, HandlePresence::Required) => quote! {
+                #local_handle(::std::sync::Arc::new(#value)).handle() as u32
+            },
             (rust_api::CallbackCarrier::BoxedDyn, HandlePresence::Nullable) => quote! {
                 #value
                     .map(|__boltffi_callback| {
@@ -296,6 +309,13 @@ impl<'expansion, 'lowered> WasmReturn<'expansion, 'lowered> {
             (rust_api::CallbackCarrier::ArcDyn, HandlePresence::Nullable) => quote! {
                 #value
                     .map(|__boltffi_callback| #local_handle(__boltffi_callback).handle() as u32)
+                    .unwrap_or(#zero)
+            },
+            (rust_api::CallbackCarrier::ImplTrait, HandlePresence::Nullable) => quote! {
+                #value
+                    .map(|__boltffi_callback| {
+                        #local_handle(::std::sync::Arc::new(__boltffi_callback)).handle() as u32
+                    })
                     .unwrap_or(#zero)
             },
             _ => {
