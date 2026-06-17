@@ -72,6 +72,10 @@ typedef struct {
     void (*notify)(uint64_t, uint32_t);
     int64_t (*on_value)(uint64_t, uint32_t);
     void (*load)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);
+    void (*locate)(uint64_t, ___Point, void (*)(void *, FfiStatus, ___Point), void *);
+    void (*maybe_value)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);
+    void (*values)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);
+    void (*try_load)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);
 } ___ListenerVTable;
 void boltffi_register_callback_demo_listener(const ___ListenerVTable *vtable);
 BoltFFICallbackHandle boltffi_create_callback_demo_listener(uint64_t handle);

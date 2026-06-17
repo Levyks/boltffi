@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 
 use boltffi_binding::{
     Bindings, CStyleEnumDecl, CallableDecl, CallbackDecl, ClassDecl, ClassId, ConstantDecl,
-    ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl, EnumDecl, ErrorDecl,
-    ExportedCallable, ExportedMethodDecl, ImportedCallable, ImportedMethodDecl, InitializerDecl,
-    IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive,
-    RecordDecl, RecordId, ReturnPlan, RustBody, StreamDecl, StreamItemPlan, TypeRef, VTableSlot,
-    native,
+    ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl, Direction, EnumDecl,
+    ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable, ImportedMethodDecl,
+    InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl, ParamDirection,
+    ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, RustBody, StreamDecl, StreamItemPlan,
+    TypeRef, VTableSlot, native,
 };
 
 use crate::core::{
@@ -1133,7 +1133,7 @@ impl<'names> Signature<'names> {
 
     fn value_param<D>(&self, name: &str, plan: &ParamPlan<Native, D>) -> Result<Vec<Parameter>>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
     {
         match plan {
             ParamPlan::Direct { ty, .. } => {
@@ -1225,7 +1225,7 @@ impl<'names> Signature<'names> {
         error: &ErrorDecl<Native, D>,
     ) -> Result<Vec<Parameter>>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         Ok(vec![
@@ -1259,7 +1259,7 @@ impl<'names> Signature<'names> {
 
     fn return_params<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Vec<Parameter>>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         match plan {
@@ -1292,7 +1292,7 @@ impl<'names> Signature<'names> {
 
     fn error_params<D>(&self, error: &ErrorDecl<Native, D>) -> Result<Vec<Parameter>>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
     {
         match error {
             ErrorDecl::StatusViaOutPointer { .. } => Ok(vec![Parameter::new(
@@ -1315,7 +1315,7 @@ impl<'names> Signature<'names> {
         error: &ErrorDecl<Native, D>,
     ) -> Result<Type>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         match error {
@@ -1332,7 +1332,7 @@ impl<'names> Signature<'names> {
 
     fn return_slot_type<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Type>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         match plan {
@@ -1358,7 +1358,7 @@ impl<'names> Signature<'names> {
         error: &ErrorDecl<Native, D>,
     ) -> Result<Type>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         match error {
@@ -1404,7 +1404,7 @@ impl<'names> Signature<'names> {
 
     fn callback_return_params<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Vec<Parameter>>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         self.return_params(plan)
@@ -1416,7 +1416,7 @@ impl<'names> Signature<'names> {
         error: &ErrorDecl<Native, D>,
     ) -> Result<Type>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
         match (plan, error) {
@@ -1431,26 +1431,10 @@ impl<'names> Signature<'names> {
         error: &ErrorDecl<Native, D>,
     ) -> Result<Type>
     where
-        D: boltffi_binding::Direction,
+        D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        let result = match (plan, error) {
-            (ReturnPlan::Void, ErrorDecl::None(_)) => None,
-            (ReturnPlan::EncodedViaReturnSlot { shape, .. }, ErrorDecl::None(_)) => {
-                Some(self.encoded_return(*shape)?)
-            }
-            (ReturnPlan::DirectViaReturnSlot { ty }, ErrorDecl::None(_)) => {
-                Some(self.names.type_ref(ty)?)
-            }
-            (ReturnPlan::HandleViaReturnSlot { carrier, .. }, ErrorDecl::None(_)) => {
-                Some(Type::handle_carrier(*carrier)?)
-            }
-            _ => {
-                return Err(Error::UnsupportedCAbi {
-                    shape: "async callback completion",
-                });
-            }
-        };
+        let result = self.async_callback_payload_type(plan, error)?;
         Ok(Type::FunctionPointer {
             returns: Box::new(Type::Void),
             params: std::iter::once(Type::MutPointer(Box::new(Type::Void)))
@@ -1458,6 +1442,95 @@ impl<'names> Signature<'names> {
                 .chain(result)
                 .collect(),
         })
+    }
+
+    fn async_callback_payload_type<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Option<Type>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match error {
+            ErrorDecl::None(_) => self.infallible_async_callback_payload_type(plan),
+            ErrorDecl::EncodedViaReturnSlot { shape, .. } => {
+                self.encoded_return(*shape)?;
+                self.validate_fallible_async_callback_success(plan)?;
+                Ok(Some(Type::Buffer))
+            }
+            ErrorDecl::StatusViaReturnSlot { .. }
+            | ErrorDecl::StatusViaOutPointer { .. }
+            | ErrorDecl::EncodedViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
+                shape: "async callback error channel",
+            }),
+            _ => Err(Error::UnsupportedCAbi {
+                shape: "unknown async callback error channel",
+            }),
+        }
+    }
+
+    fn infallible_async_callback_payload_type<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+    ) -> Result<Option<Type>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match plan {
+            ReturnPlan::Void => Ok(None),
+            ReturnPlan::DirectViaReturnSlot { ty } => Ok(Some(self.names.type_ref(ty)?)),
+            ReturnPlan::EncodedViaReturnSlot { shape, .. } => {
+                Ok(Some(self.encoded_return(*shape)?))
+            }
+            ReturnPlan::HandleViaReturnSlot { carrier, .. } => {
+                Ok(Some(Type::handle_carrier(*carrier)?))
+            }
+            ReturnPlan::ScalarOptionViaReturnSlot { .. }
+            | ReturnPlan::DirectVecViaReturnSlot { .. } => Ok(Some(Type::Buffer)),
+            ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedCAbi {
+                shape: "async callback closure return",
+            }),
+            ReturnPlan::DirectViaOutPointer { .. }
+            | ReturnPlan::EncodedViaOutPointer { .. }
+            | ReturnPlan::HandleViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnsupportedCAbi {
+                shape: "unknown infallible async callback return",
+            }),
+        }
+    }
+
+    fn validate_fallible_async_callback_success<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+    ) -> Result<()>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match plan {
+            ReturnPlan::Void
+            | ReturnPlan::DirectViaOutPointer { .. }
+            | ReturnPlan::EncodedViaOutPointer { .. }
+            | ReturnPlan::HandleViaOutPointer { .. } => Ok(()),
+            ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedCAbi {
+                shape: "async callback closure success",
+            }),
+            ReturnPlan::DirectViaReturnSlot { .. }
+            | ReturnPlan::EncodedViaReturnSlot { .. }
+            | ReturnPlan::HandleViaReturnSlot { .. }
+            | ReturnPlan::ScalarOptionViaReturnSlot { .. }
+            | ReturnPlan::DirectVecViaReturnSlot { .. } => Err(Error::UnsupportedCAbi {
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnsupportedCAbi {
+                shape: "unknown fallible async callback success",
+            }),
+        }
     }
 }
 

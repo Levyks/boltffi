@@ -89,6 +89,10 @@ mod tests {
                 fn notify(&self, code: u32);
                 fn on_value(&self, value: u32) -> i64;
                 async fn load(&self, key: u32) -> String;
+                async fn locate(&self, point: Point) -> Point;
+                async fn maybe_value(&self, key: u32) -> Option<i64>;
+                async fn values(&self, count: u32) -> Vec<u32>;
+                async fn try_load(&self, key: u32) -> Result<String, Mode>;
             }
 
             pub struct Engine;
@@ -160,5 +164,46 @@ mod tests {
         );
         let golden = include_str!("../../../fixtures/c_bridge_declaration_surface.h");
         assert_eq!(header.trim_end(), golden.trim_end());
+    }
+
+    #[test]
+    fn c_header_renders_async_callback_completion_payloads() {
+        let header = header(
+            r#"
+            use boltffi::*;
+
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+
+            #[repr(i32)]
+            #[data]
+            pub enum MathError {
+                Bad = 1,
+            }
+
+            #[export]
+            #[allow(async_fn_in_trait)]
+            pub trait AsyncCallbacks: Send + Sync {
+                async fn value(&self, key: i32) -> i32;
+                async fn point(&self, point: Point) -> Point;
+                async fn maybe(&self, key: i32) -> Option<i64>;
+                async fn numbers(&self, count: i32) -> Vec<i32>;
+                async fn fallible(&self, key: i32) -> Result<String, MathError>;
+            }
+            "#,
+        );
+        [
+            "void (*value)(uint64_t, int32_t, void (*)(void *, FfiStatus, int32_t), void *);",
+            "void (*point)(uint64_t, ___Point, void (*)(void *, FfiStatus, ___Point), void *);",
+            "void (*maybe)(uint64_t, int32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);",
+            "void (*numbers)(uint64_t, int32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);",
+            "void (*fallible)(uint64_t, int32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);",
+        ]
+        .into_iter()
+        .for_each(|signature| assert!(header.contains(signature), "{signature}\n{header}"));
     }
 }
