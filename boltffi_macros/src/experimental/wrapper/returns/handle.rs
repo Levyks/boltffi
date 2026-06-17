@@ -146,7 +146,7 @@ impl<'expansion, 'lowered> NativeReturn<'expansion, 'lowered> {
         if !matches!(self.input.target, HandleTarget::Class(_)) {
             return Err(Error::UnsupportedExpansion("non-class handle return"));
         }
-        let handle = wrapper::names::Class::from_local_type(class)?.handle();
+        let handle = wrapper::names::Class::from_type_path(class)?.handle();
         let value = &self.input.value;
         match self.input.presence {
             HandlePresence::Required => Ok(quote! {
@@ -254,7 +254,7 @@ impl<'expansion, 'lowered> WasmReturn<'expansion, 'lowered> {
         if !matches!(self.input.target, HandleTarget::Class(_)) {
             return Err(Error::UnsupportedExpansion("non-class handle return"));
         }
-        let handle = wrapper::names::Class::from_local_type(class)?.handle();
+        let handle = wrapper::names::Class::from_type_path(class)?.handle();
         let value = &self.input.value;
         match self.input.presence {
             HandlePresence::Required => Ok(quote! {

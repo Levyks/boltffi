@@ -15,6 +15,7 @@ use quote::quote_spanned;
 
 use crate::experimental::{
     error::Error as ExpansionError, expander::Expander, expansion::Expansion,
+    rust_api::RootModuleTypes,
 };
 
 pub enum Item {
@@ -70,9 +71,9 @@ impl Request {
         let scan = boltffi_scan::scan_package(
             &ScanInput::new(&self.source, self.package).with_manifest_dir(&self.root),
         )?;
-        let root = scan.root();
         let complete = scan.complete();
-        let expander = Expander::new(root);
+        let root = RootModuleTypes::new(&complete.package).contract(scan.root());
+        let expander = Expander::new(&root);
 
         match requested_surface()? {
             BindingMetadataSurface::Native => {

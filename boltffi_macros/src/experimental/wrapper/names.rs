@@ -1,6 +1,6 @@
 use proc_macro2::Span;
 use quote::format_ident;
-use syn::{Ident, Type};
+use syn::{Ident, PathArguments, Type};
 
 use crate::experimental::error::Error;
 
@@ -67,16 +67,24 @@ impl<'source> Class<'source> {
         Self { source }
     }
 
-    pub fn from_local_type(class: &'source Type) -> Result<Self, Error> {
+    pub fn from_type_path(class: &'source Type) -> Result<Self, Error> {
         let Type::Path(path) = class else {
             return Err(Error::SourceSyntaxMismatch("class type is not a path"));
         };
-        if path.qself.is_some() || path.path.segments.len() != 1 {
+        if path.qself.is_some() {
             return Err(Error::SourceSyntaxMismatch(
-                "class type is not a local identifier",
+                "class type path is not a plain Rust path",
             ));
         }
-        Ok(Self::new(&path.path.segments[0].ident))
+        let Some(segment) = path.path.segments.last() else {
+            return Err(Error::SourceSyntaxMismatch("class type path is empty"));
+        };
+        if !matches!(segment.arguments, PathArguments::None) {
+            return Err(Error::SourceSyntaxMismatch(
+                "class type path has generic arguments",
+            ));
+        }
+        Ok(Self::new(&segment.ident))
     }
 
     pub fn handle(&self) -> Ident {

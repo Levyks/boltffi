@@ -198,7 +198,7 @@ impl<'lowered, C> ClassParam<'lowered, C> {
     ) -> Result<TokenStream, Error> {
         let ident = &self.input.ident;
         let ty = class.ty();
-        let handle_type = names::Class::from_local_type(ty)?.handle();
+        let handle_type = names::Class::from_type_path(ty)?.handle();
         let handle_pointer = quote! { #ident as usize as *mut #handle_type };
         let failure = &self.input.failure;
         let null_check = matches!(self.input.plan.presence, HandlePresence::Required).then(|| {
