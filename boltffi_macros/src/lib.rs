@@ -36,15 +36,17 @@ fn expand_or_experimental(
     item: TokenStream,
     legacy: impl FnOnce(TokenStream) -> TokenStream,
 ) -> TokenStream {
-    match experimental::metadata_build::render() {
-        experimental::metadata_build::Rendered::Inactive => legacy(item),
-        experimental::metadata_build::Rendered::Tokens(tokens) => {
+    match experimental::metadata_build::item() {
+        experimental::metadata_build::Item::Inactive => legacy(item),
+        experimental::metadata_build::Item::Preserve => strip_boltffi_attrs(item),
+        experimental::metadata_build::Item::Tokens(tokens) => {
             let item = proc_macro2::TokenStream::from(strip_boltffi_attrs(item));
             TokenStream::from(quote! {
                 #item
                 #tokens
             })
         }
+        experimental::metadata_build::Item::Error(tokens) => TokenStream::from(tokens),
     }
 }
 

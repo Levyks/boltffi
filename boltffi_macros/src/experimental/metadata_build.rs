@@ -1,6 +1,7 @@
 use std::env;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use boltffi_ast::PackageInfo;
 use boltffi_binding::{
@@ -14,23 +15,28 @@ use quote::quote_spanned;
 
 use crate::experimental::{error::Error as MetadataError, metadata};
 
-pub enum Rendered {
+pub enum Item {
     Inactive,
+    Preserve,
     Tokens(TokenStream),
+    Error(TokenStream),
 }
 
-pub fn render() -> Rendered {
+static EMITTED: AtomicBool = AtomicBool::new(false);
+
+pub fn item() -> Item {
     if env::var_os(BINDING_METADATA_BUILD_ENV).is_none() {
-        return Rendered::Inactive;
+        return Item::Inactive;
     }
 
     match Request::from_env() {
+        Ok(Some(_)) if EMITTED.swap(true, Ordering::AcqRel) => Item::Preserve,
         Ok(Some(request)) => request
             .render()
-            .map(Rendered::Tokens)
-            .unwrap_or_else(|error| Rendered::Tokens(error.into_compile_error())),
-        Ok(None) => Rendered::Inactive,
-        Err(error) => Rendered::Tokens(error.into_compile_error()),
+            .map(Item::Tokens)
+            .unwrap_or_else(|error| Item::Error(error.into_compile_error())),
+        Ok(None) => Item::Inactive,
+        Err(error) => Item::Error(error.into_compile_error()),
     }
 }
 

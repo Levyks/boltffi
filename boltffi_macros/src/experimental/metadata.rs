@@ -1,7 +1,7 @@
 use boltffi_binding::{
     BindingMetadataEnvelope, BindingMetadataSection, BindingMetadataSurface, SerializedBindings,
 };
-use proc_macro2::TokenStream;
+use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use crate::experimental::error::Error;
@@ -27,7 +27,7 @@ impl Static {
         let mach_o_section = BindingMetadataSection::MachO.link_section();
         let object_section = BindingMetadataSection::Object.link_section();
         let length = self.bytes.len();
-        let bytes = self.bytes.iter().copied();
+        let bytes = Literal::byte_string(&self.bytes);
 
         quote! {
             #[allow(unexpected_cfgs)]
@@ -37,7 +37,7 @@ impl Static {
                 #[cfg_attr(target_os = "windows", unsafe(link_section = #object_section))]
                 #[cfg_attr(not(any(target_os = "macos", target_os = "ios", target_os = "windows")), unsafe(link_section = #object_section))]
                 #[used]
-                static __BOLTFFI_BINDINGS: [u8; #length] = [#(#bytes),*];
+                static __BOLTFFI_BINDINGS: [u8; #length] = *#bytes;
             };
         }
     }
