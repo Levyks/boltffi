@@ -1,12 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use boltffi_backend::bridge::c::CBridge;
-use boltffi_backend::bridge::python_cext::PythonCExtBridge;
-use boltffi_backend::core::{BridgeLayer, bridge, host};
+use boltffi_backend::core::{bridge, host};
 use boltffi_backend::target::python::PythonCExtHost;
 use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
-use boltffi_binding::{BindingMetadataSurface, Bindings, Surface};
+use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
 use thiserror::Error;
 
 use crate::metadata::{BindingMetadataBuild, BindingMetadataBuildError};
@@ -52,23 +50,7 @@ impl Generation {
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
-            Target::Python => {
-                let host = self
-                    .python_package_module
-                    .as_deref()
-                    .map(|module| PythonCExtHost::new().module_name(module))
-                    .transpose()
-                    .map_err(GenerationError::Render)?
-                    .unwrap_or_else(PythonCExtHost::new);
-                let target = BackendTarget::new(
-                    host,
-                    BridgeLayer::new(
-                        CBridge::default_header().map_err(GenerationError::Render)?,
-                        PythonCExtBridge::native_module().map_err(GenerationError::Render)?,
-                    ),
-                );
-                self.render_backend(&target)
-            }
+            Target::Python => self.render_python(),
             Target::Swift
             | Target::Kotlin
             | Target::KotlinMultiplatform
@@ -90,16 +72,34 @@ impl Generation {
         self.write_output(output, output_dir)
     }
 
+    fn render_python(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Native>()?;
+        let target = self
+            .python_host()?
+            .into_target(&bindings)
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, &bindings)
+    }
+
     fn render_backend<H, S>(
         &self,
         target: &BackendTarget<H, S>,
+        bindings: &Bindings<S::Surface>,
     ) -> Result<GeneratedOutput, GenerationError>
     where
         H: host::HostBackend<Bridge = S::Contract, Surface = S::Surface>,
         S: bridge::BridgeStack,
     {
-        let bindings = self.bindings::<S::Surface>()?;
-        target.render(&bindings).map_err(GenerationError::Render)
+        target.render(bindings).map_err(GenerationError::Render)
+    }
+
+    fn python_host(&self) -> Result<PythonCExtHost, GenerationError> {
+        self.python_package_module
+            .as_deref()
+            .map(|module| PythonCExtHost::new().module_name(module))
+            .transpose()
+            .map_err(GenerationError::Render)
+            .map(Option::unwrap_or_default)
     }
 
     fn write_output(

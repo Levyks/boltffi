@@ -1,16 +1,21 @@
 mod render;
 
+use std::path::PathBuf;
+
 use boltffi_binding::{
     Bindings, CallbackDecl, ClassDecl, ConstantDecl, CustomTypeDecl, EnumDecl, FunctionDecl,
     Native, RecordDecl, StreamDecl,
 };
 
 use crate::{
-    bridge::python_cext::PythonCExtBridgeContract,
+    bridge::{
+        c::CBridge,
+        python_cext::{PythonCExtBridge, PythonCExtBridgeContract},
+    },
     core::{
-        BindingCapability, BridgeCapability, CapabilityRequirements, Diagnostic, Emitted,
-        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result,
-        contract::sealed, host,
+        BindingCapability, BridgeCapability, BridgeLayer, CapabilityRequirements, Diagnostic,
+        Emitted, GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result,
+        Target, contract::sealed, host,
     },
     target::python::name_style::{Name, PackageModule},
 };
@@ -32,6 +37,25 @@ impl PythonCExtHost {
     pub fn module_name(mut self, module: impl Into<String>) -> Result<Self> {
         self.module = Some(PackageModule::parse(module)?);
         Ok(self)
+    }
+
+    /// Creates the backend target stack for this Python host.
+    pub fn into_target(
+        self,
+        bindings: &Bindings<Native>,
+    ) -> Result<Target<Self, BridgeLayer<CBridge, PythonCExtBridge>>> {
+        let source = self.native_module_source_path(bindings);
+        Ok(Target::new(
+            self,
+            BridgeLayer::new(
+                CBridge::default_header()?,
+                PythonCExtBridge::new("_native", source)?,
+            ),
+        ))
+    }
+
+    fn native_module_source_path(&self, bindings: &Bindings<Native>) -> PathBuf {
+        PathBuf::from(self.package_module(bindings).as_str()).join("_native.c")
     }
 }
 
@@ -234,6 +258,23 @@ mod tests {
             .find(|file| file.path().as_path() == Path::new(path))
             .map(|file| file.contents())
             .expect("generated file")
+    }
+
+    #[test]
+    fn python_host_places_native_module_source_inside_package_module() {
+        let bindings = empty_bindings();
+
+        assert_eq!(
+            PythonCExtHost::new().native_module_source_path(&bindings),
+            Path::new("demo/_native.c").to_path_buf()
+        );
+        assert_eq!(
+            PythonCExtHost::new()
+                .module_name("demo_api")
+                .expect("Python package module")
+                .native_module_source_path(&bindings),
+            Path::new("demo_api/_native.c").to_path_buf()
+        );
     }
 
     #[test]
