@@ -1,12 +1,13 @@
 use boltffi_binding::{
-    IncomingParam, IntoRust, Native, ParamDecl, ParamPlan, Receive, RecordId, TypeRef, native,
+    EnumId, IncomingParam, IntoRust, Native, ParamDecl, ParamPlan, Receive, RecordId, TypeRef,
+    native,
 };
 
 use crate::{
     bridge::{c::identifier::Identifier, python_cext::PythonCExtBridgeContract},
     core::{Error, RenderContext, Result},
     target::python::{
-        cpython::render::{primitive, record},
+        cpython::render::{enumeration, primitive, record},
         name_style::Name,
     },
 };
@@ -34,6 +35,10 @@ impl Conversion {
                 ty: TypeRef::Record(record),
                 receive: Receive::ByValue,
             }) => Self::from_record(index, parameter, *record, bridge, context),
+            IncomingParam::Value(ParamPlan::Direct {
+                ty: TypeRef::Enum(enumeration),
+                receive: Receive::ByValue,
+            }) => Self::from_enum(index, parameter, *enumeration, bridge, context),
             IncomingParam::Value(ParamPlan::Encoded {
                 ty: TypeRef::String,
                 shape: native::BufferShape::Slice,
@@ -180,6 +185,26 @@ impl Conversion {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let symbols = record::Symbols::from_record_id(record, bridge, context)?;
+        let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
+        Ok(Self {
+            index,
+            name,
+            kind: Kind::Direct(Direct {
+                c_type: symbols.c_type().to_owned(),
+                parser: symbols.parser().to_owned(),
+            }),
+            primitive: None,
+        })
+    }
+
+    fn from_enum(
+        index: usize,
+        parameter: &ParamDecl<Native, IntoRust>,
+        enumeration: EnumId,
+        bridge: &PythonCExtBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        let symbols = enumeration::Symbols::from_enum_id(enumeration, bridge, context)?;
         let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
         Ok(Self {
             index,

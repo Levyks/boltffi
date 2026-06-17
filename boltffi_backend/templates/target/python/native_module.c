@@ -119,7 +119,7 @@ done:
     return result;
 }
 {% endif %}
-{% if support.uses_direct_records() %}
+{% if support.uses_registered_types() %}
 static int boltffi_python_validate_registered_type_object(PyObject *type_object, const char *type_name) {
     if (!PyType_Check(type_object)) {
         PyErr_Format(PyExc_TypeError, "expected type for %s", type_name);
@@ -183,6 +183,131 @@ static PyObject *boltffi_python_box_registered_record(PyObject *type_object, PyO
     record_value = PyObject_CallObject(type_object, constructor_args);
     Py_DECREF(constructor_args);
     return record_value;
+}
+{% endif %}
+{% if support.uses_c_style_enums() %}
+typedef PyObject *(*boltffi_python_load_c_style_enum_member_fn)(PyObject *, Py_ssize_t);
+
+typedef struct boltffi_python_c_style_enum_registration {
+    PyObject *type_object;
+    Py_ssize_t member_count;
+    PyObject **members_by_wire_tag;
+} boltffi_python_c_style_enum_registration;
+
+static void boltffi_python_release_registered_enum_members(PyObject **members_by_wire_tag, Py_ssize_t member_count) {
+    Py_ssize_t member_index = 0;
+    for (member_index = 0; member_index < member_count; member_index += 1) {
+        Py_XDECREF(members_by_wire_tag[member_index]);
+        members_by_wire_tag[member_index] = NULL;
+    }
+}
+
+static void boltffi_python_clear_c_style_enum_registration(
+    boltffi_python_c_style_enum_registration *registration
+) {
+    Py_XDECREF(registration->type_object);
+    registration->type_object = NULL;
+    boltffi_python_release_registered_enum_members(
+        registration->members_by_wire_tag,
+        registration->member_count
+    );
+}
+
+static PyObject *boltffi_python_load_c_style_enum_member(
+    PyObject *type_object,
+    const char *enum_name,
+    const char *member_name,
+    PyObject *native_value
+) {
+    PyObject *named_member = NULL;
+    PyObject *resolved_member = NULL;
+    if (native_value == NULL) {
+        return NULL;
+    }
+    named_member = PyObject_GetAttrString(type_object, member_name);
+    if (named_member == NULL) {
+        return NULL;
+    }
+    resolved_member = PyObject_CallOneArg(type_object, native_value);
+    if (resolved_member == NULL) {
+        Py_DECREF(named_member);
+        return NULL;
+    }
+    if (named_member != resolved_member) {
+        PyErr_Format(PyExc_ValueError, "native enum %s member %s has the wrong value", enum_name, member_name);
+        Py_DECREF(named_member);
+        Py_DECREF(resolved_member);
+        return NULL;
+    }
+    Py_DECREF(resolved_member);
+    return named_member;
+}
+
+static int boltffi_python_store_c_style_enum_registration(
+    boltffi_python_c_style_enum_registration *registration,
+    PyObject *type_object,
+    const char *enum_name,
+    boltffi_python_load_c_style_enum_member_fn load_member
+) {
+    PyObject **loaded_members = NULL;
+    Py_ssize_t member_index = 0;
+    if (!boltffi_python_validate_registered_type_object(type_object, enum_name)) {
+        return 0;
+    }
+    loaded_members = PyMem_Calloc((size_t)registration->member_count, sizeof(PyObject *));
+    if (loaded_members == NULL) {
+        PyErr_NoMemory();
+        return 0;
+    }
+    for (member_index = 0; member_index < registration->member_count; member_index += 1) {
+        loaded_members[member_index] = load_member(type_object, member_index);
+        if (loaded_members[member_index] == NULL) {
+            boltffi_python_release_registered_enum_members(loaded_members, registration->member_count);
+            PyMem_Free(loaded_members);
+            return 0;
+        }
+    }
+    boltffi_python_clear_c_style_enum_registration(registration);
+    if (!boltffi_python_store_registered_type(&registration->type_object, type_object, enum_name)) {
+        boltffi_python_release_registered_enum_members(loaded_members, registration->member_count);
+        PyMem_Free(loaded_members);
+        return 0;
+    }
+    for (member_index = 0; member_index < registration->member_count; member_index += 1) {
+        registration->members_by_wire_tag[member_index] = loaded_members[member_index];
+    }
+    PyMem_Free(loaded_members);
+    return 1;
+}
+
+static int boltffi_python_expect_enum_instance(
+    PyObject *value,
+    const boltffi_python_c_style_enum_registration *registration,
+    const char *enum_name
+) {
+    return boltffi_python_expect_type_instance(value, registration->type_object, enum_name);
+}
+
+static PyObject *boltffi_python_box_registered_enum_member(
+    const boltffi_python_c_style_enum_registration *registration,
+    Py_ssize_t member_index,
+    const char *enum_name
+) {
+    PyObject *member = NULL;
+    if (!boltffi_python_expect_registered_type(registration->type_object, enum_name)) {
+        return NULL;
+    }
+    if (member_index < 0 || member_index >= registration->member_count) {
+        PyErr_SetString(PyExc_RuntimeError, "native enum member index is invalid");
+        return NULL;
+    }
+    if (registration->members_by_wire_tag[member_index] == NULL) {
+        PyErr_Format(PyExc_ImportError, "native enum %s member cache is not initialized", enum_name);
+        return NULL;
+    }
+    member = registration->members_by_wire_tag[member_index];
+    Py_INCREF(member);
+    return member;
 }
 {% endif %}
 {% for primitive in support.primitives() %}
@@ -399,6 +524,9 @@ static PyObject *{{ primitive.boxer }}(double value) {
 {% endfor %}
 {% for record in records %}
 {{ record }}
+{% endfor %}
+{% for enumeration in enums %}
+{{ enumeration }}
 {% endfor %}
 static void boltffi_python_release_host_state(void) {
 {%- for cleanup in cleanup %}

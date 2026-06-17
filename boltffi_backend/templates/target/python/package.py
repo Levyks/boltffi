@@ -4,6 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 {% endif %}
+{% if !enums.is_empty() %}
+from enum import IntEnum
+
+{% endif %}
 import sys
 from pathlib import Path
 
@@ -31,6 +35,16 @@ class {{ record.class_name }}:
 _native.{{ record.register_method }}({{ record.class_name }})
 
 {% endfor %}
+{% for enumeration in enums %}
+class {{ enumeration.class_name }}(IntEnum):
+{%- for variant in enumeration.variants %}
+    {{ variant.name }} = {{ variant.value }}
+{%- endfor %}
+
+
+_native.{{ enumeration.register_method }}({{ enumeration.class_name }})
+
+{% endfor %}
 {% for function in functions %}
 {{ function }} = _native.{{ function }}
 {%- endfor %}
@@ -45,6 +59,9 @@ __all__ = [
     "PACKAGE_VERSION",
 {%- for record in records %}
     "{{ record.class_name }}",
+{%- endfor %}
+{%- for enumeration in enums %}
+    "{{ enumeration.class_name }}",
 {%- endfor %}
 {%- for function in functions %}
     "{{ function }}",

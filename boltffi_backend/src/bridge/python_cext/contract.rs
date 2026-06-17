@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
-use boltffi_binding::{Native, NativeSymbol, RecordId};
+use boltffi_binding::{EnumId, Native, NativeSymbol, RecordId};
 
 use crate::{
     bridge::c::{self, CBridgeContract, Function},
@@ -22,6 +22,7 @@ pub struct PythonCExtBridgeContract {
     c_header: CHeaderInclude,
     symbols: ModuleSymbols,
     source_direct_records: BTreeMap<RecordId, c::Record>,
+    source_c_style_enums: BTreeMap<EnumId, c::Enum>,
     functions: Vec<LoadedFunction>,
     loader: ExtensionMethod,
 }
@@ -110,6 +111,7 @@ impl PythonCExtBridgeContract {
             loader: ExtensionMethod::loader()?,
             c_header: CHeaderInclude::from_files(&source_path, c_bridge.header_path())?,
             source_direct_records: c_bridge.source_direct_records().clone(),
+            source_c_style_enums: c_bridge.source_c_style_enums().clone(),
             module,
             source_path,
         })
@@ -145,6 +147,11 @@ impl PythonCExtBridgeContract {
     /// Returns the C typedef selected for a direct source record.
     pub fn source_direct_record(&self, record: RecordId) -> Option<&c::Record> {
         self.source_direct_records.get(&record)
+    }
+
+    /// Returns the C typedef selected for a source C-style enum.
+    pub fn source_c_style_enum(&self, enumeration: EnumId) -> Option<&c::Enum> {
+        self.source_c_style_enums.get(&enumeration)
     }
 
     /// Returns C identifiers reserved by the extension module.

@@ -3,7 +3,7 @@ use boltffi_binding::{Native, OutOfRust, ReturnPlan, TypeRef, native};
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
     core::{Error, RenderContext, Result},
-    target::python::cpython::render::{primitive, record},
+    target::python::cpython::render::{enumeration, primitive, record},
 };
 
 pub struct Conversion {
@@ -42,6 +42,16 @@ impl Conversion {
             } => Ok(Self {
                 void: false,
                 converter: record::Symbols::from_record_id(*record, bridge, context)?
+                    .boxer()
+                    .to_owned(),
+                primitive: None,
+                owned_buffer: None,
+            }),
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Enum(enumeration),
+            } => Ok(Self {
+                void: false,
+                converter: enumeration::Symbols::from_enum_id(*enumeration, bridge, context)?
                     .boxer()
                     .to_owned(),
                 primitive: None,

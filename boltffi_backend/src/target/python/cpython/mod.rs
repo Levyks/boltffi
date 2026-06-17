@@ -37,10 +37,7 @@ impl host::HostBackend for PythonCExtHost {
     fn binding_capabilities(&self) -> HostCapabilities {
         HostCapabilities::new()
             .stable(BindingCapability::Records)
-            .unsupported(
-                BindingCapability::Enums,
-                "Python enums are not migrated yet",
-            )
+            .stable(BindingCapability::Enums)
             .stable(BindingCapability::Functions)
             .unsupported(
                 BindingCapability::Classes,
@@ -79,14 +76,11 @@ impl host::HostBackend for PythonCExtHost {
 
     fn enumeration(
         &self,
-        _decl: &EnumDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
+        decl: &EnumDecl<Self::Surface>,
+        bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Error::UnsupportedTarget {
-            target: self.name(),
-            shape: "enum",
-        })
+        render::EnumWrapper::from_declaration(decl, bridge)?.render()
     }
 
     fn function(
@@ -344,6 +338,58 @@ mod tests {
         assert!(init.contains("_native._register_point(Point)"));
         assert!(stub.contains("class Point:"));
         assert!(stub.contains("def echo_point(value: Point) -> Point: ..."));
+    }
+
+    #[test]
+    fn python_target_renders_c_style_enum_package_and_native_conversions() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[repr(i32)]
+                #[data]
+                pub enum Status {
+                    Active = 0,
+                    Inactive = 1,
+                    Pending = 2,
+                }
+
+                #[export]
+                pub fn echo_status(value: Status) -> Status {
+                    value
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains("typedef struct boltffi_python_c_style_enum_registration"));
+        assert!(extension.contains(
+            "static boltffi_python_c_style_enum_registration boltffi_python_status_registration"
+        ));
+        assert!(extension.contains("static PyObject *boltffi_python_wrapper_register_status"));
+        assert!(extension.contains("static int boltffi_python_parse_status"));
+        assert!(extension.contains("static PyObject *boltffi_python_box_status"));
+        assert!(extension.contains("___Status value;"));
+        assert!(extension.contains("boltffi_python_parse_status(args[0], &value)"));
+        assert!(extension.contains(
+            "result = boltffi_python_box_status(boltffi_python_boltffi_function_demo_echo_status(value));"
+        ));
+        assert!(extension.contains(
+            "{\"_register_status\", (PyCFunction)boltffi_python_wrapper_register_status, METH_FASTCALL, NULL}"
+        ));
+        assert!(extension.contains(
+            "boltffi_python_clear_c_style_enum_registration(&boltffi_python_status_registration);"
+        ));
+        assert!(init.contains("from enum import IntEnum"));
+        assert!(init.contains("class Status(IntEnum):"));
+        assert!(init.contains("    ACTIVE = 0"));
+        assert!(init.contains("    INACTIVE = 1"));
+        assert!(init.contains("    PENDING = 2"));
+        assert!(init.contains("_native._register_status(Status)"));
+        assert!(stub.contains("class Status(IntEnum):"));
+        assert!(stub.contains("def echo_status(value: Status) -> Status: ..."));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod argument;
+mod enumeration;
 mod function;
 mod method;
 mod module;
@@ -7,6 +8,7 @@ mod primitive;
 mod record;
 mod result;
 
+pub use enumeration::Wrapper as EnumWrapper;
 pub use function::Wrapper;
 pub use module::NativeModule;
 pub use package::Package;

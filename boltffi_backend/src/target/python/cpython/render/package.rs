@@ -2,15 +2,18 @@ use std::path::PathBuf;
 
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    Bindings, DeclarationRef, DirectFieldDecl, DirectRecordDecl, ErrorDecl, FieldKey, FunctionDecl,
-    IncomingParam, IntoRust, Native, OutOfRust, ParamDecl, ParamPlan, Primitive, RecordDecl,
-    RecordId, ReturnPlan, TypeRef, native,
+    Bindings, CStyleEnumDecl, DeclarationRef, DirectFieldDecl, DirectRecordDecl, EnumDecl, EnumId,
+    ErrorDecl, FieldKey, FunctionDecl, IncomingParam, IntoRust, Native, OutOfRust, ParamDecl,
+    ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, TypeRef, native,
 };
 
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
     core::{Error, FilePath, GeneratedFile, GeneratedOutput, Result},
-    target::python::{cpython::render::record, name_style::Name},
+    target::python::{
+        cpython::render::{enumeration, record},
+        name_style::Name,
+    },
 };
 
 #[derive(AskamaTemplate)]
@@ -21,6 +24,7 @@ struct InitTemplate {
     package_version_literal: String,
     library_name: String,
     records: Vec<RecordClass>,
+    enums: Vec<EnumClass>,
     functions: Vec<String>,
 }
 
@@ -28,6 +32,7 @@ struct InitTemplate {
 #[template(path = "target/python/package.pyi", escape = "none")]
 struct StubTemplate {
     records: Vec<RecordClass>,
+    enums: Vec<EnumClass>,
     functions: Vec<FunctionStub>,
 }
 
@@ -63,6 +68,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
         let package = self.package_name();
         let version = self.package_version();
         let records = self.records()?;
+        let enums = self.enums()?;
         let functions = self.functions();
         let stubs = functions
             .iter()
@@ -105,6 +111,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                             .unwrap_or_else(|| "None".to_owned()),
                         library_name: module.clone(),
                         records: records.clone(),
+                        enums: enums.clone(),
                         functions: names,
                     }
                     .render()?,
@@ -113,6 +120,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                     PathBuf::from(&module).join("__init__.pyi"),
                     StubTemplate {
                         records,
+                        enums,
                         functions: stubs,
                     }
                     .render()?,
@@ -180,6 +188,34 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             .collect()
     }
 
+    fn enums(&self) -> Result<Vec<EnumClass>> {
+        self.bindings
+            .decls()
+            .iter()
+            .filter_map(|decl| match DeclarationRef::from(decl) {
+                DeclarationRef::Enum(enumeration) => Some(enumeration),
+                DeclarationRef::Record(_)
+                | DeclarationRef::Function(_)
+                | DeclarationRef::Class(_)
+                | DeclarationRef::Callback(_)
+                | DeclarationRef::Stream(_)
+                | DeclarationRef::Constant(_)
+                | DeclarationRef::CustomType(_) => None,
+            })
+            .map(|enumeration| match enumeration {
+                EnumDecl::CStyle(enumeration) => EnumClass::from_c_style(enumeration, self.bridge),
+                EnumDecl::Data(_) => Err(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "data enum package",
+                }),
+                _ => Err(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "unknown enum package",
+                }),
+            })
+            .collect()
+    }
+
     fn record_name(&self, record_id: RecordId) -> Result<String> {
         self.bindings
             .decls()
@@ -201,6 +237,32 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "record type hint without direct declaration",
+            })
+    }
+
+    fn enum_name(&self, enum_id: EnumId) -> Result<String> {
+        self.bindings
+            .decls()
+            .iter()
+            .find_map(|decl| match DeclarationRef::from(decl) {
+                DeclarationRef::Enum(EnumDecl::CStyle(enumeration))
+                    if enumeration.id() == enum_id =>
+                {
+                    Some(enumeration)
+                }
+                DeclarationRef::Enum(_)
+                | DeclarationRef::Record(_)
+                | DeclarationRef::Function(_)
+                | DeclarationRef::Class(_)
+                | DeclarationRef::Callback(_)
+                | DeclarationRef::Stream(_)
+                | DeclarationRef::Constant(_)
+                | DeclarationRef::CustomType(_) => None,
+            })
+            .map(|enumeration| Name::new(enumeration.name()).class())
+            .ok_or(Error::UnsupportedTarget {
+                target: "python",
+                shape: "enum type hint without c-style declaration",
             })
     }
 
@@ -315,6 +377,46 @@ impl RecordField {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct EnumClass {
+    class_name: String,
+    register_method: String,
+    variants: Vec<EnumVariant>,
+}
+
+impl EnumClass {
+    fn from_c_style(
+        enumeration: &CStyleEnumDecl<Native>,
+        bridge: &PythonCExtBridgeContract,
+    ) -> Result<Self> {
+        let class = enumeration::PythonClass::from_c_style(enumeration, bridge)?;
+        Ok(Self {
+            class_name: class.class_name().to_owned(),
+            register_method: class.register_method().to_owned(),
+            variants: class
+                .variants()
+                .iter()
+                .map(EnumVariant::from_variant)
+                .collect(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EnumVariant {
+    name: String,
+    value: i128,
+}
+
+impl EnumVariant {
+    fn from_variant(variant: &enumeration::PythonVariant) -> Self {
+        Self {
+            name: variant.name().to_owned(),
+            value: variant.value(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ParameterStub {
     name: String,
     annotation: String,
@@ -358,6 +460,12 @@ impl PythonTypeHint {
             } => Ok(Self {
                 annotation: package.record_name(*record)?,
             }),
+            ParamPlan::Direct {
+                ty: TypeRef::Enum(enumeration),
+                ..
+            } => Ok(Self {
+                annotation: package.enum_name(*enumeration)?,
+            }),
             ParamPlan::Encoded {
                 ty: TypeRef::String,
                 shape: native::BufferShape::Slice,
@@ -396,6 +504,11 @@ impl PythonTypeHint {
                 ty: TypeRef::Record(record),
             } => Ok(Self {
                 annotation: package.record_name(*record)?,
+            }),
+            ReturnPlan::DirectViaReturnSlot {
+                ty: TypeRef::Enum(enumeration),
+            } => Ok(Self {
+                annotation: package.enum_name(*enumeration)?,
             }),
             ReturnPlan::EncodedViaReturnSlot {
                 ty: TypeRef::String,

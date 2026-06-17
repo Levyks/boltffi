@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use boltffi_binding::{
     Bindings, CStyleEnumDecl, CallableDecl, CallbackDecl, ClassDecl, ClassId, ConstantDecl,
     ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl, Direction, EnumDecl,
-    ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable, ImportedMethodDecl,
+    EnumId, ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable, ImportedMethodDecl,
     InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl, ParamDirection,
     ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, RustBody, StreamDecl, StreamItemPlan,
     TypeRef, VTableSlot, native,
@@ -24,6 +24,7 @@ pub struct CBridgeContract {
     support: SupportFunctions,
     direct_records: Vec<Record>,
     source_direct_records: BTreeMap<RecordId, Record>,
+    source_c_style_enums: BTreeMap<EnumId, Enum>,
     enums: Vec<Enum>,
     callbacks: Vec<Callback>,
     functions: Vec<Function>,
@@ -161,7 +162,7 @@ pub enum Type {
 #[derive(Clone, Debug, Default)]
 struct Names {
     direct_records: BTreeMap<RecordId, String>,
-    enums: BTreeMap<boltffi_binding::EnumId, String>,
+    enums: BTreeMap<EnumId, String>,
     classes: BTreeMap<boltffi_binding::ClassId, String>,
     class_handles: BTreeMap<ClassId, native::HandleCarrier>,
     callbacks: BTreeMap<boltffi_binding::CallbackId, String>,
@@ -250,6 +251,23 @@ impl CBridgeContract {
             })
             .map(|enumeration| Enum::from_decl(enumeration, &names))
             .collect::<Result<Vec<_>>>()?;
+        let source_c_style_enums = bindings
+            .decls()
+            .iter()
+            .filter_map(|decl| match DeclarationRef::from(decl) {
+                DeclarationRef::Enum(EnumDecl::CStyle(enumeration)) => Some(enumeration),
+                DeclarationRef::Enum(EnumDecl::Data(_))
+                | DeclarationRef::Enum(_)
+                | DeclarationRef::Record(_)
+                | DeclarationRef::Function(_)
+                | DeclarationRef::Class(_)
+                | DeclarationRef::Callback(_)
+                | DeclarationRef::Stream(_)
+                | DeclarationRef::Constant(_)
+                | DeclarationRef::CustomType(_) => None,
+            })
+            .map(|enumeration| Ok((enumeration.id(), Enum::c_style(enumeration, &names)?)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
         let callbacks = bindings
             .decls()
             .iter()
@@ -280,6 +298,7 @@ impl CBridgeContract {
             support: SupportFunctions::new(),
             direct_records,
             source_direct_records,
+            source_c_style_enums,
             enums,
             callbacks,
             functions,
@@ -304,6 +323,16 @@ impl CBridgeContract {
     /// Returns C typedefs keyed by direct source record id.
     pub fn source_direct_records(&self) -> &BTreeMap<RecordId, Record> {
         &self.source_direct_records
+    }
+
+    /// Returns the C typedef selected for a source C-style enum.
+    pub fn source_c_style_enum(&self, enumeration: EnumId) -> Option<&Enum> {
+        self.source_c_style_enums.get(&enumeration)
+    }
+
+    /// Returns C typedefs keyed by source C-style enum id.
+    pub fn source_c_style_enums(&self) -> &BTreeMap<EnumId, Enum> {
+        &self.source_c_style_enums
     }
 
     /// Returns C ABI support functions.
@@ -932,7 +961,7 @@ impl Names {
             })
     }
 
-    fn enumeration(&self, id: boltffi_binding::EnumId) -> Result<String> {
+    fn enumeration(&self, id: EnumId) -> Result<String> {
         self.enums.get(&id).cloned().ok_or(Error::UnsupportedCAbi {
             shape: "missing enum type name",
         })

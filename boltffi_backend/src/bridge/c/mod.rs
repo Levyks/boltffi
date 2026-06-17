@@ -12,7 +12,8 @@ pub(crate) mod syntax;
 mod template;
 
 pub use contract::{
-    CBridgeContract, Callback, Enum, Field, Function, Parameter, Record, SupportFunctions, Type,
+    CBridgeContract, Callback, Enum, EnumVariant, Field, Function, Parameter, Record,
+    SupportFunctions, Type,
 };
 pub use header::CBridge;
 

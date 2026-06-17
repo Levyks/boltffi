@@ -31,6 +31,16 @@ impl<'source> Name<'source> {
             .map(capitalized)
             .collect()
     }
+
+    pub fn enum_member(&self) -> String {
+        self.source
+            .parts()
+            .iter()
+            .map(NamePart::as_str)
+            .map(str::to_ascii_uppercase)
+            .collect::<Vec<_>>()
+            .join("_")
+    }
 }
 
 fn capitalized(part: &str) -> String {
