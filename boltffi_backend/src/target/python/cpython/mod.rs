@@ -166,12 +166,15 @@ impl host::HostBackend for PythonCExtHost {
 
     fn assemble(
         &self,
-        _bindings: &Bindings<Self::Surface>,
+        bindings: &Bindings<Self::Surface>,
         bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
         declarations: Vec<RenderedDeclaration<'_, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
-        render::NativeModule::new(bridge, declarations).render()
+        Ok(GeneratedOutput::combine([
+            render::NativeModule::new(bridge, declarations).render()?,
+            render::Package::new(bindings, bridge).render()?,
+        ]))
     }
 }
 
@@ -219,12 +222,16 @@ mod tests {
     }
 
     fn extension(output: &GeneratedOutput) -> &str {
+        file(output, "_native.c")
+    }
+
+    fn file<'output>(output: &'output GeneratedOutput, path: &str) -> &'output str {
         output
             .files()
             .iter()
-            .find(|file| file.path().as_path() == Path::new("_native.c"))
+            .find(|file| file.path().as_path() == Path::new(path))
             .map(|file| file.contents())
-            .expect("CPython extension file")
+            .expect("generated file")
     }
 
     #[test]
@@ -270,6 +277,35 @@ mod tests {
         assert!(extension.contains(
             "{\"add\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_function_demo_add, METH_FASTCALL, NULL}"
         ));
+    }
+
+    #[test]
+    fn python_target_emits_package_files_for_free_functions() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+        let setup = file(&output, "setup.py");
+
+        assert!(file(&output, "pyproject.toml").contains("setuptools>=68"));
+        assert_eq!(file(&output, "demo/py.typed"), "");
+        assert!(init.contains("from . import _native"));
+        assert!(init.contains("_native._initialize_loader"));
+        assert!(init.contains("add = _native.add"));
+        assert!(init.contains("MODULE_NAME = \"demo\""));
+        assert!(init.contains("PACKAGE_NAME = \"demo\""));
+        assert!(init.contains("\"add\","));
+        assert!(stub.contains("def add(left: int, right: int) -> int: ..."));
+        assert!(setup.contains("Extension(\n            \"demo._native\","));
+        assert!(setup.contains("sources=[\"_native.c\"]"));
     }
 
     #[test]
