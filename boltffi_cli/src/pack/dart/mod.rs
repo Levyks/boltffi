@@ -80,6 +80,7 @@ pub(crate) fn pack_dart(
                 output: Some(config.dart_output()),
                 experimental: options.experimental,
                 ir: false,
+                cargo_args: build_cargo_args.clone(),
             },
         )?;
 

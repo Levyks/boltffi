@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 
 use boltffi_ast::PackageInfo;
 use boltffi_binding::{
-    BINDING_METADATA_BUILD_ENV, BINDING_METADATA_ROOT_ENV, BINDING_METADATA_SOURCE_ENV, LowerError,
-    Native, SerializedBindings, Wasm32, lower_with_declarations,
+    BINDING_METADATA_BUILD_ENV, BINDING_METADATA_ROOT_ENV, BINDING_METADATA_SOURCE_ENV,
+    BINDING_METADATA_SURFACE_ENV, BindingMetadataSurface, LowerError, Native, SerializedBindings,
+    Wasm32, lower_with_declarations,
 };
 use boltffi_scan::{ScanError, ScanInput};
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, quote_spanned};
+use quote::quote_spanned;
 
 use crate::experimental::{error::Error as MetadataError, metadata};
 
@@ -61,19 +62,24 @@ impl Request {
         let scan = boltffi_scan::scan_package(
             &ScanInput::new(&self.source, self.package).with_manifest_dir(&self.root),
         )?;
-        let native = lower_with_declarations::<Native>(scan.complete())?;
-        let wasm32 = lower_with_declarations::<Wasm32>(scan.complete())?;
-        let native = metadata::render(SerializedBindings::native(native.into_bindings()))?;
-        let wasm32 = metadata::render(SerializedBindings::wasm32(wasm32.into_bindings()))?;
-        Ok(quote! {
-            #native
-            #wasm32
-        })
+        match requested_surface()? {
+            BindingMetadataSurface::Native => {
+                let native = lower_with_declarations::<Native>(scan.complete())?;
+                metadata::render(SerializedBindings::native(native.into_bindings()))
+                    .map_err(Into::into)
+            }
+            BindingMetadataSurface::Wasm32 => {
+                let wasm32 = lower_with_declarations::<Wasm32>(scan.complete())?;
+                metadata::render(SerializedBindings::wasm32(wasm32.into_bindings()))
+                    .map_err(Into::into)
+            }
+        }
     }
 }
 
 enum BuildError {
     MissingEnv(&'static str),
+    InvalidSurface(String),
     Scan(ScanError),
     Lower(LowerError),
     Metadata(MetadataError),
@@ -93,6 +99,12 @@ impl fmt::Display for BuildError {
         match self {
             Self::MissingEnv(key) => {
                 write!(formatter, "BoltFFI metadata build: `{key}` is not set")
+            }
+            Self::InvalidSurface(surface) => {
+                write!(
+                    formatter,
+                    "BoltFFI metadata build: `{BINDING_METADATA_SURFACE_ENV}` has invalid value `{surface}`"
+                )
             }
             Self::Scan(error) => write!(formatter, "BoltFFI metadata build scan failed: {error}"),
             Self::Lower(error) => write!(formatter, "BoltFFI metadata build lower failed: {error}"),
@@ -123,6 +135,11 @@ impl From<MetadataError> for BuildError {
 
 fn required_env(key: &'static str) -> Result<String, BuildError> {
     env::var(key).map_err(|_| BuildError::MissingEnv(key))
+}
+
+fn requested_surface() -> Result<BindingMetadataSurface, BuildError> {
+    let surface = required_env(BINDING_METADATA_SURFACE_ENV)?;
+    BindingMetadataSurface::parse(&surface).ok_or(BuildError::InvalidSurface(surface))
 }
 
 fn compiling_generated_crate() -> Result<bool, BuildError> {

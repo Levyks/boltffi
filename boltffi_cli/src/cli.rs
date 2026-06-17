@@ -492,6 +492,7 @@ pub(crate) fn execute_command(
                 output,
                 experimental,
                 ir,
+                cargo_args: cargo_args.clone(),
             };
             run_generate_with_output(&config, options)
         }
@@ -860,6 +861,7 @@ fn run_release(
             output: None,
             experimental: false,
             ir: false,
+            cargo_args: cargo_args.clone(),
         },
     )?;
     println!();

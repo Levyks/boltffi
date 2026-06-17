@@ -36,6 +36,7 @@ pub struct GenerateOptions {
     pub output: Option<PathBuf>,
     pub experimental: bool,
     pub ir: bool,
+    pub cargo_args: Vec<String>,
 }
 
 pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Result<()> {

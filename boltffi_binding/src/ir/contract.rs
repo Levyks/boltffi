@@ -415,7 +415,31 @@ pub const BINDING_METADATA_SOURCE_ENV: &str = "BOLTFFI_BINDING_METADATA_SOURCE";
 /// concern handled separately.
 pub const BINDING_METADATA_ROOT_ENV: &str = "BOLTFFI_BINDING_METADATA_ROOT";
 
+/// Environment variable carrying the metadata surface requested by bindgen.
+///
+/// The macro uses this value to lower only the target surface Cargo is
+/// building for, instead of requiring every source crate to lower every
+/// possible surface during metadata extraction.
+pub const BINDING_METADATA_SURFACE_ENV: &str = "BOLTFFI_BINDING_METADATA_SURFACE";
+
 impl BindingMetadataSurface {
+    /// Returns the stable metadata-build environment value for this surface.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Wasm32 => "wasm32",
+        }
+    }
+
+    /// Parses a metadata-build environment value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "native" => Some(Self::Native),
+            "wasm32" => Some(Self::Wasm32),
+            _ => None,
+        }
+    }
+
     /// Selects the surface a Cargo target triple compiles for.
     ///
     /// Any `wasm32*` triple resolves to [`Self::Wasm32`]; everything else,

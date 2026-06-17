@@ -7,7 +7,7 @@ use std::process::{Command, ExitStatus};
 
 use boltffi_binding::{
     BINDING_METADATA_BUILD_ENV, BINDING_METADATA_ROOT_ENV, BINDING_METADATA_SOURCE_ENV,
-    BindingMetadataEnvelope,
+    BINDING_METADATA_SURFACE_ENV, BindingMetadataEnvelope, BindingMetadataSurface,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -43,9 +43,9 @@ impl BindingMetadataBuild {
 
     /// Runs Cargo and returns the validated metadata envelopes.
     pub fn read(&self) -> Result<Vec<BindingMetadataEnvelope>, BindingMetadataBuildError> {
-        let source_root = SourceRoot::resolve(&self.manifest_path)?;
-        let output = CargoBuild::new(self, &source_root).output()?;
         let manifest = CargoManifest::new(&self.manifest_path)?;
+        let source_root = SourceRoot::resolve(&manifest)?;
+        let output = CargoBuild::new(self, &manifest, &source_root).output()?;
         let artifacts = output.artifacts(&manifest)?;
         BindingMetadataReader::new(artifacts.into_paths())
             .read_required()
@@ -160,10 +160,9 @@ struct SourceRoot {
 }
 
 impl SourceRoot {
-    fn resolve(manifest_path: &Path) -> Result<Self, BindingMetadataBuildError> {
-        let manifest = CargoManifest::new(manifest_path)?;
-        CargoMetadata::load(&manifest)?
-            .library_source(&manifest)
+    fn resolve(manifest: &CargoManifest) -> Result<Self, BindingMetadataBuildError> {
+        CargoMetadata::load(manifest)?
+            .library_source(manifest)
             .map(|path| Self { path })
     }
 
@@ -254,15 +253,25 @@ impl MetadataTarget {
 #[derive(Clone, Debug)]
 struct CargoBuild<'build> {
     build: &'build BindingMetadataBuild,
+    manifest: &'build CargoManifest,
     source_root: &'build SourceRoot,
 }
 
 impl<'build> CargoBuild<'build> {
-    const fn new(build: &'build BindingMetadataBuild, source_root: &'build SourceRoot) -> Self {
-        Self { build, source_root }
+    const fn new(
+        build: &'build BindingMetadataBuild,
+        manifest: &'build CargoManifest,
+        source_root: &'build SourceRoot,
+    ) -> Self {
+        Self {
+            build,
+            manifest,
+            source_root,
+        }
     }
 
     fn output(self) -> Result<CargoOutput, BindingMetadataBuildError> {
+        let surface = BindingMetadataSurface::from_target_triple(self.build.target.as_deref());
         let mut command = Command::new(CargoProgram::from_env().into_os_string());
         command
             .arg("build")
@@ -275,7 +284,8 @@ impl<'build> CargoBuild<'build> {
         }
         command.env(BINDING_METADATA_BUILD_ENV, "1");
         command.env(BINDING_METADATA_SOURCE_ENV, self.source_root.path());
-        if let Some(root) = self.build.manifest_path.parent() {
+        command.env(BINDING_METADATA_SURFACE_ENV, surface.as_str());
+        if let Some(root) = self.manifest.path().parent() {
             command.env(BINDING_METADATA_ROOT_ENV, root);
         }
         MetadataRustflags::from_env().apply(&mut command);

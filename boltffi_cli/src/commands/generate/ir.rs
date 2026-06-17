@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use boltffi_bindgen::generate::{Generation, GenerationError};
 use boltffi_bindgen::target::Target;
 
@@ -11,7 +9,7 @@ use super::{GenerateOptions, GenerateTarget};
 
 pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<()> {
     match &options.target {
-        GenerateTarget::Python => generate_python(config, options.output.clone()),
+        GenerateTarget::Python => generate_python(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
                 "--ir is only available for python, not {}",
@@ -22,7 +20,7 @@ pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<(
     }
 }
 
-fn generate_python(config: &Config, output: Option<PathBuf>) -> Result<()> {
+fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
     if !config.is_python_enabled() {
         return Err(CliError::CommandFailed {
             command: "targets.python.enabled = false".to_string(),
@@ -30,10 +28,27 @@ fn generate_python(config: &Config, output: Option<PathBuf>) -> Result<()> {
         });
     }
 
-    let manifest_path = Cargo::current(&[])?.manifest_path()?;
-    let output_directory = output.unwrap_or_else(|| config.python_output());
+    if !config.should_process(Target::Python, options.experimental) {
+        return Err(CliError::CommandFailed {
+            command: "python is experimental, use --experimental flag or add \"python\" to [experimental]"
+                .to_string(),
+            status: None,
+        });
+    }
+
+    let cargo_args = config
+        .cargo_args_for_command("generate")
+        .into_iter()
+        .chain(options.cargo_args.iter().cloned())
+        .collect::<Vec<_>>();
+    let manifest_path = Cargo::current(&cargo_args)?.manifest_path()?;
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.python_output());
 
     Generation::new(manifest_path)
+        .python_module_name(config.python_module_name())
         .write(Target::Python, &output_directory)
         .map(drop)
         .map_err(generation_error)

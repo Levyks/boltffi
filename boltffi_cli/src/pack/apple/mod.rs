@@ -86,7 +86,13 @@ pub(crate) fn pack_apple(
     if options.execution.regenerate {
         scratch_directory.recreate()?;
         let step = reporter.step("Generating Apple bindings");
-        generate_apple_bindings(config, layout, &package_root, &headers_dir)?;
+        generate_apple_bindings(
+            config,
+            layout,
+            &package_root,
+            &headers_dir,
+            &build_cargo_args,
+        )?;
         step.finish_success();
     }
 
@@ -233,6 +239,7 @@ fn generate_apple_bindings(
     layout: SpmLayout,
     package_root: &Path,
     header_output_directory: &Path,
+    build_cargo_args: &[String],
 ) -> Result<()> {
     let swift_output_directory = match layout {
         SpmLayout::Bundled => config
@@ -250,6 +257,7 @@ fn generate_apple_bindings(
             output: Some(swift_output_directory),
             experimental: false,
             ir: false,
+            cargo_args: build_cargo_args.to_vec(),
         },
     )?;
 
@@ -260,6 +268,7 @@ fn generate_apple_bindings(
             output: Some(header_output_directory.to_path_buf()),
             experimental: false,
             ir: false,
+            cargo_args: build_cargo_args.to_vec(),
         },
     )
 }

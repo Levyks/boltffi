@@ -76,6 +76,7 @@ pub(crate) fn pack_android(
                 output: Some(config.android_kotlin_output()),
                 experimental: false,
                 ir: false,
+                cargo_args: build_cargo_args.clone(),
             },
         )?;
         step.finish_success();
@@ -88,6 +89,7 @@ pub(crate) fn pack_android(
                 output: Some(config.android_header_output()),
                 experimental: false,
                 ir: false,
+                cargo_args: build_cargo_args.clone(),
             },
         )?;
         step.finish_success();

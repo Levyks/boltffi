@@ -66,7 +66,10 @@ fn strip_item_attrs(item: &mut syn::Item) {
                 strip_fields_attrs(&mut variant.fields);
             });
         }
-        syn::Item::Fn(item) => strip_attrs(&mut item.attrs),
+        syn::Item::Fn(item) => {
+            strip_attrs(&mut item.attrs);
+            strip_signature_attrs(&mut item.sig);
+        }
         syn::Item::Impl(item) => {
             strip_attrs(&mut item.attrs);
             item.items.iter_mut().for_each(strip_impl_item_attrs);
@@ -100,7 +103,10 @@ fn strip_fields_attrs(fields: &mut syn::Fields) {
 fn strip_impl_item_attrs(item: &mut syn::ImplItem) {
     match item {
         syn::ImplItem::Const(item) => strip_attrs(&mut item.attrs),
-        syn::ImplItem::Fn(item) => strip_attrs(&mut item.attrs),
+        syn::ImplItem::Fn(item) => {
+            strip_attrs(&mut item.attrs);
+            strip_signature_attrs(&mut item.sig);
+        }
         syn::ImplItem::Type(item) => strip_attrs(&mut item.attrs),
         _ => {}
     }
@@ -109,10 +115,20 @@ fn strip_impl_item_attrs(item: &mut syn::ImplItem) {
 fn strip_trait_item_attrs(item: &mut syn::TraitItem) {
     match item {
         syn::TraitItem::Const(item) => strip_attrs(&mut item.attrs),
-        syn::TraitItem::Fn(item) => strip_attrs(&mut item.attrs),
+        syn::TraitItem::Fn(item) => {
+            strip_attrs(&mut item.attrs);
+            strip_signature_attrs(&mut item.sig);
+        }
         syn::TraitItem::Type(item) => strip_attrs(&mut item.attrs),
         _ => {}
     }
+}
+
+fn strip_signature_attrs(signature: &mut syn::Signature) {
+    signature.inputs.iter_mut().for_each(|input| match input {
+        syn::FnArg::Receiver(receiver) => strip_attrs(&mut receiver.attrs),
+        syn::FnArg::Typed(argument) => strip_attrs(&mut argument.attrs),
+    });
 }
 
 fn strip_attrs(attrs: &mut Vec<syn::Attribute>) {
@@ -121,16 +137,25 @@ fn strip_attrs(attrs: &mut Vec<syn::Attribute>) {
 
 fn is_boltffi_helper_attr(attr: &syn::Attribute) -> bool {
     let path = attr.path();
-    if path.is_ident("skip") || path.is_ident("name") || path.is_ident("ffi_stream") {
-        return true;
+    if !is_boltffi_helper_path(path) {
+        return false;
     }
-    match path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-    {
-        Some(name) if path.segments.len() == 2 && name == "default" => true,
-        Some(name) if name == "default" => matches!(attr.meta, syn::Meta::List(_)),
+    match path.segments.last().map(|segment| &segment.ident) {
+        Some(ident) if ident == "skip" || ident == "name" || ident == "ffi_stream" => true,
+        Some(ident) if ident == "default" => {
+            path.segments.len() == 2 || matches!(attr.meta, syn::Meta::List(_))
+        }
+        _ => false,
+    }
+}
+
+fn is_boltffi_helper_path(path: &syn::Path) -> bool {
+    match path.segments.len() {
+        1 => true,
+        2 => path
+            .segments
+            .first()
+            .is_some_and(|segment| segment.ident == "boltffi"),
         _ => false,
     }
 }
