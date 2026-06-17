@@ -10,7 +10,7 @@ use crate::{
     },
     core::{Error, RenderContext, Result},
     target::python::{
-        cpython::render::{callback, class_handle, enumeration, primitive, record},
+        cpython::render::{callback, enumeration, primitive, record, scalar_handle},
         name_style::Name,
     },
 };
@@ -231,7 +231,7 @@ impl Conversion {
         carrier: native::HandleCarrier,
     ) -> Result<Self> {
         let name = name.into();
-        let carrier = class_handle::Carrier::new(carrier)?;
+        let carrier = scalar_handle::Carrier::new(carrier)?;
         Ok(Self {
             index,
             name,

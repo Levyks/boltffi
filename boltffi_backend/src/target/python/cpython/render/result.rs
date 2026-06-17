@@ -5,7 +5,7 @@ use boltffi_binding::{
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
     core::{Error, RenderContext, Result},
-    target::python::cpython::render::{class_handle, enumeration, primitive, record},
+    target::python::cpython::render::{enumeration, primitive, record, scalar_handle},
 };
 
 pub struct Conversion {
@@ -74,7 +74,7 @@ impl Conversion {
                 carrier,
                 presence: HandlePresence::Required,
             } => {
-                let carrier = class_handle::Carrier::new(*carrier)?;
+                let carrier = scalar_handle::Carrier::new(*carrier)?;
                 Ok(Self {
                     void: false,
                     converter: carrier.boxer()?.to_owned(),

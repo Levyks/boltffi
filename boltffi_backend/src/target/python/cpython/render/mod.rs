@@ -1,7 +1,6 @@
 mod argument;
 mod callback;
 mod class;
-mod class_handle;
 mod enumeration;
 mod function;
 mod method;
@@ -10,6 +9,8 @@ mod package;
 mod primitive;
 mod record;
 mod result;
+mod scalar_handle;
+mod stream;
 
 pub use callback::Wrapper as CallbackWrapper;
 pub use class::Wrapper as ClassWrapper;
@@ -18,3 +19,4 @@ pub use function::Wrapper;
 pub use module::NativeModule;
 pub use package::Package;
 pub use record::Wrapper as RecordWrapper;
+pub use stream::Wrapper as StreamWrapper;

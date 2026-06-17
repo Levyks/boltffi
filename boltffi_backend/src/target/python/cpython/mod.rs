@@ -41,10 +41,7 @@ impl host::HostBackend for PythonCExtHost {
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Classes)
             .stable(BindingCapability::Callbacks)
-            .unsupported(
-                BindingCapability::Streams,
-                "Python streams are not migrated yet",
-            )
+            .stable(BindingCapability::Streams)
             .unsupported(
                 BindingCapability::Constants,
                 "Python constants are not migrated yet",
@@ -106,14 +103,11 @@ impl host::HostBackend for PythonCExtHost {
 
     fn stream(
         &self,
-        _decl: &StreamDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        decl: &StreamDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Error::UnsupportedTarget {
-            target: self.name(),
-            shape: "stream",
-        })
+        render::StreamWrapper::from_declaration(decl, bridge, context)?.render()
     }
 
     fn constant(
@@ -523,6 +517,63 @@ mod tests {
         assert!(
             stub.contains("def invoke_value_callback(callback: object, input: int) -> int: ...")
         );
+    }
+
+    #[test]
+    fn python_target_renders_class_stream_subscription() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                use std::sync::Arc;
+                use boltffi::EventSubscription;
+
+                pub struct EventBus;
+
+                #[export(single_threaded)]
+                impl EventBus {
+                    pub fn new() -> Self {
+                        Self
+                    }
+
+                    #[ffi_stream(item = i32)]
+                    pub fn subscribe_values(&self) -> Arc<EventSubscription<i32>> {
+                        todo!()
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render stream subscription");
+        let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_stream_wrapper_boltffi_stream_demo_event_bus_subscribe_values_subscribe"
+        ));
+        assert!(extension.contains(
+            "static PyObject *boltffi_python_stream_wrapper_boltffi_stream_demo_event_bus_subscribe_values_pop_batch"
+        ));
+        assert!(extension.contains("boltffi_python_parse_usize(args[1], &output_capacity)"));
+        assert!(extension.contains("int32_t *items = NULL;"));
+        assert!(extension.contains("boltffi_python_box_i32(items[item_index])"));
+        assert!(extension.contains(
+            "{\"subscribe_values\", (PyCFunction)boltffi_python_stream_wrapper_boltffi_stream_demo_event_bus_subscribe_values_subscribe, METH_FASTCALL, NULL}"
+        ));
+        assert!(
+            init.contains("def subscribe_values(self) -> \"EventBusSubscribeValuesSubscription\":")
+        );
+        assert!(init.contains(
+            "return EventBusSubscribeValuesSubscription._from_handle(_native.subscribe_values(self._handle))"
+        ));
+        assert!(init.contains("class EventBusSubscribeValuesSubscription:"));
+        assert!(init.contains("def pop_batch(self, max_count: int = 16) -> list[int]:"));
+        assert!(init.contains(
+            "return _native.subscribe_values_pop_batch(self._require_handle(), max_count)"
+        ));
+        assert!(stub.contains(
+            "def subscribe_values(self) -> \"EventBusSubscribeValuesSubscription\": ..."
+        ));
+        assert!(stub.contains("def pop_batch(self, max_count: int = 16) -> list[int]: ..."));
     }
 
     #[test]

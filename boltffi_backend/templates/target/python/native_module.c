@@ -551,6 +551,9 @@ static void boltffi_python_release_host_state(void) {
 {% for function in functions %}
 {{ function }}
 {% endfor %}
+{% for stream in streams %}
+{{ stream }}
+{% endfor %}
 static PyMethodDef {{ method_table }}[] = {
 {%- for method in methods %}
     {"{{ method.python_name }}", (PyCFunction){{ method.c_function }}, {{ method.flags }}, NULL},

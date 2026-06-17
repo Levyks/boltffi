@@ -9,7 +9,7 @@ use crate::{
         Emitted, Error, FileLayout, GeneratedOutput, RenderContext, RenderedDeclaration, Result,
     },
     target::python::cpython::render::{
-        callback, class, enumeration, function, method, primitive, record, result,
+        callback, class, enumeration, function, method, primitive, record, result, stream,
     },
 };
 
@@ -26,6 +26,7 @@ struct NativeModuleTemplate {
     enums: Vec<String>,
     classes: Vec<String>,
     callbacks: Vec<String>,
+    streams: Vec<String>,
     host_bindings: Vec<String>,
     functions: Vec<String>,
     methods: Vec<method::Entry>,
@@ -57,6 +58,7 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
         let enums = self.enums()?;
         let classes = self.classes()?;
         let callbacks = self.callbacks()?;
+        let streams = self.streams()?;
         let functions = self.functions()?;
         let methods = self
             .bridge
@@ -65,6 +67,7 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             .chain(direct_records.iter().map(|record| record.wrapper.method()))
             .chain(enums.iter().map(|enumeration| enumeration.wrapper.method()))
             .chain(classes.iter().flat_map(|class| class.wrapper.methods()))
+            .chain(streams.iter().flat_map(|stream| stream.wrapper.methods()))
             .chain(functions.iter().map(|function| function.wrapper.method()))
             .map(method::Entry::from_method)
             .collect();
@@ -74,6 +77,7 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             enums.iter().map(|enumeration| &enumeration.wrapper),
             classes.iter().map(|class| &class.wrapper),
             callbacks.iter().map(|callback| &callback.wrapper),
+            streams.iter().map(|stream| &stream.wrapper),
             functions.iter().map(|function| &function.wrapper),
         )?;
         let source = NativeModuleTemplate {
@@ -96,6 +100,7 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
                 .iter()
                 .map(|callback| callback.source.clone())
                 .collect(),
+            streams: streams.iter().map(|stream| stream.source.clone()).collect(),
             host_bindings: callbacks
                 .iter()
                 .map(|callback| callback.wrapper.binding().to_owned())
@@ -235,6 +240,30 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             })
             .collect()
     }
+
+    fn streams(&self) -> Result<Vec<RenderedStream>> {
+        self.declarations
+            .iter()
+            .filter_map(|declaration| match declaration.declaration() {
+                DeclarationRef::Stream(stream) => Some((stream, declaration.emitted())),
+                DeclarationRef::Record(_)
+                | DeclarationRef::Enum(_)
+                | DeclarationRef::Function(_)
+                | DeclarationRef::Class(_)
+                | DeclarationRef::Callback(_)
+                | DeclarationRef::Constant(_)
+                | DeclarationRef::CustomType(_) => None,
+            })
+            .map(|(declaration, emitted)| {
+                let wrapper =
+                    stream::Wrapper::from_declaration(declaration, self.bridge, self.context)?;
+                Ok(RenderedStream {
+                    wrapper,
+                    source: emitted.primary_chunk().as_str().to_owned(),
+                })
+            })
+            .collect()
+    }
 }
 
 struct RenderedFunction {
@@ -262,6 +291,11 @@ struct RenderedCallback {
     source: String,
 }
 
+struct RenderedStream {
+    wrapper: stream::Wrapper,
+    source: String,
+}
+
 struct ModuleSupport {
     primitives: Vec<primitive::Support>,
     free_buffer: String,
@@ -274,24 +308,27 @@ struct ModuleSupport {
 }
 
 impl ModuleSupport {
-    fn new<'record, 'enumeration, 'class, 'callback, 'function>(
+    fn new<'record, 'enumeration, 'class, 'callback, 'stream_wrapper, 'function>(
         bridge: &PythonCExtBridgeContract,
         records: impl Iterator<Item = &'record record::Wrapper>,
         enums: impl Iterator<Item = &'enumeration enumeration::Wrapper>,
         classes: impl Iterator<Item = &'class class::Wrapper>,
         callbacks: impl Iterator<Item = &'callback callback::Wrapper>,
+        streams: impl Iterator<Item = &'stream_wrapper stream::Wrapper>,
         functions: impl Iterator<Item = &'function function::Wrapper>,
     ) -> Result<Self> {
         let records = records.collect::<Vec<_>>();
         let enums = enums.collect::<Vec<_>>();
         let classes = classes.collect::<Vec<_>>();
         let callbacks = callbacks.collect::<Vec<_>>();
+        let streams = streams.collect::<Vec<_>>();
         let functions = functions.collect::<Vec<_>>();
         let primitives = functions
             .iter()
             .flat_map(|function| function.primitives())
             .chain(classes.iter().flat_map(|class| class.primitives()))
             .chain(callbacks.iter().flat_map(|callback| callback.primitives()))
+            .chain(streams.iter().flat_map(|stream| stream.primitives()))
             .chain(records.iter().flat_map(|record| record.primitives()))
             .chain(enums.iter().map(|enumeration| enumeration.primitive()))
             .collect::<BTreeSet<_>>()

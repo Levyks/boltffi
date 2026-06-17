@@ -5,7 +5,7 @@ use crate::{
     bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        cpython::render::{argument, class_handle, function, primitive, result},
+        cpython::render::{argument, function, primitive, result, scalar_handle},
         name_style::Name,
     },
 };
@@ -153,7 +153,7 @@ struct Release {
     python_name: String,
     wrapper: String,
     storage: String,
-    handle: class_handle::Carrier,
+    handle: scalar_handle::Carrier,
     method: ExtensionMethod,
 }
 
@@ -178,7 +178,7 @@ impl Release {
             python_name,
             wrapper,
             storage: loaded.storage_name().to_owned(),
-            handle: class_handle::Carrier::new(declaration.handle())?,
+            handle: scalar_handle::Carrier::new(declaration.handle())?,
             method,
         })
     }

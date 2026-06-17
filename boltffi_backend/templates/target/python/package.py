@@ -98,6 +98,49 @@ class {{ class.class_name }}:
 {%- else %}
         _native.{{ method.native_name }}({{ method.arguments }})
 {%- endif %}
+{%- endfor %}
+{%- for stream in class.streams %}
+
+    def {{ stream.python_name }}(self) -> "{{ stream.subscription_class }}":
+        return {{ stream.subscription_class }}._from_handle(_native.{{ stream.subscribe_method }}(self._handle))
+{%- endfor %}
+
+{% for stream in class.streams %}
+class {{ stream.subscription_class }}:
+    __slots__ = ("_handle",)
+
+    def __init__(self) -> None:
+        raise TypeError("{{ stream.subscription_class }} cannot be constructed directly")
+
+    @classmethod
+    def _from_handle(cls, handle: int) -> "{{ stream.subscription_class }}":
+        value = cls.__new__(cls)
+        value._handle = handle
+        return value
+
+    def __del__(self) -> None:
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            self._handle = None
+            _native.{{ stream.free_method }}(handle)
+
+    def pop_batch(self, max_count: int = 16) -> list[{{ stream.item_annotation }}]:
+        return _native.{{ stream.pop_batch_method }}(self._require_handle(), max_count)
+
+    def wait(self, timeout_milliseconds: int) -> int:
+        return _native.{{ stream.wait_method }}(self._require_handle(), timeout_milliseconds)
+
+    def unsubscribe(self) -> None:
+        handle = self._require_handle()
+        self._handle = None
+        _native.{{ stream.unsubscribe_method }}(handle)
+        _native.{{ stream.free_method }}(handle)
+
+    def _require_handle(self) -> int:
+        handle = self._handle
+        if handle is None:
+            raise RuntimeError("stream subscription is closed")
+        return handle
 
 {% endfor %}
 {% endfor %}
@@ -121,6 +164,9 @@ __all__ = [
 {%- endfor %}
 {%- for class in classes %}
     "{{ class.class_name }}",
+{%- for stream in class.streams %}
+    "{{ stream.subscription_class }}",
+{%- endfor %}
 {%- endfor %}
 {%- for function in functions %}
     "{{ function }}",

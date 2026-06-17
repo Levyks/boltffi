@@ -5,14 +5,15 @@ use boltffi_binding::{
     Bindings, CStyleEnumDecl, ClassDecl, ClassId, DeclarationRef, DirectFieldDecl,
     DirectRecordDecl, EnumDecl, EnumId, ErrorDecl, ExportedMethodDecl, FieldKey, FunctionDecl,
     HandlePresence, HandleTarget, IncomingParam, InitializerDecl, IntoRust, Native, NativeSymbol,
-    OutOfRust, ParamDecl, ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, TypeRef, native,
+    OutOfRust, ParamDecl, ParamPlan, Primitive, RecordDecl, RecordId, ReturnPlan, StreamDecl,
+    StreamItemPlan, StreamMode, TypeRef, native,
 };
 
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
     core::{Error, FilePath, GeneratedFile, GeneratedOutput, Result},
     target::python::{
-        cpython::render::{class, enumeration, record},
+        cpython::render::{class, enumeration, record, stream},
         name_style::Name,
     },
 };
@@ -237,6 +238,24 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                 | DeclarationRef::CustomType(_) => None,
             })
             .map(|class| Class::from_declaration(class, self))
+            .collect()
+    }
+
+    fn streams_for_class(&self, class: ClassId) -> Vec<&'binding StreamDecl<Native>> {
+        self.bindings
+            .decls()
+            .iter()
+            .filter_map(|decl| match DeclarationRef::from(decl) {
+                DeclarationRef::Stream(stream) if stream.owner() == Some(class) => Some(stream),
+                DeclarationRef::Record(_)
+                | DeclarationRef::Enum(_)
+                | DeclarationRef::Function(_)
+                | DeclarationRef::Class(_)
+                | DeclarationRef::Callback(_)
+                | DeclarationRef::Stream(_)
+                | DeclarationRef::Constant(_)
+                | DeclarationRef::CustomType(_) => None,
+            })
             .collect()
     }
 
@@ -470,6 +489,7 @@ struct Class {
     constructors: Vec<ClassCallable>,
     static_methods: Vec<ClassCallable>,
     instance_methods: Vec<ClassCallable>,
+    streams: Vec<ClassStream>,
 }
 
 impl Class {
@@ -500,6 +520,11 @@ impl Class {
             .collect::<Result<Vec<_>>>()?;
         let (instance_methods, static_methods): (Vec<_>, Vec<_>) =
             methods.into_iter().partition(|method| method.receiver);
+        let streams = package
+            .streams_for_class(declaration.id())
+            .into_iter()
+            .map(|stream| ClassStream::from_declaration(stream, &class_name, package))
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             class_name,
             release_method: symbols.release(),
@@ -507,6 +532,55 @@ impl Class {
             constructors,
             static_methods,
             instance_methods,
+            streams,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ClassStream {
+    python_name: String,
+    subscribe_method: String,
+    subscription_class: String,
+    item_annotation: String,
+    pop_batch_method: String,
+    wait_method: String,
+    unsubscribe_method: String,
+    free_method: String,
+}
+
+impl ClassStream {
+    fn from_declaration(
+        declaration: &StreamDecl<Native>,
+        class_name: &str,
+        package: &Package<'_, '_>,
+    ) -> Result<Self> {
+        if matches!(declaration.mode(), StreamMode::Callback) {
+            return Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "callback-mode stream package",
+            });
+        }
+        let StreamItemPlan::Direct { ty, .. } = declaration.item() else {
+            return Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "encoded stream package",
+            });
+        };
+        let symbols = stream::Symbols::new(declaration);
+        Ok(Self {
+            python_name: Name::new(declaration.name()).function(),
+            subscribe_method: symbols.subscribe(),
+            subscription_class: format!(
+                "{}{}Subscription",
+                class_name,
+                Name::new(declaration.name()).class()
+            ),
+            item_annotation: PythonTypeHint::from_type_ref(ty, package)?.into_string(),
+            pop_batch_method: symbols.pop_batch(),
+            wait_method: symbols.wait(),
+            unsubscribe_method: symbols.unsubscribe(),
+            free_method: symbols.free(),
         })
     }
 }
@@ -651,6 +725,22 @@ struct PythonTypeHint {
 }
 
 impl PythonTypeHint {
+    fn from_type_ref(ty: &TypeRef, package: &Package<'_, '_>) -> Result<Self> {
+        match ty {
+            TypeRef::Primitive(primitive) => Self::from_primitive(*primitive),
+            TypeRef::Record(record) => Ok(Self {
+                annotation: package.record_name(*record)?,
+            }),
+            TypeRef::Enum(enumeration) => Ok(Self {
+                annotation: package.enum_name(*enumeration)?,
+            }),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unsupported stream item annotation",
+            }),
+        }
+    }
+
     fn from_parameter(
         plan: &ParamPlan<Native, IntoRust>,
         package: &Package<'_, '_>,
