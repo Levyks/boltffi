@@ -146,7 +146,10 @@ impl ConstructorCoverageMatrix {
         let age_total = people.iter().map(|person| person.age).sum::<u32>();
         Self::from_parts(
             "with_borrowed_people",
-            format!("people={};age_total={age_total};names={names}", people.len()),
+            format!(
+                "people={};age_total={age_total};names={names}",
+                people.len()
+            ),
             0,
             people.len() as u32 + age_total,
         )

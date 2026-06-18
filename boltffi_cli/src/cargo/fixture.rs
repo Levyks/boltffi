@@ -144,6 +144,7 @@ impl CargoPackageIdFixture {
 pub(crate) struct CargoTargetFixture {
     name: String,
     crate_types: Vec<String>,
+    src_path: PathBuf,
 }
 
 impl CargoTargetFixture {
@@ -154,6 +155,7 @@ impl CargoTargetFixture {
         Self {
             name: name.into(),
             crate_types: crate_types.into_iter().map(Into::into).collect(),
+            src_path: PathBuf::from("src/lib.rs"),
         }
     }
 

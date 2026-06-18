@@ -28,6 +28,7 @@ pub(crate) struct CargoMetadataPackage {
 pub(crate) struct CargoMetadataPackageTarget {
     pub(crate) name: String,
     pub(crate) crate_types: Vec<CargoCrateType>,
+    pub(crate) src_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -1,5 +1,10 @@
 use std::process::Command;
 
+use boltffi_binding::{
+    BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,
+    BINDING_EXPANSION_SURFACE_ENV, BindingMetadataSurface,
+};
+
 use crate::build::{OutputCallback, run_command_streaming};
 use crate::cli::{CliError, Result};
 use crate::pack::{PackError, print_cargo_line};
@@ -55,6 +60,29 @@ impl<'a> PythonSharedLibraryBuilder<'a> {
         }
 
         command.args(&self.plan.cargo_context.cargo_command_args);
+        command.env(BINDING_EXPANSION_BUILD_ENV, "1");
+        command.env(
+            BINDING_EXPANSION_ROOT_ENV,
+            self.plan
+                .cargo_context
+                .manifest_path
+                .parent()
+                .ok_or_else(|| CliError::CommandFailed {
+                    command: format!(
+                        "manifest path '{}' has no parent directory",
+                        self.plan.cargo_context.manifest_path.display()
+                    ),
+                    status: None,
+                })?,
+        );
+        command.env(
+            BINDING_EXPANSION_SOURCE_ENV,
+            &self.plan.cargo_context.library_source_path,
+        );
+        command.env(
+            BINDING_EXPANSION_SURFACE_ENV,
+            BindingMetadataSurface::Native.as_str(),
+        );
 
         if !run_command_streaming(&mut command, on_output.as_ref()) {
             return Err(PackError::BuildFailed {
