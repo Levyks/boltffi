@@ -379,8 +379,13 @@ mod tests {
         let init = file(&output, "demo/__init__.py");
         let stub = file(&output, "demo/__init__.pyi");
         let setup = file(&output, "setup.py");
+        let pyproject = file(&output, "pyproject.toml");
 
-        assert!(file(&output, "pyproject.toml").contains("setuptools>=68"));
+        assert!(pyproject.contains("setuptools>=68"));
+        assert!(pyproject.ends_with('\n'));
+        assert!(setup.ends_with('\n'));
+        assert!(init.ends_with('\n'));
+        assert!(stub.ends_with('\n'));
         assert_eq!(file(&output, "demo/py.typed"), "");
         assert!(init.contains("from . import _native"));
         assert!(init.contains("_native._initialize_loader"));

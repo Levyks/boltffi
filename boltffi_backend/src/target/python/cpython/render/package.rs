@@ -129,62 +129,68 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             || stubs.iter().any(FunctionStub::uses_async_helpers);
         Ok(GeneratedOutput::new(
             vec![
-                self.file("pyproject.toml", PyprojectTemplate.render()?)?,
+                self.file("pyproject.toml", Self::text(PyprojectTemplate.render()?))?,
                 self.file(
                     "setup.py",
-                    SetupTemplate {
-                        module_name_literal: Self::literal(&module),
-                        package_name_literal: Self::literal(&package),
-                        package_version_literal: Self::literal(
-                            version.as_deref().unwrap_or("0.0.0"),
-                        ),
-                        extension_name_literal: Self::literal(format!(
-                            "{}.{}",
-                            module,
-                            self.bridge.module().as_str()
-                        )),
-                        extension_source_literal: Self::literal(
-                            self.bridge.source_path().as_path().display().to_string(),
-                        ),
-                    }
-                    .render()?,
+                    Self::text(
+                        SetupTemplate {
+                            module_name_literal: Self::literal(&module),
+                            package_name_literal: Self::literal(&package),
+                            package_version_literal: Self::literal(
+                                version.as_deref().unwrap_or("0.0.0"),
+                            ),
+                            extension_name_literal: Self::literal(format!(
+                                "{}.{}",
+                                module,
+                                self.bridge.module().as_str()
+                            )),
+                            extension_source_literal: Self::literal(
+                                self.bridge.source_path().as_path().display().to_string(),
+                            ),
+                        }
+                        .render()?,
+                    ),
                 )?,
                 self.file(
                     PathBuf::from(&module).join("__init__.py"),
-                    InitTemplate {
-                        module_name_literal: Self::literal(&module),
-                        package_name_literal: Self::literal(&package),
-                        package_version_literal: version
-                            .as_deref()
-                            .map(Self::literal)
-                            .unwrap_or_else(|| "None".to_owned()),
-                        library_name: self.library.clone(),
-                        uses_sequence_annotations,
-                        uses_callable_annotations,
-                        uses_wire_helpers,
-                        uses_async_helpers,
-                        has_data_enums: enums.iter().any(EnumClass::has_wire),
-                        records: records.clone(),
-                        enums: enums.clone(),
-                        classes: classes.clone(),
-                        constants: constants.clone(),
-                        functions: stubs.clone(),
-                    }
-                    .render()?,
+                    Self::text(
+                        InitTemplate {
+                            module_name_literal: Self::literal(&module),
+                            package_name_literal: Self::literal(&package),
+                            package_version_literal: version
+                                .as_deref()
+                                .map(Self::literal)
+                                .unwrap_or_else(|| "None".to_owned()),
+                            library_name: self.library.clone(),
+                            uses_sequence_annotations,
+                            uses_callable_annotations,
+                            uses_wire_helpers,
+                            uses_async_helpers,
+                            has_data_enums: enums.iter().any(EnumClass::has_wire),
+                            records: records.clone(),
+                            enums: enums.clone(),
+                            classes: classes.clone(),
+                            constants: constants.clone(),
+                            functions: stubs.clone(),
+                        }
+                        .render()?,
+                    ),
                 )?,
                 self.file(
                     PathBuf::from(&module).join("__init__.pyi"),
-                    StubTemplate {
-                        uses_sequence_annotations,
-                        uses_callable_annotations,
-                        has_data_enums: enums.iter().any(EnumClass::has_wire),
-                        records,
-                        enums,
-                        classes,
-                        constants,
-                        functions: stubs,
-                    }
-                    .render()?,
+                    Self::text(
+                        StubTemplate {
+                            uses_sequence_annotations,
+                            uses_callable_annotations,
+                            has_data_enums: enums.iter().any(EnumClass::has_wire),
+                            records,
+                            enums,
+                            classes,
+                            constants,
+                            functions: stubs,
+                        }
+                        .render()?,
+                    ),
                 )?,
                 self.file(PathBuf::from(&module).join("py.typed"), String::new())?,
             ],
@@ -479,6 +485,13 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
 
     fn literal(value: impl AsRef<str>) -> String {
         format!("{:?}", value.as_ref())
+    }
+
+    fn text(contents: String) -> String {
+        match contents.ends_with('\n') {
+            true => contents,
+            false => format!("{contents}\n"),
+        }
     }
 
     fn validate_names(
