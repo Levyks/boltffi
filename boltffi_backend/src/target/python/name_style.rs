@@ -7,6 +7,9 @@ pub struct Name<'source> {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// A Python package module name accepted by generated Python bindings.
+///
+/// The value is guaranteed to be a Python identifier and not a Python keyword.
 pub struct PackageModule {
     name: String,
 }
@@ -51,6 +54,9 @@ impl<'source> Name<'source> {
 }
 
 impl PackageModule {
+    /// Parses a configured Python package module name.
+    ///
+    /// Returns an error when the name is empty, is not a Python identifier, or is a Python keyword.
     pub fn parse(name: impl Into<String>) -> Result<Self> {
         let name = name.into();
         if Self::identifier(&name) && !keyword(&name) {
@@ -60,12 +66,14 @@ impl PackageModule {
         }
     }
 
+    /// Creates a package module name from a canonical BoltFFI package name.
     pub fn from_canonical(name: &CanonicalName) -> Self {
         Self {
             name: Name::new(name).function(),
         }
     }
 
+    /// Returns the Python module name.
     pub fn as_str(&self) -> &str {
         &self.name
     }

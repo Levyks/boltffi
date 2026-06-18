@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use boltffi_bindgen::render::python::PythonRuntimeVersion;
 use serde::Deserialize;
 
 use crate::build::{OutputCallback, run_command_streaming};
@@ -12,6 +11,7 @@ use crate::reporter::Step;
 
 use super::build::BuiltPythonSharedLibrary;
 use super::plan::{PythonInterpreterSelection, PythonPackagingPlan};
+use super::runtime::PythonRuntimeVersion;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonBuiltWheel {
@@ -357,10 +357,9 @@ fn absolutize_interpreter_path(path: &Path) -> PathBuf {
 mod tests {
     use std::path::PathBuf;
 
-    use boltffi_bindgen::render::python::PythonRuntimeVersion;
-
     use super::{PythonInterpreter, PythonInterpreterIdentity, PythonWheelBuilder};
     use crate::cli::CliError;
+    use crate::pack::python::runtime::PythonRuntimeVersion;
 
     #[test]
     fn rejects_interpreters_older_than_supported_python_floor() {

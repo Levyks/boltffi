@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use boltffi_bindgen::render::python::NamingConvention;
+use boltffi_backend::target::python::PackageModule;
 use boltffi_bindgen::target::Target;
 use serde::{Deserialize, Serialize};
 
@@ -229,7 +229,7 @@ impl Config {
 
         if self.is_python_enabled()
             && let Some(module_name) = self.targets.python.module_name.as_deref()
-            && !NamingConvention::is_valid_module_name(module_name)
+            && PackageModule::parse(module_name).is_err()
         {
             return Err(ConfigError::Validation(format!(
                 "targets.python.module_name must be a valid Python identifier, got '{}'",
