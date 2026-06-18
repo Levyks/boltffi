@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use boltffi_ast::{
-    ClassDef as SourceClass, ClassId as SourceClassId, EnumDef as SourceEnum,
-    EnumId as SourceEnumId, FunctionDef as SourceFunction, RecordDef as SourceRecord,
-    RecordId as SourceRecordId, SourceContract, TraitDef as SourceTrait, TraitId as SourceTraitId,
+    ClassDef as SourceClass, ClassId as SourceClassId, CustomTypeDef as SourceCustom,
+    CustomTypeId as SourceCustomId, EnumDef as SourceEnum, EnumId as SourceEnumId,
+    FunctionDef as SourceFunction, RecordDef as SourceRecord, RecordId as SourceRecordId,
+    SourceContract, TraitDef as SourceTrait, TraitId as SourceTraitId,
 };
 
 /// Borrowed view over a [`SourceContract`] with lookup tables for the
@@ -21,6 +22,7 @@ pub(super) struct Index<'src> {
     enums: HashMap<&'src str, &'src SourceEnum>,
     classes: HashMap<&'src str, &'src SourceClass>,
     traits: HashMap<&'src str, &'src SourceTrait>,
+    customs: HashMap<&'src str, &'src SourceCustom>,
 }
 
 impl<'src> Index<'src> {
@@ -46,6 +48,11 @@ impl<'src> Index<'src> {
                 .traits
                 .iter()
                 .map(|r#trait| (r#trait.id.as_str(), r#trait))
+                .collect(),
+            customs: source
+                .customs
+                .iter()
+                .map(|custom| (custom.id.as_str(), custom))
                 .collect(),
         }
     }
@@ -100,5 +107,9 @@ impl<'src> Index<'src> {
 
     pub(super) fn r#trait(&self, id: &SourceTraitId) -> Option<&'src SourceTrait> {
         self.traits.get(id.as_str()).copied()
+    }
+
+    pub(super) fn custom(&self, id: &SourceCustomId) -> Option<&'src SourceCustom> {
+        self.customs.get(id.as_str()).copied()
     }
 }

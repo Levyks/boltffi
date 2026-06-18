@@ -107,7 +107,7 @@ mod tests {
 
     use crate::lower::{LowerError, LowerErrorKind, lower};
     use crate::{
-        Bindings, CanonicalName, CustomTypeDecl, CustomTypeId, Decl, Native, ParamPlan,
+        Bindings, CanonicalName, CodecNode, CustomTypeDecl, CustomTypeId, Decl, Native, ParamPlan,
         Primitive as BindingPrimitive, Receive, RecordId, ReturnPlan, SurfaceLower, TypeRef,
         Wasm32,
     };
@@ -330,13 +330,30 @@ mod tests {
             ParamPlan::Encoded {
                 ty,
                 receive: Receive::ByValue,
+                codec,
                 ..
-            } => assert_eq!(ty, &TypeRef::Custom(CustomTypeId::from_raw(0))),
+            } => {
+                assert_eq!(ty, &TypeRef::Custom(CustomTypeId::from_raw(0)));
+                assert_eq!(
+                    codec.root(),
+                    &CodecNode::Custom {
+                        id: CustomTypeId::from_raw(0),
+                        representation: Box::new(CodecNode::Primitive(BindingPrimitive::U64)),
+                    }
+                );
+            }
             other => panic!("expected encoded custom param, got {other:?}"),
         }
         match function.callable().returns().plan() {
-            ReturnPlan::EncodedViaReturnSlot { ty, .. } => {
+            ReturnPlan::EncodedViaReturnSlot { ty, codec, .. } => {
                 assert_eq!(ty, &TypeRef::Custom(CustomTypeId::from_raw(0)));
+                assert_eq!(
+                    codec.root(),
+                    &CodecNode::Custom {
+                        id: CustomTypeId::from_raw(0),
+                        representation: Box::new(CodecNode::Primitive(BindingPrimitive::U64)),
+                    }
+                );
             }
             other => panic!("expected encoded custom return, got {other:?}"),
         }

@@ -82,7 +82,15 @@ pub(super) fn node(
                 BaseTrait::Function(_) => super::error::UnsupportedType::ClosureInValuePosition,
             }));
         }
-        TypeExpr::Custom { id, .. } => CodecNode::Custom(ids.custom(id)?),
+        TypeExpr::Custom { id, .. } => {
+            let custom = idx
+                .custom(id)
+                .ok_or_else(|| LowerError::unknown_custom(id))?;
+            CodecNode::Custom {
+                id: ids.custom(id)?,
+                representation: Box::new(node(idx, ids, &custom.repr, value)?),
+            }
+        }
         TypeExpr::Vec(element) | TypeExpr::Slice(element) => {
             let element = node(idx, ids, element, ValueRef::self_value())?;
             CodecNode::Sequence {

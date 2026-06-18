@@ -2,7 +2,8 @@ use boltffi_ast::BuiltinType;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CallbackId, ClassId, CustomTypeId, ElementCount, EnumId, Op, Primitive, RecordId, ValueRef,
+    BinderId, CallbackId, ClassId, CustomTypeId, ElementCount, EnumId, FieldKey, Op, Primitive,
+    RecordId, ValueRef,
 };
 
 /// Instructions for reconstructing one value from its boundary bytes.
@@ -30,6 +31,14 @@ impl ReadPlan {
     pub fn root(&self) -> &CodecNode {
         &self.root
     }
+
+    /// Renders this read plan through the shared codec walker.
+    pub fn render_with<R>(&self, renderer: &mut R) -> R::Expr
+    where
+        R: CodecRead,
+    {
+        CodecWalker::read(&self.root, renderer)
+    }
 }
 
 /// Instructions for emitting one value as boundary bytes.
@@ -56,6 +65,14 @@ impl WritePlan {
     /// Returns the root codec node.
     pub fn root(&self) -> &CodecNode {
         &self.root
+    }
+
+    /// Renders this write plan through the shared codec walker.
+    pub fn render_with<W>(&self, renderer: &mut W) -> Vec<W::Stmt>
+    where
+        W: CodecWrite,
+    {
+        CodecWalker::write(&self.root, &self.value, renderer)
     }
 }
 
@@ -122,7 +139,12 @@ pub enum CodecNode {
     /// Callback object carried by a handle.
     CallbackHandle(CallbackId),
     /// Custom type carried through its selected representation.
-    Custom(CustomTypeId),
+    Custom {
+        /// Custom type declaration id.
+        id: CustomTypeId,
+        /// Codec used for the custom type's representation.
+        representation: Box<CodecNode>,
+    },
     /// Builtin value carried through its BoltFFI wire representation.
     Builtin(BuiltinType),
     /// Optional value with a presence marker followed by the inner value.
@@ -150,4 +172,630 @@ pub enum CodecNode {
         /// Codec used for each value.
         value: Box<CodecNode>,
     },
+}
+
+/// Target-language rendering for codec reads.
+///
+/// Implementors receive rendered child expressions for container nodes.
+/// The shared walker owns the traversal order, so backend code cannot
+/// accidentally walk `CodecNode` with a different shape than another target.
+pub trait CodecRead {
+    /// Target expression produced by the reader.
+    type Expr;
+
+    /// Reads a primitive scalar.
+    fn primitive(&mut self, primitive: Primitive) -> Self::Expr;
+
+    /// Reads a UTF-8 string.
+    fn string(&mut self) -> Self::Expr;
+
+    /// Reads a byte buffer.
+    fn bytes(&mut self) -> Self::Expr;
+
+    /// Reads a directly-carried record.
+    fn direct_record(&mut self, id: RecordId) -> Self::Expr;
+
+    /// Reads an encoded record.
+    fn encoded_record(&mut self, id: RecordId) -> Self::Expr;
+
+    /// Reads a fieldless enum.
+    fn c_style_enum(&mut self, id: EnumId) -> Self::Expr;
+
+    /// Reads a payload-carrying enum.
+    fn data_enum(&mut self, id: EnumId) -> Self::Expr;
+
+    /// Reads a class handle.
+    fn class_handle(&mut self, id: ClassId) -> Self::Expr;
+
+    /// Reads a callback handle.
+    fn callback_handle(&mut self, id: CallbackId) -> Self::Expr;
+
+    /// Reads a custom type representation.
+    fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr;
+
+    /// Reads a builtin value.
+    fn builtin(&mut self, kind: BuiltinType) -> Self::Expr;
+
+    /// Reads an optional value.
+    fn optional(&mut self, inner: Self::Expr) -> Self::Expr;
+
+    /// Reads a sequence.
+    fn sequence(&mut self, len: &Op<ElementCount>, element: Self::Expr) -> Self::Expr;
+
+    /// Reads a tuple.
+    fn tuple(&mut self, elements: Vec<Self::Expr>) -> Self::Expr;
+
+    /// Reads a fallible value.
+    fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr;
+
+    /// Reads a map.
+    fn map(&mut self, key: Self::Expr, value: Self::Expr) -> Self::Expr;
+}
+
+/// Target-language rendering for codec writes.
+///
+/// Container methods receive statements produced by the shared walker for
+/// their children. The writer still receives the value reference for the
+/// current node so target code can spell the source expression.
+pub trait CodecWrite {
+    /// Target statement produced by the writer.
+    type Stmt;
+
+    /// Writes a primitive scalar.
+    fn primitive(&mut self, primitive: Primitive, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a UTF-8 string.
+    fn string(&mut self, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a byte buffer.
+    fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a directly-carried record.
+    fn direct_record(&mut self, id: RecordId, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes an encoded record.
+    fn encoded_record(&mut self, id: RecordId, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a fieldless enum.
+    fn c_style_enum(&mut self, id: EnumId, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a payload-carrying enum.
+    fn data_enum(&mut self, id: EnumId, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a class handle.
+    fn class_handle(&mut self, id: ClassId, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a callback handle.
+    fn callback_handle(&mut self, id: CallbackId, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes a custom type representation.
+    fn custom(
+        &mut self,
+        id: CustomTypeId,
+        value: &ValueRef,
+        representation: Vec<Self::Stmt>,
+    ) -> Vec<Self::Stmt>;
+
+    /// Writes a builtin value.
+    fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt>;
+
+    /// Writes an optional value.
+    fn optional(
+        &mut self,
+        value: &ValueRef,
+        binder: BinderId,
+        inner: Vec<Self::Stmt>,
+    ) -> Vec<Self::Stmt>;
+
+    /// Writes a sequence.
+    fn sequence(
+        &mut self,
+        value: &ValueRef,
+        len: &Op<ElementCount>,
+        binder: BinderId,
+        element: Vec<Self::Stmt>,
+    ) -> Vec<Self::Stmt>;
+
+    /// Writes a tuple.
+    fn tuple(&mut self, value: &ValueRef, elements: Vec<Vec<Self::Stmt>>) -> Vec<Self::Stmt>;
+
+    /// Writes a fallible value.
+    fn result(
+        &mut self,
+        value: &ValueRef,
+        binder: BinderId,
+        ok: Vec<Self::Stmt>,
+        err: Vec<Self::Stmt>,
+    ) -> Vec<Self::Stmt>;
+
+    /// Writes a map.
+    fn map(
+        &mut self,
+        value: &ValueRef,
+        key_binder: BinderId,
+        key: Vec<Self::Stmt>,
+        value_binder: BinderId,
+        map_value: Vec<Self::Stmt>,
+    ) -> Vec<Self::Stmt>;
+}
+
+struct CodecWalker;
+
+impl CodecWalker {
+    fn read<R>(node: &CodecNode, renderer: &mut R) -> R::Expr
+    where
+        R: CodecRead,
+    {
+        match node {
+            CodecNode::Primitive(primitive) => renderer.primitive(*primitive),
+            CodecNode::String => renderer.string(),
+            CodecNode::Bytes => renderer.bytes(),
+            CodecNode::DirectRecord(id) => renderer.direct_record(*id),
+            CodecNode::EncodedRecord(id) => renderer.encoded_record(*id),
+            CodecNode::CStyleEnum(id) => renderer.c_style_enum(*id),
+            CodecNode::DataEnum(id) => renderer.data_enum(*id),
+            CodecNode::ClassHandle(id) => renderer.class_handle(*id),
+            CodecNode::CallbackHandle(id) => renderer.callback_handle(*id),
+            CodecNode::Custom { id, representation } => {
+                let representation = Self::read(representation, renderer);
+                renderer.custom(*id, representation)
+            }
+            CodecNode::Builtin(kind) => renderer.builtin(*kind),
+            CodecNode::Optional(inner) => {
+                let inner = Self::read(inner, renderer);
+                renderer.optional(inner)
+            }
+            CodecNode::Sequence { len, element } => {
+                let element = Self::read(element, renderer);
+                renderer.sequence(len, element)
+            }
+            CodecNode::Tuple(elements) => {
+                let elements = elements
+                    .iter()
+                    .map(|element| Self::read(element, renderer))
+                    .collect();
+                renderer.tuple(elements)
+            }
+            CodecNode::Result { ok, err } => {
+                let ok = Self::read(ok, renderer);
+                let err = Self::read(err, renderer);
+                renderer.result(ok, err)
+            }
+            CodecNode::Map { key, value } => {
+                let key = Self::read(key, renderer);
+                let value = Self::read(value, renderer);
+                renderer.map(key, value)
+            }
+        }
+    }
+
+    fn write<W>(node: &CodecNode, value: &ValueRef, renderer: &mut W) -> Vec<W::Stmt>
+    where
+        W: CodecWrite,
+    {
+        let mut next_binder = 0;
+        Self::write_node(node, value, renderer, &mut next_binder)
+    }
+
+    fn write_node<W>(
+        node: &CodecNode,
+        value: &ValueRef,
+        renderer: &mut W,
+        next_binder: &mut u32,
+    ) -> Vec<W::Stmt>
+    where
+        W: CodecWrite,
+    {
+        match node {
+            CodecNode::Primitive(primitive) => renderer.primitive(*primitive, value),
+            CodecNode::String => renderer.string(value),
+            CodecNode::Bytes => renderer.bytes(value),
+            CodecNode::DirectRecord(id) => renderer.direct_record(*id, value),
+            CodecNode::EncodedRecord(id) => renderer.encoded_record(*id, value),
+            CodecNode::CStyleEnum(id) => renderer.c_style_enum(*id, value),
+            CodecNode::DataEnum(id) => renderer.data_enum(*id, value),
+            CodecNode::ClassHandle(id) => renderer.class_handle(*id, value),
+            CodecNode::CallbackHandle(id) => renderer.callback_handle(*id, value),
+            CodecNode::Custom { id, representation } => {
+                let representation = Self::write_node(representation, value, renderer, next_binder);
+                renderer.custom(*id, value, representation)
+            }
+            CodecNode::Builtin(kind) => renderer.builtin(*kind, value),
+            CodecNode::Optional(inner) => {
+                let binder = Self::next_binder(next_binder);
+                let inner =
+                    Self::write_node(inner, &ValueRef::binder(binder), renderer, next_binder);
+                renderer.optional(value, binder, inner)
+            }
+            CodecNode::Sequence { len, element } => {
+                let binder = Self::next_binder(next_binder);
+                let element =
+                    Self::write_node(element, &ValueRef::binder(binder), renderer, next_binder);
+                renderer.sequence(value, len, binder, element)
+            }
+            CodecNode::Tuple(elements) => {
+                let elements = elements
+                    .iter()
+                    .enumerate()
+                    .map(|(index, element)| {
+                        let field = FieldKey::position(index).expect("tuple index fits in u32");
+                        Self::write_node(
+                            element,
+                            &value.clone().field(field),
+                            renderer,
+                            next_binder,
+                        )
+                    })
+                    .collect();
+                renderer.tuple(value, elements)
+            }
+            CodecNode::Result { ok, err } => {
+                let binder = Self::next_binder(next_binder);
+                let ok = Self::write_node(ok, &ValueRef::binder(binder), renderer, next_binder);
+                let err = Self::write_node(err, &ValueRef::binder(binder), renderer, next_binder);
+                renderer.result(value, binder, ok, err)
+            }
+            CodecNode::Map {
+                key,
+                value: map_value,
+            } => {
+                let key_binder = Self::next_binder(next_binder);
+                let value_binder = Self::next_binder(next_binder);
+                let key =
+                    Self::write_node(key, &ValueRef::binder(key_binder), renderer, next_binder);
+                let map_value = Self::write_node(
+                    map_value,
+                    &ValueRef::binder(value_binder),
+                    renderer,
+                    next_binder,
+                );
+                renderer.map(value, key_binder, key, value_binder, map_value)
+            }
+        }
+    }
+
+    fn next_binder(next_binder: &mut u32) -> BinderId {
+        let binder = BinderId::from_raw(*next_binder);
+        *next_binder = next_binder
+            .checked_add(1)
+            .expect("codec binder id fits in u32");
+        binder
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use boltffi_ast::BuiltinType;
+
+    use super::{CodecNode, CodecRead, CodecWrite, ReadPlan, WritePlan};
+    use crate::{
+        BinderId, CallbackId, ClassId, CustomTypeId, ElementCount, EnumId, FieldKey, Op, Primitive,
+        RecordId, ValueRef, ValueRoot,
+    };
+
+    struct TextRead;
+
+    impl CodecRead for TextRead {
+        type Expr = String;
+
+        fn primitive(&mut self, primitive: Primitive) -> Self::Expr {
+            format!("primitive({primitive:?})")
+        }
+
+        fn string(&mut self) -> Self::Expr {
+            "string".to_owned()
+        }
+
+        fn bytes(&mut self) -> Self::Expr {
+            "bytes".to_owned()
+        }
+
+        fn direct_record(&mut self, id: RecordId) -> Self::Expr {
+            format!("direct_record({})", id.raw())
+        }
+
+        fn encoded_record(&mut self, id: RecordId) -> Self::Expr {
+            format!("encoded_record({})", id.raw())
+        }
+
+        fn c_style_enum(&mut self, id: EnumId) -> Self::Expr {
+            format!("c_style_enum({})", id.raw())
+        }
+
+        fn data_enum(&mut self, id: EnumId) -> Self::Expr {
+            format!("data_enum({})", id.raw())
+        }
+
+        fn class_handle(&mut self, id: ClassId) -> Self::Expr {
+            format!("class_handle({})", id.raw())
+        }
+
+        fn callback_handle(&mut self, id: CallbackId) -> Self::Expr {
+            format!("callback_handle({})", id.raw())
+        }
+
+        fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
+            format!("custom({}, {representation})", id.raw())
+        }
+
+        fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
+            format!("builtin({kind:?})")
+        }
+
+        fn optional(&mut self, inner: Self::Expr) -> Self::Expr {
+            format!("optional({inner})")
+        }
+
+        fn sequence(&mut self, _len: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
+            format!("sequence({element})")
+        }
+
+        fn tuple(&mut self, elements: Vec<Self::Expr>) -> Self::Expr {
+            format!("tuple({})", elements.join(","))
+        }
+
+        fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
+            format!("result({ok},{err})")
+        }
+
+        fn map(&mut self, key: Self::Expr, value: Self::Expr) -> Self::Expr {
+            format!("map({key},{value})")
+        }
+    }
+
+    struct TextWrite;
+
+    impl CodecWrite for TextWrite {
+        type Stmt = String;
+
+        fn primitive(&mut self, primitive: Primitive, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("primitive({primitive:?}, {})", value_name(value))]
+        }
+
+        fn string(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("string({})", value_name(value))]
+        }
+
+        fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("bytes({})", value_name(value))]
+        }
+
+        fn direct_record(&mut self, id: RecordId, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!(
+                "direct_record({}, {})",
+                id.raw(),
+                value_name(value)
+            )]
+        }
+
+        fn encoded_record(&mut self, id: RecordId, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!(
+                "encoded_record({}, {})",
+                id.raw(),
+                value_name(value)
+            )]
+        }
+
+        fn c_style_enum(&mut self, id: EnumId, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("c_style_enum({}, {})", id.raw(), value_name(value))]
+        }
+
+        fn data_enum(&mut self, id: EnumId, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("data_enum({}, {})", id.raw(), value_name(value))]
+        }
+
+        fn class_handle(&mut self, id: ClassId, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("class_handle({}, {})", id.raw(), value_name(value))]
+        }
+
+        fn callback_handle(&mut self, id: CallbackId, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!(
+                "callback_handle({}, {})",
+                id.raw(),
+                value_name(value)
+            )]
+        }
+
+        fn custom(
+            &mut self,
+            id: CustomTypeId,
+            value: &ValueRef,
+            representation: Vec<Self::Stmt>,
+        ) -> Vec<Self::Stmt> {
+            vec![format!(
+                "custom({}, {}, [{}])",
+                id.raw(),
+                value_name(value),
+                representation.join(";")
+            )]
+        }
+
+        fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt> {
+            vec![format!("builtin({kind:?}, {})", value_name(value))]
+        }
+
+        fn optional(
+            &mut self,
+            value: &ValueRef,
+            binder: BinderId,
+            inner: Vec<Self::Stmt>,
+        ) -> Vec<Self::Stmt> {
+            vec![format!(
+                "optional({}, b{}, [{}])",
+                value_name(value),
+                binder.raw(),
+                inner.join(";")
+            )]
+        }
+
+        fn sequence(
+            &mut self,
+            value: &ValueRef,
+            _len: &Op<ElementCount>,
+            binder: BinderId,
+            element: Vec<Self::Stmt>,
+        ) -> Vec<Self::Stmt> {
+            vec![format!(
+                "sequence({}, b{}, [{}])",
+                value_name(value),
+                binder.raw(),
+                element.join(";")
+            )]
+        }
+
+        fn tuple(&mut self, value: &ValueRef, elements: Vec<Vec<Self::Stmt>>) -> Vec<Self::Stmt> {
+            let elements = elements
+                .into_iter()
+                .map(|element| element.join(";"))
+                .collect::<Vec<_>>()
+                .join("|");
+            vec![format!("tuple({}, [{}])", value_name(value), elements)]
+        }
+
+        fn result(
+            &mut self,
+            value: &ValueRef,
+            binder: BinderId,
+            ok: Vec<Self::Stmt>,
+            err: Vec<Self::Stmt>,
+        ) -> Vec<Self::Stmt> {
+            vec![format!(
+                "result({}, b{}, [{}], [{}])",
+                value_name(value),
+                binder.raw(),
+                ok.join(";"),
+                err.join(";")
+            )]
+        }
+
+        fn map(
+            &mut self,
+            value: &ValueRef,
+            key_binder: BinderId,
+            key: Vec<Self::Stmt>,
+            value_binder: BinderId,
+            map_value: Vec<Self::Stmt>,
+        ) -> Vec<Self::Stmt> {
+            vec![format!(
+                "map({}, k{}, [{}], v{}, [{}])",
+                value_name(value),
+                key_binder.raw(),
+                key.join(";"),
+                value_binder.raw(),
+                map_value.join(";")
+            )]
+        }
+    }
+
+    #[test]
+    fn read_plan_renders_children_before_containers() {
+        let plan = ReadPlan::new(CodecNode::Optional(Box::new(CodecNode::Sequence {
+            len: Op::sequence_len(ValueRef::self_value()),
+            element: Box::new(CodecNode::Primitive(Primitive::U32)),
+        })));
+        let mut renderer = TextRead;
+
+        assert_eq!(
+            plan.render_with(&mut renderer),
+            "optional(sequence(primitive(U32)))"
+        );
+    }
+
+    #[test]
+    fn write_plan_allocates_unique_binders_for_nested_collections() {
+        let plan = WritePlan::new(
+            ValueRef::self_value(),
+            CodecNode::Sequence {
+                len: Op::sequence_len(ValueRef::self_value()),
+                element: Box::new(CodecNode::Map {
+                    key: Box::new(CodecNode::String),
+                    value: Box::new(CodecNode::Sequence {
+                        len: Op::sequence_len(ValueRef::self_value()),
+                        element: Box::new(CodecNode::Primitive(Primitive::U32)),
+                    }),
+                }),
+            },
+        );
+        let mut renderer = TextWrite;
+
+        assert_eq!(
+            plan.render_with(&mut renderer),
+            vec![
+                "sequence(self, b0, [map(b0, k1, [string(b1)], v2, [sequence(b2, b3, [primitive(U32, b3)])])])"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn write_plan_binds_optional_payload_before_rendering_inner_codec() {
+        let plan = WritePlan::new(
+            ValueRef::self_value(),
+            CodecNode::Optional(Box::new(CodecNode::Primitive(Primitive::U32))),
+        );
+        let mut renderer = TextWrite;
+
+        assert_eq!(
+            plan.render_with(&mut renderer),
+            vec!["optional(self, b0, [primitive(U32, b0)])".to_owned()]
+        );
+    }
+
+    #[test]
+    fn write_plan_binds_result_payload_before_rendering_branch_codecs() {
+        let plan = WritePlan::new(
+            ValueRef::self_value(),
+            CodecNode::Result {
+                ok: Box::new(CodecNode::String),
+                err: Box::new(CodecNode::Bytes),
+            },
+        );
+        let mut renderer = TextWrite;
+
+        assert_eq!(
+            plan.render_with(&mut renderer),
+            vec!["result(self, b0, [string(b0)], [bytes(b0)])".to_owned()]
+        );
+    }
+
+    #[test]
+    fn custom_codec_renders_representation_through_shared_walker() {
+        let read = ReadPlan::new(CodecNode::Custom {
+            id: CustomTypeId::from_raw(7),
+            representation: Box::new(CodecNode::Sequence {
+                len: Op::sequence_len(ValueRef::self_value()),
+                element: Box::new(CodecNode::String),
+            }),
+        });
+        let write = WritePlan::new(
+            ValueRef::self_value(),
+            CodecNode::Custom {
+                id: CustomTypeId::from_raw(7),
+                representation: Box::new(CodecNode::Sequence {
+                    len: Op::sequence_len(ValueRef::self_value()),
+                    element: Box::new(CodecNode::String),
+                }),
+            },
+        );
+        let mut reader = TextRead;
+        let mut writer = TextWrite;
+
+        assert_eq!(read.render_with(&mut reader), "custom(7, sequence(string))");
+        assert_eq!(
+            write.render_with(&mut writer),
+            vec!["custom(7, self, [sequence(self, b0, [string(b0)])])".to_owned()]
+        );
+    }
+
+    fn value_name(value: &ValueRef) -> String {
+        let root = match value.root() {
+            ValueRoot::SelfValue => "self".to_owned(),
+            ValueRoot::Named(name) | ValueRoot::Local(name) => name.as_path_string(),
+            ValueRoot::Binder(id) => format!("b{}", id.raw()),
+        };
+        value.path().iter().fold(root, |name, field| match field {
+            FieldKey::Named(field) => format!("{name}.{}", field.as_path_string()),
+            FieldKey::Position(index) => format!("{name}.{index}"),
+        })
+    }
 }

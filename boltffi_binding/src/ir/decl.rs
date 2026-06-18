@@ -1439,6 +1439,17 @@ pub enum StreamItemPlan<S: Surface> {
 }
 
 impl<S: Surface> StreamItemPlan<S> {
+    /// Renders this stream item plan through the shared stream-item walker.
+    pub fn render_with<'plan, R>(&'plan self, renderer: &mut R) -> R::Output
+    where
+        R: StreamItemPlanRender<'plan, S>,
+    {
+        match self {
+            Self::Direct { ty, size } => renderer.direct(ty, *size),
+            Self::Encoded { ty, read, shape } => renderer.encoded(ty, read, *shape),
+        }
+    }
+
     pub(crate) fn buffer_shape(&self) -> Option<S::BufferShape> {
         match self {
             Self::Encoded { shape, .. } => Some(*shape),
@@ -1454,6 +1465,27 @@ impl<S: Surface> StreamItemPlan<S> {
             _ => Ok(()),
         }
     }
+}
+
+/// Target-language rendering for stream item plans.
+///
+/// The shared walker owns the `StreamItemPlan` variant traversal.
+/// Backends implement direct and encoded item leaves without reopening
+/// the stream item enum in each target.
+pub trait StreamItemPlanRender<'plan, S: Surface> {
+    /// Value produced by the renderer.
+    type Output;
+
+    /// Renders a directly copied stream item.
+    fn direct(&mut self, ty: &'plan TypeRef, size: ByteSize) -> Self::Output;
+
+    /// Renders an encoded stream item.
+    fn encoded(
+        &mut self,
+        ty: &'plan TypeRef,
+        read: &'plan ReadPlan,
+        shape: S::BufferShape,
+    ) -> Self::Output;
 }
 
 /// The set of native symbols foreign code uses to consume a stream.

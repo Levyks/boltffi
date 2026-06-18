@@ -93,9 +93,10 @@ pub use boltffi_ast::BuiltinType;
 pub use callable::{
     CallableDecl, ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, ErrorDecl,
     ExecutionDecl, ExportedCallable, ImportedCallable, IncomingParam, OutgoingParam, ParamDecl,
-    ParamDirection, ParamPlan, Receive, ReturnDecl, ReturnPlan,
+    ParamDirection, ParamPlan, ParamPlanRender, Receive, ReturnDecl, ReturnPlan, ReturnPlanRender,
+    ReturnValueSlot,
 };
-pub use codec::{CodecNode, CodecPlan, ReadPlan, WritePlan};
+pub use codec::{CodecNode, CodecPlan, CodecRead, CodecWrite, ReadPlan, WritePlan};
 pub use contract::{
     BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,
     BINDING_EXPANSION_SURFACE_ENV, BINDING_METADATA_BUILD_ENV, BINDING_METADATA_ROOT_ENV,
@@ -114,7 +115,8 @@ pub use decl::{
     ConstantValueDecl, CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl,
     DeclarationRef, DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl,
     EnumDecl, ExportedMethodDecl, FieldKey, FunctionDecl, ImportedMethodDecl, InitializerDecl,
-    MethodDecl, RecordDecl, StreamDecl, StreamItemPlan, StreamMode, StreamProtocol, VariantTag,
+    MethodDecl, RecordDecl, StreamDecl, StreamItemPlan, StreamItemPlanRender, StreamMode,
+    StreamProtocol, VariantTag,
 };
 pub(crate) use decl::{ClassDeclParts, InvalidClassDecl, StreamDeclParts};
 pub use direction::{CallableScope, Direction, ForeignBody, IntoRust, OutOfRust, RustBody};
@@ -129,8 +131,8 @@ pub use metadata::{
 };
 pub use name::{CanonicalName, NamePart};
 pub use op::{
-    BinderId, ByteCount, ElementCount, IntrinsicOp, Op, OpNode, Scalar, ScalarTy, Truth, ValueRef,
-    ValueRoot,
+    BinderId, ByteCount, ElementCount, IntrinsicOp, Op, OpNode, OpRender, Scalar, ScalarTy, Truth,
+    ValueRef, ValueRoot,
 };
 pub use primitive::{IntegerRepr, Primitive};
 pub use surface::{

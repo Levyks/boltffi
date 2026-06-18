@@ -112,6 +112,22 @@ impl ValueRef {
         }
     }
 
+    /// References a generated local value.
+    pub fn local(name: CanonicalName) -> Self {
+        Self {
+            root: ValueRoot::Local(name),
+            path: Vec::new(),
+        }
+    }
+
+    /// References an element bound by a repeated operation.
+    pub fn binder(id: BinderId) -> Self {
+        Self {
+            root: ValueRoot::Binder(id),
+            path: Vec::new(),
+        }
+    }
+
     /// Appends a field or tuple-position access to the path.
     pub fn field(mut self, field: FieldKey) -> Self {
         self.path.push(field);
@@ -182,6 +198,14 @@ impl<T> Op<T> {
     /// Returns the underlying [`OpNode`].
     pub fn node(&self) -> &OpNode {
         &self.node
+    }
+
+    /// Renders this operation through the shared operation walker.
+    pub fn render_with<R>(&self, renderer: &mut R) -> R::Expr
+    where
+        R: OpRender,
+    {
+        OperationWalker::render(&self.node, renderer)
     }
 }
 
@@ -284,4 +308,140 @@ pub enum IntrinsicOp {
     SequenceLen,
     /// Encoded byte size of a value.
     WireSize,
+}
+
+/// Target-language rendering for operation leaves.
+///
+/// Implementors receive already-rendered children for recursive operation
+/// nodes. That keeps operation traversal inside `boltffi_binding` and leaves
+/// only target spelling to backends.
+pub trait OpRender {
+    /// Target expression produced by the renderer.
+    type Expr;
+
+    /// Renders a value reference.
+    fn value(&mut self, value: &ValueRef) -> Self::Expr;
+
+    /// Renders a fixed byte count.
+    fn byte_count(&mut self, bytes: u64) -> Self::Expr;
+
+    /// Renders an integer literal.
+    fn integer(&mut self, value: i128) -> Self::Expr;
+
+    /// Renders a sum.
+    fn add(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr;
+
+    /// Renders a product.
+    fn mul(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr;
+
+    /// Renders an equality expression.
+    fn eq(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr;
+
+    /// Renders field access on an expression.
+    fn field(&mut self, base: Self::Expr, field: &FieldKey) -> Self::Expr;
+
+    /// Renders a target-specific intrinsic.
+    fn intrinsic(&mut self, intrinsic: IntrinsicOp, args: Vec<Self::Expr>) -> Self::Expr;
+
+    /// Renders a type-size query.
+    fn size_of(&mut self, ty: &TypeRef) -> Self::Expr;
+}
+
+struct OperationWalker;
+
+impl OperationWalker {
+    fn render<R>(node: &OpNode, renderer: &mut R) -> R::Expr
+    where
+        R: OpRender,
+    {
+        match node {
+            OpNode::Value(value) => renderer.value(value),
+            OpNode::ByteCount(bytes) => renderer.byte_count(*bytes),
+            OpNode::Integer(value) => renderer.integer(*value),
+            OpNode::Add(left, right) => {
+                let left = Self::render(left, renderer);
+                let right = Self::render(right, renderer);
+                renderer.add(left, right)
+            }
+            OpNode::Mul(left, right) => {
+                let left = Self::render(left, renderer);
+                let right = Self::render(right, renderer);
+                renderer.mul(left, right)
+            }
+            OpNode::Eq(left, right) => {
+                let left = Self::render(left, renderer);
+                let right = Self::render(right, renderer);
+                renderer.eq(left, right)
+            }
+            OpNode::Field { base, field } => {
+                let base = Self::render(base, renderer);
+                renderer.field(base, field)
+            }
+            OpNode::Intrinsic { intrinsic, args } => {
+                let args = args.iter().map(|arg| Self::render(arg, renderer)).collect();
+                renderer.intrinsic(*intrinsic, args)
+            }
+            OpNode::SizeOf(ty) => renderer.size_of(ty),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IntrinsicOp, Op, OpRender, ValueRef};
+    use crate::{ByteCount, FieldKey, TypeRef};
+
+    struct TextOps;
+
+    impl OpRender for TextOps {
+        type Expr = String;
+
+        fn value(&mut self, _value: &ValueRef) -> Self::Expr {
+            "self".to_owned()
+        }
+
+        fn byte_count(&mut self, bytes: u64) -> Self::Expr {
+            bytes.to_string()
+        }
+
+        fn integer(&mut self, value: i128) -> Self::Expr {
+            value.to_string()
+        }
+
+        fn add(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr {
+            format!("({left}+{right})")
+        }
+
+        fn mul(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr {
+            format!("({left}*{right})")
+        }
+
+        fn eq(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr {
+            format!("({left}=={right})")
+        }
+
+        fn field(&mut self, base: Self::Expr, field: &FieldKey) -> Self::Expr {
+            format!("{base}.{field:?}")
+        }
+
+        fn intrinsic(&mut self, intrinsic: IntrinsicOp, args: Vec<Self::Expr>) -> Self::Expr {
+            format!("{intrinsic:?}({})", args.join(","))
+        }
+
+        fn size_of(&mut self, ty: &TypeRef) -> Self::Expr {
+            format!("size_of({ty:?})")
+        }
+    }
+
+    #[test]
+    fn operation_render_uses_shared_traversal() {
+        let mut renderer = TextOps;
+        let value = ValueRef::self_value();
+        let expression = Op::<ByteCount>::fixed(4).add_bytes(Op::<ByteCount>::utf8_bytes(value));
+
+        assert_eq!(
+            expression.render_with(&mut renderer),
+            "(4+Utf8ByteCount(self))"
+        );
+    }
 }
