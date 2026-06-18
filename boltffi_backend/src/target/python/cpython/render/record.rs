@@ -1,7 +1,7 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    DeclarationRef, DirectFieldDecl, DirectRecordDecl, EncodedRecordDecl, ExportedMethodDecl,
-    FieldKey, InitializerDecl, Native, NativeSymbol, RecordDecl, RecordId, TypeRef,
+    DirectFieldDecl, DirectRecordDecl, EncodedRecordDecl, ExportedMethodDecl, FieldKey,
+    InitializerDecl, Native, NativeSymbol, RecordDecl, RecordId, TypeRef,
 };
 
 use crate::{
@@ -38,7 +38,6 @@ struct EncodedTemplate {
     register_wrapper: String,
     wire_encoder: String,
     owned_decoder: String,
-    borrowed_decoder: String,
 }
 
 pub struct Record {
@@ -88,7 +87,6 @@ impl Record {
                 register_wrapper: symbols.register_wrapper,
                 wire_encoder: symbols.parser,
                 owned_decoder: symbols.boxer,
-                borrowed_decoder: symbols.borrowed_decoder,
             }
             .render()?,
         };
@@ -334,9 +332,6 @@ pub struct Symbols {
     register_wrapper: String,
     parser: String,
     boxer: String,
-    borrowed_decoder: String,
-    direct_vec_parser: Option<String>,
-    direct_vec_decoder: Option<String>,
 }
 
 impl Symbols {
@@ -345,30 +340,10 @@ impl Symbols {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let record = context
-            .bindings()
-            .decls()
-            .iter()
-            .find_map(|decl| match DeclarationRef::from(decl) {
-                DeclarationRef::Record(RecordDecl::Direct(record)) if record.id() == record_id => {
-                    Some(RecordDecl::Direct(record.clone()))
-                }
-                DeclarationRef::Record(RecordDecl::Encoded(record)) if record.id() == record_id => {
-                    Some(RecordDecl::Encoded(record.clone()))
-                }
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "record id without declaration",
-            })?;
+        let record = context.record(record_id).ok_or(Error::UnsupportedTarget {
+            target: "python",
+            shape: "record id without declaration",
+        })?;
         match record {
             RecordDecl::Direct(record) => {
                 let c_record =
@@ -378,9 +353,9 @@ impl Symbols {
                             target: "python",
                             shape: "direct record without C typedef",
                         })?;
-                Self::from_direct(&record, c_record)
+                Self::from_direct(record, c_record)
             }
-            RecordDecl::Encoded(record) => Self::from_encoded(&record),
+            RecordDecl::Encoded(record) => Self::from_encoded(record),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown record declaration",
@@ -403,30 +378,8 @@ impl Symbols {
         &self.boxer
     }
 
-    pub fn borrowed_decoder(&self) -> &str {
-        &self.borrowed_decoder
-    }
-
     pub fn stem(&self) -> &str {
         &self.stem
-    }
-
-    pub fn direct_vec_parser(&self) -> Result<&str> {
-        self.direct_vec_parser
-            .as_deref()
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "encoded record has no direct vector parser",
-            })
-    }
-
-    pub fn direct_vec_decoder(&self) -> Result<&str> {
-        self.direct_vec_decoder
-            .as_deref()
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "encoded record has no direct vector decoder",
-            })
     }
 
     pub fn class_name(&self) -> &str {
@@ -456,9 +409,6 @@ impl Symbols {
             register_wrapper: format!("boltffi_python_wrapper_register_{stem}"),
             parser: format!("boltffi_python_parse_{stem}"),
             boxer: format!("boltffi_python_box_{stem}"),
-            borrowed_decoder: String::new(),
-            direct_vec_parser: Some(format!("boltffi_python_parse_vec_{stem}")),
-            direct_vec_decoder: Some(format!("boltffi_python_decode_owned_vec_{stem}")),
         })
     }
 
@@ -473,9 +423,6 @@ impl Symbols {
             register_wrapper: format!("boltffi_python_wrapper_register_{stem}"),
             parser: format!("boltffi_python_wire_{stem}"),
             boxer: format!("boltffi_python_decode_owned_{stem}"),
-            borrowed_decoder: format!("boltffi_python_decode_borrowed_{stem}"),
-            direct_vec_parser: None,
-            direct_vec_decoder: None,
         })
     }
 

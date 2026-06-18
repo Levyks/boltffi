@@ -56,25 +56,3 @@ done:
     boltffi_python_release_owned_buffer(buffer);
     return result;
 }
-
-static PyObject *{{ borrowed_decoder }}(const uint8_t *ptr, uintptr_t len) {
-    PyObject *wire = NULL;
-    PyObject *result = NULL;
-    if (ptr == NULL && len != 0) {
-        PyErr_SetString(PyExc_RuntimeError, "{{ class_name }} borrowed wire payload is invalid");
-        return NULL;
-    }
-    if (len > PY_SSIZE_T_MAX) {
-        PyErr_SetString(PyExc_OverflowError, "{{ class_name }} borrowed wire payload is too large");
-        return NULL;
-    }
-    wire = PyBytes_FromStringAndSize((const char *)ptr, (Py_ssize_t)len);
-    if (wire == NULL) {
-        return NULL;
-    }
-    if (boltffi_python_expect_registered_type({{ type_object }}, "{{ class_name }}")) {
-        result = PyObject_CallMethod({{ type_object }}, "_boltffi_from_wire", "O", wire);
-    }
-    Py_DECREF(wire);
-    return result;
-}

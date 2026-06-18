@@ -1,7 +1,7 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    CStyleEnumDecl, DataEnumDecl, DeclarationRef, EnumDecl, EnumId, ExportedMethodDecl,
-    InitializerDecl, Native, NativeSymbol, Receive,
+    CStyleEnumDecl, DataEnumDecl, EnumDecl, EnumId, ExportedMethodDecl, InitializerDecl, Native,
+    NativeSymbol, Receive,
 };
 
 use crate::{
@@ -49,7 +49,6 @@ struct DataTemplate {
     register_wrapper: String,
     wire_encoder: String,
     owned_decoder: String,
-    borrowed_decoder: String,
 }
 
 pub struct Enumeration {
@@ -122,7 +121,6 @@ impl Enumeration {
                     register_wrapper: symbols.register_wrapper,
                     wire_encoder: symbols.parser,
                     owned_decoder: symbols.boxer,
-                    borrowed_decoder: symbols.borrowed_decoder,
                 }
                 .render()?
             }
@@ -401,9 +399,6 @@ pub struct Symbols {
     wire_encoder: String,
     boxer: String,
     owned_decoder: String,
-    borrowed_decoder: String,
-    direct_vec_parser: Option<String>,
-    direct_vec_decoder: Option<String>,
     box_from_wire_tag: Option<String>,
     native_to_wire_tag: Option<String>,
 }
@@ -415,29 +410,7 @@ impl Symbols {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let enumeration = context
-            .bindings()
-            .decls()
-            .iter()
-            .find_map(|decl| match DeclarationRef::from(decl) {
-                DeclarationRef::Enum(EnumDecl::CStyle(enumeration))
-                    if enumeration.id() == enum_id =>
-                {
-                    Some(EnumDecl::CStyle(enumeration.clone()))
-                }
-                DeclarationRef::Enum(EnumDecl::Data(enumeration))
-                    if enumeration.id() == enum_id =>
-                {
-                    Some(EnumDecl::Data(enumeration.clone()))
-                }
-                DeclarationRef::Enum(_)
-                | DeclarationRef::Record(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
+            .enumeration(enum_id)
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "enum id without declaration",
@@ -451,9 +424,9 @@ impl Symbols {
                             target: "python",
                             shape: "c-style enum without C typedef",
                         })?;
-                Self::from_c_style(&enumeration, c_enum)
+                Self::from_c_style(enumeration, c_enum)
             }
-            EnumDecl::Data(enumeration) => Self::from_data(&enumeration),
+            EnumDecl::Data(enumeration) => Self::from_data(enumeration),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown enum declaration",
@@ -472,10 +445,6 @@ impl Symbols {
         &self.parser
     }
 
-    pub fn wire_encoder(&self) -> &str {
-        &self.wire_encoder
-    }
-
     pub fn boxer(&self) -> &str {
         &self.boxer
     }
@@ -484,30 +453,8 @@ impl Symbols {
         &self.owned_decoder
     }
 
-    pub fn borrowed_decoder(&self) -> &str {
-        &self.borrowed_decoder
-    }
-
     pub fn stem(&self) -> &str {
         &self.stem
-    }
-
-    pub fn direct_vec_parser(&self) -> Result<&str> {
-        self.direct_vec_parser
-            .as_deref()
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "data enum has no direct vector parser",
-            })
-    }
-
-    pub fn direct_vec_decoder(&self) -> Result<&str> {
-        self.direct_vec_decoder
-            .as_deref()
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "data enum has no direct vector decoder",
-            })
     }
 
     pub fn class_name(&self) -> &str {
@@ -544,9 +491,6 @@ impl Symbols {
             wire_encoder: format!("boltffi_python_wire_{stem}"),
             boxer: format!("boltffi_python_box_{stem}"),
             owned_decoder: format!("boltffi_python_decode_owned_{stem}"),
-            borrowed_decoder: String::new(),
-            direct_vec_parser: Some(format!("boltffi_python_parse_vec_{stem}")),
-            direct_vec_decoder: Some(format!("boltffi_python_decode_owned_vec_{stem}")),
             box_from_wire_tag: Some(format!("boltffi_python_box_{stem}_from_wire_tag")),
             native_to_wire_tag: Some(format!("boltffi_python_{stem}_native_to_wire_tag")),
         })
@@ -570,9 +514,6 @@ impl Symbols {
             wire_encoder: format!("boltffi_python_wire_{stem}"),
             boxer: format!("boltffi_python_decode_owned_{stem}"),
             owned_decoder: format!("boltffi_python_decode_owned_{stem}"),
-            borrowed_decoder: format!("boltffi_python_decode_borrowed_{stem}"),
-            direct_vec_parser: None,
-            direct_vec_decoder: None,
             box_from_wire_tag: None,
             native_to_wire_tag: None,
         })

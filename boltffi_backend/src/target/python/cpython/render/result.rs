@@ -1,11 +1,12 @@
 use boltffi_binding::{
-    HandlePresence, HandleTarget, Native, OutOfRust, ReturnPlan, TypeRef, native,
+    ClosureReturn, HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan,
+    ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
 };
 
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
     core::{Error, RenderContext, Result},
-    target::python::cpython::render::{custom, direct_vector, enumeration, primitive, record},
+    target::python::cpython::render::{direct, direct_vector, primitive},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,265 +23,7 @@ impl Conversion {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => Ok(Self {
-                void: true,
-                converter: String::new(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(primitive),
-            } => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Ok(Self {
-                    void: false,
-                    converter: primitive.boxer()?.to_owned(),
-                    primitive: Some(primitive),
-                    owned_buffer: None,
-                })
-            }
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Record(record),
-            } => Ok(Self {
-                void: false,
-                converter: record::Symbols::from_record_id(*record, bridge, context)?
-                    .boxer()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(enumeration),
-            } => Ok(Self {
-                void: false,
-                converter: enumeration::Symbols::from_enum_id(*enumeration, bridge, context)?
-                    .boxer()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::EncodedViaReturnSlot {
-                ty: TypeRef::String,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::from_owned_buffer(OwnedBuffer::String),
-            ReturnPlan::EncodedViaReturnSlot {
-                ty: TypeRef::Bytes,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::from_owned_buffer(OwnedBuffer::Bytes),
-            ReturnPlan::EncodedViaReturnSlot {
-                ty: TypeRef::Record(record),
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Ok(Self {
-                void: false,
-                converter: record::Symbols::from_record_id(*record, bridge, context)?
-                    .boxer()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::EncodedViaReturnSlot {
-                ty: TypeRef::Enum(enumeration),
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::from_encoded_type(&TypeRef::Enum(*enumeration), bridge, context),
-            ReturnPlan::EncodedViaReturnSlot {
-                ty: TypeRef::Custom(custom_type),
-                shape: native::BufferShape::Buffer,
-                ..
-            } => {
-                let custom_types = custom::CustomTypes::from_context(context);
-                Self::from_encoded_type(custom_types.representation(*custom_type)?, bridge, context)
-            }
-            ReturnPlan::EncodedViaReturnSlot {
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::from_owned_buffer(OwnedBuffer::RawWire),
-            ReturnPlan::DirectVecViaReturnSlot {
-                element: element @ (TypeRef::Primitive(_) | TypeRef::Record(_) | TypeRef::Enum(_)),
-            } => Self::from_owned_buffer(OwnedBuffer::DirectVector(
-                direct_vector::Element::from_type_ref(element, bridge, context)?,
-            )),
-            ReturnPlan::ScalarOptionViaReturnSlot { primitive } => Self::from_owned_buffer(
-                OwnedBuffer::OptionalPrimitive(primitive::Runtime::new(*primitive)),
-            ),
-            ReturnPlan::HandleViaReturnSlot {
-                target: HandleTarget::Class(_),
-                carrier,
-                presence: HandlePresence::Required,
-            } => {
-                let carrier = primitive::Runtime::native_handle(*carrier)?;
-                Ok(Self {
-                    void: false,
-                    converter: carrier.boxer()?.to_owned(),
-                    primitive: Some(carrier),
-                    owned_buffer: None,
-                })
-            }
-            ReturnPlan::HandleViaReturnSlot {
-                target: HandleTarget::Callback(_),
-                ..
-            } => Ok(Self {
-                void: false,
-                converter: "boltffi_python_box_callback_handle".to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::HandleViaReturnSlot {
-                target: HandleTarget::Class(_),
-                ..
-            } => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "nullable class handle return",
-            }),
-            ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. }
-            | ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. }
-            | ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "non-primitive return",
-            }),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unknown return plan",
-            }),
-        }
-    }
-
-    pub fn from_out_plan(
-        plan: &ReturnPlan<Native, OutOfRust>,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => Ok(Self {
-                void: true,
-                converter: String::new(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::DirectViaOutPointer {
-                ty: TypeRef::Primitive(primitive),
-            } => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Ok(Self {
-                    void: false,
-                    converter: primitive.boxer()?.to_owned(),
-                    primitive: Some(primitive),
-                    owned_buffer: None,
-                })
-            }
-            ReturnPlan::DirectViaOutPointer {
-                ty: TypeRef::Record(record),
-            } => Ok(Self {
-                void: false,
-                converter: record::Symbols::from_record_id(*record, bridge, context)?
-                    .boxer()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::DirectViaOutPointer {
-                ty: TypeRef::Enum(enumeration),
-            } => Ok(Self {
-                void: false,
-                converter: enumeration::Symbols::from_enum_id(*enumeration, bridge, context)?
-                    .boxer()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::EncodedViaOutPointer {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::from_encoded_type(ty, bridge, context),
-            ReturnPlan::HandleViaOutPointer {
-                target: HandleTarget::Class(_),
-                carrier,
-                presence: HandlePresence::Required,
-            } => {
-                let carrier = primitive::Runtime::native_handle(*carrier)?;
-                Ok(Self {
-                    void: false,
-                    converter: carrier.boxer()?.to_owned(),
-                    primitive: Some(carrier),
-                    owned_buffer: None,
-                })
-            }
-            ReturnPlan::HandleViaOutPointer {
-                target: HandleTarget::Callback(_),
-                ..
-            } => Ok(Self {
-                void: false,
-                converter: "boltffi_python_box_callback_handle".to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            ReturnPlan::HandleViaOutPointer {
-                target: HandleTarget::Class(_),
-                ..
-            } => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "fallible nullable class handle success",
-            }),
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::ClosureViaOutPointer(_)
-            | ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "fallible success return",
-            }),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unknown fallible success return",
-            }),
-        }
-    }
-
-    pub fn from_encoded_type(
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        match ty {
-            TypeRef::Primitive(primitive) => {
-                Self::from_owned_buffer(OwnedBuffer::Primitive(primitive::Runtime::new(*primitive)))
-            }
-            TypeRef::String => Self::from_owned_buffer(OwnedBuffer::String),
-            TypeRef::Bytes => Self::from_owned_buffer(OwnedBuffer::Bytes),
-            TypeRef::Record(record) => Ok(Self {
-                void: false,
-                converter: record::Symbols::from_record_id(*record, bridge, context)?
-                    .boxer()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            TypeRef::Enum(enumeration) => Ok(Self {
-                void: false,
-                converter: enumeration::Symbols::from_enum_id(*enumeration, bridge, context)?
-                    .owned_decoder()
-                    .to_owned(),
-                primitive: None,
-                owned_buffer: None,
-            }),
-            TypeRef::Custom(custom_type) => {
-                let custom_types = custom::CustomTypes::from_context(context);
-                Self::from_encoded_type(custom_types.representation(*custom_type)?, bridge, context)
-            }
-            _ => Self::from_owned_buffer(OwnedBuffer::RawWire),
-        }
+        plan.render_with(&mut Renderer { bridge, context })
     }
 
     pub fn primitive(&self) -> Option<primitive::Runtime> {
@@ -293,12 +36,11 @@ impl Conversion {
 
     pub fn direct_vector_element(&self) -> Option<direct_vector::Element> {
         match &self.owned_buffer {
-            Some(OwnedBuffer::DirectVector(element)) => Some(element.clone()),
+            Some(OwnedBuffer::DirectVector(element)) => Some((**element).clone()),
             Some(
                 OwnedBuffer::String
                 | OwnedBuffer::Bytes
                 | OwnedBuffer::RawWire
-                | OwnedBuffer::Primitive(_)
                 | OwnedBuffer::OptionalPrimitive(_),
             )
             | None => None,
@@ -309,7 +51,7 @@ impl Conversion {
         self.void
     }
 
-    fn from_owned_buffer(buffer: OwnedBuffer) -> Result<Self> {
+    pub fn from_owned_buffer(buffer: OwnedBuffer) -> Result<Self> {
         Ok(Self {
             void: false,
             converter: buffer.converter()?,
@@ -319,13 +61,172 @@ impl Conversion {
     }
 }
 
+struct Renderer<'bridge, 'context> {
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'context, Native>,
+}
+
+impl Renderer<'_, '_> {
+    fn direct_type(&self, slot: ReturnValueSlot, ty: &TypeRef) -> Result<Conversion> {
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            self.bridge,
+            self.context,
+            slot.unsupported_direct_shape(),
+        )?;
+        Ok(Conversion {
+            void: false,
+            converter: direct.boxer().to_owned(),
+            primitive: direct.primitive(),
+            owned_buffer: None,
+        })
+    }
+
+    fn handle_type(
+        &self,
+        slot: ReturnValueSlot,
+        target: &HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
+    ) -> Result<Conversion> {
+        match (target, presence) {
+            (HandleTarget::Class(_), HandlePresence::Required) => {
+                let carrier = primitive::Runtime::native_handle(carrier)?;
+                Ok(Conversion {
+                    void: false,
+                    converter: carrier.boxer()?.to_owned(),
+                    primitive: Some(carrier),
+                    owned_buffer: None,
+                })
+            }
+            (HandleTarget::Callback(_), _) => Ok(Conversion {
+                void: false,
+                converter: "boltffi_python_box_callback_handle".to_owned(),
+                primitive: None,
+                owned_buffer: None,
+            }),
+            (HandleTarget::Class(_), HandlePresence::Nullable) => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: slot.unsupported_nullable_class_shape(),
+            }),
+            (HandleTarget::Stream(_), _) => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "stream handle return",
+            }),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown handle return",
+            }),
+        }
+    }
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'_, '_> {
+    type Output = Result<Conversion>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Conversion {
+            void: true,
+            converter: String::new(),
+            primitive: None,
+            owned_buffer: None,
+        })
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &TypeRef) -> Self::Output {
+        self.direct_type(slot, ty)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &TypeRef,
+        _: &ReadPlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Buffer => Conversion::from_owned_buffer(OwnedBuffer::RawWire),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: slot.unsupported_encoded_shape(),
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        target: &HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
+    ) -> Self::Output {
+        self.handle_type(slot, target, carrier, presence)
+    }
+
+    fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
+        Conversion::from_owned_buffer(OwnedBuffer::OptionalPrimitive(primitive::Runtime::new(
+            primitive,
+        )))
+    }
+
+    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+        Conversion::from_owned_buffer(OwnedBuffer::DirectVector(Box::new(
+            direct_vector::Element::from_type_ref(element, self.bridge, self.context)?,
+        )))
+    }
+
+    fn closure(&mut self, _: &ClosureReturn<Native, OutOfRust>) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "closure return",
+        })
+    }
+}
+
+trait ReturnValueSlotMessage {
+    fn unsupported_direct_shape(self) -> &'static str
+    where
+        Self: Sized,
+    {
+        self.unsupported_return_shape()
+    }
+
+    fn unsupported_encoded_shape(self) -> &'static str
+    where
+        Self: Sized,
+    {
+        self.unsupported_return_shape()
+    }
+
+    fn unsupported_nullable_class_shape(self) -> &'static str;
+
+    fn unsupported_return_shape(self) -> &'static str;
+}
+
+impl ReturnValueSlotMessage for ReturnValueSlot {
+    fn unsupported_nullable_class_shape(self) -> &'static str {
+        match self {
+            Self::ReturnSlot => "nullable class handle return",
+            Self::OutPointer => "fallible nullable class handle success",
+            _ => "nullable class handle return",
+        }
+    }
+
+    fn unsupported_return_shape(self) -> &'static str {
+        match self {
+            Self::ReturnSlot => "non-primitive return",
+            Self::OutPointer => "fallible success return",
+            _ => "unknown return plan",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum OwnedBuffer {
     String,
     Bytes,
     RawWire,
-    DirectVector(direct_vector::Element),
-    Primitive(primitive::Runtime),
+    DirectVector(Box<direct_vector::Element>),
     OptionalPrimitive(primitive::Runtime),
 }
 
@@ -336,14 +237,13 @@ impl OwnedBuffer {
             Self::Bytes => Ok("boltffi_python_decode_owned_bytes".to_owned()),
             Self::RawWire => Ok("boltffi_python_decode_owned_raw_wire".to_owned()),
             Self::DirectVector(element) => Ok(element.vector_decoder().to_owned()),
-            Self::Primitive(primitive) => primitive.owned_wire_decoder(),
             Self::OptionalPrimitive(primitive) => primitive.optional_owned_wire_decoder(),
         }
     }
 
     pub fn primitive(&self) -> Option<primitive::Runtime> {
         match self {
-            Self::Primitive(primitive) | Self::OptionalPrimitive(primitive) => Some(*primitive),
+            Self::OptionalPrimitive(primitive) => Some(*primitive),
             Self::String | Self::Bytes | Self::RawWire | Self::DirectVector(_) => None,
         }
     }

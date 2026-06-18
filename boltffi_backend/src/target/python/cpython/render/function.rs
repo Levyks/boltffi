@@ -1,7 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ErrorDecl, ExecutionDecl, ExportedCallable, FunctionDecl, IncomingParam, Native, NativeSymbol,
-    OutOfRust, ParamPlan, Receive, ReturnPlan, TypeRef, native,
+    ClosureReturn, ErrorDecl, ExecutionDecl, ExportedCallable, FunctionDecl, HandlePresence,
+    HandleTarget, IncomingParam, IntoRust, Native, NativeSymbol, OutOfRust, ParamPlanRender,
+    Primitive, ReadPlan, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef,
+    WritePlan, native,
 };
 
 use crate::{
@@ -70,10 +72,9 @@ struct SyncFunction {
 }
 
 struct AsyncFunction {
-    python_name: String,
+    future_methods: NativeFutureMethods,
     start_wrapper: String,
     start_storage: String,
-    poll_python_name: String,
     poll_wrapper: String,
     poll_storage: String,
     complete_wrapper: String,
@@ -90,6 +91,104 @@ struct AsyncFunction {
     returns: result::Conversion,
     fallible: Option<FallibleResult>,
     methods: Vec<ExtensionMethod>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeFutureMethods {
+    start: String,
+    poll: String,
+    complete: String,
+    cancel: String,
+    free: String,
+    panic_message: String,
+}
+
+impl NativeFutureMethods {
+    pub fn new(start: impl Into<String>) -> Self {
+        let start = start.into();
+        Self {
+            poll: Self::method(&start, "poll"),
+            complete: Self::method(&start, "complete"),
+            cancel: Self::method(&start, "cancel"),
+            free: Self::method(&start, "free"),
+            panic_message: Self::method(&start, "panic_message"),
+            start,
+        }
+    }
+
+    pub fn start(&self) -> &str {
+        &self.start
+    }
+
+    pub fn poll(&self) -> &str {
+        &self.poll
+    }
+
+    pub fn complete(&self) -> &str {
+        &self.complete
+    }
+
+    pub fn cancel(&self) -> &str {
+        &self.cancel
+    }
+
+    pub fn free(&self) -> &str {
+        &self.free
+    }
+
+    pub fn panic_message(&self) -> &str {
+        &self.panic_message
+    }
+
+    fn extension_methods(&self, methods: FutureExtensionMethods) -> Result<Vec<ExtensionMethod>> {
+        [
+            ExtensionMethod::new(self.start(), methods.start, MethodFlags::FastCall),
+            ExtensionMethod::new(self.poll(), methods.poll, MethodFlags::FastCall),
+            ExtensionMethod::new(self.complete(), methods.complete, MethodFlags::OneObject),
+            ExtensionMethod::new(
+                self.panic_message(),
+                methods.panic_message,
+                MethodFlags::OneObject,
+            ),
+            ExtensionMethod::new(self.cancel(), methods.cancel, MethodFlags::OneObject),
+            ExtensionMethod::new(self.free(), methods.free, MethodFlags::OneObject),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn method(start: &str, suffix: &'static str) -> String {
+        format!("{start}__{suffix}")
+    }
+}
+
+struct FutureExtensionMethods {
+    start: String,
+    poll: String,
+    complete: String,
+    cancel: String,
+    free: String,
+    panic_message: String,
+}
+
+impl FutureExtensionMethods {
+    fn new(
+        start: String,
+        poll: String,
+        complete: String,
+        cancel: String,
+        free: String,
+        panic_message: String,
+    ) -> Self {
+        Self {
+            start,
+            poll,
+            complete,
+            cancel,
+            free,
+            panic_message,
+        }
+    }
 }
 
 enum Body {
@@ -314,18 +413,55 @@ impl UnsupportedCallable {
             .params()
             .iter()
             .find_map(|parameter| match parameter.payload() {
-                IncomingParam::Value(ParamPlan::Encoded {
-                    receive: Receive::ByMutRef,
-                    ..
-                }) => Some(Self {
-                    shape: "mutable encoded parameter",
-                }),
+                IncomingParam::Value(plan) if plan.render_with(&mut MutableEncodedParameter) => {
+                    Some(Self {
+                        shape: "mutable encoded parameter",
+                    })
+                }
                 IncomingParam::Value(_) | IncomingParam::Closure(_) => None,
             })
     }
 
     fn shape(self) -> &'static str {
         self.shape
+    }
+}
+
+struct MutableEncodedParameter;
+
+impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for MutableEncodedParameter {
+    type Output = bool;
+
+    fn direct(&mut self, _: &TypeRef, _: Receive) -> Self::Output {
+        false
+    }
+
+    fn encoded(
+        &mut self,
+        _: &TypeRef,
+        _: &WritePlan,
+        _: native::BufferShape,
+        receive: Receive,
+    ) -> Self::Output {
+        receive == Receive::ByMutRef
+    }
+
+    fn handle(
+        &mut self,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+        _: Receive,
+    ) -> Self::Output {
+        false
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        false
+    }
+
+    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+        false
     }
 }
 
@@ -383,18 +519,12 @@ impl SyncFunction {
             .iter()
             .flat_map(argument::Conversion::call_args)
             .collect::<Vec<_>>();
-        let fallible =
-            FallibleResult::new(callable, loaded, base_call_args.len(), bridge, context)?;
+        let fallible = FallibleResult::new(callable, loaded, base_call_args.len())?;
         let call_args = base_call_args
             .into_iter()
             .chain(fallible.iter().filter_map(FallibleResult::success_argument))
             .collect();
-        let returns = match &fallible {
-            Some(_) => {
-                result::Conversion::from_out_plan(callable.returns().plan(), bridge, context)
-            }
-            None => result::Conversion::from_plan(callable.returns().plan(), bridge, context),
-        }?;
+        let returns = result::Conversion::from_plan(callable.returns().plan(), bridge, context)?;
         let mutation = Self::mutation(&params, &returns, fallible.is_some())?;
         Ok(Self {
             python_name,
@@ -550,8 +680,8 @@ impl AsyncFunction {
         let cancel = Self::loaded(symbols.cancel, bridge, "async cancel symbol")?;
         let free = Self::loaded(symbols.free, bridge, "async free symbol")?;
         let panic_message = Self::loaded(symbols.panic_message, bridge, "async panic symbol")?;
+        let future_methods = NativeFutureMethods::new(python_name);
         let start_wrapper = Self::wrapper(symbols.start);
-        let poll_python_name = format!("{python_name}__poll");
         let poll_wrapper = Self::wrapper(symbols.poll);
         let complete_wrapper = Self::wrapper(symbols.complete);
         let panic_message_wrapper = Self::wrapper(symbols.panic_message);
@@ -593,56 +723,24 @@ impl AsyncFunction {
             .iter()
             .flat_map(argument::Conversion::call_args)
             .collect::<Vec<_>>();
-        let fallible = FallibleResult::new(callable, complete, 2, bridge, context)?;
+        let fallible = FallibleResult::new(callable, complete, 2)?;
         let complete_call_args = fallible
             .iter()
             .filter_map(FallibleResult::success_argument)
             .collect::<Vec<_>>();
-        let returns = match &fallible {
-            Some(_) => {
-                result::Conversion::from_out_plan(callable.returns().plan(), bridge, context)
-            }
-            None => Self::completion_return(callable.returns().plan(), bridge, context),
-        }?;
-        let methods = [
-            ExtensionMethod::new(
-                python_name.clone(),
-                start_wrapper.clone(),
-                MethodFlags::FastCall,
-            ),
-            ExtensionMethod::new(
-                poll_python_name.clone(),
-                poll_wrapper.clone(),
-                MethodFlags::FastCall,
-            ),
-            ExtensionMethod::new(
-                format!("{python_name}__complete"),
-                complete_wrapper.clone(),
-                MethodFlags::OneObject,
-            ),
-            ExtensionMethod::new(
-                format!("{python_name}__panic_message"),
-                panic_message_wrapper.clone(),
-                MethodFlags::OneObject,
-            ),
-            ExtensionMethod::new(
-                format!("{python_name}__cancel"),
-                cancel_wrapper.clone(),
-                MethodFlags::OneObject,
-            ),
-            ExtensionMethod::new(
-                format!("{python_name}__free"),
-                free_wrapper.clone(),
-                MethodFlags::OneObject,
-            ),
-        ]
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+        let returns = result::Conversion::from_plan(callable.returns().plan(), bridge, context)?;
+        let methods = future_methods.extension_methods(FutureExtensionMethods::new(
+            start_wrapper.clone(),
+            poll_wrapper.clone(),
+            complete_wrapper.clone(),
+            cancel_wrapper.clone(),
+            free_wrapper.clone(),
+            panic_message_wrapper.clone(),
+        ))?;
         Ok(Self {
-            python_name,
+            future_methods,
             start_wrapper,
             start_storage: start.storage_name().to_owned(),
-            poll_python_name,
             poll_wrapper,
             poll_storage: poll.storage_name().to_owned(),
             complete_wrapper,
@@ -664,10 +762,10 @@ impl AsyncFunction {
 
     fn render(self) -> Result<Emitted> {
         let source = AsyncTemplate {
-            python_name: self.python_name,
+            python_name: self.future_methods.start,
             start_wrapper: self.start_wrapper,
             start_storage: self.start_storage,
-            poll_python_name: self.poll_python_name,
+            poll_python_name: self.future_methods.poll,
             poll_wrapper: self.poll_wrapper,
             poll_storage: self.poll_storage,
             complete_wrapper: self.complete_wrapper,
@@ -778,32 +876,6 @@ impl AsyncFunction {
     fn wrapper(symbol: &NativeSymbol) -> String {
         format!("boltffi_python_callable_wrapper_{}", symbol.name().as_str())
     }
-
-    fn completion_return(
-        plan: &ReturnPlan<Native, OutOfRust>,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<result::Conversion> {
-        match plan {
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. } => {
-                result::Conversion::from_out_plan(plan, bridge, context)
-            }
-            ReturnPlan::Void
-            | ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => {
-                result::Conversion::from_plan(plan, bridge, context)
-            }
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "async completion return",
-            }),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -821,24 +893,13 @@ impl FallibleResult {
         callable: &ExportedCallable<Native>,
         loaded: &LoadedFunction,
         argument_count: usize,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
     ) -> Result<Option<Self>> {
         match callable.error() {
             ErrorDecl::None(_) => Ok(None),
             ErrorDecl::EncodedViaReturnSlot {
-                ty,
                 shape: native::BufferShape::Buffer,
                 ..
-            } => Self::encoded(
-                ty,
-                callable.returns().plan(),
-                loaded,
-                argument_count,
-                bridge,
-                context,
-            )
-            .map(Some),
+            } => Self::encoded(callable.returns().plan(), loaded, argument_count).map(Some),
             ErrorDecl::EncodedViaReturnSlot { .. } => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "fallible error buffer shape",
@@ -867,12 +928,9 @@ impl FallibleResult {
     }
 
     fn encoded(
-        error: &TypeRef,
         success: &ReturnPlan<Native, OutOfRust>,
         loaded: &LoadedFunction,
         argument_count: usize,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
     ) -> Result<Self> {
         if !matches!(loaded.function().returns(), c::Type::Buffer) {
             return Err(Error::UnsupportedTarget {
@@ -880,54 +938,140 @@ impl FallibleResult {
                 shape: "fallible error return",
             });
         }
-        let error = result::Conversion::from_encoded_type(error, bridge, context)?;
-        let (success_declaration, success_argument, success_value) =
-            Self::success_binding(success, loaded.function(), argument_count)?;
+        let error = result::Conversion::from_owned_buffer(result::OwnedBuffer::RawWire)?;
+        let success = FallibleSuccess::new(loaded.function(), argument_count).render(success)?;
         Ok(Self {
-            success_declaration,
-            success_argument,
-            success_value,
+            success_declaration: success.declaration,
+            success_argument: success.argument,
+            success_value: success.value,
             error_type: TypeSyntax::new(loaded.function().returns()).anonymous()?,
             error_value: "return_error".to_owned(),
             error,
         })
     }
+}
 
-    fn success_binding(
-        success: &ReturnPlan<Native, OutOfRust>,
-        function: &c::Function,
-        argument_count: usize,
-    ) -> Result<(Option<String>, Option<String>, String)> {
-        match success {
-            ReturnPlan::Void => Ok((None, None, String::new())),
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. } => {
-                let parameter =
-                    function
-                        .params()
-                        .get(argument_count)
-                        .ok_or(Error::UnsupportedTarget {
-                            target: "python",
-                            shape: "missing fallible success out parameter",
-                        })?;
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FallibleSuccessBinding {
+    declaration: Option<String>,
+    argument: Option<String>,
+    value: String,
+}
+
+impl FallibleSuccessBinding {
+    fn empty() -> Self {
+        Self {
+            declaration: None,
+            argument: None,
+            value: String::new(),
+        }
+    }
+
+    fn out_pointer(ty: &c::Type) -> Result<Self> {
+        let value = "return_success".to_owned();
+        Ok(Self {
+            declaration: Some(TypeSyntax::new(ty).declaration(&value)?),
+            argument: Some(format!("&{value}")),
+            value,
+        })
+    }
+}
+
+struct FallibleSuccess<'function> {
+    function: &'function c::Function,
+    argument_count: usize,
+}
+
+impl<'function> FallibleSuccess<'function> {
+    fn new(function: &'function c::Function, argument_count: usize) -> Self {
+        Self {
+            function,
+            argument_count,
+        }
+    }
+
+    fn render(mut self, plan: &ReturnPlan<Native, OutOfRust>) -> Result<FallibleSuccessBinding> {
+        plan.render_with(&mut self)
+    }
+
+    fn out_pointer(&self, slot: ReturnValueSlot) -> Result<FallibleSuccessBinding> {
+        match slot {
+            ReturnValueSlot::OutPointer => {
+                let parameter = self.function.params().get(self.argument_count).ok_or(
+                    Error::UnsupportedTarget {
+                        target: "python",
+                        shape: "missing fallible success out parameter",
+                    },
+                )?;
                 let c::Type::MutPointer(success_type) = parameter.ty() else {
                     return Err(Error::UnsupportedTarget {
                         target: "python",
                         shape: "fallible success parameter",
                     });
                 };
-                let value = "return_success".to_owned();
-                Ok((
-                    Some(TypeSyntax::new(success_type.as_ref()).declaration(&value)?),
-                    Some(format!("&{value}")),
-                    value,
-                ))
+                FallibleSuccessBinding::out_pointer(success_type.as_ref())
             }
-            _ => Err(Error::UnsupportedTarget {
+            ReturnValueSlot::ReturnSlot => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "fallible success return",
             }),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown fallible success return",
+            }),
         }
+    }
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FallibleSuccess<'_> {
+    type Output = Result<FallibleSuccessBinding>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(FallibleSuccessBinding::empty())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, _: &TypeRef) -> Self::Output {
+        self.out_pointer(slot)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &TypeRef,
+        _: &ReadPlan,
+        _: native::BufferShape,
+    ) -> Self::Output {
+        self.out_pointer(slot)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        self.out_pointer(slot)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "fallible success return",
+        })
+    }
+
+    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "fallible success return",
+        })
+    }
+
+    fn closure(&mut self, _: &ClosureReturn<Native, OutOfRust>) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "fallible success return",
+        })
     }
 }

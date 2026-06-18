@@ -1,6 +1,6 @@
-mod render;
-
 use std::path::PathBuf;
+
+pub mod render;
 
 use boltffi_binding::{
     Bindings, CallbackDecl, ClassDecl, ConstantDecl, CustomTypeDecl, EnumDecl, FunctionDecl,
@@ -17,7 +17,10 @@ use crate::{
         GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
         contract::sealed, host,
     },
-    target::python::name_style::{Name, PackageModule},
+    target::python::{
+        name_style::{Name, PackageModule},
+        render::Package,
+    },
 };
 
 /// Python host renderer for a CPython extension bridge.
@@ -189,7 +192,7 @@ impl host::HostBackend for PythonCExtHost {
             .collect();
         let mut output = GeneratedOutput::combine([
             render::NativeModule::new(bridge, context, declarations).render()?,
-            render::Package::new(
+            Package::new(
                 bindings,
                 bridge,
                 self.package_module(bindings),
@@ -734,10 +737,10 @@ mod tests {
             "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_function_demo_echo_statuses(values_ptr, values_len));"
         ));
         assert!(init.contains(
-            "_boltffi_wire_sequence(values, lambda value: _boltffi_wire_i32(_boltffi_enum_value(value, Status, \"Status\")))"
+            "_boltffi_wire_sequence(values, len(values), lambda __boltffi_value_0: _boltffi_wire_i32(_boltffi_enum_value(__boltffi_value_0, Status, \"Status\")))"
         ));
         assert!(init.contains(
-            "_boltffi_read_wire(_native.echo_statuses(_boltffi_wire_sequence(values, lambda value: _boltffi_wire_i32(_boltffi_enum_value(value, Status, \"Status\")))), lambda reader: reader.sequence(lambda: Status(reader.i32())))"
+            "_boltffi_read_wire(_native.echo_statuses(_boltffi_wire_sequence(values, len(values), lambda __boltffi_value_0: _boltffi_wire_i32(_boltffi_enum_value(__boltffi_value_0, Status, \"Status\")))), lambda reader: reader.sequence(lambda: Status(reader.i32())))"
         ));
         assert!(stub.contains("from collections.abc import Sequence"));
         assert!(stub.contains("def echo_statuses(values: Sequence[Status]) -> list[Status]: ..."));
@@ -969,6 +972,106 @@ mod tests {
     }
 
     #[test]
+    fn python_target_renders_callback_string_payloads_through_codec() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub trait TextCallback {
+                    fn on_text(&self, value: String) -> String;
+                }
+
+                #[export]
+                pub fn invoke_text_callback(callback: impl TextCallback, value: String) -> String {
+                    callback.on_text(value)
+                }
+                "#,
+            ))
+            .expect("Python target should render encoded callback payloads");
+        let extension = extension(&output);
+        let package = file(&output, "demo/__init__.py");
+
+        assert!(extension.contains("value_object = boltffi_python_decode_read_"));
+        assert!(extension.contains("if (!boltffi_python_encode_write_"));
+        assert!(
+            package.contains("return _boltffi_read_wire(data, lambda reader: reader.string())")
+        );
+        assert!(package.contains("return _boltffi_wire_string("));
+        assert!(package.contains("_native._register_wire_codec(\"read_"));
+        assert!(package.contains("_native._register_wire_codec(\"write_"));
+    }
+
+    #[test]
+    fn python_target_renders_closure_string_payloads_through_codec() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn invoke_text_closure(callback: impl Fn(String) -> String, value: String) -> String {
+                    callback(value)
+                }
+                "#,
+            ))
+            .expect("Python target should render encoded closure payloads");
+        let extension = extension(&output);
+        let package = file(&output, "demo/__init__.py");
+
+        assert!(extension.contains("boltffi_python_decode_read_"));
+        assert!(extension.contains("if (!boltffi_python_encode_write_"));
+        assert!(
+            package.contains("return _boltffi_read_wire(data, lambda reader: reader.string())")
+        );
+        assert!(package.contains("return _boltffi_wire_string("));
+    }
+
+    #[test]
+    fn python_target_renders_callback_sequence_payloads_through_codec() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub trait TextCallback {
+                    fn on_text(&self, values: Vec<String>) -> Vec<String>;
+                }
+
+                #[export]
+                pub fn invoke_text_callback(callback: impl TextCallback, values: Vec<String>) -> Vec<String> {
+                    callback.on_text(values)
+                }
+                "#,
+            ))
+            .expect("Python target should render composite callback payloads");
+        let extension = extension(&output);
+        let package = file(&output, "demo/__init__.py");
+
+        assert!(extension.contains("values_object = boltffi_python_decode_read_"));
+        assert!(extension.contains("if (!boltffi_python_encode_write_"));
+        assert!(package.contains("reader.sequence(lambda: reader.string())"));
+        assert!(package.contains("_boltffi_wire_sequence("));
+    }
+
+    #[test]
+    fn python_target_renders_closure_sequence_payloads_through_codec() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn invoke_text_closure(callback: impl Fn(Vec<String>) -> Vec<String>, values: Vec<String>) -> Vec<String> {
+                    callback(values)
+                }
+                "#,
+            ))
+            .expect("Python target should render composite closure payloads");
+        let extension = extension(&output);
+        let package = file(&output, "demo/__init__.py");
+
+        assert!(extension.contains("boltffi_python_decode_read_"));
+        assert!(extension.contains("if (!boltffi_python_encode_write_"));
+        assert!(package.contains("reader.sequence(lambda: reader.string())"));
+        assert!(package.contains("_boltffi_wire_sequence("));
+    }
+
+    #[test]
     fn python_target_renders_class_stream_subscription() {
         let output = target()
             .render(&bindings(
@@ -1116,19 +1219,21 @@ mod tests {
         let init = file(&output, "demo/__init__.py");
         let stub = file(&output, "demo/__init__.pyi");
 
-        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_bytes"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_raw_wire"));
         assert!(
             extension.contains(
                 "static PyObject *boltffi_python_callable_wrapper_boltffi_const_demo_magic"
             )
         );
         assert!(extension.contains(
-            "result = boltffi_python_decode_owned_bytes(boltffi_python_boltffi_const_demo_magic());"
+            "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_const_demo_magic());"
         ));
         assert!(extension.contains(
             "{\"magic\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_const_demo_magic, METH_FASTCALL, NULL}"
         ));
-        assert!(init.contains("magic: bytes = _native.magic()"));
+        assert!(init.contains(
+            "magic: bytes = _boltffi_read_wire(_native.magic(), lambda reader: reader.bytes())"
+        ));
         assert!(init.contains("\"magic\","));
         assert!(stub.contains("magic: bytes"));
     }
@@ -1302,21 +1407,24 @@ mod tests {
             ))
             .expect("Python target should render");
         let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
 
-        assert!(extension.contains("static int boltffi_python_wire_string"));
-        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_utf8"));
+        assert!(extension.contains("static int boltffi_python_wire_raw"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_raw_wire"));
         assert!(extension.contains("PyObject *name_wire = NULL;"));
         assert!(extension.contains("const uint8_t *name_ptr = NULL;"));
         assert!(extension.contains("uintptr_t name_len = 0;"));
         assert!(
             extension
-                .contains("boltffi_python_wire_string(args[0], &name_wire, &name_ptr, &name_len)")
+                .contains("boltffi_python_wire_raw(args[0], &name_wire, &name_ptr, &name_len)")
         );
         assert!(extension.contains(
-            "result = boltffi_python_decode_owned_utf8(boltffi_python_boltffi_function_demo_greet(name_ptr, name_len));"
+            "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_function_demo_greet(name_ptr, name_len));"
         ));
         assert!(extension.contains("Py_XDECREF(name_wire);"));
         assert!(extension.contains("boltffi_python_boltffi_free_buf(buffer);"));
+        assert!(init.contains("_native.greet(_boltffi_wire_string(name))"));
+        assert!(init.contains("lambda reader: reader.string()"));
     }
 
     #[test]
@@ -1332,20 +1440,22 @@ mod tests {
             ))
             .expect("Python target should render");
         let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
 
-        assert!(extension.contains("static int boltffi_python_wire_bytes"));
-        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_bytes"));
+        assert!(extension.contains("static int boltffi_python_wire_raw"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_raw_wire"));
         assert!(extension.contains("PyObject *bytes_wire = NULL;"));
         assert!(extension.contains("const uint8_t *bytes_ptr = NULL;"));
         assert!(extension.contains("uintptr_t bytes_len = 0;"));
         assert!(
-            extension.contains(
-                "boltffi_python_wire_bytes(args[0], &bytes_wire, &bytes_ptr, &bytes_len)"
-            )
+            extension
+                .contains("boltffi_python_wire_raw(args[0], &bytes_wire, &bytes_ptr, &bytes_len)")
         );
         assert!(extension.contains(
-            "result = boltffi_python_decode_owned_bytes(boltffi_python_boltffi_function_demo_echo(bytes_ptr, bytes_len));"
+            "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_function_demo_echo(bytes_ptr, bytes_len));"
         ));
         assert!(extension.contains("Py_XDECREF(bytes_wire);"));
+        assert!(init.contains("_native.echo(_boltffi_wire_bytes(bytes))"));
+        assert!(init.contains("lambda reader: reader.bytes()"));
     }
 }

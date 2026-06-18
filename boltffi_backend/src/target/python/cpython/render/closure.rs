@@ -1,7 +1,8 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClosureParameter, ErrorDecl, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl, ParamPlan,
-    Primitive, ReturnPlan, TypeRef, native,
+    ClosureParameter, ClosureReturn, ErrorDecl, HandlePresence, HandleTarget, IntoRust, Native,
+    OutOfRust, OutgoingParam, ParamDecl, ParamPlanRender, Primitive, ReadPlan, ReturnPlan,
+    ReturnPlanRender, ReturnValueSlot, TypeRef, WritePlan, native,
 };
 
 use crate::{
@@ -11,7 +12,8 @@ use crate::{
     },
     core::{Error, RenderContext, Result},
     target::python::{
-        cpython::render::{direct_vector, enumeration, primitive, record},
+        codec::{BorrowedPayload, OwnedPayload},
+        cpython::render::{direct, direct_vector, primitive},
         name_style::Name,
     },
 };
@@ -181,15 +183,7 @@ impl Parameter {
     }
 
     fn copy_buffer_storage(bridge: &PythonCExtBridgeContract) -> Result<String> {
-        bridge
-            .functions()
-            .iter()
-            .find(|function| function.function().name() == "boltffi_buf_from_bytes")
-            .map(|function| function.storage_name().to_owned())
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "missing CPython buffer copy support symbol",
-            })
+        Ok(bridge.buffer_from_bytes()?.storage_name().to_owned())
     }
 }
 
@@ -408,20 +402,64 @@ impl Signature {
     }
 
     fn return_out_count(plan: &ReturnPlan<Native, IntoRust>) -> Result<usize> {
-        match plan {
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. } => Ok(1),
-            ReturnPlan::Void
-            | ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => Ok(0),
-            ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "closure return from closure parameter",
-            }),
+        plan.render_with(&mut ClosureReturnOutCount)
+    }
+}
+
+struct ClosureReturnOutCount;
+
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnOutCount {
+    type Output = Result<usize>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(0)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, _: &'plan TypeRef) -> Self::Output {
+        Self::slot_count(slot)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan WritePlan,
+        _: native::BufferShape,
+    ) -> Self::Output {
+        Self::slot_count(slot)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::slot_count(slot)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(0)
+    }
+
+    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+        Ok(0)
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "closure return from closure parameter",
+        })
+    }
+}
+
+impl ClosureReturnOutCount {
+    fn slot_count(slot: ReturnValueSlot) -> Result<usize> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(0),
+            ReturnValueSlot::OutPointer => Ok(1),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown closure return plan",
@@ -446,21 +484,8 @@ struct Argument {
 impl Argument {
     fn arity(parameter: &ParamDecl<Native, OutOfRust>) -> Result<usize> {
         match parameter.payload() {
-            OutgoingParam::Value(ParamPlan::Direct { .. }) => Ok(1),
-            OutgoingParam::Value(ParamPlan::Encoded {
-                shape: native::BufferShape::Slice,
-                ..
-            })
-            | OutgoingParam::Value(ParamPlan::DirectVec { .. }) => Ok(2),
-            OutgoingParam::Value(ParamPlan::Encoded { .. })
-            | OutgoingParam::Value(ParamPlan::Handle { .. })
-            | OutgoingParam::Value(ParamPlan::ScalarOption { .. }) => {
-                Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported closure argument",
-                })
-            }
-            OutgoingParam::Closure(_) | OutgoingParam::Value(_) => Err(Error::UnsupportedTarget {
+            OutgoingParam::Value(plan) => plan.render_with(&mut ClosureArgumentArity),
+            OutgoingParam::Closure(_) => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown closure argument",
             }),
@@ -476,22 +501,14 @@ impl Argument {
         let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
         let object = format!("{name}_object");
         match parameter.payload() {
-            OutgoingParam::Value(ParamPlan::Direct { ty, .. }) => {
-                Self::direct(name, object, ty, c_types, bridge, context)
-            }
-            OutgoingParam::Value(ParamPlan::Encoded {
-                ty,
-                shape: native::BufferShape::Slice,
-                ..
-            }) => Self::encoded(name, object, ty, c_types, bridge, context),
-            OutgoingParam::Value(ParamPlan::DirectVec { element }) => {
-                Self::direct_vector(name, object, element, c_types, bridge, context)
-            }
-            OutgoingParam::Value(ParamPlan::Encoded { .. })
-            | OutgoingParam::Value(ParamPlan::Handle { .. })
-            | OutgoingParam::Value(ParamPlan::ScalarOption { .. })
-            | OutgoingParam::Closure(_)
-            | OutgoingParam::Value(_) => Err(Error::UnsupportedTarget {
+            OutgoingParam::Value(plan) => plan.render_with(&mut ClosureArgumentValue {
+                name,
+                object,
+                c_types,
+                bridge,
+                context,
+            }),
+            OutgoingParam::Closure(_) => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unsupported closure argument",
             }),
@@ -536,31 +553,17 @@ impl Argument {
                 shape: "closure direct argument ABI",
             });
         };
-        let (expression, primitive) = match ty {
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                (format!("{}({name})", primitive.boxer()?), Some(primitive))
-            }
-            TypeRef::Record(record_id) => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                (format!("{}({name})", symbols.boxer()), None)
-            }
-            TypeRef::Enum(enum_id) => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                (format!("{}({name})", symbols.boxer()), None)
-            }
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported direct closure argument",
-                });
-            }
-        };
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported direct closure argument",
+        )?;
         Ok(Self {
             declarations: vec![TypeSyntax::new(c_type).declaration(&name)?],
             object,
-            expression,
-            primitive,
+            expression: direct.box_expression(&name),
+            primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
             string: false,
@@ -572,10 +575,8 @@ impl Argument {
     fn encoded(
         name: String,
         object: String,
-        ty: &TypeRef,
+        codec: &ReadPlan,
         c_types: &[c::Type],
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
     ) -> Result<Self> {
         let [pointer, length] = c_types else {
             return Err(Error::UnsupportedTarget {
@@ -585,65 +586,12 @@ impl Argument {
         };
         let pointer_name = format!("{name}_ptr");
         let length_name = format!("{name}_len");
-        let (expression, wire_primitive, string, bytes, raw_wire) = match ty {
-            TypeRef::String => (
-                format!("boltffi_python_decode_borrowed_utf8({pointer_name}, {length_name})"),
-                None,
-                true,
-                false,
-                false,
-            ),
-            TypeRef::Bytes => (
-                format!("boltffi_python_decode_borrowed_bytes({pointer_name}, {length_name})"),
-                None,
-                false,
-                true,
-                false,
-            ),
-            TypeRef::Record(record_id) => {
-                let decoder = record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .borrowed_decoder()
-                    .to_owned();
-                (
-                    format!("{decoder}({pointer_name}, {length_name})"),
-                    None,
-                    false,
-                    false,
-                    false,
-                )
-            }
-            TypeRef::Enum(enum_id) => {
-                let decoder = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .borrowed_decoder()
-                    .to_owned();
-                (
-                    format!("{decoder}({pointer_name}, {length_name})"),
-                    None,
-                    false,
-                    false,
-                    false,
-                )
-            }
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                (
-                    format!(
-                        "boltffi_python_decode_borrowed_raw_wire({pointer_name}, {length_name})"
-                    ),
-                    Some(primitive),
-                    false,
-                    false,
-                    true,
-                )
-            }
-            _ => (
-                format!("boltffi_python_decode_borrowed_raw_wire({pointer_name}, {length_name})"),
-                None,
-                false,
-                false,
-                true,
-            ),
-        };
+        let payload = BorrowedPayload::read(codec, &pointer_name, &length_name);
+        let wire_primitive = payload.primitive();
+        let string = payload.has_string();
+        let bytes = payload.has_bytes();
+        let raw_wire = payload.has_raw_wire();
+        let expression = payload.expression();
         Ok(Self {
             declarations: vec![
                 TypeSyntax::new(pointer).declaration(&pointer_name)?,
@@ -694,6 +642,128 @@ impl Argument {
     }
 }
 
+struct ClosureArgumentArity;
+
+impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentArity {
+    type Output = Result<usize>;
+
+    fn direct(&mut self, _: &TypeRef, _: ()) -> Self::Output {
+        Ok(1)
+    }
+
+    fn encoded(
+        &mut self,
+        _: &TypeRef,
+        _: &ReadPlan,
+        shape: native::BufferShape,
+        _: (),
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Slice => Ok(2),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unsupported closure argument",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+        _: (),
+    ) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported closure argument",
+        })
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported closure argument",
+        })
+    }
+
+    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+        Ok(2)
+    }
+}
+
+struct ClosureArgumentValue<'ctype, 'bridge, 'context, 'bindings> {
+    name: String,
+    object: String,
+    c_types: &'ctype [c::Type],
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'_, '_, '_, '_> {
+    type Output = Result<Argument>;
+
+    fn direct(&mut self, ty: &TypeRef, _: ()) -> Self::Output {
+        Argument::direct(
+            self.name.clone(),
+            self.object.clone(),
+            ty,
+            self.c_types,
+            self.bridge,
+            self.context,
+        )
+    }
+
+    fn encoded(
+        &mut self,
+        _: &TypeRef,
+        codec: &ReadPlan,
+        shape: native::BufferShape,
+        _: (),
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Slice => {
+                Argument::encoded(self.name.clone(), self.object.clone(), codec, self.c_types)
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unsupported closure argument",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+        _: (),
+    ) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported closure argument",
+        })
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported closure argument",
+        })
+    }
+
+    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+        Argument::direct_vector(
+            self.name.clone(),
+            self.object.clone(),
+            element,
+            self.c_types,
+            self.bridge,
+            self.context,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FallibleReturn {
     declarations: Vec<String>,
@@ -709,14 +779,14 @@ impl FallibleReturn {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let ErrorDecl::EncodedViaReturnSlot { ty: error, .. } = error else {
+        let ErrorDecl::EncodedViaReturnSlot { codec: error, .. } = error else {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "closure error channel",
             });
         };
         let success = FallibleSuccess::new(plan, return_out, bridge, context)?;
-        let error = FallibleError::new(error, bridge, context)?;
+        let error = FallibleError::new(error)?;
         let declarations = return_out
             .map(|ty| TypeSyntax::new(ty).declaration("return_out"))
             .transpose()?
@@ -789,29 +859,11 @@ impl FallibleSuccess {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => {
-                if return_out.is_some() {
-                    return Err(Error::UnsupportedTarget {
-                        target: "python",
-                        shape: "void closure success out-parameter",
-                    });
-                }
-                Ok(Self::void())
-            }
-            ReturnPlan::DirectViaOutPointer { ty } => {
-                Self::direct(ty, Self::out_type(return_out)?, bridge, context)
-            }
-            ReturnPlan::EncodedViaOutPointer {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::wire(ty, Self::out_type(return_out)?, bridge, context),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported fallible closure success",
-            }),
-        }
+        plan.render_with(&mut FallibleSuccessValue {
+            return_out,
+            bridge,
+            context,
+        })
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
@@ -851,41 +903,22 @@ impl FallibleSuccess {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let (parser, default_value, primitive) = match ty {
-            TypeRef::Primitive(primitive) => {
-                let source_primitive = *primitive;
-                let primitive = primitive::Runtime::new(source_primitive);
-                (
-                    primitive.parser()?.to_owned(),
-                    ReturnValue::default_value(source_primitive),
-                    Some(primitive),
-                )
-            }
-            TypeRef::Record(record_id) => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                (symbols.parser().to_owned(), "{0}".to_owned(), None)
-            }
-            TypeRef::Enum(enum_id) => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                (symbols.parser().to_owned(), "0".to_owned(), None)
-            }
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported direct closure success",
-                });
-            }
-        };
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported direct closure success",
+        )?;
         Ok(Self {
             out: "return_out".to_owned(),
             value: "return_success".to_owned(),
             c_type: TypeSyntax::new(out_type).anonymous()?,
-            default_value,
-            parser,
+            default_value: direct.default_value().to_owned(),
+            parser: direct.parser().to_owned(),
             wire: false,
             direct: true,
             void: false,
-            primitive,
+            primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
             string: false,
@@ -894,34 +927,29 @@ impl FallibleSuccess {
         })
     }
 
-    fn wire(
-        ty: &TypeRef,
-        out_type: &c::Type,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
+    fn wire(codec: &WritePlan, out_type: &c::Type) -> Result<Self> {
         if !matches!(out_type, c::Type::Buffer) {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "fallible closure encoded out-parameter",
             });
         }
-        let encoded = EncodedPayload::new(ty, bridge, context)?;
+        let encoded = OwnedPayload::write(codec);
         Ok(Self {
             out: "return_out".to_owned(),
             value: "return_success".to_owned(),
             c_type: String::new(),
             default_value: String::new(),
-            parser: encoded.parser,
+            parser: encoded.parser().to_owned(),
             wire: true,
             direct: false,
             void: false,
             primitive: None,
-            wire_primitive: encoded.primitive,
-            direct_vector: encoded.direct_vector,
-            string: encoded.string,
-            bytes: encoded.bytes,
-            raw_wire: encoded.raw_wire,
+            wire_primitive: encoded.primitive(),
+            direct_vector: encoded.direct_vector(),
+            string: encoded.has_string(),
+            bytes: encoded.has_bytes(),
+            raw_wire: encoded.has_raw_wire(),
         })
     }
 
@@ -933,6 +961,94 @@ impl FallibleSuccess {
                 shape: "fallible closure success out-parameter",
             }),
         }
+    }
+}
+
+struct FallibleSuccessValue<'out, 'bridge, 'context, 'bindings> {
+    return_out: Option<&'out c::Type>,
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'_, '_, '_, '_> {
+    type Output = Result<FallibleSuccess>;
+
+    fn void(&mut self) -> Self::Output {
+        if self.return_out.is_some() {
+            return Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "void closure success out-parameter",
+            });
+        }
+        Ok(FallibleSuccess::void())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => FallibleSuccess::direct(
+                ty,
+                FallibleSuccess::out_type(self.return_out)?,
+                self.bridge,
+                self.context,
+            ),
+            ReturnValueSlot::ReturnSlot => Self::unsupported(),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown fallible closure success slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        codec: &'plan WritePlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match (slot, shape) {
+            (ReturnValueSlot::OutPointer, native::BufferShape::Buffer) => {
+                FallibleSuccess::wire(codec, FallibleSuccess::out_type(self.return_out)?)
+            }
+            (ReturnValueSlot::OutPointer, _) | (ReturnValueSlot::ReturnSlot, _) => {
+                Self::unsupported()
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown fallible closure success slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
+    }
+}
+
+impl FallibleSuccessValue<'_, '_, '_, '_> {
+    fn unsupported() -> Result<FallibleSuccess> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported fallible closure success",
+        })
     }
 }
 
@@ -948,20 +1064,16 @@ struct FallibleError {
 }
 
 impl FallibleError {
-    fn new(
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        let encoded = EncodedPayload::new(ty, bridge, context)?;
+    fn new(codec: &WritePlan) -> Result<Self> {
+        let encoded = OwnedPayload::write(codec);
         Ok(Self {
             value: "return_value".to_owned(),
-            parser: encoded.parser,
-            wire_primitive: encoded.primitive,
-            direct_vector: encoded.direct_vector,
-            string: encoded.string,
-            bytes: encoded.bytes,
-            raw_wire: encoded.raw_wire,
+            parser: encoded.parser().to_owned(),
+            wire_primitive: encoded.primitive(),
+            direct_vector: encoded.direct_vector(),
+            string: encoded.has_string(),
+            bytes: encoded.has_bytes(),
+            raw_wire: encoded.has_raw_wire(),
         })
     }
 
@@ -1014,97 +1126,11 @@ impl ReturnValue {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => Ok(Self {
-                c_type: TypeSyntax::new(c_type).anonymous()?,
-                parser: String::new(),
-                default_value: String::new(),
-                value: String::new(),
-                primitive: None,
-                wire_primitive: None,
-                direct_vector: None,
-                wire: false,
-                string: false,
-                bytes: false,
-                raw_wire: false,
-                void: true,
-            }),
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(primitive),
-            } => {
-                let source_primitive = *primitive;
-                let primitive = primitive::Runtime::new(source_primitive);
-                Ok(Self {
-                    c_type: TypeSyntax::new(c_type).anonymous()?,
-                    parser: primitive.parser()?.to_owned(),
-                    default_value: Self::default_value(source_primitive),
-                    value: "return_value".to_owned(),
-                    primitive: Some(primitive),
-                    wire_primitive: None,
-                    direct_vector: None,
-                    wire: false,
-                    string: false,
-                    bytes: false,
-                    raw_wire: false,
-                    void: false,
-                })
-            }
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Record(record_id),
-            } => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                Self::direct(c_type, symbols.parser().to_owned(), "{0}".to_owned())
-            }
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(enum_id),
-            } => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                Self::direct(c_type, symbols.parser().to_owned(), "0".to_owned())
-            }
-            ReturnPlan::EncodedViaReturnSlot {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::encoded(c_type, ty, bridge, context),
-            ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Self::wire(
-                    c_type,
-                    primitive.optional_wire_encoder()?,
-                    None,
-                    Some(primitive),
-                    false,
-                    false,
-                    false,
-                )
-            }
-            ReturnPlan::DirectVecViaReturnSlot { element } => {
-                let element = direct_vector::Element::from_type_ref(element, bridge, context)?;
-                Self::wire(
-                    c_type,
-                    element.vector_encoder().to_owned(),
-                    Some(element),
-                    None,
-                    false,
-                    false,
-                    false,
-                )
-            }
-            ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. }
-            | ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported closure return",
-            }),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unknown closure return",
-            }),
-        }
+        plan.render_with(&mut ClosureReturnValue {
+            c_type,
+            bridge,
+            context,
+        })
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
@@ -1135,47 +1161,16 @@ impl ReturnValue {
         !self.void
     }
 
-    fn default_value(primitive: Primitive) -> String {
-        match primitive {
-            Primitive::Bool => "false".to_owned(),
-            Primitive::F32 => "0.0f".to_owned(),
-            Primitive::F64 => "0.0".to_owned(),
-            _ => "0".to_owned(),
-        }
-    }
-
-    fn direct(c_type: &c::Type, parser: String, default_value: String) -> Result<Self> {
-        Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
-            parser,
-            default_value,
-            value: "return_value".to_owned(),
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
-            wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
-            void: false,
-        })
-    }
-
-    fn encoded(
-        c_type: &c::Type,
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        let encoded = EncodedPayload::new(ty, bridge, context)?;
+    fn encoded(c_type: &c::Type, codec: &WritePlan) -> Result<Self> {
+        let encoded = OwnedPayload::write(codec);
         Self::wire(
             c_type,
-            encoded.parser,
-            encoded.direct_vector,
-            encoded.primitive,
-            encoded.string,
-            encoded.bytes,
-            encoded.raw_wire,
+            encoded.parser().to_owned(),
+            encoded.direct_vector(),
+            encoded.primitive(),
+            encoded.has_string(),
+            encoded.has_bytes(),
+            encoded.has_raw_wire(),
         )
     }
 
@@ -1205,95 +1200,125 @@ impl ReturnValue {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct EncodedPayload {
-    parser: String,
-    primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+struct ClosureReturnValue<'ctype, 'bridge, 'context, 'bindings> {
+    c_type: &'ctype c::Type,
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
 }
 
-impl EncodedPayload {
-    fn new(
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        match ty {
-            TypeRef::String => Ok(Self::string()),
-            TypeRef::Bytes => Ok(Self::bytes()),
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Ok(Self::primitive(primitive.wire_encoder()?, primitive))
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_, '_, '_, '_> {
+    type Output = Result<ReturnValue>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(ReturnValue {
+            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            parser: String::new(),
+            default_value: String::new(),
+            value: String::new(),
+            primitive: None,
+            wire_primitive: None,
+            direct_vector: None,
+            wire: false,
+            string: false,
+            bytes: false,
+            raw_wire: false,
+            void: true,
+        })
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+        if slot != ReturnValueSlot::ReturnSlot {
+            return Self::unsupported();
+        }
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            self.bridge,
+            self.context,
+            "unsupported closure return",
+        )?;
+        Ok(ReturnValue {
+            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            parser: direct.parser().to_owned(),
+            default_value: direct.default_value().to_owned(),
+            value: "return_value".to_owned(),
+            primitive: direct.primitive(),
+            wire_primitive: None,
+            direct_vector: None,
+            wire: false,
+            string: false,
+            bytes: false,
+            raw_wire: false,
+            void: false,
+        })
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        codec: &'plan WritePlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match (slot, shape) {
+            (ReturnValueSlot::ReturnSlot, native::BufferShape::Buffer) => {
+                ReturnValue::encoded(self.c_type, codec)
             }
-            TypeRef::Record(record_id) => Ok(Self::parser(
-                record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .parser()
-                    .to_owned(),
-            )),
-            TypeRef::Enum(enum_id) => Ok(Self::parser(
-                enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .wire_encoder()
-                    .to_owned(),
-            )),
-            _ => Ok(Self::raw_wire()),
+            (ReturnValueSlot::ReturnSlot, _) | (ReturnValueSlot::OutPointer, _) => {
+                Self::unsupported()
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown closure return",
+            }),
         }
     }
 
-    fn string() -> Self {
-        Self {
-            parser: "boltffi_python_wire_string".to_owned(),
-            primitive: None,
-            direct_vector: None,
-            string: true,
-            bytes: false,
-            raw_wire: false,
-        }
+    fn handle(
+        &mut self,
+        _: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::unsupported()
     }
 
-    fn bytes() -> Self {
-        Self {
-            parser: "boltffi_python_wire_bytes".to_owned(),
-            primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: true,
-            raw_wire: false,
-        }
+    fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
+        let primitive = primitive::Runtime::new(primitive);
+        ReturnValue::wire(
+            self.c_type,
+            primitive.optional_wire_encoder()?,
+            None,
+            Some(primitive),
+            false,
+            false,
+            false,
+        )
     }
 
-    fn primitive(parser: impl Into<String>, primitive: primitive::Runtime) -> Self {
-        Self {
-            parser: parser.into(),
-            primitive: Some(primitive),
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
-        }
+    fn direct_vector(&mut self, element: &'plan TypeRef) -> Self::Output {
+        let element = direct_vector::Element::from_type_ref(element, self.bridge, self.context)?;
+        ReturnValue::wire(
+            self.c_type,
+            element.vector_encoder().to_owned(),
+            Some(element),
+            None,
+            false,
+            false,
+            false,
+        )
     }
 
-    fn parser(parser: impl Into<String>) -> Self {
-        Self {
-            parser: parser.into(),
-            primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
-        }
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
     }
+}
 
-    fn raw_wire() -> Self {
-        Self {
-            parser: "boltffi_python_wire_raw".to_owned(),
-            primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: true,
-        }
+impl ClosureReturnValue<'_, '_, '_, '_> {
+    fn unsupported() -> Result<ReturnValue> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported closure return",
+        })
     }
 }

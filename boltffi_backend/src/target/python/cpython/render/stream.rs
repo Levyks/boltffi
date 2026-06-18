@@ -1,14 +1,14 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClassDecl, DeclarationRef, Native, NativeSymbol, Primitive, StreamDecl, StreamItemPlan,
-    TypeRef, native,
+    ByteSize, Native, NativeSymbol, Primitive, ReadPlan, StreamDecl, StreamItemPlan,
+    StreamItemPlanRender, TypeRef, native,
 };
 
 use crate::{
     bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        cpython::render::{enumeration, primitive, record, result},
+        cpython::render::{direct, primitive, result},
         name_style::Name,
     },
 };
@@ -146,26 +146,14 @@ struct Receiver {
 
 impl Receiver {
     fn new(owner: boltffi_binding::ClassId, context: &RenderContext<Native>) -> Result<Self> {
-        let handle = context
-            .bindings()
-            .decls()
-            .iter()
-            .find_map(|decl| match DeclarationRef::from(decl) {
-                DeclarationRef::Class(class) if class.id() == owner => Some(class),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(ClassDecl::handle)
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "stream owner without class declaration",
-            })?;
+        let handle =
+            context
+                .class(owner)
+                .map(|class| class.handle())
+                .ok_or(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "stream owner without class declaration",
+                })?;
         let handle = primitive::Runtime::native_handle(handle)?;
         Ok(Self {
             primitive: handle,
@@ -217,24 +205,7 @@ impl Item {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            StreamItemPlan::Direct { ty, .. } => Self::direct(ty, bridge, context),
-            StreamItemPlan::Encoded {
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Ok(Self {
-                kind: ItemKind::Encoded,
-                primitive: None,
-            }),
-            StreamItemPlan::Encoded { .. } => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "encoded stream item shape",
-            }),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unknown stream item",
-            }),
-        }
+        plan.render_with(&mut StreamItem { bridge, context })
     }
 
     fn is_direct(&self) -> bool {
@@ -267,40 +238,48 @@ impl Item {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match ty {
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Ok(Self {
-                    kind: ItemKind::Direct {
-                        c_type: primitive.c_type()?,
-                        boxer: primitive.boxer()?.to_owned(),
-                    },
-                    primitive: Some(primitive),
-                })
-            }
-            TypeRef::Record(record) => {
-                let symbols = record::Symbols::from_record_id(*record, bridge, context)?;
-                Ok(Self {
-                    kind: ItemKind::Direct {
-                        c_type: symbols.c_type()?.to_owned(),
-                        boxer: symbols.boxer().to_owned(),
-                    },
-                    primitive: None,
-                })
-            }
-            TypeRef::Enum(enumeration) => {
-                let symbols = enumeration::Symbols::from_enum_id(*enumeration, bridge, context)?;
-                Ok(Self {
-                    kind: ItemKind::Direct {
-                        c_type: symbols.c_type()?.to_owned(),
-                        boxer: symbols.boxer().to_owned(),
-                    },
-                    primitive: None,
-                })
-            }
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported direct stream item",
+        )?;
+        Ok(Self {
+            kind: ItemKind::Direct {
+                c_type: direct.c_type().to_owned(),
+                boxer: direct.boxer().to_owned(),
+            },
+            primitive: direct.primitive(),
+        })
+    }
+}
+
+struct StreamItem<'bridge, 'context, 'bindings> {
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> StreamItemPlanRender<'plan, Native> for StreamItem<'_, '_, '_> {
+    type Output = Result<Item>;
+
+    fn direct(&mut self, ty: &'plan TypeRef, _: ByteSize) -> Self::Output {
+        Item::direct(ty, self.bridge, self.context)
+    }
+
+    fn encoded(
+        &mut self,
+        _: &'plan TypeRef,
+        _: &'plan ReadPlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Buffer => Ok(Item {
+                kind: ItemKind::Encoded,
+                primitive: None,
+            }),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
-                shape: "unsupported direct stream item",
+                shape: "encoded stream item shape",
             }),
         }
     }

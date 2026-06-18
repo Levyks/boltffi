@@ -5,12 +5,13 @@ use boltffi_binding::{DeclarationRef, Native};
 
 use crate::{
     bridge::python_cext::PythonCExtBridgeContract,
-    core::{
-        Emitted, Error, FileLayout, GeneratedOutput, RenderContext, RenderedDeclaration, Result,
-    },
-    target::python::cpython::render::{
-        callback, class, constant, direct_vector, enumeration, function, method, primitive, record,
-        result, stream,
+    core::{Emitted, FileLayout, GeneratedOutput, RenderContext, RenderedDeclaration, Result},
+    target::python::{
+        codec::{CodecAdapters, ReadAdapter, WriteAdapter},
+        cpython::render::{
+            callback, class, constant, direct_vector, enumeration, function, method, primitive,
+            record, result, stream,
+        },
     },
 };
 
@@ -30,6 +31,8 @@ struct NativeModuleTemplate {
     callbacks: Vec<String>,
     streams: Vec<String>,
     constants: Vec<String>,
+    codec_decoders: Vec<CodecDecoder>,
+    codec_encoders: Vec<CodecEncoder>,
     host_bindings: Vec<String>,
     functions: Vec<String>,
     methods: Vec<method::Entry>,
@@ -57,52 +60,21 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
 
     pub fn render(self) -> Result<GeneratedOutput> {
         let bridge = self.bridge;
-        let records = self.records()?;
-        let enums = self.enums()?;
-        let classes = self.classes()?;
-        let callbacks = self.callbacks()?;
-        let streams = self.streams()?;
-        let constants = self.constants()?;
-        let functions = self.functions()?;
-        let methods = self
-            .bridge
-            .methods()
+        let declarations =
+            ModuleDeclarations::collect(self.bridge, self.context, &self.declarations)?;
+        let codec_adapters = CodecAdapters::from_bindings(self.context.bindings());
+        let codec_decoders = codec_adapters
+            .decoders()
             .iter()
-            .chain(records.iter().flat_map(|record| record.wrapper.methods()))
-            .chain(
-                enums
-                    .iter()
-                    .flat_map(|enumeration| enumeration.wrapper.methods()),
-            )
-            .chain(classes.iter().flat_map(|class| class.wrapper.methods()))
-            .chain(streams.iter().flat_map(|stream| stream.wrapper.methods()))
-            .chain(
-                constants
-                    .iter()
-                    .flat_map(|constant| constant.wrapper.methods()),
-            )
-            .chain(
-                functions
-                    .iter()
-                    .flat_map(|function| function.wrapper.methods()),
-            )
-            .map(method::Entry::from_method)
+            .map(CodecDecoder::from_adapter)
             .collect();
-        let support = ModuleSupport::new(
-            bridge,
-            SupportArtifacts {
-                records: records.iter().map(|record| &record.wrapper).collect(),
-                enums: enums
-                    .iter()
-                    .map(|enumeration| &enumeration.wrapper)
-                    .collect(),
-                classes: classes.iter().map(|class| &class.wrapper).collect(),
-                callbacks: callbacks.iter().map(|callback| &callback.wrapper).collect(),
-                streams: streams.iter().map(|stream| &stream.wrapper).collect(),
-                constants: constants.iter().map(|constant| &constant.wrapper).collect(),
-                functions: functions.iter().map(|function| &function.wrapper).collect(),
-            },
-        )?;
+        let codec_encoders = codec_adapters
+            .encoders()
+            .iter()
+            .map(CodecEncoder::from_adapter)
+            .collect();
+        let methods = declarations.methods(bridge);
+        let support = ModuleSupport::new(bridge, declarations.support())?;
         let source = NativeModuleTemplate {
             module_name: bridge.module().as_str().to_owned(),
             method_table: bridge.symbols().method_table().to_owned(),
@@ -110,252 +82,260 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             free_function: bridge.symbols().free_function().to_owned(),
             init_function: bridge.symbols().init_function().to_owned(),
             support,
-            records: records.iter().map(|record| record.source.clone()).collect(),
-            enums: enums
-                .iter()
-                .map(|enumeration| enumeration.source.clone())
-                .collect(),
-            classes: classes.iter().map(|class| class.source.clone()).collect(),
-            callback_declarations: callbacks
-                .iter()
-                .flat_map(|callback| callback.wrapper.parser_declarations())
-                .collect(),
-            callbacks: callbacks
-                .iter()
-                .map(|callback| callback.source.clone())
-                .collect(),
-            streams: streams.iter().map(|stream| stream.source.clone()).collect(),
-            constants: constants
-                .iter()
-                .map(|constant| constant.source.clone())
-                .collect(),
-            host_bindings: callbacks
-                .iter()
-                .map(|callback| callback.wrapper.binding().to_owned())
-                .collect(),
-            functions: functions
-                .into_iter()
-                .map(|function| function.source)
-                .collect(),
+            records: declarations.record_sources(),
+            enums: declarations.enum_sources(),
+            classes: declarations.class_sources(),
+            callback_declarations: declarations.callback_declarations(),
+            callbacks: declarations.callback_sources(),
+            streams: declarations.stream_sources(),
+            constants: declarations.constant_sources(),
+            codec_decoders,
+            codec_encoders,
+            host_bindings: declarations.host_bindings(),
+            functions: declarations.function_sources(),
             methods,
-            cleanup: records
-                .iter()
-                .map(|record| record.wrapper.cleanup())
-                .chain(
-                    enums
-                        .iter()
-                        .map(|enumeration| enumeration.wrapper.cleanup()),
-                )
-                .collect(),
+            cleanup: declarations.cleanup(),
         }
         .render()?;
         FileLayout::single(bridge.source_path().clone()).assemble([Emitted::primary(source)])
     }
+}
 
-    fn records(&self) -> Result<Vec<RenderedRecord>> {
-        self.declarations
+#[derive(Default)]
+struct ModuleDeclarations {
+    records: Vec<Rendered<record::Record>>,
+    enums: Vec<Rendered<enumeration::Enumeration>>,
+    classes: Vec<Rendered<class::Class>>,
+    callbacks: Vec<Rendered<callback::Callback>>,
+    streams: Vec<Rendered<stream::Stream>>,
+    constants: Vec<Rendered<constant::Constant>>,
+    functions: Vec<Rendered<function::Function>>,
+}
+
+impl ModuleDeclarations {
+    fn collect(
+        bridge: &PythonCExtBridgeContract,
+        context: &RenderContext<'_, Native>,
+        declarations: &[RenderedDeclaration<'_, Native>],
+    ) -> Result<Self> {
+        declarations
             .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Record(record) => Some((record, declaration.emitted())),
-                DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
+            .try_fold(Self::default(), |module, declaration| {
+                module.collect_declaration(bridge, context, declaration)
             })
-            .map(|(record, emitted)| {
-                let wrapper = record::Record::from_declaration(record, self.bridge, self.context)?;
-                Ok(RenderedRecord {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
+    }
+
+    fn record_sources(&self) -> Vec<String> {
+        self.records.iter().map(Rendered::source).collect()
+    }
+
+    fn enum_sources(&self) -> Vec<String> {
+        self.enums.iter().map(Rendered::source).collect()
+    }
+
+    fn class_sources(&self) -> Vec<String> {
+        self.classes.iter().map(Rendered::source).collect()
+    }
+
+    fn callback_declarations(&self) -> Vec<String> {
+        self.callbacks
+            .iter()
+            .flat_map(|callback| callback.declaration.parser_declarations())
             .collect()
     }
 
-    fn functions(&self) -> Result<Vec<RenderedFunction>> {
-        self.declarations
+    fn callback_sources(&self) -> Vec<String> {
+        self.callbacks.iter().map(Rendered::source).collect()
+    }
+
+    fn stream_sources(&self) -> Vec<String> {
+        self.streams.iter().map(Rendered::source).collect()
+    }
+
+    fn constant_sources(&self) -> Vec<String> {
+        self.constants.iter().map(Rendered::source).collect()
+    }
+
+    fn function_sources(&self) -> Vec<String> {
+        self.functions.iter().map(Rendered::source).collect()
+    }
+
+    fn host_bindings(&self) -> Vec<String> {
+        self.callbacks
             .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Function(function) => Some((function, declaration.emitted())),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|(function, emitted)| {
-                let wrapper =
-                    function::Function::from_declaration(function, self.bridge, self.context)?;
-                Ok(RenderedFunction {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
+            .map(|callback| callback.declaration.binding().to_owned())
             .collect()
     }
 
-    fn enums(&self) -> Result<Vec<RenderedEnum>> {
-        self.declarations
+    fn methods(&self, bridge: &PythonCExtBridgeContract) -> Vec<method::Entry> {
+        bridge
+            .methods()
             .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Enum(enumeration) => Some((enumeration, declaration.emitted())),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|(enumeration, emitted)| {
-                let wrapper = enumeration::Enumeration::from_declaration(
-                    enumeration,
-                    self.bridge,
-                    self.context,
-                )?;
-                Ok(RenderedEnum {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
+            .chain(
+                self.records
+                    .iter()
+                    .flat_map(|record| record.declaration.methods()),
+            )
+            .chain(
+                self.enums
+                    .iter()
+                    .flat_map(|enumeration| enumeration.declaration.methods()),
+            )
+            .chain(
+                self.classes
+                    .iter()
+                    .flat_map(|class| class.declaration.methods()),
+            )
+            .chain(
+                self.streams
+                    .iter()
+                    .flat_map(|stream| stream.declaration.methods()),
+            )
+            .chain(
+                self.constants
+                    .iter()
+                    .flat_map(|constant| constant.declaration.methods()),
+            )
+            .chain(
+                self.functions
+                    .iter()
+                    .flat_map(|function| function.declaration.methods()),
+            )
+            .map(method::Entry::from_method)
             .collect()
     }
 
-    fn classes(&self) -> Result<Vec<RenderedClass>> {
-        self.declarations
+    fn cleanup(&self) -> Vec<String> {
+        self.records
             .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Class(class) => Some((class, declaration.emitted())),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|(declaration, emitted)| {
-                let wrapper =
-                    class::Class::from_declaration(declaration, self.bridge, self.context)?;
-                Ok(RenderedClass {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
+            .map(|record| record.declaration.cleanup())
+            .chain(
+                self.enums
+                    .iter()
+                    .map(|enumeration| enumeration.declaration.cleanup()),
+            )
             .collect()
     }
 
-    fn callbacks(&self) -> Result<Vec<RenderedCallback>> {
-        self.declarations
-            .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Callback(callback) => Some((callback, declaration.emitted())),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|(declaration, emitted)| {
-                let wrapper =
-                    callback::Callback::from_declaration(declaration, self.bridge, self.context)?;
-                Ok(RenderedCallback {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
-            .collect()
+    fn support(&self) -> SupportArtifacts<'_> {
+        SupportArtifacts {
+            records: self.records.iter().map(Rendered::declaration).collect(),
+            enums: self.enums.iter().map(Rendered::declaration).collect(),
+            classes: self.classes.iter().map(Rendered::declaration).collect(),
+            callbacks: self.callbacks.iter().map(Rendered::declaration).collect(),
+            streams: self.streams.iter().map(Rendered::declaration).collect(),
+            constants: self.constants.iter().map(Rendered::declaration).collect(),
+            functions: self.functions.iter().map(Rendered::declaration).collect(),
+        }
     }
 
-    fn streams(&self) -> Result<Vec<RenderedStream>> {
-        self.declarations
-            .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Stream(stream) => Some((stream, declaration.emitted())),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|(declaration, emitted)| {
-                let wrapper =
-                    stream::Stream::from_declaration(declaration, self.bridge, self.context)?;
-                Ok(RenderedStream {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
-            .collect()
-    }
-
-    fn constants(&self) -> Result<Vec<RenderedConstant>> {
-        self.declarations
-            .iter()
-            .filter_map(|declaration| match declaration.declaration() {
-                DeclarationRef::Constant(constant) => Some((constant, declaration.emitted())),
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
-            .map(|(declaration, emitted)| {
-                let wrapper =
-                    constant::Constant::from_declaration(declaration, self.bridge, self.context)?;
-                Ok(RenderedConstant {
-                    wrapper,
-                    source: emitted.primary_chunk().as_str().to_owned(),
-                })
-            })
-            .collect()
+    fn collect_declaration(
+        mut self,
+        bridge: &PythonCExtBridgeContract,
+        context: &RenderContext<'_, Native>,
+        declaration: &RenderedDeclaration<'_, Native>,
+    ) -> Result<Self> {
+        match declaration.declaration() {
+            DeclarationRef::Record(record) => self.records.push(Rendered::new(
+                record::Record::from_declaration(record, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::Enum(enumeration) => self.enums.push(Rendered::new(
+                enumeration::Enumeration::from_declaration(enumeration, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::Function(function) => self.functions.push(Rendered::new(
+                function::Function::from_declaration(function, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::Class(class) => self.classes.push(Rendered::new(
+                class::Class::from_declaration(class, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::Callback(callback) => self.callbacks.push(Rendered::new(
+                callback::Callback::from_declaration(callback, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::Stream(stream) => self.streams.push(Rendered::new(
+                stream::Stream::from_declaration(stream, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::Constant(constant) => self.constants.push(Rendered::new(
+                constant::Constant::from_declaration(constant, bridge, context)?,
+                declaration,
+            )),
+            DeclarationRef::CustomType(_) => {}
+        }
+        Ok(self)
     }
 }
 
-struct RenderedFunction {
-    wrapper: function::Function,
+struct Rendered<T> {
+    declaration: T,
     source: String,
 }
 
-struct RenderedRecord {
-    wrapper: record::Record,
-    source: String,
+impl<T> Rendered<T> {
+    fn new(declaration: T, rendered: &RenderedDeclaration<'_, Native>) -> Self {
+        Self {
+            declaration,
+            source: rendered.emitted().primary_chunk().as_str().to_owned(),
+        }
+    }
+
+    fn declaration(&self) -> &T {
+        &self.declaration
+    }
+
+    fn source(&self) -> String {
+        self.source.clone()
+    }
 }
 
-struct RenderedEnum {
-    wrapper: enumeration::Enumeration,
-    source: String,
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodecDecoder {
+    key: String,
+    function: String,
 }
 
-struct RenderedClass {
-    wrapper: class::Class,
-    source: String,
+impl CodecDecoder {
+    fn from_adapter(adapter: &ReadAdapter<'_>) -> Self {
+        Self {
+            key: adapter.key().literal(),
+            function: adapter.key().c_decoder(),
+        }
+    }
+
+    fn key(&self) -> &str {
+        &self.key
+    }
+
+    fn function(&self) -> &str {
+        &self.function
+    }
 }
 
-struct RenderedCallback {
-    wrapper: callback::Callback,
-    source: String,
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodecEncoder {
+    key: String,
+    function: String,
 }
 
-struct RenderedStream {
-    wrapper: stream::Stream,
-    source: String,
-}
+impl CodecEncoder {
+    fn from_adapter(adapter: &WriteAdapter<'_>) -> Self {
+        Self {
+            key: adapter.key().literal(),
+            function: adapter.key().c_encoder(),
+        }
+    }
 
-struct RenderedConstant {
-    wrapper: constant::Constant,
-    source: String,
+    fn key(&self) -> &str {
+        &self.key
+    }
+
+    fn function(&self) -> &str {
+        &self.function
+    }
 }
 
 struct SupportArtifacts<'module> {
@@ -366,6 +346,271 @@ struct SupportArtifacts<'module> {
     streams: Vec<&'module stream::Stream>,
     constants: Vec<&'module constant::Constant>,
     functions: Vec<&'module function::Function>,
+}
+
+impl SupportArtifacts<'_> {
+    fn has_encoded_records(&self) -> bool {
+        self.records
+            .iter()
+            .any(|record| record.needs_owned_buffer())
+    }
+
+    fn has_data_enums(&self) -> bool {
+        self.enums
+            .iter()
+            .any(|enumeration| enumeration.needs_owned_buffer())
+    }
+
+    fn uses_async_protocol(&self) -> bool {
+        self.functions
+            .iter()
+            .any(|function| function.uses_async_protocol())
+            || self
+                .records
+                .iter()
+                .any(|record| record.uses_async_protocol())
+            || self
+                .enums
+                .iter()
+                .any(|enumeration| enumeration.uses_async_protocol())
+            || self.classes.iter().any(|class| class.uses_async_protocol())
+    }
+
+    fn owned_buffers(&self) -> BTreeSet<result::OwnedBuffer> {
+        self.functions
+            .iter()
+            .flat_map(|function| function.owned_buffers())
+            .chain(
+                self.constants
+                    .iter()
+                    .filter_map(|constant| constant.owned_buffer()),
+            )
+            .chain(
+                self.records
+                    .iter()
+                    .flat_map(|record| record.owned_buffers()),
+            )
+            .chain(
+                self.enums
+                    .iter()
+                    .flat_map(|enumeration| enumeration.owned_buffers()),
+            )
+            .chain(self.classes.iter().flat_map(|class| class.owned_buffers()))
+            .chain(
+                self.streams
+                    .iter()
+                    .filter_map(|stream| stream.owned_buffer()),
+            )
+            .collect()
+    }
+
+    fn direct_vector_elements(
+        &self,
+        owned_buffers: &BTreeSet<result::OwnedBuffer>,
+    ) -> BTreeSet<direct_vector::Element> {
+        owned_buffers
+            .iter()
+            .filter_map(|buffer| match buffer {
+                result::OwnedBuffer::DirectVector(element) => Some((**element).clone()),
+                result::OwnedBuffer::String
+                | result::OwnedBuffer::Bytes
+                | result::OwnedBuffer::RawWire
+                | result::OwnedBuffer::OptionalPrimitive(_) => None,
+            })
+            .chain(
+                self.functions
+                    .iter()
+                    .flat_map(|function| function.direct_vector_elements()),
+            )
+            .chain(
+                self.constants
+                    .iter()
+                    .flat_map(|constant| constant.direct_vector_elements()),
+            )
+            .chain(
+                self.records
+                    .iter()
+                    .flat_map(|record| record.direct_vector_elements()),
+            )
+            .chain(
+                self.enums
+                    .iter()
+                    .flat_map(|enumeration| enumeration.direct_vector_elements()),
+            )
+            .chain(
+                self.classes
+                    .iter()
+                    .flat_map(|class| class.direct_vector_elements()),
+            )
+            .chain(
+                self.callbacks
+                    .iter()
+                    .flat_map(|callback| callback.direct_vector_elements()),
+            )
+            .collect()
+    }
+
+    fn primitives(
+        &self,
+        direct_vector_elements: &BTreeSet<direct_vector::Element>,
+    ) -> Result<Vec<primitive::Support>> {
+        self.functions
+            .iter()
+            .flat_map(|function| function.primitives())
+            .chain(
+                self.constants
+                    .iter()
+                    .flat_map(|constant| constant.primitives()),
+            )
+            .chain(self.classes.iter().flat_map(|class| class.primitives()))
+            .chain(
+                self.callbacks
+                    .iter()
+                    .flat_map(|callback| callback.primitives()),
+            )
+            .chain(self.streams.iter().flat_map(|stream| stream.primitives()))
+            .chain(self.records.iter().flat_map(|record| record.primitives()))
+            .chain(
+                self.enums
+                    .iter()
+                    .filter_map(|enumeration| enumeration.primitive()),
+            )
+            .chain(
+                direct_vector_elements
+                    .iter()
+                    .filter_map(direct_vector::Element::runtime_primitive),
+            )
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(primitive::Support::new)
+            .collect()
+    }
+
+    fn wire_primitives(&self) -> Result<Vec<primitive::Support>> {
+        self.functions
+            .iter()
+            .flat_map(|function| function.wire_primitives())
+            .chain(
+                self.constants
+                    .iter()
+                    .flat_map(|constant| constant.wire_primitives()),
+            )
+            .chain(
+                self.records
+                    .iter()
+                    .flat_map(|record| record.wire_primitives()),
+            )
+            .chain(
+                self.enums
+                    .iter()
+                    .flat_map(|enumeration| enumeration.wire_primitives()),
+            )
+            .chain(
+                self.classes
+                    .iter()
+                    .flat_map(|class| class.wire_primitives()),
+            )
+            .chain(
+                self.callbacks
+                    .iter()
+                    .flat_map(|callback| callback.wire_primitives()),
+            )
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(primitive::Support::new)
+            .collect()
+    }
+
+    fn owned_primitives(
+        &self,
+        owned_buffers: &BTreeSet<result::OwnedBuffer>,
+    ) -> Result<Vec<primitive::Support>> {
+        owned_buffers
+            .iter()
+            .filter_map(|buffer| match buffer {
+                result::OwnedBuffer::OptionalPrimitive(primitive) => Some(*primitive),
+                result::OwnedBuffer::String
+                | result::OwnedBuffer::Bytes
+                | result::OwnedBuffer::RawWire
+                | result::OwnedBuffer::DirectVector(_) => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(primitive::Support::new)
+            .collect()
+    }
+
+    fn has_string_arguments(&self) -> bool {
+        self.functions
+            .iter()
+            .any(|function| function.has_string_argument())
+            || self
+                .constants
+                .iter()
+                .any(|constant| constant.has_string_argument())
+            || self
+                .records
+                .iter()
+                .any(|record| record.has_string_argument())
+            || self
+                .enums
+                .iter()
+                .any(|enumeration| enumeration.has_string_argument())
+            || self.classes.iter().any(|class| class.has_string_argument())
+            || self
+                .callbacks
+                .iter()
+                .any(|callback| callback.has_string_argument())
+    }
+
+    fn has_bytes_arguments(&self) -> bool {
+        self.functions
+            .iter()
+            .any(|function| function.has_bytes_argument())
+            || self
+                .constants
+                .iter()
+                .any(|constant| constant.has_bytes_argument())
+            || self
+                .records
+                .iter()
+                .any(|record| record.has_bytes_argument())
+            || self
+                .enums
+                .iter()
+                .any(|enumeration| enumeration.has_bytes_argument())
+            || self.classes.iter().any(|class| class.has_bytes_argument())
+            || self
+                .callbacks
+                .iter()
+                .any(|callback| callback.has_bytes_argument())
+    }
+
+    fn has_raw_wire_arguments(&self) -> bool {
+        self.functions
+            .iter()
+            .any(|function| function.has_raw_wire_argument())
+            || self
+                .constants
+                .iter()
+                .any(|constant| constant.has_raw_wire_argument())
+            || self
+                .records
+                .iter()
+                .any(|record| record.has_raw_wire_argument())
+            || self
+                .enums
+                .iter()
+                .any(|enumeration| enumeration.has_raw_wire_argument())
+            || self
+                .classes
+                .iter()
+                .any(|class| class.has_raw_wire_argument())
+            || self
+                .callbacks
+                .iter()
+                .any(|callback| callback.has_raw_wire_argument())
+    }
 }
 
 struct ModuleSupport {
@@ -389,188 +634,18 @@ struct ModuleSupport {
 }
 
 impl ModuleSupport {
-    fn new(bridge: &PythonCExtBridgeContract, wrappers: SupportArtifacts<'_>) -> Result<Self> {
-        let SupportArtifacts {
-            records,
-            enums,
-            classes,
-            callbacks,
-            streams,
-            constants,
-            functions,
-        } = wrappers;
-        let encoded_records = records.iter().any(|record| record.needs_owned_buffer());
-        let data_enums = enums
-            .iter()
-            .any(|enumeration| enumeration.needs_owned_buffer());
-        let async_functions = functions
-            .iter()
-            .any(|function| function.uses_async_protocol())
-            || records.iter().any(|record| record.uses_async_protocol())
-            || enums
-                .iter()
-                .any(|enumeration| enumeration.uses_async_protocol())
-            || classes.iter().any(|class| class.uses_async_protocol());
-        let owned_buffers = functions
-            .iter()
-            .flat_map(|function| function.owned_buffers())
-            .chain(
-                constants
-                    .iter()
-                    .filter_map(|constant| constant.owned_buffer()),
-            )
-            .chain(records.iter().flat_map(|record| record.owned_buffers()))
-            .chain(
-                enums
-                    .iter()
-                    .flat_map(|enumeration| enumeration.owned_buffers()),
-            )
-            .chain(classes.iter().flat_map(|class| class.owned_buffers()))
-            .chain(streams.iter().filter_map(|stream| stream.owned_buffer()))
-            .collect::<BTreeSet<_>>();
-        let direct_vector_elements = owned_buffers
-            .iter()
-            .filter_map(|buffer| match buffer {
-                result::OwnedBuffer::DirectVector(element) => Some(element.clone()),
-                result::OwnedBuffer::String
-                | result::OwnedBuffer::Bytes
-                | result::OwnedBuffer::RawWire
-                | result::OwnedBuffer::Primitive(_)
-                | result::OwnedBuffer::OptionalPrimitive(_) => None,
-            })
-            .chain(
-                functions
-                    .iter()
-                    .flat_map(|function| function.direct_vector_elements()),
-            )
-            .chain(
-                constants
-                    .iter()
-                    .flat_map(|constant| constant.direct_vector_elements()),
-            )
-            .chain(
-                records
-                    .iter()
-                    .flat_map(|record| record.direct_vector_elements()),
-            )
-            .chain(
-                enums
-                    .iter()
-                    .flat_map(|enumeration| enumeration.direct_vector_elements()),
-            )
-            .chain(
-                classes
-                    .iter()
-                    .flat_map(|class| class.direct_vector_elements()),
-            )
-            .chain(
-                callbacks
-                    .iter()
-                    .flat_map(|callback| callback.direct_vector_elements()),
-            )
-            .collect::<BTreeSet<_>>();
-        let primitives = functions
-            .iter()
-            .flat_map(|function| function.primitives())
-            .chain(constants.iter().flat_map(|constant| constant.primitives()))
-            .chain(classes.iter().flat_map(|class| class.primitives()))
-            .chain(callbacks.iter().flat_map(|callback| callback.primitives()))
-            .chain(streams.iter().flat_map(|stream| stream.primitives()))
-            .chain(records.iter().flat_map(|record| record.primitives()))
-            .chain(
-                enums
-                    .iter()
-                    .filter_map(|enumeration| enumeration.primitive()),
-            )
-            .chain(
-                direct_vector_elements
-                    .iter()
-                    .filter_map(direct_vector::Element::runtime_primitive),
-            )
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(primitive::Support::new)
-            .collect::<Result<Vec<_>>>()?;
-        let wire_primitives = functions
-            .iter()
-            .flat_map(|function| function.wire_primitives())
-            .chain(
-                constants
-                    .iter()
-                    .flat_map(|constant| constant.wire_primitives()),
-            )
-            .chain(records.iter().flat_map(|record| record.wire_primitives()))
-            .chain(
-                enums
-                    .iter()
-                    .flat_map(|enumeration| enumeration.wire_primitives()),
-            )
-            .chain(classes.iter().flat_map(|class| class.wire_primitives()))
-            .chain(
-                callbacks
-                    .iter()
-                    .flat_map(|callback| callback.wire_primitives()),
-            )
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(primitive::Support::new)
-            .collect::<Result<Vec<_>>>()?;
-        let owned_primitives = owned_buffers
-            .iter()
-            .filter_map(|buffer| match buffer {
-                result::OwnedBuffer::Primitive(primitive)
-                | result::OwnedBuffer::OptionalPrimitive(primitive) => Some(*primitive),
-                result::OwnedBuffer::String
-                | result::OwnedBuffer::Bytes
-                | result::OwnedBuffer::RawWire
-                | result::OwnedBuffer::DirectVector(_) => None,
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(primitive::Support::new)
-            .collect::<Result<Vec<_>>>()?;
-        let string_arguments = functions
-            .iter()
-            .any(|function| function.has_string_argument())
-            || constants
-                .iter()
-                .any(|constant| constant.has_string_argument())
-            || records.iter().any(|record| record.has_string_argument())
-            || enums
-                .iter()
-                .any(|enumeration| enumeration.has_string_argument())
-            || classes.iter().any(|class| class.has_string_argument())
-            || callbacks
-                .iter()
-                .any(|callback| callback.has_string_argument());
-        let bytes_arguments = functions
-            .iter()
-            .any(|function| function.has_bytes_argument())
-            || constants
-                .iter()
-                .any(|constant| constant.has_bytes_argument())
-            || records.iter().any(|record| record.has_bytes_argument())
-            || enums
-                .iter()
-                .any(|enumeration| enumeration.has_bytes_argument())
-            || classes.iter().any(|class| class.has_bytes_argument())
-            || callbacks
-                .iter()
-                .any(|callback| callback.has_bytes_argument());
-        let raw_wire_arguments = functions
-            .iter()
-            .any(|function| function.has_raw_wire_argument())
-            || constants
-                .iter()
-                .any(|constant| constant.has_raw_wire_argument())
-            || records.iter().any(|record| record.has_raw_wire_argument())
-            || enums
-                .iter()
-                .any(|enumeration| enumeration.has_raw_wire_argument())
-            || classes.iter().any(|class| class.has_raw_wire_argument())
-            || callbacks
-                .iter()
-                .any(|callback| callback.has_raw_wire_argument());
+    fn new(bridge: &PythonCExtBridgeContract, artifacts: SupportArtifacts<'_>) -> Result<Self> {
+        let encoded_records = artifacts.has_encoded_records();
+        let data_enums = artifacts.has_data_enums();
+        let async_functions = artifacts.uses_async_protocol();
+        let owned_buffers = artifacts.owned_buffers();
+        let direct_vector_elements = artifacts.direct_vector_elements(&owned_buffers);
+        let primitives = artifacts.primitives(&direct_vector_elements)?;
+        let wire_primitives = artifacts.wire_primitives()?;
+        let owned_primitives = artifacts.owned_primitives(&owned_buffers)?;
+        let string_arguments = artifacts.has_string_arguments();
+        let bytes_arguments = artifacts.has_bytes_arguments();
+        let raw_wire_arguments = artifacts.has_raw_wire_arguments();
         Ok(Self {
             primitives,
             wire_primitives,
@@ -585,9 +660,9 @@ impl ModuleSupport {
             raw_wire_returns: owned_buffers.contains(&result::OwnedBuffer::RawWire),
             encoded_records,
             data_enums,
-            record_types: !records.is_empty(),
-            c_style_enums: !enums.is_empty(),
-            callback_handles: !callbacks.is_empty(),
+            record_types: !artifacts.records.is_empty(),
+            c_style_enums: !artifacts.enums.is_empty(),
+            callback_handles: !artifacts.callbacks.is_empty(),
             async_functions,
         })
     }
@@ -643,10 +718,6 @@ impl ModuleSupport {
         self.raw_wire_arguments
     }
 
-    fn uses_borrowed_wire_decoders(&self) -> bool {
-        self.string_arguments || self.bytes_arguments || self.raw_wire_arguments
-    }
-
     fn uses_owned_utf8(&self) -> bool {
         self.string_returns || self.async_functions
     }
@@ -676,14 +747,6 @@ impl ModuleSupport {
     }
 
     fn free_buffer_storage(bridge: &PythonCExtBridgeContract) -> Result<String> {
-        bridge
-            .functions()
-            .iter()
-            .find(|function| function.function().name() == "boltffi_free_buf")
-            .map(|function| function.storage_name().to_owned())
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "missing CPython free buffer support symbol",
-            })
+        Ok(bridge.buffer_free()?.storage_name().to_owned())
     }
 }

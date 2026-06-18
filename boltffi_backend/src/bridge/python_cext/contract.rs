@@ -150,6 +150,22 @@ impl PythonCExtBridgeContract {
             .find(|function| function.function().name() == symbol.name().as_str())
     }
 
+    /// Returns the loaded support function that releases a BoltFFI buffer.
+    pub fn buffer_free(&self) -> Result<&LoadedFunction> {
+        self.support_function(
+            "boltffi_free_buf",
+            "missing CPython free buffer support symbol",
+        )
+    }
+
+    /// Returns the loaded support function that copies bytes into a BoltFFI buffer.
+    pub fn buffer_from_bytes(&self) -> Result<&LoadedFunction> {
+        self.support_function(
+            "boltffi_buf_from_bytes",
+            "missing CPython buffer copy support symbol",
+        )
+    }
+
     /// Returns the C typedef selected for a direct source record.
     pub fn source_direct_record(&self, record: RecordId) -> Option<&c::Record> {
         self.source_direct_records.get(&record)
@@ -178,6 +194,16 @@ impl PythonCExtBridgeContract {
     /// Returns the bridge-owned loader method.
     pub fn loader_method(&self) -> &ExtensionMethod {
         &self.loader
+    }
+
+    fn support_function(&self, name: &'static str, shape: &'static str) -> Result<&LoadedFunction> {
+        self.functions
+            .iter()
+            .find(|function| function.function().name() == name)
+            .ok_or(Error::UnsupportedTarget {
+                target: "python",
+                shape,
+            })
     }
 }
 

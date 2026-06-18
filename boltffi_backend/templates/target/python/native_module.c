@@ -87,8 +87,10 @@ static int boltffi_python_wire_raw(PyObject *value, PyObject **out_wire, const u
     return ok;
 }
 {% endif %}
-{% if support.uses_borrowed_wire_decoders() %}
-static int boltffi_python_validate_borrowed_wire(const uint8_t *ptr, uintptr_t len) {
+{% if !codec_decoders.is_empty() || !codec_encoders.is_empty() %}
+static PyObject *boltffi_python_wire_codecs = NULL;
+
+static int boltffi_python_validate_codec_bytes(const uint8_t *ptr, uintptr_t len) {
     if (ptr == NULL && len != 0) {
         PyErr_SetString(PyExc_RuntimeError, "native callback argument contains an invalid buffer");
         return 0;
@@ -100,53 +102,94 @@ static int boltffi_python_validate_borrowed_wire(const uint8_t *ptr, uintptr_t l
     return 1;
 }
 
-static uint32_t boltffi_python_read_borrowed_u32_le(const uint8_t *buffer) {
-    return ((uint32_t)buffer[0])
-        | ((uint32_t)buffer[1] << 8)
-        | ((uint32_t)buffer[2] << 16)
-        | ((uint32_t)buffer[3] << 24);
+static PyObject *boltffi_python_register_wire_codec(PyObject *self, PyObject *args) {
+    const char *key = NULL;
+    PyObject *callable = NULL;
+    (void)self;
+    if (!PyArg_ParseTuple(args, "sO", &key, &callable)) {
+        return NULL;
+    }
+    if (!PyCallable_Check(callable)) {
+        PyErr_SetString(PyExc_TypeError, "wire codec must be callable");
+        return NULL;
+    }
+    if (boltffi_python_wire_codecs == NULL) {
+        boltffi_python_wire_codecs = PyDict_New();
+        if (boltffi_python_wire_codecs == NULL) {
+            return NULL;
+        }
+    }
+    if (PyDict_SetItemString(boltffi_python_wire_codecs, key, callable) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
 }
 
-static PyObject *boltffi_python_decode_borrowed_utf8(const uint8_t *ptr, uintptr_t len) {
-    uint32_t payload_len = 0;
-    if (!boltffi_python_validate_borrowed_wire(ptr, len)) {
+static PyObject *boltffi_python_wire_codec(const char *key) {
+    PyObject *callable = NULL;
+    if (boltffi_python_wire_codecs == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "wire codec registry is not initialized");
         return NULL;
     }
-    if (len < 4) {
-        PyErr_SetString(PyExc_RuntimeError, "native callback string argument is truncated");
+    callable = PyDict_GetItemString(boltffi_python_wire_codecs, key);
+    if (callable == NULL) {
+        PyErr_Format(PyExc_RuntimeError, "wire codec %s is not registered", key);
         return NULL;
     }
-    payload_len = boltffi_python_read_borrowed_u32_le(ptr);
-    if ((uintptr_t)payload_len > len - 4) {
-        PyErr_SetString(PyExc_RuntimeError, "native callback string argument length is invalid");
-        return NULL;
-    }
-    return PyUnicode_FromStringAndSize((const char *)(ptr + 4), (Py_ssize_t)payload_len);
+    return callable;
 }
 
-static PyObject *boltffi_python_decode_borrowed_bytes(const uint8_t *ptr, uintptr_t len) {
-    uint32_t payload_len = 0;
-    if (!boltffi_python_validate_borrowed_wire(ptr, len)) {
+static PyObject *boltffi_python_decode_wire_codec(const char *key, const uint8_t *ptr, uintptr_t len) {
+    PyObject *callable = NULL;
+    PyObject *wire = NULL;
+    PyObject *result = NULL;
+    if (!boltffi_python_validate_codec_bytes(ptr, len)) {
         return NULL;
     }
-    if (len < 4) {
-        PyErr_SetString(PyExc_RuntimeError, "native callback bytes argument is truncated");
+    callable = boltffi_python_wire_codec(key);
+    if (callable == NULL) {
         return NULL;
     }
-    payload_len = boltffi_python_read_borrowed_u32_le(ptr);
-    if ((uintptr_t)payload_len > len - 4) {
-        PyErr_SetString(PyExc_RuntimeError, "native callback bytes argument length is invalid");
+    wire = PyBytes_FromStringAndSize((const char *)ptr, (Py_ssize_t)len);
+    if (wire == NULL) {
         return NULL;
     }
-    return PyBytes_FromStringAndSize((const char *)(ptr + 4), (Py_ssize_t)payload_len);
+    result = PyObject_CallOneArg(callable, wire);
+    Py_DECREF(wire);
+    return result;
 }
 
-static PyObject *boltffi_python_decode_borrowed_raw_wire(const uint8_t *ptr, uintptr_t len) {
-    if (!boltffi_python_validate_borrowed_wire(ptr, len)) {
-        return NULL;
+static int boltffi_python_encode_wire_codec(const char *key, PyObject *value, PyObject **out_wire, const uint8_t **out_ptr, uintptr_t *out_len) {
+    PyObject *callable = boltffi_python_wire_codec(key);
+    PyObject *wire = NULL;
+    if (callable == NULL) {
+        return 0;
     }
-    return PyBytes_FromStringAndSize((const char *)ptr, (Py_ssize_t)len);
+    wire = PyObject_CallOneArg(callable, value);
+    if (wire == NULL) {
+        return 0;
+    }
+    if (!PyBytes_Check(wire)) {
+        Py_DECREF(wire);
+        PyErr_SetString(PyExc_TypeError, "wire codec must return bytes");
+        return 0;
+    }
+    *out_wire = wire;
+    *out_ptr = (const uint8_t *)PyBytes_AS_STRING(wire);
+    *out_len = (uintptr_t)PyBytes_GET_SIZE(wire);
+    return 1;
 }
+
+{% for decoder in codec_decoders %}
+static PyObject *{{ decoder.function() }}(const uint8_t *ptr, uintptr_t len) {
+    return boltffi_python_decode_wire_codec({{ decoder.key() }}, ptr, len);
+}
+{% endfor %}
+{% for encoder in codec_encoders %}
+static int {{ encoder.function() }}(PyObject *value, PyObject **out_wire, const uint8_t **out_ptr, uintptr_t *out_len) {
+    return boltffi_python_encode_wire_codec({{ encoder.key() }}, value, out_wire, out_ptr, out_len);
+}
+{% endfor %}
 {% endif %}
 {% if support.uses_owned_buffers() %}
 static uint16_t boltffi_python_read_u16_le(const uint8_t *buffer) {
@@ -1333,6 +1376,9 @@ static void boltffi_python_release_host_state(void) {
 {%- for cleanup in cleanup %}
     {{ cleanup }};
 {%- endfor %}
+{% if !codec_decoders.is_empty() || !codec_encoders.is_empty() %}
+    Py_CLEAR(boltffi_python_wire_codecs);
+{% endif %}
 }
 {% for function in functions %}
 {{ function }}
@@ -1344,6 +1390,9 @@ static void boltffi_python_release_host_state(void) {
 {{ stream }}
 {% endfor %}
 static PyMethodDef {{ method_table }}[] = {
+{% if !codec_decoders.is_empty() || !codec_encoders.is_empty() %}
+    {"_register_wire_codec", (PyCFunction)boltffi_python_register_wire_codec, METH_VARARGS, NULL},
+{% endif %}
 {%- for method in methods %}
     {"{{ method.python_name }}", (PyCFunction){{ method.c_function }}, {{ method.flags }}, NULL},
 {%- endfor %}

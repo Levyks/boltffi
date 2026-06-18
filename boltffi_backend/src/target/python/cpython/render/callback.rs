@@ -1,8 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    CallbackDecl, CallbackId, DeclarationRef, ErrorDecl, ExecutionDecl, HandlePresence,
-    ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl, ParamPlan,
-    Primitive, ReturnPlan, TypeRef, VTableSlot, native,
+    CallbackDecl, CallbackId, ClosureReturn, ErrorDecl, ExecutionDecl, HandlePresence,
+    HandleTarget, ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl,
+    ParamPlanRender, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef,
+    VTableSlot, WritePlan, native,
 };
 
 use crate::{
@@ -12,7 +13,8 @@ use crate::{
     },
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        cpython::render::{direct_vector, enumeration, primitive, record},
+        codec::{BorrowedPayload, OwnedPayload},
+        cpython::render::{direct, direct_vector, primitive},
         name_style::Name,
     },
 };
@@ -69,14 +71,7 @@ impl Callback {
                 target: "python",
                 shape: "callback handle constructor symbol not loaded",
             })?;
-        let copy_buffer = bridge
-            .functions()
-            .iter()
-            .find(|function| function.function().name() == "boltffi_buf_from_bytes")
-            .ok_or(Error::UnsupportedTarget {
-                target: "python",
-                shape: "missing CPython buffer copy support symbol",
-            })?;
+        let copy_buffer = bridge.buffer_from_bytes()?;
         let symbols = Symbols::from_declaration(declaration)?;
         let methods = declaration
             .protocol()
@@ -180,22 +175,7 @@ impl Symbols {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let callback = context
-            .bindings()
-            .decls()
-            .iter()
-            .find_map(|decl| match DeclarationRef::from(decl) {
-                DeclarationRef::Callback(callback) if callback.id() == callback_id => {
-                    Some(callback)
-                }
-                DeclarationRef::Record(_)
-                | DeclarationRef::Enum(_)
-                | DeclarationRef::Function(_)
-                | DeclarationRef::Class(_)
-                | DeclarationRef::Callback(_)
-                | DeclarationRef::Stream(_)
-                | DeclarationRef::Constant(_)
-                | DeclarationRef::CustomType(_) => None,
-            })
+            .callback(callback_id)
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "callback id without declaration",
@@ -581,16 +561,73 @@ impl<'field> MethodSignature<'field> {
     }
 
     fn return_param_count(plan: &ReturnPlan<Native, IntoRust>) -> Result<usize> {
-        match plan {
-            ReturnPlan::Void => Ok(0),
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. } => Ok(1),
+        plan.render_with(&mut CallbackSuccessOutCount)
+    }
+}
+
+struct CallbackSuccessOutCount;
+
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for CallbackSuccessOutCount {
+    type Output = Result<usize>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(0)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, _: &'plan TypeRef) -> Self::Output {
+        Self::slot_count(slot)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan WritePlan,
+        _: native::BufferShape,
+    ) -> Self::Output {
+        Self::slot_count(slot)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::slot_count(slot)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
+    }
+}
+
+impl CallbackSuccessOutCount {
+    fn slot_count(slot: ReturnValueSlot) -> Result<usize> {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(1),
+            ReturnValueSlot::ReturnSlot => Self::unsupported(),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
-                shape: "unsupported fallible callback success",
+                shape: "unknown fallible callback success slot",
             }),
         }
+    }
+
+    fn unsupported() -> Result<usize> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported fallible callback success",
+        })
     }
 }
 
@@ -624,21 +661,8 @@ struct MethodParam {
 impl MethodParam {
     fn arity(parameter: &ParamDecl<Native, OutOfRust>) -> Result<usize> {
         match parameter.payload() {
-            OutgoingParam::Value(ParamPlan::Direct { .. }) => Ok(1),
-            OutgoingParam::Value(ParamPlan::Encoded {
-                shape: native::BufferShape::Slice,
-                ..
-            })
-            | OutgoingParam::Value(ParamPlan::DirectVec { .. }) => Ok(2),
-            OutgoingParam::Value(ParamPlan::Handle { .. }) => Ok(1),
-            OutgoingParam::Value(ParamPlan::Encoded { .. })
-            | OutgoingParam::Value(ParamPlan::ScalarOption { .. }) => {
-                Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported callback method parameter",
-                })
-            }
-            OutgoingParam::Closure(_) | OutgoingParam::Value(_) => Err(Error::UnsupportedTarget {
+            OutgoingParam::Value(plan) => plan.render_with(&mut MethodParamArity),
+            OutgoingParam::Closure(_) => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown callback method parameter",
             }),
@@ -654,26 +678,14 @@ impl MethodParam {
         let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
         let object = format!("{name}_object");
         match parameter.payload() {
-            OutgoingParam::Value(ParamPlan::Direct { ty, .. }) => {
-                Self::direct(name, object, ty, c_types, bridge, context)
-            }
-            OutgoingParam::Value(ParamPlan::Encoded {
-                ty,
-                shape: native::BufferShape::Slice,
-                ..
-            }) => Self::encoded(name, object, ty, c_types, bridge, context),
-            OutgoingParam::Value(ParamPlan::DirectVec { element }) => {
-                Self::direct_vector_param(name, object, element, c_types, bridge, context)
-            }
-            OutgoingParam::Value(ParamPlan::Encoded { .. }) => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported callback method encoded parameter",
+            OutgoingParam::Value(plan) => plan.render_with(&mut MethodParamValue {
+                name,
+                object,
+                c_types,
+                bridge,
+                context,
             }),
-            OutgoingParam::Value(ParamPlan::Handle { .. }) => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "callback handle method parameter",
-            }),
-            OutgoingParam::Closure(_) | OutgoingParam::Value(_) => Err(Error::UnsupportedTarget {
+            OutgoingParam::Closure(_) => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown callback method parameter",
             }),
@@ -718,32 +730,19 @@ impl MethodParam {
                 shape: "callback direct parameter ABI mismatch",
             });
         }
-        let (expression, primitive) = match ty {
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                (format!("{}({name})", primitive.boxer()?), Some(primitive))
-            }
-            TypeRef::Record(record_id) => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                (format!("{}({name})", symbols.boxer()), None)
-            }
-            TypeRef::Enum(enum_id) => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                (format!("{}({name})", symbols.boxer()), None)
-            }
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported direct callback parameter",
-                });
-            }
-        };
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported direct callback parameter",
+        )?;
+        let expression = direct.box_expression(&name);
         Ok(Self {
             declarations: vec![TypeSyntax::new(&c_types[0]).declaration(&name)?],
             name,
             object,
             expression,
-            primitive,
+            primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
             string: false,
@@ -755,10 +754,8 @@ impl MethodParam {
     fn encoded(
         name: String,
         object: String,
-        ty: &TypeRef,
+        codec: &ReadPlan,
         c_types: &[c::Type],
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
     ) -> Result<Self> {
         let [pointer, length] = c_types else {
             return Err(Error::UnsupportedTarget {
@@ -768,65 +765,12 @@ impl MethodParam {
         };
         let pointer_name = format!("{name}_ptr");
         let length_name = format!("{name}_len");
-        let (expression, wire_primitive, string, bytes, raw_wire) = match ty {
-            TypeRef::String => (
-                format!("boltffi_python_decode_borrowed_utf8({pointer_name}, {length_name})"),
-                None,
-                true,
-                false,
-                false,
-            ),
-            TypeRef::Bytes => (
-                format!("boltffi_python_decode_borrowed_bytes({pointer_name}, {length_name})"),
-                None,
-                false,
-                true,
-                false,
-            ),
-            TypeRef::Record(record_id) => {
-                let decoder = record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .borrowed_decoder()
-                    .to_owned();
-                (
-                    format!("{decoder}({pointer_name}, {length_name})"),
-                    None,
-                    false,
-                    false,
-                    false,
-                )
-            }
-            TypeRef::Enum(enum_id) => {
-                let decoder = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .borrowed_decoder()
-                    .to_owned();
-                (
-                    format!("{decoder}({pointer_name}, {length_name})"),
-                    None,
-                    false,
-                    false,
-                    false,
-                )
-            }
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                (
-                    format!(
-                        "boltffi_python_decode_borrowed_raw_wire({pointer_name}, {length_name})"
-                    ),
-                    Some(primitive),
-                    false,
-                    false,
-                    true,
-                )
-            }
-            _ => (
-                format!("boltffi_python_decode_borrowed_raw_wire({pointer_name}, {length_name})"),
-                None,
-                false,
-                false,
-                true,
-            ),
-        };
+        let payload = BorrowedPayload::read(codec, &pointer_name, &length_name);
+        let wire_primitive = payload.primitive();
+        let string = payload.has_string();
+        let bytes = payload.has_bytes();
+        let raw_wire = payload.has_raw_wire();
+        let expression = payload.expression();
         Ok(Self {
             declarations: vec![
                 TypeSyntax::new(pointer).declaration(&pointer_name)?,
@@ -879,6 +823,125 @@ impl MethodParam {
     }
 }
 
+struct MethodParamArity;
+
+impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamArity {
+    type Output = Result<usize>;
+
+    fn direct(&mut self, _: &TypeRef, _: ()) -> Self::Output {
+        Ok(1)
+    }
+
+    fn encoded(
+        &mut self,
+        _: &TypeRef,
+        _: &ReadPlan,
+        shape: native::BufferShape,
+        _: (),
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Slice => Ok(2),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unsupported callback method parameter",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+        _: (),
+    ) -> Self::Output {
+        Ok(1)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported callback method parameter",
+        })
+    }
+
+    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+        Ok(2)
+    }
+}
+
+struct MethodParamValue<'ctype, 'bridge, 'context, 'bindings> {
+    name: String,
+    object: String,
+    c_types: &'ctype [c::Type],
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamValue<'_, '_, '_, '_> {
+    type Output = Result<MethodParam>;
+
+    fn direct(&mut self, ty: &TypeRef, _: ()) -> Self::Output {
+        MethodParam::direct(
+            self.name.clone(),
+            self.object.clone(),
+            ty,
+            self.c_types,
+            self.bridge,
+            self.context,
+        )
+    }
+
+    fn encoded(
+        &mut self,
+        _: &TypeRef,
+        codec: &ReadPlan,
+        shape: native::BufferShape,
+        _: (),
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Slice => {
+                MethodParam::encoded(self.name.clone(), self.object.clone(), codec, self.c_types)
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unsupported callback method encoded parameter",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+        _: (),
+    ) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "callback handle method parameter",
+        })
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unknown callback method parameter",
+        })
+    }
+
+    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+        MethodParam::direct_vector_param(
+            self.name.clone(),
+            self.object.clone(),
+            element,
+            self.c_types,
+            self.bridge,
+            self.context,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FallibleReturn {
     declarations: Vec<String>,
@@ -894,14 +957,14 @@ impl FallibleReturn {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let ErrorDecl::EncodedViaReturnSlot { ty: error, .. } = error else {
+        let ErrorDecl::EncodedViaReturnSlot { codec: error, .. } = error else {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "callback method error channel",
             });
         };
         let success = FallibleSuccess::new(plan, return_out, bridge, context)?;
-        let error = FallibleError::new(error, bridge, context)?;
+        let error = FallibleError::new(error)?;
         let declarations = return_out
             .map(|ty| TypeSyntax::new(ty).declaration("return_out"))
             .transpose()?
@@ -974,29 +1037,11 @@ impl FallibleSuccess {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => {
-                if return_out.is_some() {
-                    return Err(Error::UnsupportedTarget {
-                        target: "python",
-                        shape: "void callback success out-parameter",
-                    });
-                }
-                Ok(Self::void())
-            }
-            ReturnPlan::DirectViaOutPointer { ty } => {
-                Self::direct(ty, Self::out_type(return_out)?, bridge, context)
-            }
-            ReturnPlan::EncodedViaOutPointer {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::wire(ty, Self::out_type(return_out)?, bridge, context),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported fallible callback success",
-            }),
-        }
+        plan.render_with(&mut FallibleSuccessValue {
+            return_out,
+            bridge,
+            context,
+        })
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
@@ -1036,41 +1081,22 @@ impl FallibleSuccess {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let (parser, default_value, primitive) = match ty {
-            TypeRef::Primitive(primitive) => {
-                let source_primitive = *primitive;
-                let primitive = primitive::Runtime::new(source_primitive);
-                (
-                    primitive.parser()?.to_owned(),
-                    MethodReturn::default_value(source_primitive),
-                    Some(primitive),
-                )
-            }
-            TypeRef::Record(record_id) => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                (symbols.parser().to_owned(), "{0}".to_owned(), None)
-            }
-            TypeRef::Enum(enum_id) => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                (symbols.parser().to_owned(), "0".to_owned(), None)
-            }
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported direct callback success",
-                });
-            }
-        };
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported direct callback success",
+        )?;
         Ok(Self {
             out: "return_out".to_owned(),
             value: "return_success".to_owned(),
             c_type: TypeSyntax::new(out_type).anonymous()?,
-            default_value,
-            parser,
+            default_value: direct.default_value().to_owned(),
+            parser: direct.parser().to_owned(),
             wire: false,
             direct: true,
             void: false,
-            primitive,
+            primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
             string: false,
@@ -1079,34 +1105,29 @@ impl FallibleSuccess {
         })
     }
 
-    fn wire(
-        ty: &TypeRef,
-        out_type: &c::Type,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
+    fn wire(codec: &WritePlan, out_type: &c::Type) -> Result<Self> {
         if !matches!(out_type, c::Type::Buffer) {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "fallible callback encoded out-parameter",
             });
         }
-        let encoded = CompletionPayload::wire_parser(ty, bridge, context)?;
+        let encoded = OwnedPayload::write(codec);
         Ok(Self {
             out: "return_out".to_owned(),
             value: "return_success".to_owned(),
             c_type: String::new(),
             default_value: String::new(),
-            parser: encoded.parser,
+            parser: encoded.parser().to_owned(),
             wire: true,
             direct: false,
             void: false,
             primitive: None,
-            wire_primitive: encoded.primitive,
-            direct_vector: encoded.direct_vector,
-            string: encoded.string,
-            bytes: encoded.bytes,
-            raw_wire: encoded.raw_wire,
+            wire_primitive: encoded.primitive(),
+            direct_vector: encoded.direct_vector(),
+            string: encoded.has_string(),
+            bytes: encoded.has_bytes(),
+            raw_wire: encoded.has_raw_wire(),
         })
     }
 
@@ -1118,6 +1139,94 @@ impl FallibleSuccess {
                 shape: "fallible callback success out-parameter",
             }),
         }
+    }
+}
+
+struct FallibleSuccessValue<'out, 'bridge, 'context, 'bindings> {
+    return_out: Option<&'out c::Type>,
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'_, '_, '_, '_> {
+    type Output = Result<FallibleSuccess>;
+
+    fn void(&mut self) -> Self::Output {
+        if self.return_out.is_some() {
+            return Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "void callback success out-parameter",
+            });
+        }
+        Ok(FallibleSuccess::void())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => FallibleSuccess::direct(
+                ty,
+                FallibleSuccess::out_type(self.return_out)?,
+                self.bridge,
+                self.context,
+            ),
+            ReturnValueSlot::ReturnSlot => Self::unsupported(),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown fallible callback success slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        codec: &'plan WritePlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match (slot, shape) {
+            (ReturnValueSlot::OutPointer, native::BufferShape::Buffer) => {
+                FallibleSuccess::wire(codec, FallibleSuccess::out_type(self.return_out)?)
+            }
+            (ReturnValueSlot::OutPointer, _) | (ReturnValueSlot::ReturnSlot, _) => {
+                Self::unsupported()
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown fallible callback success slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
+    }
+}
+
+impl FallibleSuccessValue<'_, '_, '_, '_> {
+    fn unsupported() -> Result<FallibleSuccess> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported fallible callback success",
+        })
     }
 }
 
@@ -1133,20 +1242,16 @@ struct FallibleError {
 }
 
 impl FallibleError {
-    fn new(
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        let encoded = CompletionPayload::wire_parser(ty, bridge, context)?;
+    fn new(codec: &WritePlan) -> Result<Self> {
+        let encoded = OwnedPayload::write(codec);
         Ok(Self {
             value: "return_value".to_owned(),
-            parser: encoded.parser,
-            wire_primitive: encoded.primitive,
-            direct_vector: encoded.direct_vector,
-            string: encoded.string,
-            bytes: encoded.bytes,
-            raw_wire: encoded.raw_wire,
+            parser: encoded.parser().to_owned(),
+            wire_primitive: encoded.primitive(),
+            direct_vector: encoded.direct_vector(),
+            string: encoded.has_string(),
+            bytes: encoded.has_bytes(),
+            raw_wire: encoded.has_raw_wire(),
         })
     }
 
@@ -1182,8 +1287,8 @@ impl AsyncCompletion {
             ErrorDecl::None(_) => {
                 CompletionPayload::infallible(plan, signature.payload(), bridge, context)?
             }
-            ErrorDecl::EncodedViaReturnSlot { ty, .. } => {
-                CompletionPayload::fallible(plan, ty, signature.payload(), bridge, context)?
+            ErrorDecl::EncodedViaReturnSlot { codec, .. } => {
+                CompletionPayload::fallible(plan, codec, signature.payload(), bridge, context)?
             }
             _ => {
                 return Err(Error::UnsupportedTarget {
@@ -1277,58 +1382,16 @@ impl CompletionPayload {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => {
-                if payload.is_some() {
-                    return Err(Error::UnsupportedTarget {
-                        target: "python",
-                        shape: "async void callback completion payload",
-                    });
-                }
-                Ok(Self::void())
-            }
-            ReturnPlan::DirectViaReturnSlot { ty } => {
-                let payload = payload.ok_or(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "async direct callback completion without payload",
-                })?;
-                Self::direct(ty, payload, bridge, context)
-            }
-            ReturnPlan::EncodedViaReturnSlot {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => {
-                let payload = payload.ok_or(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "async encoded callback completion without payload",
-                })?;
-                Self::wire(ty, payload, bridge, context)
-            }
-            ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
-                let payload = payload.ok_or(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "async optional callback completion without payload",
-                })?;
-                Self::scalar_option(*primitive, payload)
-            }
-            ReturnPlan::DirectVecViaReturnSlot { element } => {
-                let payload = payload.ok_or(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "async vector callback completion without payload",
-                })?;
-                Self::vector(element, payload, bridge, context)
-            }
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported async callback return",
-            }),
-        }
+        plan.render_with(&mut AsyncCompletionPayload {
+            payload,
+            bridge,
+            context,
+        })
     }
 
     fn fallible(
         success: &ReturnPlan<Native, IntoRust>,
-        error: &TypeRef,
+        error: &WritePlan,
         payload: Option<&c::Type>,
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
@@ -1344,7 +1407,7 @@ impl CompletionPayload {
             });
         }
         let success = Self::fallible_success(success, payload, bridge, context)?;
-        let error = Self::wire(error, payload, bridge, context)?;
+        let error = Self::wire(error, payload)?;
         Ok(Self {
             error_parser: error.parser,
             error_direct_value: "completion_error_direct_value".to_owned(),
@@ -1416,36 +1479,17 @@ impl CompletionPayload {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let (parser, default_value, primitive) = match ty {
-            TypeRef::Primitive(primitive) => {
-                let source_primitive = *primitive;
-                let primitive = primitive::Runtime::new(source_primitive);
-                (
-                    primitive.parser()?.to_owned(),
-                    MethodReturn::default_value(source_primitive),
-                    Some(primitive),
-                )
-            }
-            TypeRef::Record(record_id) => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                (symbols.parser().to_owned(), "{0}".to_owned(), None)
-            }
-            TypeRef::Enum(enum_id) => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                (symbols.parser().to_owned(), "0".to_owned(), None)
-            }
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported async direct callback payload",
-                });
-            }
-        };
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported async direct callback payload",
+        )?;
         Self {
             value: "completion_value".to_owned(),
             c_type: String::new(),
-            default_value,
-            parser,
+            default_value: direct.default_value().to_owned(),
+            parser: direct.parser().to_owned(),
             error_parser: String::new(),
             direct_value: String::new(),
             direct_type: String::new(),
@@ -1457,7 +1501,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive,
+            primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
             string: false,
@@ -1467,24 +1511,19 @@ impl CompletionPayload {
         .with_payload_type(payload)
     }
 
-    fn wire(
-        ty: &TypeRef,
-        payload: &c::Type,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
+    fn wire(codec: &WritePlan, payload: &c::Type) -> Result<Self> {
         if !matches!(payload, c::Type::Buffer) {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "async wire callback payload ABI mismatch",
             });
         }
-        let encoded = Self::wire_parser(ty, bridge, context)?;
+        let encoded = OwnedPayload::write(codec);
         Self {
             value: "completion_value".to_owned(),
             c_type: String::new(),
             default_value: "{0}".to_owned(),
-            parser: encoded.parser,
+            parser: encoded.parser().to_owned(),
             error_parser: String::new(),
             direct_value: String::new(),
             direct_type: String::new(),
@@ -1497,11 +1536,11 @@ impl CompletionPayload {
             fallible: false,
             void: false,
             primitive: None,
-            wire_primitive: encoded.primitive,
-            direct_vector: encoded.direct_vector,
-            string: encoded.string,
-            bytes: encoded.bytes,
-            raw_wire: encoded.raw_wire,
+            wire_primitive: encoded.primitive(),
+            direct_vector: encoded.direct_vector(),
+            string: encoded.has_string(),
+            bytes: encoded.has_bytes(),
+            raw_wire: encoded.has_raw_wire(),
         }
         .with_payload_type(payload)
     }
@@ -1585,21 +1624,11 @@ impl CompletionPayload {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => Self::wire_empty(payload),
-            ReturnPlan::EncodedViaOutPointer {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::wire(ty, payload, bridge, context),
-            ReturnPlan::DirectViaOutPointer { ty } => {
-                Self::direct_bytes(ty, payload, bridge, context)
-            }
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported async fallible callback success",
-            }),
-        }
+        plan.render_with(&mut AsyncCompletionSuccess {
+            payload,
+            bridge,
+            context,
+        })
     }
 
     fn direct_bytes(
@@ -1614,51 +1643,20 @@ impl CompletionPayload {
                 shape: "async direct-byte callback payload ABI mismatch",
             });
         }
-        let direct_type = match ty {
-            TypeRef::Primitive(primitive) => {
-                TypeSyntax::new(&c::Type::primitive(*primitive)?).anonymous()?
-            }
-            TypeRef::Record(record_id) => {
-                record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .c_type()?
-                    .to_owned()
-            }
-            TypeRef::Enum(enum_id) => {
-                enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .c_type()?
-                    .to_owned()
-            }
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unsupported async direct-byte callback payload",
-                });
-            }
-        };
-        let parser = match ty {
-            TypeRef::Primitive(primitive) => {
-                primitive::Runtime::new(*primitive).parser()?.to_owned()
-            }
-            TypeRef::Record(record_id) => {
-                record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .parser()
-                    .to_owned()
-            }
-            TypeRef::Enum(enum_id) => {
-                enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .parser()
-                    .to_owned()
-            }
-            _ => unreachable!(),
-        };
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            bridge,
+            context,
+            "unsupported async direct-byte callback payload",
+        )?;
         Self {
             value: "completion_value".to_owned(),
             c_type: String::new(),
             default_value: "{0}".to_owned(),
-            parser,
+            parser: direct.parser().to_owned(),
             error_parser: String::new(),
             direct_value: "completion_direct_value".to_owned(),
-            direct_type,
+            direct_type: direct.c_type().to_owned(),
             error_direct_value: String::new(),
             error_direct_type: String::new(),
             wire: false,
@@ -1710,35 +1708,6 @@ impl CompletionPayload {
         .with_payload_type(payload)
     }
 
-    fn wire_parser(
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<EncodedPayload> {
-        match ty {
-            TypeRef::String => Ok(EncodedPayload::string()),
-            TypeRef::Bytes => Ok(EncodedPayload::bytes()),
-            TypeRef::Primitive(primitive) => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Ok(EncodedPayload::primitive(
-                    primitive.wire_encoder()?,
-                    primitive,
-                ))
-            }
-            TypeRef::Record(record_id) => Ok(EncodedPayload::parser(
-                record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .parser()
-                    .to_owned(),
-            )),
-            TypeRef::Enum(enum_id) => Ok(EncodedPayload::parser(
-                enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .wire_encoder()
-                    .to_owned(),
-            )),
-            _ => Ok(EncodedPayload::raw_wire()),
-        }
-    }
-
     fn with_payload_type(mut self, payload: &c::Type) -> Result<Self> {
         let payload_type = TypeSyntax::new(payload).anonymous()?;
         self.c_type = payload_type.clone();
@@ -1750,70 +1719,187 @@ impl CompletionPayload {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct EncodedPayload {
-    parser: String,
-    primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+struct AsyncCompletionPayload<'payload, 'bridge, 'context, 'bindings> {
+    payload: Option<&'payload c::Type>,
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
 }
 
-impl EncodedPayload {
-    fn string() -> Self {
-        Self {
-            parser: "boltffi_python_wire_string".to_owned(),
-            primitive: None,
-            direct_vector: None,
-            string: true,
-            bytes: false,
-            raw_wire: false,
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload<'_, '_, '_, '_> {
+    type Output = Result<CompletionPayload>;
+
+    fn void(&mut self) -> Self::Output {
+        if self.payload.is_some() {
+            return Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "async void callback completion payload",
+            });
+        }
+        Ok(CompletionPayload::void())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+        if slot != ReturnValueSlot::ReturnSlot {
+            return Self::unsupported();
+        }
+        CompletionPayload::direct(
+            ty,
+            self.payload.ok_or(Error::UnsupportedTarget {
+                target: "python",
+                shape: "async direct callback completion without payload",
+            })?,
+            self.bridge,
+            self.context,
+        )
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        codec: &'plan WritePlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match (slot, shape) {
+            (ReturnValueSlot::ReturnSlot, native::BufferShape::Buffer) => CompletionPayload::wire(
+                codec,
+                self.payload.ok_or(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "async encoded callback completion without payload",
+                })?,
+            ),
+            (ReturnValueSlot::ReturnSlot, _) | (ReturnValueSlot::OutPointer, _) => {
+                Self::unsupported()
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown async callback return slot",
+            }),
         }
     }
 
-    fn bytes() -> Self {
-        Self {
-            parser: "boltffi_python_wire_bytes".to_owned(),
-            primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: true,
-            raw_wire: false,
+    fn handle(
+        &mut self,
+        _: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
+        CompletionPayload::scalar_option(
+            primitive,
+            self.payload.ok_or(Error::UnsupportedTarget {
+                target: "python",
+                shape: "async optional callback completion without payload",
+            })?,
+        )
+    }
+
+    fn direct_vector(&mut self, element: &'plan TypeRef) -> Self::Output {
+        CompletionPayload::vector(
+            element,
+            self.payload.ok_or(Error::UnsupportedTarget {
+                target: "python",
+                shape: "async vector callback completion without payload",
+            })?,
+            self.bridge,
+            self.context,
+        )
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
+    }
+}
+
+impl AsyncCompletionPayload<'_, '_, '_, '_> {
+    fn unsupported() -> Result<CompletionPayload> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported async callback return",
+        })
+    }
+}
+
+struct AsyncCompletionSuccess<'payload, 'bridge, 'context, 'bindings> {
+    payload: &'payload c::Type,
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionSuccess<'_, '_, '_, '_> {
+    type Output = Result<CompletionPayload>;
+
+    fn void(&mut self) -> Self::Output {
+        CompletionPayload::wire_empty(self.payload)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => {
+                CompletionPayload::direct_bytes(ty, self.payload, self.bridge, self.context)
+            }
+            ReturnValueSlot::ReturnSlot => Self::unsupported(),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown async fallible callback success slot",
+            }),
         }
     }
 
-    fn primitive(parser: impl Into<String>, primitive: primitive::Runtime) -> Self {
-        Self {
-            parser: parser.into(),
-            primitive: Some(primitive),
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        codec: &'plan WritePlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match (slot, shape) {
+            (ReturnValueSlot::OutPointer, native::BufferShape::Buffer) => {
+                CompletionPayload::wire(codec, self.payload)
+            }
+            (ReturnValueSlot::OutPointer, _) | (ReturnValueSlot::ReturnSlot, _) => {
+                Self::unsupported()
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown async fallible callback success slot",
+            }),
         }
     }
 
-    fn parser(parser: impl Into<String>) -> Self {
-        Self {
-            parser: parser.into(),
-            primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
-        }
+    fn handle(
+        &mut self,
+        _: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::unsupported()
     }
 
-    fn raw_wire() -> Self {
-        Self {
-            parser: "boltffi_python_wire_raw".to_owned(),
-            primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: true,
-        }
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
+    }
+}
+
+impl AsyncCompletionSuccess<'_, '_, '_, '_> {
+    fn unsupported() -> Result<CompletionPayload> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported async fallible callback success",
+        })
     }
 }
 
@@ -1874,105 +1960,11 @@ impl MethodReturn {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        match plan {
-            ReturnPlan::Void => Ok(Self {
-                c_type: TypeSyntax::new(c_type).anonymous()?,
-                parser: String::new(),
-                default_value: String::new(),
-                value: String::new(),
-                primitive: None,
-                wire_primitive: None,
-                direct_vector: None,
-                wire: false,
-                string: false,
-                bytes: false,
-                raw_wire: false,
-                void: true,
-            }),
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(primitive),
-            } => {
-                let source_primitive = *primitive;
-                let primitive = primitive::Runtime::new(source_primitive);
-                Ok(Self {
-                    c_type: TypeSyntax::new(c_type).anonymous()?,
-                    parser: primitive.parser()?.to_owned(),
-                    default_value: Self::default_value(source_primitive),
-                    value: "return_value".to_owned(),
-                    primitive: Some(primitive),
-                    wire_primitive: None,
-                    direct_vector: None,
-                    wire: false,
-                    string: false,
-                    bytes: false,
-                    raw_wire: false,
-                    void: false,
-                })
-            }
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Record(record_id),
-            } => {
-                let symbols = record::Symbols::from_record_id(*record_id, bridge, context)?;
-                Ok(Self::direct(
-                    c_type,
-                    symbols.parser().to_owned(),
-                    "{0}".to_owned(),
-                )?)
-            }
-            ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(enum_id),
-            } => {
-                let symbols = enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?;
-                Ok(Self::direct(
-                    c_type,
-                    symbols.parser().to_owned(),
-                    "0".to_owned(),
-                )?)
-            }
-            ReturnPlan::EncodedViaReturnSlot {
-                ty,
-                shape: native::BufferShape::Buffer,
-                ..
-            } => Self::encoded(c_type, ty, bridge, context),
-            ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
-                let primitive = primitive::Runtime::new(*primitive);
-                Ok(Self::wire(
-                    c_type,
-                    primitive.optional_wire_encoder()?,
-                    None,
-                    Some(primitive),
-                    false,
-                    false,
-                    false,
-                )?)
-            }
-            ReturnPlan::DirectVecViaReturnSlot { element } => {
-                let element = direct_vector::Element::from_type_ref(element, bridge, context)?;
-                Ok(Self::wire(
-                    c_type,
-                    element.vector_encoder().to_owned(),
-                    Some(element),
-                    None,
-                    false,
-                    false,
-                    false,
-                )?)
-            }
-            ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. }
-            | ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported callback method return",
-            }),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unknown callback method return",
-            }),
-        }
+        plan.render_with(&mut CallbackMethodReturnValue {
+            c_type,
+            bridge,
+            context,
+        })
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
@@ -1999,102 +1991,21 @@ impl MethodReturn {
         self.raw_wire
     }
 
-    fn default_value(primitive: Primitive) -> String {
-        match primitive {
-            Primitive::Bool => "false".to_owned(),
-            Primitive::F32 => "0.0f".to_owned(),
-            Primitive::F64 => "0.0".to_owned(),
-            _ => "0".to_owned(),
-        }
-    }
-
     fn has_value(&self) -> bool {
         !self.void
     }
 
-    fn direct(c_type: &c::Type, parser: String, default_value: String) -> Result<Self> {
-        Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
-            parser,
-            default_value,
-            value: "return_value".to_owned(),
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
-            wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
-            void: false,
-        })
-    }
-
-    fn encoded(
-        c_type: &c::Type,
-        ty: &TypeRef,
-        bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<Native>,
-    ) -> Result<Self> {
-        match ty {
-            TypeRef::String => Self::wire(
-                c_type,
-                "boltffi_python_wire_string".to_owned(),
-                None,
-                None,
-                true,
-                false,
-                false,
-            ),
-            TypeRef::Bytes => Self::wire(
-                c_type,
-                "boltffi_python_wire_bytes".to_owned(),
-                None,
-                None,
-                false,
-                true,
-                false,
-            ),
-            TypeRef::Primitive(primitive) => Self::wire(
-                c_type,
-                primitive::Runtime::new(*primitive).wire_encoder()?,
-                None,
-                Some(primitive::Runtime::new(*primitive)),
-                false,
-                false,
-                false,
-            ),
-            TypeRef::Record(record_id) => Self::wire(
-                c_type,
-                record::Symbols::from_record_id(*record_id, bridge, context)?
-                    .parser()
-                    .to_owned(),
-                None,
-                None,
-                false,
-                false,
-                false,
-            ),
-            TypeRef::Enum(enum_id) => Self::wire(
-                c_type,
-                enumeration::Symbols::from_enum_id(*enum_id, bridge, context)?
-                    .parser()
-                    .to_owned(),
-                None,
-                None,
-                false,
-                false,
-                false,
-            ),
-            _ => Self::wire(
-                c_type,
-                "boltffi_python_wire_raw".to_owned(),
-                None,
-                None,
-                false,
-                false,
-                true,
-            ),
-        }
+    fn encoded(c_type: &c::Type, codec: &WritePlan) -> Result<Self> {
+        let encoded = OwnedPayload::write(codec);
+        Self::wire(
+            c_type,
+            encoded.parser().to_owned(),
+            encoded.direct_vector(),
+            encoded.primitive(),
+            encoded.has_string(),
+            encoded.has_bytes(),
+            encoded.has_raw_wire(),
+        )
     }
 
     fn wire(
@@ -2119,6 +2030,131 @@ impl MethodReturn {
             bytes,
             raw_wire,
             void: false,
+        })
+    }
+}
+
+struct CallbackMethodReturnValue<'ctype, 'bridge, 'context, 'bindings> {
+    c_type: &'ctype c::Type,
+    bridge: &'bridge PythonCExtBridgeContract,
+    context: &'context RenderContext<'bindings, Native>,
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
+    for CallbackMethodReturnValue<'_, '_, '_, '_>
+{
+    type Output = Result<MethodReturn>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(MethodReturn {
+            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            parser: String::new(),
+            default_value: String::new(),
+            value: String::new(),
+            primitive: None,
+            wire_primitive: None,
+            direct_vector: None,
+            wire: false,
+            string: false,
+            bytes: false,
+            raw_wire: false,
+            void: true,
+        })
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+        if slot != ReturnValueSlot::ReturnSlot {
+            return Self::unsupported();
+        }
+        let direct = direct::NativeSlot::from_type_ref(
+            ty,
+            self.bridge,
+            self.context,
+            "unsupported callback method return",
+        )?;
+        Ok(MethodReturn {
+            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            parser: direct.parser().to_owned(),
+            default_value: direct.default_value().to_owned(),
+            value: "return_value".to_owned(),
+            primitive: direct.primitive(),
+            wire_primitive: None,
+            direct_vector: None,
+            wire: false,
+            string: false,
+            bytes: false,
+            raw_wire: false,
+            void: false,
+        })
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        codec: &'plan WritePlan,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match (slot, shape) {
+            (ReturnValueSlot::ReturnSlot, native::BufferShape::Buffer) => {
+                MethodReturn::encoded(self.c_type, codec)
+            }
+            (ReturnValueSlot::ReturnSlot, _) | (ReturnValueSlot::OutPointer, _) => {
+                Self::unsupported()
+            }
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown callback method return",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        Self::unsupported()
+    }
+
+    fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
+        let primitive = primitive::Runtime::new(primitive);
+        MethodReturn::wire(
+            self.c_type,
+            primitive.optional_wire_encoder()?,
+            None,
+            Some(primitive),
+            false,
+            false,
+            false,
+        )
+    }
+
+    fn direct_vector(&mut self, element: &'plan TypeRef) -> Self::Output {
+        let element = direct_vector::Element::from_type_ref(element, self.bridge, self.context)?;
+        MethodReturn::wire(
+            self.c_type,
+            element.vector_encoder().to_owned(),
+            Some(element),
+            None,
+            false,
+            false,
+            false,
+        )
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
+        Self::unsupported()
+    }
+}
+
+impl CallbackMethodReturnValue<'_, '_, '_, '_> {
+    fn unsupported() -> Result<MethodReturn> {
+        Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "unsupported callback method return",
         })
     }
 }

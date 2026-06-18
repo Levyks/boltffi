@@ -210,9 +210,11 @@ def _boltffi_wire_result(value, encode_ok, encode_err) -> bytes:
     return b"\x01" + encode_err(payload)
 
 
-def _boltffi_wire_sequence(value, encode) -> bytes:
+def _boltffi_wire_sequence(value, count, encode) -> bytes:
     items = list(value)
-    return _boltffi_u32(len(items)) + b"".join(encode(item) for item in items)
+    if len(items) != count:
+        raise ValueError("invalid BoltFFI sequence count")
+    return _boltffi_u32(count) + b"".join(encode(item) for item in items)
 
 
 def _boltffi_wire_map(value, encode_key, encode_value) -> bytes:
@@ -341,6 +343,22 @@ def _boltffi_read_wire(data: bytes, decode):
     return value
 
 {% endif %}
+{% for decoder in codec_decoders %}
+def {{ decoder.name() }}(data: bytes):
+    return _boltffi_read_wire(data, lambda reader: {{ decoder.expression() }})
+
+
+_native._register_wire_codec({{ decoder.key() }}, {{ decoder.name() }})
+
+{% endfor %}
+{% for encoder in codec_encoders %}
+def {{ encoder.name() }}({{ encoder.argument() }}) -> bytes:
+    return {{ encoder.expression() }}
+
+
+_native._register_wire_codec({{ encoder.key() }}, {{ encoder.name() }})
+
+{% endfor %}
 {% for record in records %}
 @dataclass(frozen=True, slots=True)
 class {{ record.class_name }}:
