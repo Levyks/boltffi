@@ -15,6 +15,8 @@ pub mod error;
 pub mod files;
 /// Host backend traits.
 pub mod host;
+/// Typed language syntax fragments.
+pub mod syntax;
 /// Target composition.
 pub mod target;
 
@@ -33,4 +35,5 @@ pub use files::{
     ImportDirective, RenderedDeclaration, TextChunk,
 };
 pub use host::HostBackend;
+pub use syntax::{LanguageSyntax, SyntaxFragment};
 pub use target::{BridgeLayer, Target};

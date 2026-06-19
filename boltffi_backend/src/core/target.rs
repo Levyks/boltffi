@@ -260,14 +260,44 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::fmt;
+
     use boltffi_ast::PackageInfo;
     use boltffi_binding::{Bindings, Native, lower};
 
     use crate::core::{
         BindingCapability, BridgeCapabilities, BridgeCapability, BridgeContract,
-        CapabilityRequirements, Emitted, Error, GeneratedOutput, HostCapabilities, RenderContext,
-        RenderedDeclaration, Result, bridge, contract::sealed, host,
+        CapabilityRequirements, Emitted, Error, GeneratedOutput, HostCapabilities, LanguageSyntax,
+        RenderContext, RenderedDeclaration, Result, bridge, contract::sealed, host,
+        syntax::sealed as syntax_sealed,
     };
+
+    #[derive(Clone)]
+    struct TestFragment;
+
+    impl fmt::Display for TestFragment {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("test")
+        }
+    }
+
+    impl syntax_sealed::SyntaxFragment for TestFragment {}
+
+    #[derive(Clone, Copy)]
+    struct TestSyntax;
+
+    impl LanguageSyntax for TestSyntax {
+        const KEYWORDS: &'static [&'static str] = &[];
+
+        type Identifier = TestFragment;
+        type Type = TestFragment;
+        type Expr = TestFragment;
+        type Stmt = TestFragment;
+        type Literal = TestFragment;
+        type Arguments = TestFragment;
+    }
+
+    impl syntax_sealed::LanguageSyntax for TestSyntax {}
 
     fn function_bindings() -> Bindings<Native> {
         let source = boltffi_scan::scan_file(
@@ -308,6 +338,7 @@ mod tests {
         type Surface = Native;
         type Input = Bindings<Native>;
         type Contract = NativeContract;
+        type Syntax = TestSyntax;
 
         fn build_contract(&self, _input: &Self::Input) -> Result<Self::Contract> {
             Ok(NativeContract {
@@ -338,6 +369,7 @@ mod tests {
     impl host::HostBackend for SwiftHost {
         type Surface = Native;
         type Bridge = NativeContract;
+        type Syntax = TestSyntax;
 
         fn name(&self) -> &'static str {
             "swift"

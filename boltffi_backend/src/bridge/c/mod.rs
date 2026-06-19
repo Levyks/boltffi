@@ -6,7 +6,7 @@
 
 mod contract;
 mod header;
-pub(crate) mod identifier;
+mod identifier;
 mod name;
 pub(crate) mod syntax;
 mod template;
@@ -16,6 +16,8 @@ pub use contract::{
     SupportFunctions, Type,
 };
 pub use header::CBridge;
+pub use identifier::Identifier;
+pub use syntax::{ArgumentList, Expression, Literal, Statement, Syntax, TypeFragment};
 
 #[cfg(test)]
 mod tests {

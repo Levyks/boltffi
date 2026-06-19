@@ -23,6 +23,6 @@ pub use core::{
     BridgeCapability, CapabilityRequirements, CapabilitySet, CapabilityStatus, CoverageMode,
     CoverageReport, DeclarationLabel, Diagnostic, Emitted, Error, FallbackPolicy, FileAssembler,
     FileGroup, FileLayout, FilePath, FilePlan, GeneratedFile, GeneratedOutput, HelperId,
-    HelperPolicy, HostCapabilities, ImportDirective, RenderContext, RenderedDeclaration, Result,
-    Target, TextChunk, UnsupportedDeclaration,
+    HelperPolicy, HostCapabilities, ImportDirective, LanguageSyntax, RenderContext,
+    RenderedDeclaration, Result, SyntaxFragment, Target, TextChunk, UnsupportedDeclaration,
 };
