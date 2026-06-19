@@ -68,9 +68,10 @@ mod tests {
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
     use crate::{
-        Bindings, CodecNode, Decl, ErrorDecl, ExecutionDecl, FunctionDecl, IntoRust, Native,
-        OutOfRust, ParamPlan, Primitive as BindingPrimitive, Receive, RecordDecl, RecordId,
-        ReturnPlan, SurfaceLower, TypeRef, ValueRef, Wasm32, native, wasm32,
+        Bindings, CodecNode, Decl, DirectValueType, DirectVectorElementType, ErrorDecl,
+        ExecutionDecl, FunctionDecl, IntoRust, Native, OutOfRust, ParamPlan,
+        Primitive as BindingPrimitive, Receive, RecordDecl, RecordId, ReturnPlan, SurfaceLower,
+        TypeRef, ValueRef, Wasm32, native, wasm32,
     };
 
     struct TestContract {
@@ -236,14 +237,14 @@ mod tests {
         assert_eq!(
             callable.params()[0].as_value().unwrap(),
             &ParamPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
                 receive: Receive::ByValue,
             }
         );
         assert_eq!(
             callable.returns().plan(),
             &ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
             }
         );
     }
@@ -324,7 +325,7 @@ mod tests {
         assert_eq!(
             callable.returns().plan(),
             &ReturnPlan::DirectViaOutPointer {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
             }
         );
         assert_native_string_error(callable.error());
@@ -636,7 +637,7 @@ mod tests {
         assert_eq!(
             function.callable().params()[0].as_value().unwrap(),
             &ParamPlan::Direct {
-                ty: TypeRef::Record(RecordId::from_raw(0)),
+                ty: DirectValueType::Record(RecordId::from_raw(0)),
                 receive: Receive::ByValue,
             }
         );
@@ -755,7 +756,8 @@ mod tests {
         assert_eq!(
             first_function(&bindings).callable().returns().plan(),
             &ReturnPlan::DirectVecViaReturnSlot {
-                element: TypeRef::Primitive(BindingPrimitive::U32),
+                element: DirectVectorElementType::primitive(BindingPrimitive::U32)
+                    .expect("u32 is a direct-vector primitive"),
             }
         );
     }
@@ -773,7 +775,8 @@ mod tests {
         assert_eq!(
             first_function(&bindings).callable().returns().plan(),
             &ReturnPlan::DirectVecViaReturnSlot {
-                element: TypeRef::Primitive(BindingPrimitive::U32),
+                element: DirectVectorElementType::primitive(BindingPrimitive::U32)
+                    .expect("u32 is a direct-vector primitive"),
             }
         );
     }
@@ -791,7 +794,7 @@ mod tests {
 
         match first_function(&bindings).callable().returns().plan() {
             ReturnPlan::DirectVecViaReturnSlot {
-                element: TypeRef::Record(_),
+                element: DirectVectorElementType::Record(_),
             } => {}
             other => panic!("expected DirectVec of direct record, got {other:?}"),
         }
@@ -940,7 +943,8 @@ mod tests {
         assert_eq!(
             first_param_lower(&bindings),
             &ParamPlan::DirectVec {
-                element: TypeRef::Primitive(BindingPrimitive::U32),
+                element: DirectVectorElementType::primitive(BindingPrimitive::U32)
+                    .expect("u32 is a direct-vector primitive"),
             }
         );
     }
@@ -959,7 +963,8 @@ mod tests {
         assert_eq!(
             first_param_lower(&bindings),
             &ParamPlan::DirectVec {
-                element: TypeRef::Primitive(BindingPrimitive::U32),
+                element: DirectVectorElementType::primitive(BindingPrimitive::U32)
+                    .expect("u32 is a direct-vector primitive"),
             }
         );
     }
@@ -978,7 +983,7 @@ mod tests {
 
         match first_param_lower(&bindings) {
             ParamPlan::DirectVec {
-                element: TypeRef::Record(_),
+                element: DirectVectorElementType::Record(_),
             } => {}
             other => panic!("expected DirectVec of direct record, got {other:?}"),
         }

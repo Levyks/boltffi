@@ -575,9 +575,9 @@ mod tests {
     use crate::lower::lower;
     use crate::lower::{LowerErrorKind, UnsupportedType};
     use crate::{
-        Bindings, CallbackDecl, CodecNode, Decl, ErrorDecl, ExecutionDecl, HandlePresence,
-        HandleTarget, Native, ParamPlan, Receive, ReturnPlan, SurfaceLower, TypeRef, ValueRef,
-        Wasm32, native, wasm32,
+        Bindings, CallbackDecl, CodecNode, Decl, DirectValueType, ErrorDecl, ExecutionDecl,
+        HandlePresence, HandleTarget, Native, ParamPlan, Receive, ReturnPlan, SurfaceLower,
+        TypeRef, ValueRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -1012,7 +1012,7 @@ mod tests {
         assert!(matches!(
             params[0].as_value().unwrap(),
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(crate::Primitive::I32),
+                ty: DirectValueType::Primitive(crate::Primitive::I32),
                 // direction is OutOfRust (Rust pushes args to foreign
                 // implementation), so the slot has no Rust-side receive mode
                 receive: (),
@@ -1065,7 +1065,7 @@ mod tests {
         assert_eq!(outgoing.invoke().params().len(), 1);
         match outgoing.invoke().params()[0].as_value().unwrap() {
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(crate::Primitive::U32),
+                ty: DirectValueType::Primitive(crate::Primitive::U32),
                 receive: Receive::ByValue,
             } => {}
             other => panic!("expected u32 direct param on invoke, got {other:?}"),
@@ -1140,7 +1140,7 @@ mod tests {
         assert_eq!(invoke.params().len(), 1);
         match invoke.params()[0].as_value().unwrap() {
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(crate::Primitive::U32),
+                ty: DirectValueType::Primitive(crate::Primitive::U32),
                 receive: Receive::ByValue,
             } => {}
             other => panic!("expected u32 direct param on wasm closure invoke, got {other:?}"),
@@ -1176,14 +1176,14 @@ mod tests {
         assert_eq!(invoke.params().len(), 1);
         match invoke.params()[0].as_value().unwrap() {
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(crate::Primitive::U32),
+                ty: DirectValueType::Primitive(crate::Primitive::U32),
                 receive: (),
             } => {}
             other => panic!("expected u32 invoke param with OutOfRust direction, got {other:?}"),
         }
         match invoke.returns().plan() {
             ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(crate::Primitive::U32),
+                ty: DirectValueType::Primitive(crate::Primitive::U32),
             } => {}
             other => panic!("expected u32 direct invoke return, got {other:?}"),
         }
@@ -1256,14 +1256,14 @@ mod tests {
         assert_eq!(invoke.params().len(), 1);
         match invoke.params()[0].as_value().unwrap() {
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(crate::Primitive::U32),
+                ty: DirectValueType::Primitive(crate::Primitive::U32),
                 receive: (),
             } => {}
             other => panic!("expected u32 invoke param with OutOfRust direction, got {other:?}"),
         }
         match invoke.returns().plan() {
             ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(crate::Primitive::U32),
+                ty: DirectValueType::Primitive(crate::Primitive::U32),
             } => {}
             other => panic!("expected u32 direct invoke return, got {other:?}"),
         }
@@ -2039,7 +2039,7 @@ mod tests {
         assert!(matches!(
             callable.params()[0].as_value().unwrap(),
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(crate::Primitive::I32),
+                ty: DirectValueType::Primitive(crate::Primitive::I32),
                 receive: (),
             }
         ));

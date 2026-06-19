@@ -1,22 +1,10 @@
 use boltffi_ast::{Primitive as SourcePrimitive, ReprAttr, ReprItem, TypeExpr};
 
-use crate::{IntegerRepr, Primitive};
+use crate::{DirectFieldType, IntegerRepr, Primitive};
 
-/// Size and alignment of a primitive whose ABI shape is fixed across
-/// every supported target.
-///
-/// Records that contain only fixed-shape primitives are eligible for the
-/// direct memory layout. Primitives with platform-dependent width
-/// (`isize`/`usize`) deliberately have no [`FixedPrimitive`].
-#[derive(Clone, Copy)]
-pub(super) struct FixedPrimitive {
-    pub(super) size: u64,
-    pub(super) alignment: u64,
-}
-
-pub(super) fn fixed_primitive(type_expr: &TypeExpr) -> Option<FixedPrimitive> {
+pub(super) fn direct_field_type(type_expr: &TypeExpr) -> Option<DirectFieldType> {
     match type_expr {
-        TypeExpr::Primitive(primitive) => FixedPrimitive::from_source(*primitive),
+        TypeExpr::Primitive(primitive) => DirectFieldType::new((*primitive).into()),
         _ => None,
     }
 }
@@ -57,30 +45,6 @@ impl From<SourcePrimitive> for Primitive {
             SourcePrimitive::USize => Self::USize,
             SourcePrimitive::F32 => Self::F32,
             SourcePrimitive::F64 => Self::F64,
-        }
-    }
-}
-
-impl FixedPrimitive {
-    fn from_source(primitive: SourcePrimitive) -> Option<Self> {
-        match primitive {
-            SourcePrimitive::Bool | SourcePrimitive::I8 | SourcePrimitive::U8 => Some(Self {
-                size: 1,
-                alignment: 1,
-            }),
-            SourcePrimitive::I16 | SourcePrimitive::U16 => Some(Self {
-                size: 2,
-                alignment: 2,
-            }),
-            SourcePrimitive::I32 | SourcePrimitive::U32 | SourcePrimitive::F32 => Some(Self {
-                size: 4,
-                alignment: 4,
-            }),
-            SourcePrimitive::I64 | SourcePrimitive::U64 | SourcePrimitive::F64 => Some(Self {
-                size: 8,
-                alignment: 8,
-            }),
-            SourcePrimitive::ISize | SourcePrimitive::USize => None,
         }
     }
 }

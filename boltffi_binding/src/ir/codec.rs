@@ -1,4 +1,4 @@
-use boltffi_ast::BuiltinType;
+use boltffi_ast::{BuiltinType, MapKind};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -167,11 +167,37 @@ pub enum CodecNode {
     },
     /// Key-value collection.
     Map {
+        /// Source map constructor.
+        kind: MapKind,
         /// Codec used for each key.
         key: Box<CodecNode>,
         /// Codec used for each value.
         value: Box<CodecNode>,
     },
+}
+
+impl CodecNode {
+    /// Returns whether this codec tree contains a custom conversion node.
+    pub fn contains_custom(&self) -> bool {
+        match self {
+            Self::Custom { .. } => true,
+            Self::Optional(inner) | Self::Sequence { element: inner, .. } => {
+                inner.contains_custom()
+            }
+            Self::Tuple(elements) => elements.iter().any(Self::contains_custom),
+            Self::Result { ok, err } => ok.contains_custom() || err.contains_custom(),
+            Self::Map { key, value, .. } => key.contains_custom() || value.contains_custom(),
+            _ => false,
+        }
+    }
+
+    /// Renders this codec node through the shared read walker.
+    pub fn render_read_with<R>(&self, renderer: &mut R) -> R::Expr
+    where
+        R: CodecRead,
+    {
+        CodecWalker::read(self, renderer)
+    }
 }
 
 /// Target-language rendering for codec reads.
@@ -229,7 +255,7 @@ pub trait CodecRead {
     fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr;
 
     /// Reads a map.
-    fn map(&mut self, key: Self::Expr, value: Self::Expr) -> Self::Expr;
+    fn map(&mut self, kind: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr;
 }
 
 /// Target-language rendering for codec writes.
@@ -311,6 +337,7 @@ pub trait CodecWrite {
     /// Writes a map.
     fn map(
         &mut self,
+        kind: MapKind,
         value: &ValueRef,
         key_binder: BinderId,
         key: Vec<Self::Stmt>,
@@ -361,10 +388,10 @@ impl CodecWalker {
                 let err = Self::read(err, renderer);
                 renderer.result(ok, err)
             }
-            CodecNode::Map { key, value } => {
+            CodecNode::Map { kind, key, value } => {
                 let key = Self::read(key, renderer);
                 let value = Self::read(value, renderer);
-                renderer.map(key, value)
+                renderer.map(*kind, key, value)
             }
         }
     }
@@ -436,6 +463,7 @@ impl CodecWalker {
                 renderer.result(value, binder, ok, err)
             }
             CodecNode::Map {
+                kind,
                 key,
                 value: map_value,
             } => {
@@ -449,7 +477,7 @@ impl CodecWalker {
                     renderer,
                     next_binder,
                 );
-                renderer.map(value, key_binder, key, value_binder, map_value)
+                renderer.map(*kind, value, key_binder, key, value_binder, map_value)
             }
         }
     }
@@ -465,7 +493,7 @@ impl CodecWalker {
 
 #[cfg(test)]
 mod tests {
-    use boltffi_ast::BuiltinType;
+    use boltffi_ast::{BuiltinType, MapKind};
 
     use super::{CodecNode, CodecRead, CodecWrite, ReadPlan, WritePlan};
     use crate::{
@@ -538,8 +566,8 @@ mod tests {
             format!("result({ok},{err})")
         }
 
-        fn map(&mut self, key: Self::Expr, value: Self::Expr) -> Self::Expr {
-            format!("map({key},{value})")
+        fn map(&mut self, kind: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr {
+            format!("map({kind:?},{key},{value})")
         }
     }
 
@@ -670,6 +698,7 @@ mod tests {
 
         fn map(
             &mut self,
+            kind: MapKind,
             value: &ValueRef,
             key_binder: BinderId,
             key: Vec<Self::Stmt>,
@@ -677,7 +706,7 @@ mod tests {
             map_value: Vec<Self::Stmt>,
         ) -> Vec<Self::Stmt> {
             vec![format!(
-                "map({}, k{}, [{}], v{}, [{}])",
+                "map({kind:?}, {}, k{}, [{}], v{}, [{}])",
                 value_name(value),
                 key_binder.raw(),
                 key.join(";"),
@@ -708,6 +737,7 @@ mod tests {
             CodecNode::Sequence {
                 len: Op::sequence_len(ValueRef::self_value()),
                 element: Box::new(CodecNode::Map {
+                    kind: MapKind::Hash,
                     key: Box::new(CodecNode::String),
                     value: Box::new(CodecNode::Sequence {
                         len: Op::sequence_len(ValueRef::self_value()),
@@ -721,7 +751,7 @@ mod tests {
         assert_eq!(
             plan.render_with(&mut renderer),
             vec![
-                "sequence(self, b0, [map(b0, k1, [string(b1)], v2, [sequence(b2, b3, [primitive(U32, b3)])])])"
+                "sequence(self, b0, [map(Hash, b0, k1, [string(b1)], v2, [sequence(b2, b3, [primitive(U32, b3)])])])"
                     .to_owned()
             ]
         );

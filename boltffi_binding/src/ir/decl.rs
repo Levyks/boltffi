@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BufferShapeRules, ByteSize, CallableScope, CallbackId, CallbackProtocolIntrospect,
     CanonicalName, ClassId, CodecPlan, ConstantId, CustomTypeConverters, CustomTypeId, DeclMeta,
-    DeclarationId, DefaultValue, ElementMeta, EnumId, ExportedCallable, FunctionId,
-    ImportedCallable, InitializerId, IntegerRepr, IntegerValue, MethodId, NamePart, NativeSymbol,
-    ReadPlan, Receive, RecordId, RecordLayout, ReturnTypeRef, RustBody, StreamId, Surface, TypeRef,
-    WritePlan,
+    DeclarationId, DefaultValue, DirectFieldType, DirectValueType, ElementMeta, EnumId,
+    ExportedCallable, FunctionId, ImportedCallable, InitializerId, IntegerRepr, IntegerValue,
+    MethodId, NamePart, NativeSymbol, ReadPlan, Receive, RecordId, RecordLayout, ReturnTypeRef,
+    RustBody, StreamId, Surface, TypeRef, WritePlan,
 };
 
 /// One classified declaration in a binding contract.
@@ -505,12 +505,12 @@ impl FieldKey {
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct DirectFieldDecl {
     key: FieldKey,
-    ty: TypeRef,
+    ty: DirectFieldType,
     meta: ElementMeta,
 }
 
 impl DirectFieldDecl {
-    pub(crate) fn new(key: FieldKey, ty: TypeRef, meta: ElementMeta) -> Self {
+    pub(crate) fn new(key: FieldKey, ty: DirectFieldType, meta: ElementMeta) -> Self {
         Self { key, ty, meta }
     }
 
@@ -520,8 +520,8 @@ impl DirectFieldDecl {
     }
 
     /// Returns the field type.
-    pub fn ty(&self) -> &TypeRef {
-        &self.ty
+    pub fn ty(&self) -> DirectFieldType {
+        self.ty
     }
 
     /// Returns the element metadata.
@@ -1423,7 +1423,7 @@ pub enum StreamItemPlan<S: Surface> {
     /// Items are copied directly into the batch output buffer.
     Direct {
         /// Item type.
-        ty: TypeRef,
+        ty: DirectValueType,
         /// Size of one item in bytes.
         size: ByteSize,
     },
@@ -1477,7 +1477,7 @@ pub trait StreamItemPlanRender<'plan, S: Surface> {
     type Output;
 
     /// Renders a directly copied stream item.
-    fn direct(&mut self, ty: &'plan TypeRef, size: ByteSize) -> Self::Output;
+    fn direct(&mut self, ty: &'plan DirectValueType, size: ByteSize) -> Self::Output;
 
     /// Renders an encoded stream item.
     fn encoded(

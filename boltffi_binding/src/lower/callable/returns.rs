@@ -1,8 +1,8 @@
 use boltffi_ast::{ReturnDef, TypeExpr};
 
 use crate::{
-    Direction, ElementMeta, ErrorDecl, HandleTarget, ParamDirection, Primitive, ReturnDecl,
-    ReturnPlan, TypeRef, ValueRef,
+    DirectValueType, DirectVectorElementType, Direction, ElementMeta, ErrorDecl, HandleTarget,
+    ParamDirection, Primitive, ReturnDecl, ReturnPlan, ValueRef,
 };
 
 use super::super::{
@@ -122,13 +122,13 @@ fn direct_vec_element(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
-) -> Result<Option<TypeRef>, LowerError> {
+) -> Result<Option<DirectVectorElementType>, LowerError> {
     match type_expr {
-        TypeExpr::Primitive(_) if !types::is_byte_primitive(type_expr) => {
-            Ok(Some(types::lower(ids, type_expr)?))
-        }
+        TypeExpr::Primitive(primitive) => Ok(DirectVectorElementType::primitive(Primitive::from(
+            *primitive,
+        ))),
         TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
-            Ok(Some(types::lower(ids, type_expr)?))
+            Ok(Some(DirectVectorElementType::record(ids.record(id)?)))
         }
         _ => Ok(None),
     }
@@ -180,17 +180,17 @@ where
     }
     match type_expr {
         TypeExpr::Unit => Ok(ReturnPlan::Void),
-        TypeExpr::Primitive(_) => Ok(ReturnPlan::DirectViaReturnSlot {
-            ty: types::lower(ids, type_expr)?,
+        TypeExpr::Primitive(primitive) => Ok(ReturnPlan::DirectViaReturnSlot {
+            ty: DirectValueType::primitive(Primitive::from(*primitive)),
         }),
         TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
             Ok(ReturnPlan::DirectViaReturnSlot {
-                ty: types::lower(ids, type_expr)?,
+                ty: DirectValueType::record(ids.record(id)?),
             })
         }
         TypeExpr::Enum { id, .. } if idx.enumeration(id).is_some_and(enums::is_c_style) => {
             Ok(ReturnPlan::DirectViaReturnSlot {
-                ty: types::lower(ids, type_expr)?,
+                ty: DirectValueType::enumeration(ids.enumeration(id)?),
             })
         }
         TypeExpr::String

@@ -1,8 +1,9 @@
 use boltffi_ast::{ParameterDef, ParameterPassing, TypeExpr};
 
 use crate::{
-    CanonicalName, ClosureParameter, ClosureReturn, Direction, ElementMeta, HandleTarget, IntoRust,
-    OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive, Receive, TypeRef, ValueRef,
+    CanonicalName, ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType,
+    Direction, ElementMeta, HandleTarget, IntoRust, OutOfRust, ParamDecl, ParamDirection,
+    ParamPlan, Primitive, Receive, ValueRef,
 };
 
 use super::super::{
@@ -119,13 +120,13 @@ fn direct_vec_element(
     idx: &Index<'_>,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
-) -> Result<Option<TypeRef>, LowerError> {
+) -> Result<Option<DirectVectorElementType>, LowerError> {
     match type_expr {
-        TypeExpr::Primitive(_) if !types::is_byte_primitive(type_expr) => {
-            Ok(Some(types::lower(ids, type_expr)?))
-        }
+        TypeExpr::Primitive(primitive) => Ok(DirectVectorElementType::primitive(Primitive::from(
+            *primitive,
+        ))),
         TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
-            Ok(Some(types::lower(ids, type_expr)?))
+            Ok(Some(DirectVectorElementType::record(ids.record(id)?)))
         }
         _ => Ok(None),
     }
@@ -173,19 +174,19 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
         ));
     }
     match type_expr {
-        TypeExpr::Primitive(_) => Ok(ParamPlan::Direct {
-            ty: types::lower(ids, type_expr)?,
+        TypeExpr::Primitive(primitive) => Ok(ParamPlan::Direct {
+            ty: DirectValueType::primitive(Primitive::from(*primitive)),
             receive: D::receive_from(receive),
         }),
         TypeExpr::Record { id, .. } if idx.record(id).is_some_and(records::is_direct) => {
             Ok(ParamPlan::Direct {
-                ty: types::lower(ids, type_expr)?,
+                ty: DirectValueType::record(ids.record(id)?),
                 receive: D::receive_from(receive),
             })
         }
         TypeExpr::Enum { id, .. } if idx.enumeration(id).is_some_and(enums::is_c_style) => {
             Ok(ParamPlan::Direct {
-                ty: types::lower(ids, type_expr)?,
+                ty: DirectValueType::enumeration(ids.enumeration(id)?),
                 receive: D::receive_from(receive),
             })
         }

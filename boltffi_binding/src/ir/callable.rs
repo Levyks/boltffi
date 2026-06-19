@@ -8,9 +8,9 @@ use boltffi_ast::FnTraitKind;
 
 use crate::{
     AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, CallableScope,
-    CanonicalName, ClosureRegistrationIntrospect, Direction, ElementMeta, ForeignBody,
-    HandlePresence, HandleTarget, IntegerRepr, IntoRust, NativeSymbol, OutOfRust, Primitive,
-    RustBody, Surface, TypeRef,
+    CanonicalName, ClosureRegistrationIntrospect, DirectValueType, DirectVectorElementType,
+    Direction, ElementMeta, ForeignBody, HandlePresence, HandleTarget, IntegerRepr, IntoRust,
+    NativeSymbol, OutOfRust, Primitive, RustBody, Surface, TypeRef,
 };
 
 /// One call shape ready to be turned into target code.
@@ -616,7 +616,7 @@ pub enum ParamPlan<S: Surface, D: Direction> {
     /// Value occupies a native call slot directly.
     Direct {
         /// Foreign-side spelling.
-        ty: TypeRef,
+        ty: DirectValueType,
         /// Rust-side receive mode.
         receive: D::Receive,
     },
@@ -658,7 +658,7 @@ pub enum ParamPlan<S: Surface, D: Direction> {
     /// a `(ptr, len, cap, align)` quadruple.
     DirectVec {
         /// Element type.
-        element: TypeRef,
+        element: DirectVectorElementType,
     },
 }
 
@@ -706,7 +706,7 @@ pub trait ParamPlanRender<'plan, S: Surface, D: Direction> {
     type Output;
 
     /// Renders a directly-carried parameter.
-    fn direct(&mut self, ty: &'plan TypeRef, receive: D::Receive) -> Self::Output;
+    fn direct(&mut self, ty: &'plan DirectValueType, receive: D::Receive) -> Self::Output;
 
     /// Renders an encoded parameter.
     fn encoded(
@@ -730,7 +730,7 @@ pub trait ParamPlanRender<'plan, S: Surface, D: Direction> {
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output;
 
     /// Renders a direct-vector parameter.
-    fn direct_vector(&mut self, element: &'plan TypeRef) -> Self::Output;
+    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output;
 }
 
 /// A callable's return slot.
@@ -796,7 +796,7 @@ where
     /// Direct value in the return slot.
     DirectViaReturnSlot {
         /// Foreign-side spelling.
-        ty: TypeRef,
+        ty: DirectValueType,
     },
     /// Encoded value in the return slot.
     EncodedViaReturnSlot {
@@ -824,13 +824,13 @@ where
     /// Direct-vector in the return slot.
     DirectVecViaReturnSlot {
         /// Element type.
-        element: TypeRef,
+        element: DirectVectorElementType,
     },
     /// Direct value through an out-pointer (return slot carries the
     /// error status).
     DirectViaOutPointer {
         /// Foreign-side spelling.
-        ty: TypeRef,
+        ty: DirectValueType,
     },
     /// Encoded value through an out-pointer.
     EncodedViaOutPointer {
@@ -893,7 +893,7 @@ where
     fn void(&mut self) -> Self::Output;
 
     /// Renders a directly-carried value.
-    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output;
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output;
 
     /// Renders an encoded value.
     fn encoded(
@@ -917,7 +917,7 @@ where
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output;
 
     /// Renders a direct-vector return.
-    fn direct_vector(&mut self, element: &'plan TypeRef) -> Self::Output;
+    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output;
 
     /// Renders a closure return.
     fn closure(&mut self, closure: &'plan ClosureReturn<S, D>) -> Self::Output;

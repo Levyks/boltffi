@@ -218,11 +218,11 @@ mod tests {
     use crate::lower::lower;
     use crate::{
         BindingErrorKind, Bindings, CStyleEnumDecl, CanonicalName, CodecNode, DataEnumDecl,
-        DataVariantPayload, Decl, DefaultValue, EncodedFieldDecl, EnumDecl, EnumId, ErrorDecl,
-        ExecutionDecl, ExportedMethodDecl, FieldKey, InitializerDecl, IntegerRepr, IntegerValue,
-        LowerError, LowerErrorKind, Native, NativeSymbol, OutOfRust, ParamPlan,
-        Primitive as BindingPrimitive, ReadPlan, Receive, RecordId, ReturnPlan, SurfaceLower,
-        TypeRef, ValueRef, Wasm32, native, wasm32,
+        DataVariantPayload, Decl, DefaultValue, DirectValueType, EncodedFieldDecl, EnumDecl,
+        EnumId, ErrorDecl, ExecutionDecl, ExportedMethodDecl, FieldKey, InitializerDecl,
+        IntegerRepr, IntegerValue, LowerError, LowerErrorKind, Native, NativeSymbol, OutOfRust,
+        ParamPlan, Primitive as BindingPrimitive, ReadPlan, Receive, RecordId, ReturnPlan,
+        SurfaceLower, TypeRef, ValueRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -719,7 +719,7 @@ mod tests {
         assert_eq!(
             method.callable().returns().plan(),
             &ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                ty: DirectValueType::Enum(EnumId::from_raw(0)),
             }
         );
     }
@@ -769,7 +769,7 @@ mod tests {
         assert_eq!(
             initializer.callable().returns().plan(),
             &ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                ty: DirectValueType::Enum(EnumId::from_raw(0)),
             }
         );
     }
@@ -794,7 +794,7 @@ mod tests {
         assert_eq!(
             initializer.callable().returns().plan(),
             &ReturnPlan::DirectViaOutPointer {
-                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                ty: DirectValueType::Enum(EnumId::from_raw(0)),
             }
         );
         assert_encoded_string_error(initializer.callable().error());
@@ -844,7 +844,7 @@ mod tests {
         assert_eq!(
             method.callable().params()[0].as_value().unwrap(),
             &ParamPlan::Direct {
-                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                ty: DirectValueType::Enum(EnumId::from_raw(0)),
                 receive: Receive::ByValue,
             }
         );
@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(
             method.callable().returns().plan(),
             &ReturnPlan::DirectViaOutPointer {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
             }
         );
         assert_encoded_string_error(method.callable().error());
@@ -1092,7 +1092,7 @@ mod tests {
         assert_eq!(
             method.callable().params()[0].as_value().unwrap(),
             &ParamPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
                 receive: Receive::ByRef,
             }
         );
@@ -1123,7 +1123,7 @@ mod tests {
         assert!(matches!(
             params[0].as_value().unwrap(),
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
                 ..
             }
         ));
@@ -1206,7 +1206,7 @@ mod tests {
         assert!(matches!(
             params[0].as_value().unwrap(),
             ParamPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
                 ..
             }
         ));
@@ -1284,7 +1284,7 @@ mod tests {
         assert_eq!(
             method.callable().returns().plan(),
             &ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Record(RecordId::from_raw(0)),
+                ty: DirectValueType::Record(RecordId::from_raw(0)),
             }
         );
     }
@@ -1307,7 +1307,7 @@ mod tests {
         assert_eq!(
             method.callable().returns().plan(),
             &ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                ty: DirectValueType::Enum(EnumId::from_raw(0)),
             }
         );
     }

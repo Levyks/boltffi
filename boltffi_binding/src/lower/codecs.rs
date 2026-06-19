@@ -115,8 +115,11 @@ pub(super) fn node(
             err: Box::new(node(idx, ids, err, ValueRef::self_value())?),
         },
         TypeExpr::Map {
-            key, value: item, ..
+            kind,
+            key,
+            value: item,
         } => CodecNode::Map {
+            kind: *kind,
             key: Box::new(node(idx, ids, key, ValueRef::self_value())?),
             value: Box::new(node(idx, ids, item, ValueRef::self_value())?),
         },

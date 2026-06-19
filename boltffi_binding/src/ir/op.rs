@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
-use crate::{CanonicalName, FieldKey, Primitive, TypeRef};
+use crate::{CanonicalName, DirectValueType, FieldKey, Primitive};
 
 /// Marker for operations that yield a count of bytes.
 ///
@@ -290,7 +290,7 @@ pub enum OpNode {
         args: Vec<OpNode>,
     },
     /// Type-size query.
-    SizeOf(TypeRef),
+    SizeOf(DirectValueType),
 }
 
 /// A built-in operation whose spelling depends on the target language.
@@ -344,7 +344,7 @@ pub trait OpRender {
     fn intrinsic(&mut self, intrinsic: IntrinsicOp, args: Vec<Self::Expr>) -> Self::Expr;
 
     /// Renders a type-size query.
-    fn size_of(&mut self, ty: &TypeRef) -> Self::Expr;
+    fn size_of(&mut self, ty: &DirectValueType) -> Self::Expr;
 }
 
 struct OperationWalker;
@@ -389,7 +389,7 @@ impl OperationWalker {
 #[cfg(test)]
 mod tests {
     use super::{IntrinsicOp, Op, OpRender, ValueRef};
-    use crate::{ByteCount, FieldKey, TypeRef};
+    use crate::{ByteCount, DirectValueType, FieldKey};
 
     struct TextOps;
 
@@ -428,7 +428,7 @@ mod tests {
             format!("{intrinsic:?}({})", args.join(","))
         }
 
-        fn size_of(&mut self, ty: &TypeRef) -> Self::Expr {
+        fn size_of(&mut self, ty: &DirectValueType) -> Self::Expr {
             format!("size_of({ty:?})")
         }
     }

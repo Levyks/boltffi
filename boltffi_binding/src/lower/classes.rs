@@ -88,10 +88,10 @@ mod tests {
     use crate::lower::lower;
     use crate::{
         BindingErrorKind, Bindings, CanonicalName, ClassDecl, ClassId, ClassThreadSafety,
-        CodecNode, Decl, EnumId, ErrorDecl, ExecutionDecl, HandlePresence, HandleTarget,
-        InitializerId, LowerError, LowerErrorKind, MethodId, Native, NativeSymbol, ParamPlan,
-        Primitive as BindingPrimitive, Receive, RecordId, ReturnPlan, ReturnTypeRef, Surface,
-        SurfaceLower, TypeRef, UnsupportedType, Wasm32, native, wasm32,
+        CodecNode, Decl, DirectValueType, EnumId, ErrorDecl, ExecutionDecl, HandlePresence,
+        HandleTarget, InitializerId, LowerError, LowerErrorKind, MethodId, Native, NativeSymbol,
+        ParamPlan, Primitive as BindingPrimitive, Receive, RecordId, ReturnPlan, ReturnTypeRef,
+        Surface, SurfaceLower, TypeRef, UnsupportedType, Wasm32, native, wasm32,
     };
     use serde_json::{Value, json};
 
@@ -247,7 +247,7 @@ mod tests {
                 .first()
                 .map(|param| param.as_value().unwrap()),
             Some(&ParamPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::U64),
+                ty: DirectValueType::Primitive(BindingPrimitive::U64),
                 receive: Receive::ByValue,
             })
         );
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(
             class_method.callable().returns().plan(),
             &ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Primitive(BindingPrimitive::I32),
+                ty: DirectValueType::Primitive(BindingPrimitive::I32),
             }
         );
     }
@@ -683,7 +683,7 @@ mod tests {
                 .first()
                 .map(|method| method.callable().returns().plan()),
             Some(&ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Record(RecordId::from_raw(0)),
+                ty: DirectValueType::Record(RecordId::from_raw(0)),
             })
         );
         assert_eq!(
@@ -692,7 +692,7 @@ mod tests {
                 .get(1)
                 .map(|method| method.callable().returns().plan()),
             Some(&ReturnPlan::DirectViaReturnSlot {
-                ty: TypeRef::Enum(EnumId::from_raw(0)),
+                ty: DirectValueType::Enum(EnumId::from_raw(0)),
             })
         );
     }

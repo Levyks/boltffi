@@ -89,7 +89,7 @@ mod surface;
 mod symbol;
 mod types;
 
-pub use boltffi_ast::BuiltinType;
+pub use boltffi_ast::{BuiltinType, MapKind};
 pub use callable::{
     CallableDecl, ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, ErrorChannel,
     ErrorDecl, ErrorPlacement, ExecutionDecl, ExportedCallable, ImportedCallable, IncomingParam,
@@ -142,4 +142,7 @@ pub use surface::{
 pub use symbol::{
     ImportModule, ImportSymbol, NativeSymbol, NativeSymbolTable, SymbolName, VTableSlot,
 };
-pub use types::{HandlePresence, HandleTarget, ReturnTypeRef, TypeRef};
+pub use types::{
+    DirectFieldType, DirectValueType, DirectVectorElementType, DirectVectorPrimitive,
+    HandlePresence, HandleTarget, ReturnTypeRef, TypeRef, TypeRefRender,
+};

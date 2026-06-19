@@ -14,8 +14,8 @@
 use boltffi_ast::{StreamDef as SourceStream, TypeExpr};
 
 use crate::{
-    ByteSize, CanonicalName, Primitive as BindingPrimitive, ReadPlan, StreamDecl, StreamDeclParts,
-    StreamItemPlan, StreamMode, StreamProtocol, ValueRef,
+    ByteSize, CanonicalName, DirectValueType, Primitive as BindingPrimitive, ReadPlan, StreamDecl,
+    StreamDeclParts, StreamItemPlan, StreamMode, StreamProtocol, ValueRef,
 };
 
 use super::{
@@ -101,9 +101,23 @@ fn direct_item<S: SurfaceLower>(
     size: ByteSize,
 ) -> Result<StreamItemPlan<S>, LowerError> {
     Ok(StreamItemPlan::Direct {
-        ty: types::lower(ids, type_expr)?,
+        ty: direct_value_type(ids, type_expr)?,
         size,
     })
+}
+
+fn direct_value_type(
+    ids: &DeclarationIds,
+    type_expr: &TypeExpr,
+) -> Result<DirectValueType, LowerError> {
+    match type_expr {
+        TypeExpr::Primitive(primitive) => Ok(DirectValueType::primitive(BindingPrimitive::from(
+            *primitive,
+        ))),
+        TypeExpr::Record { id, .. } => Ok(DirectValueType::record(ids.record(id)?)),
+        TypeExpr::Enum { id, .. } => Ok(DirectValueType::enumeration(ids.enumeration(id)?)),
+        _ => Err(LowerError::unsupported_type(UnsupportedType::StreamItem)),
+    }
 }
 
 fn encoded_item<S: SurfaceLower>(
@@ -202,9 +216,9 @@ mod tests {
 
     use crate::lower::{LowerError, LowerErrorKind, UnsupportedType, lower};
     use crate::{
-        Bindings, ByteSize, CanonicalName, CodecNode, Decl, Native, Primitive as BindingPrimitive,
-        ReadPlan, StreamDecl, StreamId, StreamItemPlan, StreamMode as BindingStreamMode,
-        SurfaceLower, TypeRef, Wasm32, native, wasm32,
+        Bindings, ByteSize, CanonicalName, CodecNode, Decl, DirectValueType, Native,
+        Primitive as BindingPrimitive, ReadPlan, StreamDecl, StreamId, StreamItemPlan,
+        StreamMode as BindingStreamMode, SurfaceLower, TypeRef, Wasm32, native, wasm32,
     };
 
     fn package() -> SourceContract {
@@ -294,7 +308,7 @@ mod tests {
         assert_eq!(
             decl.item(),
             &StreamItemPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::U32),
+                ty: DirectValueType::Primitive(BindingPrimitive::U32),
                 size: ByteSize::new(4),
             }
         );
@@ -445,7 +459,7 @@ mod tests {
         assert_eq!(
             only_stream(&bindings).item(),
             &StreamItemPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::USize),
+                ty: DirectValueType::Primitive(BindingPrimitive::USize),
                 size: ByteSize::new(8),
             }
         );
@@ -462,7 +476,7 @@ mod tests {
         assert_eq!(
             only_stream(&bindings).item(),
             &StreamItemPlan::Direct {
-                ty: TypeRef::Primitive(BindingPrimitive::USize),
+                ty: DirectValueType::Primitive(BindingPrimitive::USize),
                 size: ByteSize::new(4),
             }
         );
@@ -486,7 +500,7 @@ mod tests {
         assert_eq!(
             only_stream(&bindings).item(),
             &StreamItemPlan::Direct {
-                ty: TypeRef::Record(crate::RecordId::from_raw(0)),
+                ty: DirectValueType::Record(crate::RecordId::from_raw(0)),
                 size: ByteSize::new(16),
             }
         );
