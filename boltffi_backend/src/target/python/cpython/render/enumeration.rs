@@ -250,9 +250,8 @@ impl Enumeration {
         let variants = enumeration
             .variants()
             .iter()
-            .zip(c_enum.variants())
             .enumerate()
-            .map(|(index, (variant, c_variant))| Variant::new(index, variant, c_variant))
+            .map(|(index, variant)| Variant::new(index, variant))
             .collect::<Result<Vec<_>>>()?;
         let method = ExtensionMethod::new(
             MethodName::parse(symbols.register_method.as_str())?,
@@ -693,16 +692,16 @@ impl PythonVariant {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Variant {
     member_name: PythonIdentifier,
-    native_value: Identifier,
+    native_value: i128,
     wire_tag: usize,
     member_index: usize,
 }
 
 impl Variant {
-    fn new(index: usize, variant: &CStyleVariantDecl, c_variant: &c::EnumVariant) -> Result<Self> {
+    fn new(index: usize, variant: &CStyleVariantDecl) -> Result<Self> {
         Ok(Self {
             member_name: PythonIdentifier::parse(Name::new(variant.name()).enum_member())?,
-            native_value: Identifier::parse(c_variant.name())?,
+            native_value: variant.discriminant().get(),
             wire_tag: index,
             member_index: index,
         })

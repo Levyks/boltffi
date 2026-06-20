@@ -680,6 +680,7 @@ mod tests {
         assert!(extension.contains("static int boltffi_python_parse_status"));
         assert!(extension.contains("static PyObject *boltffi_python_box_status"));
         assert!(extension.contains("uint8_t bytes[2] = {0};"));
+        assert!(extension.contains("static const ___Status boltffi_python_status_member_native_values[3] = {\n    -3,\n    8,\n    13\n};"));
         assert!(extension.contains("boltffi_python_write_u16_le(bytes, (uint16_t)native_value);"));
         assert!(extension.contains("boltffi_python_validate_owned_fixed_buffer(buffer, 2)"));
         assert!(extension.contains("native_value = (___Status)boltffi_python_read_u16_le"));
