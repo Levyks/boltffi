@@ -153,7 +153,10 @@ pub struct ReadFunction {
 }
 
 impl ReadFunction {
-    pub fn from_adapter(adapter: &ReadAdapter<'_>, package: &Package<'_, '_>) -> Result<Self> {
+    pub fn from_adapter<'adapter, 'package>(
+        adapter: &ReadAdapter<'adapter>,
+        package: &Package<'package>,
+    ) -> Result<Self> {
         Ok(Self {
             key: adapter.key().python_literal(),
             name: adapter.key().python_function()?,
@@ -183,7 +186,10 @@ pub struct WriteFunction {
 }
 
 impl WriteFunction {
-    pub fn from_adapter(adapter: &WriteAdapter<'_>, package: &Package<'_, '_>) -> Result<Self> {
+    pub fn from_adapter<'adapter, 'package>(
+        adapter: &WriteAdapter<'adapter>,
+        package: &Package<'package>,
+    ) -> Result<Self> {
         Ok(Self {
             key: adapter.key().python_literal(),
             name: adapter.key().python_function()?,
@@ -336,7 +342,9 @@ struct IncomingParamAdapters<'collector, 'binding> {
     adapters: &'collector mut CollectedAdapters<'binding>,
 }
 
-impl<'binding> ParamPlanRender<'binding, Native, IntoRust> for IncomingParamAdapters<'_, 'binding> {
+impl<'collector, 'binding> ParamPlanRender<'binding, Native, IntoRust>
+    for IncomingParamAdapters<'collector, 'binding>
+{
     type Output = ();
 
     fn direct(&mut self, _: &'binding DirectValueType, _: Receive) {}
@@ -369,8 +377,8 @@ struct OutgoingParamAdapters<'collector, 'binding> {
     adapters: &'collector mut CollectedAdapters<'binding>,
 }
 
-impl<'binding> ParamPlanRender<'binding, Native, OutOfRust>
-    for OutgoingParamAdapters<'_, 'binding>
+impl<'collector, 'binding> ParamPlanRender<'binding, Native, OutOfRust>
+    for OutgoingParamAdapters<'collector, 'binding>
 {
     type Output = ();
 
@@ -404,8 +412,8 @@ struct OutOfRustReturnAdapters<'collector, 'binding> {
     adapters: &'collector mut CollectedAdapters<'binding>,
 }
 
-impl<'binding> ReturnPlanRender<'binding, Native, OutOfRust>
-    for OutOfRustReturnAdapters<'_, 'binding>
+impl<'collector, 'binding> ReturnPlanRender<'binding, Native, OutOfRust>
+    for OutOfRustReturnAdapters<'collector, 'binding>
 {
     type Output = ();
 
@@ -445,8 +453,8 @@ struct IntoRustReturnAdapters<'collector, 'binding> {
     adapters: &'collector mut CollectedAdapters<'binding>,
 }
 
-impl<'binding> ReturnPlanRender<'binding, Native, IntoRust>
-    for IntoRustReturnAdapters<'_, 'binding>
+impl<'collector, 'binding> ReturnPlanRender<'binding, Native, IntoRust>
+    for IntoRustReturnAdapters<'collector, 'binding>
 {
     type Output = ();
 

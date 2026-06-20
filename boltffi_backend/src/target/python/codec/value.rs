@@ -8,13 +8,15 @@ use crate::{
     },
 };
 
-pub struct ValueExpression<'value> {
-    value: &'value ValueRef,
+pub struct ValueExpression {
+    value: ValueRef,
 }
 
-impl<'value> ValueExpression<'value> {
-    pub fn new(value: &'value ValueRef) -> Self {
-        Self { value }
+impl ValueExpression {
+    pub fn new(value: &ValueRef) -> Self {
+        Self {
+            value: value.clone(),
+        }
     }
 
     pub fn root(value: &ValueRef) -> Result<Expression> {
@@ -36,7 +38,7 @@ impl<'value> ValueExpression<'value> {
     }
 
     pub fn render(self) -> Result<Expression> {
-        let root = Self::root(self.value)?;
+        let root = Self::root(&self.value)?;
         self.value.path().iter().try_fold(root, Self::field)
     }
 

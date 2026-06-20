@@ -22,9 +22,9 @@ pub struct Class {
 }
 
 impl Class {
-    pub fn from_declaration(
+    pub fn from_declaration<'package>(
         declaration: &ClassDecl<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let symbols = class_render::Symbols::new(declaration)?;
         let class_name = symbols.class_name().clone();

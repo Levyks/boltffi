@@ -8,7 +8,7 @@ use boltffi_binding::{
 
 use crate::{
     bridge::{
-        c::{self, Identifier, syntax::TypeSyntax},
+        c::{self, Identifier, TypeFragment},
         python_cext::{
             ExtensionMethod, LoadedFunction, MethodFlags, MethodName, PythonCExtBridgeContract,
         },
@@ -220,12 +220,12 @@ impl Function {
             }) => AsyncFunction::from_export(
                 python_name,
                 AsyncSymbols {
-                    start: symbol,
-                    poll,
-                    complete,
-                    cancel,
-                    free,
-                    panic_message,
+                    start: symbol.clone(),
+                    poll: poll.clone(),
+                    complete: complete.clone(),
+                    cancel: cancel.clone(),
+                    free: free.clone(),
+                    panic_message: panic_message.clone(),
                 },
                 callable,
                 receiver_args,
@@ -643,38 +643,38 @@ impl SyncFunction {
     }
 }
 
-#[derive(Clone, Copy)]
-struct AsyncSymbols<'symbol> {
-    start: &'symbol NativeSymbol,
-    poll: &'symbol NativeSymbol,
-    complete: &'symbol NativeSymbol,
-    cancel: &'symbol NativeSymbol,
-    free: &'symbol NativeSymbol,
-    panic_message: &'symbol NativeSymbol,
+#[derive(Clone)]
+struct AsyncSymbols {
+    start: NativeSymbol,
+    poll: NativeSymbol,
+    complete: NativeSymbol,
+    cancel: NativeSymbol,
+    free: NativeSymbol,
+    panic_message: NativeSymbol,
 }
 
 impl AsyncFunction {
     fn from_export(
         python_name: PythonIdentifier,
-        symbols: AsyncSymbols<'_>,
+        symbols: AsyncSymbols,
         callable: &ExportedCallable<Native>,
         receiver_args: Vec<argument::Conversion>,
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let start = Self::loaded(symbols.start, bridge, "async start symbol")?;
-        let poll = Self::loaded(symbols.poll, bridge, "async poll symbol")?;
-        let complete = Self::loaded(symbols.complete, bridge, "async complete symbol")?;
-        let cancel = Self::loaded(symbols.cancel, bridge, "async cancel symbol")?;
-        let free = Self::loaded(symbols.free, bridge, "async free symbol")?;
-        let panic_message = Self::loaded(symbols.panic_message, bridge, "async panic symbol")?;
+        let start = Self::loaded(&symbols.start, bridge, "async start symbol")?;
+        let poll = Self::loaded(&symbols.poll, bridge, "async poll symbol")?;
+        let complete = Self::loaded(&symbols.complete, bridge, "async complete symbol")?;
+        let cancel = Self::loaded(&symbols.cancel, bridge, "async cancel symbol")?;
+        let free = Self::loaded(&symbols.free, bridge, "async free symbol")?;
+        let panic_message = Self::loaded(&symbols.panic_message, bridge, "async panic symbol")?;
         let future_methods = NativeFutureMethods::new(python_name)?;
-        let start_wrapper = Function::wrapper_symbol(symbols.start)?;
-        let poll_wrapper = Function::wrapper_symbol(symbols.poll)?;
-        let complete_wrapper = Function::wrapper_symbol(symbols.complete)?;
-        let panic_message_wrapper = Function::wrapper_symbol(symbols.panic_message)?;
-        let cancel_wrapper = Function::wrapper_symbol(symbols.cancel)?;
-        let free_wrapper = Function::wrapper_symbol(symbols.free)?;
+        let start_wrapper = Function::wrapper_symbol(&symbols.start)?;
+        let poll_wrapper = Function::wrapper_symbol(&symbols.poll)?;
+        let complete_wrapper = Function::wrapper_symbol(&symbols.complete)?;
+        let panic_message_wrapper = Function::wrapper_symbol(&symbols.panic_message)?;
+        let cancel_wrapper = Function::wrapper_symbol(&symbols.cancel)?;
+        let free_wrapper = Function::wrapper_symbol(&symbols.free)?;
         let value_args = callable
             .params()
             .iter()
@@ -930,7 +930,7 @@ impl FallibleResult {
             success_declaration: success.declaration,
             success_argument: success.argument,
             success_value: success.value,
-            error_type: TypeSyntax::new(loaded.function().returns()).anonymous()?,
+            error_type: TypeFragment::anonymous(loaded.function().returns())?,
             error_value: c::Identifier::parse("return_error")?,
             error,
         })
@@ -956,7 +956,7 @@ impl FallibleSuccessBinding {
     fn out_pointer(ty: &c::Type) -> Result<Self> {
         let value = c::Identifier::parse("return_success")?;
         Ok(Self {
-            declaration: Some(TypeSyntax::new(ty).declaration(value.as_str())?),
+            declaration: Some(TypeFragment::declaration(ty, value.as_str())?),
             argument: Some(c::Expression::address_of(c::Expression::identifier(
                 value.clone(),
             ))),
@@ -965,16 +965,17 @@ impl FallibleSuccessBinding {
     }
 }
 
-struct FallibleSuccess<'function> {
-    function: &'function c::Function,
-    argument_count: usize,
+struct FallibleSuccess {
+    out_parameter: Option<c::Type>,
 }
 
-impl<'function> FallibleSuccess<'function> {
-    fn new(function: &'function c::Function, argument_count: usize) -> Self {
+impl FallibleSuccess {
+    fn new(function: &c::Function, argument_count: usize) -> Self {
         Self {
-            function,
-            argument_count,
+            out_parameter: function
+                .params()
+                .get(argument_count)
+                .map(|parameter| parameter.ty().clone()),
         }
     }
 
@@ -985,13 +986,7 @@ impl<'function> FallibleSuccess<'function> {
     fn out_pointer(&self, slot: ReturnValueSlot) -> Result<FallibleSuccessBinding> {
         match slot {
             ReturnValueSlot::OutPointer => {
-                let parameter = self.function.params().get(self.argument_count).ok_or(
-                    Error::UnsupportedTarget {
-                        target: "python",
-                        shape: "missing fallible success out parameter",
-                    },
-                )?;
-                let c::Type::MutPointer(success_type) = parameter.ty() else {
+                let Some(c::Type::MutPointer(success_type)) = &self.out_parameter else {
                     return Err(Error::UnsupportedTarget {
                         target: "python",
                         shape: "fallible success parameter",
@@ -1011,7 +1006,7 @@ impl<'function> FallibleSuccess<'function> {
     }
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FallibleSuccess<'_> {
+impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FallibleSuccess {
     type Output = Result<FallibleSuccessBinding>;
 
     fn void(&mut self) -> Self::Output {

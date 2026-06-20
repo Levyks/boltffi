@@ -29,78 +29,42 @@ impl<'bindings, S: Surface> RenderContext<'bindings, S> {
 
     /// Returns the record declaration with the given id.
     pub fn record(&self, id: RecordId) -> Option<&'bindings RecordDecl<S>> {
-        self.find(DeclarationId::Record(id), |declaration| match declaration {
-            DeclarationRef::Record(record) => Some(record),
-            _ => None,
-        })
+        self.find(DeclarationId::Record(id), DeclarationRef::record)
     }
 
     /// Returns the enum declaration with the given id.
     pub fn enumeration(&self, id: EnumId) -> Option<&'bindings EnumDecl<S>> {
-        self.find(DeclarationId::Enum(id), |declaration| match declaration {
-            DeclarationRef::Enum(enumeration) => Some(enumeration),
-            _ => None,
-        })
+        self.find(DeclarationId::Enum(id), DeclarationRef::enumeration)
     }
 
     /// Returns the class declaration with the given id.
     pub fn class(&self, id: ClassId) -> Option<&'bindings ClassDecl<S>> {
-        self.find(DeclarationId::Class(id), |declaration| match declaration {
-            DeclarationRef::Class(class) => Some(class),
-            _ => None,
-        })
+        self.find(DeclarationId::Class(id), DeclarationRef::class)
     }
 
     /// Returns the callback declaration with the given id.
     pub fn callback(&self, id: CallbackId) -> Option<&'bindings CallbackDecl<S>> {
-        self.find(
-            DeclarationId::Callback(id),
-            |declaration| match declaration {
-                DeclarationRef::Callback(callback) => Some(callback),
-                _ => None,
-            },
-        )
+        self.find(DeclarationId::Callback(id), DeclarationRef::callback)
     }
 
     /// Returns the stream declaration with the given id.
     pub fn stream(&self, id: StreamId) -> Option<&'bindings StreamDecl<S>> {
-        self.find(DeclarationId::Stream(id), |declaration| match declaration {
-            DeclarationRef::Stream(stream) => Some(stream),
-            _ => None,
-        })
+        self.find(DeclarationId::Stream(id), DeclarationRef::stream)
     }
 
     /// Returns the constant declaration with the given id.
     pub fn constant(&self, id: ConstantId) -> Option<&'bindings ConstantDecl<S>> {
-        self.find(
-            DeclarationId::Constant(id),
-            |declaration| match declaration {
-                DeclarationRef::Constant(constant) => Some(constant),
-                _ => None,
-            },
-        )
+        self.find(DeclarationId::Constant(id), DeclarationRef::constant)
     }
 
     /// Returns the function declaration with the given id.
     pub fn function(&self, id: FunctionId) -> Option<&'bindings FunctionDecl<S>> {
-        self.find(
-            DeclarationId::Function(id),
-            |declaration| match declaration {
-                DeclarationRef::Function(function) => Some(function),
-                _ => None,
-            },
-        )
+        self.find(DeclarationId::Function(id), DeclarationRef::function)
     }
 
     /// Returns the custom type declaration with the given id.
     pub fn custom_type(&self, id: CustomTypeId) -> Option<&'bindings CustomTypeDecl> {
-        self.find(
-            DeclarationId::CustomType(id),
-            |declaration| match declaration {
-                DeclarationRef::CustomType(custom_type) => Some(custom_type),
-                _ => None,
-            },
-        )
+        self.find(DeclarationId::CustomType(id), DeclarationRef::custom_type)
     }
 
     fn find<T>(

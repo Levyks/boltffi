@@ -2,8 +2,6 @@ use std::fmt;
 
 use crate::core::{Error, LanguageSyntax, Result, syntax::sealed};
 
-use super::name_style::valid_identifier;
-
 /// Python syntax fragment family.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Syntax;
@@ -77,7 +75,7 @@ impl Identifier {
     /// Parses a Python identifier.
     pub fn parse(identifier: impl Into<String>) -> Result<Self> {
         let identifier = identifier.into();
-        match valid_identifier(&identifier) && !Syntax::keyword(&identifier) {
+        match Self::valid(&identifier) && !Syntax::keyword(&identifier) {
             true => Ok(Self(identifier)),
             false => Err(Error::InvalidPythonIdentifier { identifier }),
         }
@@ -95,6 +93,15 @@ impl Identifier {
     /// Returns the identifier text.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    fn valid(identifier: &str) -> bool {
+        let mut characters = identifier.chars();
+        let Some(first_character) = characters.next() else {
+            return false;
+        };
+        (first_character == '_' || first_character.is_alphabetic())
+            && characters.all(|character| character == '_' || character.is_alphanumeric())
     }
 }
 

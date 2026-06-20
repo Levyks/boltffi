@@ -23,9 +23,9 @@ pub struct FunctionStub {
 }
 
 impl FunctionStub {
-    pub fn from_declaration(
+    pub fn from_declaration<'package>(
         function: &FunctionDecl<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let parameters = function
             .callable()

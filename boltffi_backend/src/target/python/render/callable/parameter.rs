@@ -26,9 +26,9 @@ pub struct ParameterStub {
 }
 
 impl ParameterStub {
-    pub fn from_declaration(
+    pub fn from_declaration<'package>(
         parameter: &ParamDecl<Native, IntoRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let name = Name::new(parameter.name()).function()?;
         let IncomingParam::Value(plan) = parameter.payload() else {
@@ -76,10 +76,10 @@ impl ParameterStub {
         NameScope::new(label).insert_all(parameters.iter().map(Self::parameter_name))
     }
 
-    fn argument(
+    fn argument<'package>(
         plan: &ParamPlan<Native, IntoRust>,
         name: &CanonicalName,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Expression> {
         plan.render_with(&mut StubArgument {
             name: Name::new(name).function()?,
@@ -87,17 +87,20 @@ impl ParameterStub {
         })
     }
 
-    fn uses_wire(plan: &ParamPlan<Native, IntoRust>, package: &Package<'_, '_>) -> Result<bool> {
+    fn uses_wire<'package>(
+        plan: &ParamPlan<Native, IntoRust>,
+        package: &'package Package<'package>,
+    ) -> Result<bool> {
         plan.render_with(&mut WireHelperUse { package })
     }
 }
 
-struct StubArgument<'package, 'binding, 'bridge> {
+struct StubArgument<'package> {
     name: Identifier,
-    package: &'package Package<'binding, 'bridge>,
+    package: &'package Package<'package>,
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<'_, '_, '_> {
+impl<'plan, 'package> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<'package> {
     type Output = Result<Expression>;
 
     fn direct(&mut self, _: &DirectValueType, _: Receive) -> Self::Output {
@@ -147,11 +150,11 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<'_, '_, '_
     }
 }
 
-struct WireHelperUse<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+struct WireHelperUse<'package> {
+    package: &'package Package<'package>,
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for WireHelperUse<'_, '_, '_> {
+impl<'plan, 'package> ParamPlanRender<'plan, Native, IntoRust> for WireHelperUse<'package> {
     type Output = Result<bool>;
 
     fn direct(&mut self, _: &DirectValueType, _: Receive) -> Self::Output {

@@ -4,11 +4,11 @@ use boltffi_binding::{
     Bindings, CStyleEnumDecl, CallableDecl, CallbackDecl, CallbackId, ClassDecl, ClassId,
     ClosureReturn, ConstantDecl, ConstantValueDecl, Decl, DeclarationRef, DirectRecordDecl,
     DirectValueType, DirectVectorElementType, Direction, EnumDecl, EnumId, ErrorDecl,
-    ExportedCallable, ExportedMethodDecl, HandlePresence, HandleTarget, ImportedCallable,
-    ImportedMethodDecl, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl,
-    ParamDirection, ParamPlan, ParamPlanRender, Primitive, Receive, RecordDecl, RecordId,
-    ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, StreamDecl, StreamItemPlan, TypeRef,
-    VTableSlot, native,
+    ExecutionDecl, ExportedCallable, ExportedMethodDecl, HandlePresence, HandleTarget,
+    ImportedCallable, ImportedMethodDecl, IncomingParam, InitializerDecl, IntoRust, Native,
+    NativeSymbol, OutOfRust, OutgoingParam, ParamDecl, ParamDirection, ParamPlan, ParamPlanRender,
+    Primitive, Receive, RecordDecl, RecordId, ReturnPlan, ReturnPlanRender, ReturnValueSlot,
+    RustBody, StreamDecl, StreamId, StreamItemPlan, TypeRef, VTableSlot, native,
 };
 
 use crate::core::{
@@ -169,15 +169,15 @@ pub enum Type {
 struct Names {
     direct_records: BTreeMap<RecordId, Identifier>,
     enums: BTreeMap<EnumId, Identifier>,
-    classes: BTreeMap<boltffi_binding::ClassId, Identifier>,
+    classes: BTreeMap<ClassId, Identifier>,
     class_handles: BTreeMap<ClassId, native::HandleCarrier>,
-    callbacks: BTreeMap<boltffi_binding::CallbackId, Identifier>,
-    streams: BTreeMap<boltffi_binding::StreamId, Identifier>,
+    callbacks: BTreeMap<CallbackId, Identifier>,
+    streams: BTreeMap<StreamId, Identifier>,
 }
 
 #[derive(Clone, Debug)]
-struct Signature<'names> {
-    names: &'names Names,
+struct Signature {
+    names: Names,
     receiver: Vec<Parameter>,
 }
 
@@ -187,32 +187,32 @@ struct ReceiverAbi {
     writeback: Option<Parameter>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct PollHandleSymbols<'protocol> {
-    start: &'protocol NativeSymbol,
-    poll: &'protocol NativeSymbol,
-    complete: &'protocol NativeSymbol,
-    cancel: &'protocol NativeSymbol,
-    free: &'protocol NativeSymbol,
-    panic_message: &'protocol NativeSymbol,
+#[derive(Clone, Debug)]
+struct PollHandleSymbols {
+    start: NativeSymbol,
+    poll: NativeSymbol,
+    complete: NativeSymbol,
+    cancel: NativeSymbol,
+    free: NativeSymbol,
+    panic_message: NativeSymbol,
 }
 
-impl<'protocol> PollHandleSymbols<'protocol> {
+impl PollHandleSymbols {
     fn new(
-        start: &'protocol NativeSymbol,
-        poll: &'protocol NativeSymbol,
-        complete: &'protocol NativeSymbol,
-        cancel: &'protocol NativeSymbol,
-        free: &'protocol NativeSymbol,
-        panic_message: &'protocol NativeSymbol,
+        start: &NativeSymbol,
+        poll: &NativeSymbol,
+        complete: &NativeSymbol,
+        cancel: &NativeSymbol,
+        free: &NativeSymbol,
+        panic_message: &NativeSymbol,
     ) -> Self {
         Self {
-            start,
-            poll,
-            complete,
-            cancel,
-            free,
-            panic_message,
+            start: start.clone(),
+            poll: poll.clone(),
+            complete: complete.clone(),
+            cancel: cancel.clone(),
+            free: free.clone(),
+            panic_message: panic_message.clone(),
         }
     }
 }
@@ -426,6 +426,57 @@ impl Field {
             ty,
         })
     }
+
+    fn callback_method(
+        method: &ImportedMethodDecl<Native, VTableSlot>,
+        names: &Names,
+    ) -> Result<Self> {
+        let signature = Signature::new(names, Vec::new());
+        if matches!(
+            method.callable().execution(),
+            ExecutionDecl::Asynchronous(_)
+        ) {
+            return Self::async_callback_method(method, &signature);
+        }
+        let return_params = signature.callback_return_params(method.callable().returns().plan())?;
+        let method_params = signature.imported_params(method.callable().params())?;
+        let params = std::iter::once(Type::Uint64)
+            .chain(return_params.into_iter().map(|parameter| parameter.ty))
+            .chain(method_params.into_iter().map(|parameter| parameter.ty))
+            .collect();
+        Self::new(
+            method.target().as_str(),
+            Type::FunctionPointer {
+                returns: Box::new(signature.callback_return_type(
+                    method.callable().returns().plan(),
+                    method.callable().error(),
+                )?),
+                params,
+            },
+        )
+    }
+
+    fn async_callback_method(
+        method: &ImportedMethodDecl<Native, VTableSlot>,
+        signature: &Signature,
+    ) -> Result<Self> {
+        let method_params = signature.imported_params(method.callable().params())?;
+        let completion = signature.async_completion(
+            method.callable().returns().plan(),
+            method.callable().error(),
+        )?;
+        let params = std::iter::once(Type::Uint64)
+            .chain(method_params.into_iter().map(|parameter| parameter.ty))
+            .chain([completion, Type::MutPointer(Box::new(Type::Void))])
+            .collect();
+        Self::new(
+            method.target().as_str(),
+            Type::FunctionPointer {
+                returns: Box::new(Type::Void),
+                params,
+            },
+        )
+    }
 }
 
 impl SupportFunctions {
@@ -594,7 +645,7 @@ impl Callback {
         let methods = vtable
             .methods()
             .iter()
-            .map(|method| callback_field(method, names))
+            .map(|method| Field::callback_method(method, names))
             .collect::<Result<Vec<_>>>()?;
         let vtable = Record {
             name: vtable_name.clone(),
@@ -640,7 +691,7 @@ impl Function {
 }
 
 impl Function {
-    fn from_decl(decl: DeclarationRef<'_, Native>, names: &Names) -> Result<Vec<Self>> {
+    fn from_decl<'decl>(decl: DeclarationRef<'decl, Native>, names: &Names) -> Result<Vec<Self>> {
         match decl {
             DeclarationRef::Function(function) => {
                 Self::exported(function.symbol(), function.callable(), Vec::new(), names)
@@ -1005,7 +1056,7 @@ impl Names {
             })
     }
 
-    fn callback(&self, id: boltffi_binding::CallbackId) -> Result<Identifier> {
+    fn callback(&self, id: CallbackId) -> Result<Identifier> {
         self.callbacks
             .get(&id)
             .cloned()
@@ -1058,30 +1109,30 @@ impl DirectVectorElementAbi {
     }
 }
 
-struct ValueParameter<'signature, 'names> {
-    signature: &'signature Signature<'names>,
-    name: &'signature str,
+struct ValueParameter {
+    signature: Signature,
+    name: String,
 }
 
-struct ReturnParameters<'signature, 'names> {
-    signature: &'signature Signature<'names>,
+struct ReturnParameters {
+    signature: Signature,
 }
 
-struct CallableReturnType<'signature, 'names> {
-    signature: &'signature Signature<'names>,
+struct CallableReturnType {
+    signature: Signature,
 }
 
-struct InfallibleCallbackReturnType<'signature, 'names> {
-    signature: &'signature Signature<'names>,
+struct InfallibleCallbackReturnType {
+    signature: Signature,
 }
 
-struct AsyncCallbackPayloadType<'signature, 'names> {
-    signature: &'signature Signature<'names>,
+struct AsyncCallbackPayloadType {
+    signature: Signature,
 }
 
 struct FallibleAsyncCallbackSuccess;
 
-impl CallableReturnType<'_, '_> {
+impl CallableReturnType {
     fn direct_slot(&self, slot: ReturnValueSlot, ty: &DirectValueType) -> Result<Type> {
         match slot {
             ReturnValueSlot::ReturnSlot => self.signature.names.direct_value(ty),
@@ -1124,7 +1175,7 @@ impl CallableReturnType<'_, '_> {
     }
 }
 
-impl<'plan, D> ParamPlanRender<'plan, Native, D> for ValueParameter<'_, '_>
+impl<'plan, D> ParamPlanRender<'plan, Native, D> for ValueParameter
 where
     D: Direction,
 {
@@ -1132,7 +1183,7 @@ where
 
     fn direct(&mut self, ty: &'plan DirectValueType, _: D::Receive) -> Self::Output {
         Ok(vec![Parameter::new(
-            self.name,
+            self.name.as_str(),
             self.signature.names.direct_value(ty)?,
         )?])
     }
@@ -1173,7 +1224,7 @@ where
         _: D::Receive,
     ) -> Self::Output {
         Ok(vec![Parameter::new(
-            self.name,
+            self.name.as_str(),
             Type::handle_carrier(carrier)?,
         )?])
     }
@@ -1189,11 +1240,11 @@ where
     }
 
     fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
-        self.signature.direct_vec_param(self.name, element)
+        self.signature.direct_vec_param(&self.name, element)
     }
 }
 
-impl<'plan, D> ReturnPlanRender<'plan, Native, D> for ReturnParameters<'_, '_>
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for ReturnParameters
 where
     D: Direction,
     D::Opposite: ParamDirection<Native>,
@@ -1271,7 +1322,7 @@ where
     }
 }
 
-impl<'plan, D> ReturnPlanRender<'plan, Native, D> for CallableReturnType<'_, '_>
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for CallableReturnType
 where
     D: Direction,
     D::Opposite: ParamDirection<Native>,
@@ -1319,7 +1370,7 @@ where
     }
 }
 
-impl<'plan, D> ReturnPlanRender<'plan, Native, D> for InfallibleCallbackReturnType<'_, '_>
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for InfallibleCallbackReturnType
 where
     D: Direction,
     D::Opposite: ParamDirection<Native>,
@@ -1332,7 +1383,7 @@ where
 
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         CallableReturnType {
-            signature: self.signature,
+            signature: self.signature.clone(),
         }
         .direct_slot(slot, ty)
     }
@@ -1345,7 +1396,7 @@ where
         shape: native::BufferShape,
     ) -> Self::Output {
         CallableReturnType {
-            signature: self.signature,
+            signature: self.signature.clone(),
         }
         .encoded_slot(slot, shape)
     }
@@ -1358,34 +1409,34 @@ where
         _: HandlePresence,
     ) -> Self::Output {
         CallableReturnType {
-            signature: self.signature,
+            signature: self.signature.clone(),
         }
         .handle_slot(slot, carrier)
     }
 
     fn scalar_option(&mut self, _: Primitive) -> Self::Output {
         Ok(CallableReturnType {
-            signature: self.signature,
+            signature: self.signature.clone(),
         }
         .buffer())
     }
 
     fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
         Ok(CallableReturnType {
-            signature: self.signature,
+            signature: self.signature.clone(),
         }
         .buffer())
     }
 
     fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
         Ok(CallableReturnType {
-            signature: self.signature,
+            signature: self.signature.clone(),
         }
         .status())
     }
 }
 
-impl<'plan, D> ReturnPlanRender<'plan, Native, D> for AsyncCallbackPayloadType<'_, '_>
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for AsyncCallbackPayloadType
 where
     D: Direction,
     D::Opposite: ParamDirection<Native>,
@@ -1549,10 +1600,10 @@ where
     }
 }
 
-impl<'names> Signature<'names> {
-    fn new(names: &'names Names, receiver: impl IntoIterator<Item = Parameter>) -> Self {
+impl Signature {
+    fn new(names: &Names, receiver: impl IntoIterator<Item = Parameter>) -> Self {
         Self {
-            names,
+            names: names.clone(),
             receiver: receiver.into_iter().collect(),
         }
     }
@@ -1563,10 +1614,10 @@ impl<'names> Signature<'names> {
         callable: &ExportedCallable<Native>,
     ) -> Result<Vec<Function>> {
         match callable.execution() {
-            boltffi_binding::ExecutionDecl::Synchronous(_) => self
+            ExecutionDecl::Synchronous(_) => self
                 .synchronous(symbol.name().as_str(), callable)
                 .map(|function| vec![function]),
-            boltffi_binding::ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
                 poll,
                 complete,
                 cancel,
@@ -1577,18 +1628,18 @@ impl<'names> Signature<'names> {
                 callable,
                 PollHandleSymbols::new(symbol, poll, complete, cancel, free, panic_message),
             ),
-            boltffi_binding::ExecutionDecl::Asynchronous(
+            ExecutionDecl::Asynchronous(
                 native::AsyncProtocol::NativeFuture | native::AsyncProtocol::Continuation { .. },
             ) => Err(Error::UnsupportedCAbi {
                 shape: "native async protocol",
             }),
-            boltffi_binding::ExecutionDecl::Asynchronous(
-                native::AsyncProtocol::CallbackCompletion,
-            ) => Err(Error::UnexpectedBindingShape {
-                layer: C_BRIDGE_LAYER,
-                shape: "callback completion protocol on exported callable",
-            }),
-            boltffi_binding::ExecutionDecl::Asynchronous(_) => Err(Error::UnexpectedBindingShape {
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::CallbackCompletion) => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "callback completion protocol on exported callable",
+                })
+            }
+            ExecutionDecl::Asynchronous(_) => Err(Error::UnexpectedBindingShape {
                 layer: C_BRIDGE_LAYER,
                 shape: "unknown native async protocol",
             }),
@@ -1615,7 +1666,7 @@ impl<'names> Signature<'names> {
     fn async_poll_handle(
         &self,
         callable: &ExportedCallable<Native>,
-        symbols: PollHandleSymbols<'_>,
+        symbols: PollHandleSymbols,
     ) -> Result<Vec<Function>> {
         let start = Function::new(
             symbols.start.name().as_str(),
@@ -1679,8 +1730,8 @@ impl<'names> Signature<'names> {
             .map(|param| {
                 let name = name::Spelling::new(param.name()).parameter();
                 match param.payload() {
-                    boltffi_binding::IncomingParam::Value(plan) => self.value_param(&name, plan),
-                    boltffi_binding::IncomingParam::Closure(closure) => {
+                    IncomingParam::Value(plan) => self.value_param(&name, plan),
+                    IncomingParam::Closure(closure) => {
                         self.incoming_closure_param(&name, closure.invoke())
                     }
                 }
@@ -1696,8 +1747,8 @@ impl<'names> Signature<'names> {
             .map(|param| {
                 let name = name::Spelling::new(param.name()).parameter();
                 match param.payload() {
-                    boltffi_binding::OutgoingParam::Value(plan) => self.value_param(&name, plan),
-                    boltffi_binding::OutgoingParam::Closure(closure) => {
+                    OutgoingParam::Value(plan) => self.value_param(&name, plan),
+                    OutgoingParam::Closure(closure) => {
                         self.outgoing_closure_param(&name, closure.invoke())
                     }
                 }
@@ -1712,8 +1763,8 @@ impl<'names> Signature<'names> {
         D: Direction,
     {
         plan.render_with(&mut ValueParameter {
-            signature: self,
-            name,
+            signature: self.clone(),
+            name: name.to_owned(),
         })
     }
 
@@ -1808,7 +1859,9 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        plan.render_with(&mut ReturnParameters { signature: self })
+        plan.render_with(&mut ReturnParameters {
+            signature: self.clone(),
+        })
     }
 
     fn error_params<D>(&self, error: &ErrorDecl<Native, D>) -> Result<Vec<Parameter>>
@@ -1858,7 +1911,9 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        plan.render_with(&mut CallableReturnType { signature: self })
+        plan.render_with(&mut CallableReturnType {
+            signature: self.clone(),
+        })
     }
 
     fn async_complete_return<D>(
@@ -1872,9 +1927,9 @@ impl<'names> Signature<'names> {
     {
         match error {
             ErrorDecl::EncodedViaReturnSlot { shape, .. } => self.encoded_return(*shape),
-            ErrorDecl::None(_) => {
-                plan.render_with(&mut InfallibleCallbackReturnType { signature: self })
-            }
+            ErrorDecl::None(_) => plan.render_with(&mut InfallibleCallbackReturnType {
+                signature: self.clone(),
+            }),
             ErrorDecl::StatusViaReturnSlot { .. }
             | ErrorDecl::StatusViaOutPointer { .. }
             | ErrorDecl::EncodedViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
@@ -1940,9 +1995,9 @@ impl<'names> Signature<'names> {
         D::Opposite: ParamDirection<Native>,
     {
         match error {
-            ErrorDecl::None(_) => {
-                plan.render_with(&mut InfallibleCallbackReturnType { signature: self })
-            }
+            ErrorDecl::None(_) => plan.render_with(&mut InfallibleCallbackReturnType {
+                signature: self.clone(),
+            }),
             _ => self.return_type(plan, error),
         }
     }
@@ -2002,7 +2057,9 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        plan.render_with(&mut AsyncCallbackPayloadType { signature: self })
+        plan.render_with(&mut AsyncCallbackPayloadType {
+            signature: self.clone(),
+        })
     }
 
     fn validate_fallible_async_callback_success<D>(
@@ -2037,7 +2094,13 @@ impl ReceiverAbi {
 
     fn encoded(name: &str) -> Result<Self> {
         Ok(Self {
-            input: encoded_receiver(name)?,
+            input: vec![
+                Parameter::new(
+                    format!("{name}_ptr"),
+                    Type::ConstPointer(Box::new(Type::Uint8)),
+                )?,
+                Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
+            ],
             writeback: Some(Parameter::new(
                 format!("{name}_out"),
                 Type::MutPointer(Box::new(Type::Buffer)),
@@ -2056,62 +2119,4 @@ impl ReceiverAbi {
             )
             .collect()
     }
-}
-
-fn callback_field(method: &ImportedMethodDecl<Native, VTableSlot>, names: &Names) -> Result<Field> {
-    let signature = Signature::new(names, Vec::new());
-    if matches!(
-        method.callable().execution(),
-        boltffi_binding::ExecutionDecl::Asynchronous(_)
-    ) {
-        return async_callback_field(method, &signature);
-    }
-    let return_params = signature.callback_return_params(method.callable().returns().plan())?;
-    let method_params = signature.imported_params(method.callable().params())?;
-    let params = std::iter::once(Type::Uint64)
-        .chain(return_params.into_iter().map(|parameter| parameter.ty))
-        .chain(method_params.into_iter().map(|parameter| parameter.ty))
-        .collect();
-    Field::new(
-        method.target().as_str(),
-        Type::FunctionPointer {
-            returns: Box::new(signature.callback_return_type(
-                method.callable().returns().plan(),
-                method.callable().error(),
-            )?),
-            params,
-        },
-    )
-}
-
-fn async_callback_field(
-    method: &ImportedMethodDecl<Native, VTableSlot>,
-    signature: &Signature<'_>,
-) -> Result<Field> {
-    let method_params = signature.imported_params(method.callable().params())?;
-    let completion = signature.async_completion(
-        method.callable().returns().plan(),
-        method.callable().error(),
-    )?;
-    let params = std::iter::once(Type::Uint64)
-        .chain(method_params.into_iter().map(|parameter| parameter.ty))
-        .chain([completion, Type::MutPointer(Box::new(Type::Void))])
-        .collect();
-    Field::new(
-        method.target().as_str(),
-        Type::FunctionPointer {
-            returns: Box::new(Type::Void),
-            params,
-        },
-    )
-}
-
-fn encoded_receiver(name: &str) -> Result<Vec<Parameter>> {
-    Ok(vec![
-        Parameter::new(
-            format!("{name}_ptr"),
-            Type::ConstPointer(Box::new(Type::Uint8)),
-        )?,
-        Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
-    ])
 }

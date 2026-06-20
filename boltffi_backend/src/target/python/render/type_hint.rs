@@ -16,11 +16,17 @@ pub struct TypeHint {
 }
 
 impl TypeHint {
-    pub fn from_type_ref(ty: &TypeRef, package: &Package<'_, '_>) -> Result<Self> {
+    pub fn from_type_ref<'package>(
+        ty: &TypeRef,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         ty.render_with(&mut TypeRefHint::value(package))
     }
 
-    pub fn from_direct_value(ty: &DirectValueType, package: &Package<'_, '_>) -> Result<Self> {
+    pub fn from_direct_value<'package>(
+        ty: &DirectValueType,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         match ty {
             DirectValueType::Primitive(primitive) => Self::from_primitive(*primitive),
             DirectValueType::Record(record) => Ok(Self::new(TypeAnnotation::identifier(
@@ -36,16 +42,16 @@ impl TypeHint {
         }
     }
 
-    pub fn from_parameter(
+    pub fn from_parameter<'package>(
         plan: &ParamPlan<Native, IntoRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         plan.render_with(&mut ParameterHint { package })
     }
 
-    pub fn from_return(
+    pub fn from_return<'package>(
         plan: &ReturnPlan<Native, OutOfRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         plan.render_with(&mut ReturnHint { package })
     }
@@ -81,29 +87,32 @@ impl TypeHint {
         self.uses_sequence
     }
 
-    fn from_parameter_type_ref(ty: &TypeRef, package: &Package<'_, '_>) -> Result<Self> {
+    fn from_parameter_type_ref<'package>(
+        ty: &TypeRef,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         ty.render_with(&mut TypeRefHint::parameter(package))
     }
 
-    fn from_direct_vector_parameter(
+    fn from_direct_vector_parameter<'package>(
         element: &DirectVectorElementType,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let element = Self::from_direct_vector_element(element, package)?;
         Ok(Self::sequence(TypeAnnotation::sequence(element.annotation)))
     }
 
-    fn from_direct_vector_return(
+    fn from_direct_vector_return<'package>(
         element: &DirectVectorElementType,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let element = Self::from_direct_vector_element(element, package)?;
         Ok(Self::new(TypeAnnotation::list(element.annotation)))
     }
 
-    fn from_direct_vector_element(
+    fn from_direct_vector_element<'package>(
         element: &DirectVectorElementType,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         match element {
             DirectVectorElementType::Primitive(primitive) => {
@@ -154,20 +163,20 @@ enum SequenceHint {
     Sequence,
 }
 
-struct TypeRefHint<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+struct TypeRefHint<'package> {
+    package: &'package Package<'package>,
     sequence: SequenceHint,
 }
 
-impl<'package, 'binding, 'bridge> TypeRefHint<'package, 'binding, 'bridge> {
-    fn value(package: &'package Package<'binding, 'bridge>) -> Self {
+impl<'package> TypeRefHint<'package> {
+    fn value(package: &'package Package<'package>) -> Self {
         Self {
             package,
             sequence: SequenceHint::List,
         }
     }
 
-    fn parameter(package: &'package Package<'binding, 'bridge>) -> Self {
+    fn parameter(package: &'package Package<'package>) -> Self {
         Self {
             package,
             sequence: SequenceHint::Sequence,
@@ -175,7 +184,7 @@ impl<'package, 'binding, 'bridge> TypeRefHint<'package, 'binding, 'bridge> {
     }
 }
 
-impl TypeRefRender for TypeRefHint<'_, '_, '_> {
+impl<'package> TypeRefRender for TypeRefHint<'package> {
     type Output = Result<TypeHint>;
 
     fn primitive(&mut self, primitive: Primitive) -> Self::Output {
@@ -261,11 +270,11 @@ impl TypeRefRender for TypeRefHint<'_, '_, '_> {
     }
 }
 
-struct ParameterHint<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+struct ParameterHint<'package> {
+    package: &'package Package<'package>,
 }
 
-impl ParameterHint<'_, '_, '_> {
+impl<'package> ParameterHint<'package> {
     fn encoded_type_ref(&self, ty: &TypeRef, shape: native::BufferShape) -> Result<TypeHint> {
         if shape != native::BufferShape::Slice {
             return Err(Error::UnsupportedTarget {
@@ -277,7 +286,7 @@ impl ParameterHint<'_, '_, '_> {
     }
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterHint<'_, '_, '_> {
+impl<'plan, 'package> ParamPlanRender<'plan, Native, IntoRust> for ParameterHint<'package> {
     type Output = Result<TypeHint>;
 
     fn direct(&mut self, ty: &DirectValueType, _: Receive) -> Self::Output {
@@ -329,17 +338,17 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterHint<'_, '_, '
     }
 }
 
-struct ReturnHint<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+struct ReturnHint<'package> {
+    package: &'package Package<'package>,
 }
 
-impl ReturnHint<'_, '_, '_> {
+impl<'package> ReturnHint<'package> {
     fn type_ref(&self, ty: &TypeRef) -> Result<TypeHint> {
         TypeHint::from_type_ref(ty, self.package)
     }
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnHint<'_, '_, '_> {
+impl<'plan, 'package> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnHint<'package> {
     type Output = Result<TypeHint>;
 
     fn void(&mut self) -> Self::Output {

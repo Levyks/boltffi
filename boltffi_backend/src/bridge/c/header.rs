@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use boltffi_binding::{Bindings, Native};
 
 use crate::core::{
@@ -15,7 +17,7 @@ pub struct CBridge {
 
 impl CBridge {
     /// Creates a C header bridge.
-    pub fn new(path: impl Into<std::path::PathBuf>) -> Result<Self> {
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self> {
         Ok(Self {
             path: FilePath::new(path)?,
         })
@@ -47,7 +49,7 @@ impl bridge::BridgeBackend for CBridge {
         _input: &Self::Input,
         contract: &Self::Contract,
     ) -> Result<GeneratedOutput> {
-        let header = template::Header::new(contract).render()?;
+        let header = template::Header::render(contract)?;
         FileLayout::single(self.path.clone()).assemble([Emitted::primary(header)])
     }
 }

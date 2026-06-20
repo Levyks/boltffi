@@ -28,9 +28,9 @@ pub struct RecordClass {
 }
 
 impl RecordClass {
-    pub fn from_direct(
+    pub fn from_direct<'package>(
         record: &DirectRecordDecl<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let c_record =
             package
@@ -56,9 +56,9 @@ impl RecordClass {
         })
     }
 
-    pub fn from_encoded(
+    pub fn from_encoded<'package>(
         record: &EncodedRecordDecl<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let symbols = record_render::Symbols::from_encoded(record)?;
         let fields = record
@@ -131,10 +131,10 @@ impl RecordClass {
             .chain(&self.instance_methods)
     }
 
-    fn constructors(
+    fn constructors<'package>(
         initializers: &[InitializerDecl<Native>],
         symbols: &record_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<AssociatedCallable>> {
         initializers
             .iter()
@@ -149,10 +149,10 @@ impl RecordClass {
             .collect()
     }
 
-    fn static_methods(
+    fn static_methods<'package>(
         methods: &[ExportedMethodDecl<Native, NativeSymbol>],
         symbols: &record_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<AssociatedCallable>> {
         methods
             .iter()
@@ -172,10 +172,10 @@ impl RecordClass {
             .collect()
     }
 
-    fn instance_methods(
+    fn instance_methods<'package>(
         methods: &[ExportedMethodDecl<Native, NativeSymbol>],
         symbols: &record_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<AssociatedCallable>> {
         methods
             .iter()
@@ -207,7 +207,10 @@ pub struct RecordField {
 }
 
 impl RecordField {
-    pub fn from_encoded(field: &EncodedFieldDecl, package: &Package<'_, '_>) -> Result<Self> {
+    pub fn from_encoded<'package>(
+        field: &EncodedFieldDecl,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         Ok(Self {
             name: Self::name(field.key())?,
             annotation: TypeHint::from_type_ref(field.ty(), package)?.into_annotation(),
@@ -250,7 +253,10 @@ pub struct EncodedRecordField {
 }
 
 impl EncodedRecordField {
-    pub fn from_field(field: &EncodedFieldDecl, package: &Package<'_, '_>) -> Result<Self> {
+    pub fn from_field<'package>(
+        field: &EncodedFieldDecl,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         let name = RecordField::name(field.key())?;
         Ok(Self {
             encode: CodecExpression::write(field.write(), package)?.into_expression(),

@@ -13,12 +13,12 @@ use crate::{
     },
 };
 
-pub struct Writer<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+pub struct Writer<'package> {
+    package: &'package Package<'package>,
 }
 
-impl<'package, 'binding, 'bridge> Writer<'package, 'binding, 'bridge> {
-    pub fn new(package: &'package Package<'binding, 'bridge>) -> Self {
+impl<'package> Writer<'package> {
+    pub fn new(package: &'package Package<'package>) -> Self {
         Self { package }
     }
 
@@ -94,7 +94,7 @@ impl<'package, 'binding, 'bridge> Writer<'package, 'binding, 'bridge> {
     }
 }
 
-impl CodecWrite for Writer<'_, '_, '_> {
+impl<'package> CodecWrite for Writer<'package> {
     type Stmt = Result<Expression>;
 
     fn primitive(&mut self, primitive: Primitive, value: &ValueRef) -> Vec<Self::Stmt> {
@@ -159,13 +159,10 @@ impl CodecWrite for Writer<'_, '_, '_> {
         })]
     }
 
-    fn callback_handle(&mut self, id: CallbackId, value: &ValueRef) -> Vec<Self::Stmt> {
-        vec![self.value(value).and_then(|_| {
-            id.raw();
-            Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "callback handle in wire writer",
-            })
+    fn callback_handle(&mut self, _: CallbackId, _: &ValueRef) -> Vec<Self::Stmt> {
+        vec![Err(Error::UnsupportedTarget {
+            target: "python",
+            shape: "callback handle in wire writer",
         })]
     }
 

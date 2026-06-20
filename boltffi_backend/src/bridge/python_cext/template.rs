@@ -2,7 +2,7 @@ use askama::Template as AskamaTemplate;
 
 use crate::{
     bridge::{
-        c::{Identifier, Literal, Statement, syntax::FunctionSyntax},
+        c::{Identifier, Literal, Statement},
         python_cext::{LoadedFunction, PythonCExtBridgeContract},
     },
     core::Result,
@@ -24,22 +24,15 @@ struct FunctionView {
     storage_name: Identifier,
 }
 
-pub struct Loader<'contract> {
-    contract: &'contract PythonCExtBridgeContract,
-}
+pub struct Loader;
 
-impl<'contract> Loader<'contract> {
-    pub fn new(contract: &'contract PythonCExtBridgeContract) -> Self {
-        Self { contract }
-    }
-
-    pub fn render(self) -> Result<String> {
+impl Loader {
+    pub fn render(contract: &PythonCExtBridgeContract) -> Result<String> {
         Ok(LoaderTemplate {
-            c_header: Literal::string(self.contract.c_header().as_str()),
-            loader_function: self.contract.loader_method().c_function().clone(),
-            free_function: self.contract.symbols().free_function().clone(),
-            functions: self
-                .contract
+            c_header: Literal::string(contract.c_header().as_str()),
+            loader_function: contract.loader_method().c_function().clone(),
+            free_function: contract.symbols().free_function().clone(),
+            functions: contract
                 .functions()
                 .iter()
                 .map(FunctionView::from_function)
@@ -54,8 +47,10 @@ impl FunctionView {
         Ok(Self {
             symbol: Literal::string(function.function().name()),
             typedef_name: function.typedef_name().clone(),
-            typedef_declaration: FunctionSyntax::new(function.function())
-                .pointer_typedef(function.typedef_name().as_str())?,
+            typedef_declaration: Statement::function_pointer_typedef(
+                function.function(),
+                function.typedef_name().as_str(),
+            )?,
             storage_name: function.storage_name().clone(),
         })
     }

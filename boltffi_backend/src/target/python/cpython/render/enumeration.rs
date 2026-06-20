@@ -1,12 +1,12 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    CStyleEnumDecl, DataEnumDecl, EnumDecl, EnumId, ExportedMethodDecl, InitializerDecl, Native,
-    NativeSymbol, Receive,
+    CStyleEnumDecl, CStyleVariantDecl, CanonicalName, DataEnumDecl, EnumDecl, EnumId,
+    ExportedMethodDecl, InitializerDecl, Native, NativeSymbol, Receive,
 };
 
 use crate::{
     bridge::{
-        c::{self, Identifier, TypeFragment, syntax::TypeSyntax},
+        c::{self, Identifier, TypeFragment},
         python_cext::{ExtensionMethod, MethodFlags, MethodName, PythonCExtBridgeContract},
     },
     core::{Emitted, Error, RenderContext, Result},
@@ -474,11 +474,11 @@ impl Symbols {
         &self.register_method
     }
 
-    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
+    pub fn initializer(&self, name: &CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
-    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
+    pub fn method(&self, name: &CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
@@ -487,7 +487,7 @@ impl Symbols {
         Ok(Self {
             class_name: PythonIdentifier::parse(Name::new(enumeration.name()).class())?,
             stem: stem.clone(),
-            c_type: Some(TypeSyntax::new(&c::Type::named(c_enum.name())?).anonymous()?),
+            c_type: Some(TypeFragment::anonymous(&c::Type::named(c_enum.name())?)?),
             type_object: None,
             registration: Some(Identifier::parse(format!(
                 "boltffi_python_{stem}_registration"
@@ -606,7 +606,7 @@ impl Symbols {
         })
     }
 
-    fn callable(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
+    fn callable(&self, name: &CanonicalName) -> Result<PythonIdentifier> {
         PythonIdentifier::parse(format!(
             "_boltffi_{}_{}",
             self.stem,
@@ -682,7 +682,7 @@ impl PythonVariant {
         self.value
     }
 
-    fn from_variant(variant: &boltffi_binding::CStyleVariantDecl) -> Result<Self> {
+    fn from_variant(variant: &CStyleVariantDecl) -> Result<Self> {
         Ok(Self {
             name: PythonIdentifier::parse(Name::new(variant.name()).enum_member())?,
             value: variant.discriminant().get(),
@@ -699,11 +699,7 @@ struct Variant {
 }
 
 impl Variant {
-    fn new(
-        index: usize,
-        variant: &boltffi_binding::CStyleVariantDecl,
-        c_variant: &c::EnumVariant,
-    ) -> Result<Self> {
+    fn new(index: usize, variant: &CStyleVariantDecl, c_variant: &c::EnumVariant) -> Result<Self> {
         Ok(Self {
             member_name: PythonIdentifier::parse(Name::new(variant.name()).enum_member())?,
             native_value: Identifier::parse(c_variant.name())?,

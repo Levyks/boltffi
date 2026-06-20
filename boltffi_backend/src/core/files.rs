@@ -258,7 +258,7 @@ impl<'decl, S: Surface> RenderedDeclaration<'decl, S> {
 /// Declaration grouping rule for a generated file.
 pub trait FileGroup {
     /// Returns whether a declaration belongs in the file.
-    fn matches<S: Surface>(&self, declaration: DeclarationRef<'_, S>) -> bool;
+    fn matches<'decl, S: Surface>(&self, declaration: DeclarationRef<'decl, S>) -> bool;
 }
 
 /// File group that accepts every declaration.
@@ -267,7 +267,7 @@ pub trait FileGroup {
 pub struct AllDeclarations;
 
 impl FileGroup for AllDeclarations {
-    fn matches<S: Surface>(&self, _declaration: DeclarationRef<'_, S>) -> bool {
+    fn matches<'decl, S: Surface>(&self, _declaration: DeclarationRef<'decl, S>) -> bool {
         true
     }
 }
@@ -607,7 +607,10 @@ where
         }
     }
 
-    fn matching_path<S: Surface>(&self, declaration: DeclarationRef<'_, S>) -> Option<&FilePath> {
+    fn matching_path<'decl, S: Surface>(
+        &self,
+        declaration: DeclarationRef<'decl, S>,
+    ) -> Option<&FilePath> {
         self.files
             .iter()
             .find(|file| file.matches(declaration))
@@ -697,7 +700,7 @@ where
         &self.path
     }
 
-    fn matches<S: Surface>(&self, declaration: DeclarationRef<'_, S>) -> bool {
+    fn matches<'decl, S: Surface>(&self, declaration: DeclarationRef<'decl, S>) -> bool {
         self.group
             .as_ref()
             .is_some_and(|group| group.matches(declaration))
@@ -794,7 +797,7 @@ mod tests {
     }
 
     impl FileGroup for OutputFile {
-        fn matches<S: Surface>(&self, declaration: DeclarationRef<'_, S>) -> bool {
+        fn matches<'decl, S: Surface>(&self, declaration: DeclarationRef<'decl, S>) -> bool {
             matches!(
                 (self, declaration),
                 (Self::Records, DeclarationRef::Record(_))

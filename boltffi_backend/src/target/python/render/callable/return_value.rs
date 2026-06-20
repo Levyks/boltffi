@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use boltffi_binding::{
     ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl, ExportedCallable,
     HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan, ReturnPlan,
@@ -29,9 +27,9 @@ impl ReturnStub {
         }
     }
 
-    pub fn from_callable(
+    pub fn from_callable<'package>(
         callable: &ExportedCallable<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         match callable.error() {
             ErrorDecl::None(_) => Self::from_plan(callable.returns().plan(), package),
@@ -50,9 +48,9 @@ impl ReturnStub {
         }
     }
 
-    pub fn from_plan(
+    pub fn from_plan<'package>(
         plan: &ReturnPlan<Native, OutOfRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         Ok(Self {
             annotation: TypeHint::from_return(plan, package)?.into_annotation(),
@@ -78,9 +76,9 @@ impl ReturnStub {
         self.value.uses_wire_helpers()
     }
 
-    fn from_success_plan(
+    fn from_success_plan<'package>(
         plan: &ReturnPlan<Native, OutOfRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         Ok(Self {
             annotation: TypeHint::from_return(plan, package)?.into_annotation(),
@@ -101,19 +99,23 @@ impl ReturnedValue {
         Self::ClassHandle(class_name)
     }
 
-    pub fn from_plan(
+    pub fn from_plan<'package>(
         plan: &ReturnPlan<Native, OutOfRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
-        plan.render_with(&mut ReturnedValueRender::<CallableReturn>::new(package))
+        plan.render_with(&mut ReturnedValueRender::new(
+            package,
+            ReturnDelivery::Callable,
+        ))
     }
 
-    pub fn from_success_plan(
+    pub fn from_success_plan<'package>(
         plan: &ReturnPlan<Native, OutOfRust>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
-        plan.render_with(&mut ReturnedValueRender::<FallibleSuccessReturn>::new(
+        plan.render_with(&mut ReturnedValueRender::new(
             package,
+            ReturnDelivery::FallibleSuccess,
         ))
     }
 
@@ -166,45 +168,29 @@ impl ReturnedValue {
         }
     }
 
-    fn from_encoded_plan(codec: &ReadPlan, package: &Package<'_, '_>) -> Result<Self> {
+    fn from_encoded_plan<'package>(
+        codec: &ReadPlan,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         CodecExpression::read_return(codec, package)
             .map(|decode| Self::Wire(decode.into_expression()))
     }
 }
 
-struct CallableReturn;
-
-struct FallibleSuccessReturn;
-
-trait ReturnDelivery {
-    fn slot(slot: ReturnValueSlot) -> Result<()>;
-
-    fn native() -> Result<ReturnedValue>;
-
-    fn unsupported_shape() -> &'static str;
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReturnDelivery {
+    Callable,
+    FallibleSuccess,
 }
 
-impl ReturnDelivery for CallableReturn {
-    fn slot(_: ReturnValueSlot) -> Result<()> {
-        Ok(())
-    }
-
-    fn native() -> Result<ReturnedValue> {
-        Ok(ReturnedValue::Native)
-    }
-
-    fn unsupported_shape() -> &'static str {
-        "unknown return stub"
-    }
-}
-
-impl ReturnDelivery for FallibleSuccessReturn {
-    fn slot(slot: ReturnValueSlot) -> Result<()> {
+impl ReturnDelivery {
+    fn slot(self, slot: ReturnValueSlot) -> Result<()> {
         match slot {
+            _ if self == Self::Callable => Ok(()),
             ReturnValueSlot::OutPointer => Ok(()),
             ReturnValueSlot::ReturnSlot => Err(Error::UnsupportedTarget {
                 target: "python",
-                shape: Self::unsupported_shape(),
+                shape: self.unsupported_shape(),
             }),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -213,33 +199,30 @@ impl ReturnDelivery for FallibleSuccessReturn {
         }
     }
 
-    fn native() -> Result<ReturnedValue> {
+    fn native(self) -> Result<ReturnedValue> {
         Ok(ReturnedValue::Native)
     }
 
-    fn unsupported_shape() -> &'static str {
-        "fallible success return"
-    }
-}
-
-struct ReturnedValueRender<'package, 'binding, 'bridge, D> {
-    package: &'package Package<'binding, 'bridge>,
-    delivery: PhantomData<D>,
-}
-
-impl<'package, 'binding, 'bridge, D> ReturnedValueRender<'package, 'binding, 'bridge, D> {
-    fn new(package: &'package Package<'binding, 'bridge>) -> Self {
-        Self {
-            package,
-            delivery: PhantomData,
+    fn unsupported_shape(self) -> &'static str {
+        match self {
+            Self::Callable => "unknown return stub",
+            Self::FallibleSuccess => "fallible success return",
         }
     }
 }
 
-impl<'plan, D> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnedValueRender<'_, '_, '_, D>
-where
-    D: ReturnDelivery,
-{
+struct ReturnedValueRender<'package> {
+    package: &'package Package<'package>,
+    delivery: ReturnDelivery,
+}
+
+impl<'package> ReturnedValueRender<'package> {
+    fn new(package: &'package Package<'package>, delivery: ReturnDelivery) -> Self {
+        Self { package, delivery }
+    }
+}
+
+impl<'plan, 'package> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnedValueRender<'package> {
     type Output = Result<ReturnedValue>;
 
     fn void(&mut self) -> Self::Output {
@@ -247,7 +230,9 @@ where
     }
 
     fn direct(&mut self, slot: ReturnValueSlot, _: &DirectValueType) -> Self::Output {
-        D::slot(slot).and_then(|()| D::native())
+        self.delivery
+            .slot(slot)
+            .and_then(|()| self.delivery.native())
     }
 
     fn encoded(
@@ -257,12 +242,12 @@ where
         codec: &ReadPlan,
         shape: native::BufferShape,
     ) -> Self::Output {
-        D::slot(slot)?;
+        self.delivery.slot(slot)?;
         match shape {
             native::BufferShape::Buffer => ReturnedValue::from_encoded_plan(codec, self.package),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
-                shape: D::unsupported_shape(),
+                shape: self.delivery.unsupported_shape(),
             }),
         }
     }
@@ -274,27 +259,27 @@ where
         _: native::HandleCarrier,
         presence: HandlePresence,
     ) -> Self::Output {
-        D::slot(slot)?;
+        self.delivery.slot(slot)?;
         match (target, presence) {
             (HandleTarget::Class(class_id), HandlePresence::Required) => Ok(
                 ReturnedValue::class_handle(self.package.class_name(class_id)?),
             ),
-            _ => D::native(),
+            _ => self.delivery.native(),
         }
     }
 
     fn scalar_option(&mut self, _: Primitive) -> Self::Output {
-        D::native()
+        self.delivery.native()
     }
 
     fn direct_vector(&mut self, _: &DirectVectorElementType) -> Self::Output {
-        D::native()
+        self.delivery.native()
     }
 
     fn closure(&mut self, _: &ClosureReturn<Native, OutOfRust>) -> Self::Output {
         Err(Error::UnsupportedTarget {
             target: "python",
-            shape: D::unsupported_shape(),
+            shape: self.delivery.unsupported_shape(),
         })
     }
 }

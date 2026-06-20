@@ -4,7 +4,7 @@ use crate::core::Result;
 
 use super::contract::{CBridgeContract, Callback, Enum, Field, Function, Record};
 use super::identifier::Identifier;
-use super::syntax::{FunctionSyntax, Statement, TypeFragment, TypeSyntax};
+use super::syntax::{Statement, TypeFragment};
 
 #[derive(AskamaTemplate)]
 #[template(path = "bridge/c/header.h", escape = "none")]
@@ -42,52 +42,40 @@ struct FunctionView {
     declaration: Statement,
 }
 
-pub struct Header<'abi> {
-    abi: &'abi CBridgeContract,
-}
+pub struct Header;
 
-impl<'abi> Header<'abi> {
-    pub fn new(abi: &'abi CBridgeContract) -> Self {
-        Self { abi }
-    }
-
-    pub fn render(self) -> Result<String> {
+impl Header {
+    pub fn render(abi: &CBridgeContract) -> Result<String> {
         Ok(HeaderTemplate {
-            support_functions: self
-                .abi
+            support_functions: abi
                 .support()
                 .functions()
                 .iter()
                 .map(FunctionView::from_function)
                 .collect::<Result<_>>()?,
-            direct_records: self
-                .abi
+            direct_records: abi
                 .direct_records()
                 .iter()
                 .map(RecordView::from_record)
                 .collect::<Result<_>>()?,
-            enums: self
-                .abi
+            enums: abi
                 .enums()
                 .iter()
                 .map(EnumView::from_enum)
                 .collect::<Result<_>>()?,
-            callback_vtables: self
-                .abi
+            callback_vtables: abi
                 .callbacks()
                 .iter()
                 .map(Callback::vtable)
                 .map(RecordView::from_record)
                 .collect::<Result<_>>()?,
-            callback_functions: self
-                .abi
+            callback_functions: abi
                 .callbacks()
                 .iter()
                 .flat_map(|callback| [callback.register(), callback.create_handle()])
                 .map(FunctionView::from_function)
                 .collect::<Result<_>>()?,
-            functions: self
-                .abi
+            functions: abi
                 .functions()
                 .iter()
                 .map(FunctionView::from_function)
@@ -113,7 +101,7 @@ impl RecordView {
 impl FieldView {
     fn from_field(field: &Field) -> Result<Self> {
         Ok(Self {
-            declaration: TypeSyntax::new(field.ty()).declaration(field.name())?,
+            declaration: TypeFragment::declaration(field.ty(), field.name())?,
         })
     }
 }
@@ -122,7 +110,7 @@ impl EnumView {
     fn from_enum(enumeration: &Enum) -> Result<Self> {
         Ok(Self {
             name: Identifier::parse(enumeration.name())?,
-            repr: TypeSyntax::new(enumeration.repr()).anonymous()?,
+            repr: TypeFragment::anonymous(enumeration.repr())?,
             variants: enumeration
                 .variants()
                 .iter()
@@ -141,7 +129,7 @@ impl EnumView {
 impl FunctionView {
     fn from_function(function: &Function) -> Result<Self> {
         Ok(Self {
-            declaration: FunctionSyntax::new(function).declaration()?,
+            declaration: Statement::function_declaration(function)?,
         })
     }
 }

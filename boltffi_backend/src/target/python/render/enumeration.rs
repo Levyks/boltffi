@@ -55,9 +55,9 @@ pub struct EnumClass {
 }
 
 impl EnumClass {
-    pub fn from_c_style(
+    pub fn from_c_style<'package>(
         enumeration: &CStyleEnumDecl<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let class = enumeration_render::PythonClass::from_c_style(enumeration, package.bridge)?;
         let c_enum = package.bridge.source_c_style_enum(enumeration.id()).ok_or(
@@ -82,9 +82,9 @@ impl EnumClass {
         })
     }
 
-    pub fn from_data(
+    pub fn from_data<'package>(
         enumeration: &DataEnumDecl<Native>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let symbols = enumeration_render::Symbols::from_data(enumeration)?;
         let class_name = symbols.class_name().clone();
@@ -175,10 +175,10 @@ impl EnumClass {
             .chain(&self.instance_methods)
     }
 
-    fn constructors(
+    fn constructors<'package>(
         initializers: &[InitializerDecl<Native>],
         symbols: &enumeration_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<AssociatedCallable>> {
         initializers
             .iter()
@@ -193,10 +193,10 @@ impl EnumClass {
             .collect()
     }
 
-    fn static_methods(
+    fn static_methods<'package>(
         methods: &[ExportedMethodDecl<Native, NativeSymbol>],
         symbols: &enumeration_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<AssociatedCallable>> {
         methods
             .iter()
@@ -216,10 +216,10 @@ impl EnumClass {
             .collect()
     }
 
-    fn instance_methods(
+    fn instance_methods<'package>(
         methods: &[ExportedMethodDecl<Native, NativeSymbol>],
         symbols: &enumeration_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<AssociatedCallable>> {
         methods
             .iter()
@@ -284,10 +284,10 @@ impl DataEnumVariant {
         !self.fields.is_empty()
     }
 
-    fn from_variant(
+    fn from_variant<'package>(
         variant: &DataVariantDecl,
         enum_class_name: &Identifier,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let fields = Self::payload_fields(variant.payload())?;
         Ok(Self {

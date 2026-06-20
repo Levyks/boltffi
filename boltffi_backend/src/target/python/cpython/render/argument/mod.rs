@@ -6,7 +6,7 @@ use boltffi_binding::{
 
 use crate::{
     bridge::{
-        c::{self, Identifier, Type, syntax::TypeSyntax},
+        c::{self, Identifier, Type, TypeFragment},
         python_cext::PythonCExtBridgeContract,
     },
     core::{Error, RenderContext, Result},
@@ -412,7 +412,7 @@ impl Conversion {
             index,
             name,
             kind: Kind::Direct(Direct {
-                c_type: TypeSyntax::new(&Type::CallbackHandle).anonymous()?,
+                c_type: TypeFragment::anonymous(&Type::CallbackHandle)?,
                 parser: symbols.parser(presence).clone(),
             }),
             primitive: None,
@@ -505,14 +505,14 @@ impl Conversion {
     }
 }
 
-struct ParameterConversion<'bridge, 'context, 'bindings> {
+struct ParameterConversion<'render> {
     index: usize,
     name: Identifier,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl ParameterConversion<'_, '_, '_> {
+impl<'render> ParameterConversion<'render> {
     fn direct_type(&self, ty: &DirectValueType, receive: Receive) -> Result<Conversion> {
         match receive {
             Receive::ByValue | Receive::ByRef => Conversion::from_direct_slot(
@@ -562,7 +562,7 @@ impl ParameterConversion<'_, '_, '_> {
     }
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterConversion<'_, '_, '_> {
+impl<'plan, 'render> ParamPlanRender<'plan, Native, IntoRust> for ParameterConversion<'render> {
     type Output = Result<Conversion>;
 
     fn direct(&mut self, ty: &DirectValueType, receive: Receive) -> Self::Output {

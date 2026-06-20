@@ -30,10 +30,10 @@ pub struct ClassStream {
 }
 
 impl ClassStream {
-    pub fn from_declaration(
+    pub fn from_declaration<'package>(
         declaration: &StreamDecl<Native>,
         class_name: &Identifier,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let symbols = stream_render::Symbols::new(declaration)?;
         let item = StreamItem::from_plan(declaration.item(), package)?;
@@ -82,7 +82,10 @@ struct StreamItem {
 }
 
 impl StreamItem {
-    fn from_plan(plan: &StreamItemPlan<Native>, package: &Package<'_, '_>) -> Result<Self> {
+    fn from_plan<'package>(
+        plan: &StreamItemPlan<Native>,
+        package: &'package Package<'package>,
+    ) -> Result<Self> {
         plan.render_with(&mut PackageStreamItem { package })
     }
 
@@ -130,11 +133,11 @@ impl StreamItem {
     }
 }
 
-struct PackageStreamItem<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+struct PackageStreamItem<'package> {
+    package: &'package Package<'package>,
 }
 
-impl<'plan> StreamItemPlanRender<'plan, Native> for PackageStreamItem<'_, '_, '_> {
+impl<'plan, 'package> StreamItemPlanRender<'plan, Native> for PackageStreamItem<'package> {
     type Output = Result<StreamItem>;
 
     fn direct(&mut self, ty: &'plan DirectValueType, _: ByteSize) -> Self::Output {

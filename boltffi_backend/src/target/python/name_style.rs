@@ -4,8 +4,8 @@ use crate::core::{Error, Result};
 
 use super::syntax::Identifier;
 
-pub struct Name<'source> {
-    source: &'source CanonicalName,
+pub struct Name {
+    source: CanonicalName,
 }
 
 /// A Python package module name accepted by generated Python bindings.
@@ -16,9 +16,11 @@ pub struct PackageModule {
     name: String,
 }
 
-impl<'source> Name<'source> {
-    pub fn new(source: &'source CanonicalName) -> Self {
-        Self { source }
+impl Name {
+    pub fn new(source: &CanonicalName) -> Self {
+        Self {
+            source: source.clone(),
+        }
     }
 
     pub fn function(&self) -> Result<Identifier> {
@@ -41,7 +43,7 @@ impl<'source> Name<'source> {
             .parts()
             .iter()
             .map(NamePart::as_str)
-            .map(capitalized)
+            .map(Self::capitalized)
             .collect()
     }
 
@@ -53,6 +55,13 @@ impl<'source> Name<'source> {
             .map(str::to_ascii_uppercase)
             .collect::<Vec<_>>()
             .join("_")
+    }
+
+    fn capitalized(part: &str) -> String {
+        let mut characters = part.chars();
+        characters.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(characters).collect()
+        })
     }
 }
 
@@ -80,20 +89,4 @@ impl PackageModule {
     pub fn as_str(&self) -> &str {
         &self.name
     }
-}
-
-pub fn valid_identifier(name: &str) -> bool {
-    let mut characters = name.chars();
-    let Some(first_character) = characters.next() else {
-        return false;
-    };
-    (first_character == '_' || first_character.is_alphabetic())
-        && characters.all(|character| character == '_' || character.is_alphanumeric())
-}
-
-fn capitalized(part: &str) -> String {
-    let mut characters = part.chars();
-    characters.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(characters).collect()
-    })
 }

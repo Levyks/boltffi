@@ -1,7 +1,7 @@
 use boltffi_binding::{Primitive, native};
 
 use crate::{
-    bridge::c::{Identifier, Type, TypeFragment, syntax::TypeSyntax},
+    bridge::c::{Identifier, Type, TypeFragment},
     core::{Error, Result},
 };
 
@@ -114,7 +114,7 @@ impl Runtime {
     }
 
     pub fn c_type(self) -> Result<TypeFragment> {
-        TypeSyntax::new(&Type::primitive(self.primitive)?).anonymous()
+        TypeFragment::anonymous(&Type::primitive(self.primitive)?)
     }
 
     pub fn parser(self) -> Result<Identifier> {

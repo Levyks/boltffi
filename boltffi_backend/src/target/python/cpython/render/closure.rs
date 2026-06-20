@@ -8,7 +8,7 @@ use boltffi_binding::{
 
 use crate::{
     bridge::{
-        c::{self, Expression, Identifier, Literal, TypeFragment, syntax::TypeSyntax},
+        c::{self, Expression, Identifier, Literal, TypeFragment},
         python_cext::PythonCExtBridgeContract,
     },
     core::{Error, RenderContext, Result},
@@ -91,13 +91,17 @@ impl Parameter {
         }
         .render()?;
         Ok(Self {
-            call_declaration: TypeSyntax::new(c_parameters[0].ty()).declaration(call.as_str())?,
+            call_declaration: TypeFragment::declaration(c_parameters[0].ty(), call.as_str())?,
             call,
-            context_declaration: TypeSyntax::new(c_parameters[1].ty())
-                .declaration(context_name.as_str())?,
+            context_declaration: TypeFragment::declaration(
+                c_parameters[1].ty(),
+                context_name.as_str(),
+            )?,
             context: context_name,
-            release_declaration: TypeSyntax::new(c_parameters[2].ty())
-                .declaration(release_name.as_str())?,
+            release_declaration: TypeFragment::declaration(
+                c_parameters[2].ty(),
+                release_name.as_str(),
+            )?,
             release: release_name,
             parser,
             release_needed,
@@ -188,20 +192,23 @@ impl Parameter {
     }
 }
 
-struct OutputParameter<'ty> {
-    ty: &'ty c::Type,
+struct OutputParameter {
+    ty: c::Type,
     name: &'static str,
 }
 
-impl<'ty> OutputParameter<'ty> {
-    fn new(ty: &'ty c::Type, name: &'static str) -> Self {
-        Self { ty, name }
+impl OutputParameter {
+    fn new(ty: &c::Type, name: &'static str) -> Self {
+        Self {
+            ty: ty.clone(),
+            name,
+        }
     }
 
     fn declaration(&self) -> Result<c::Statement> {
-        match self.ty {
+        match &self.ty {
             c::Type::FunctionPointer { returns, params } => {
-                TypeSyntax::function_pointer_declaration(
+                TypeFragment::function_pointer_declaration(
                     format!("*{}", self.name).as_str(),
                     returns,
                     params.iter(),
@@ -209,7 +216,7 @@ impl<'ty> OutputParameter<'ty> {
             }
             _ => Ok(c::Statement::new(format!(
                 "{} *{}",
-                TypeSyntax::new(self.ty).anonymous()?,
+                TypeFragment::anonymous(&self.ty)?,
                 self.name
             ))),
         }
@@ -505,7 +512,7 @@ impl Argument {
             OutgoingParam::Value(plan) => plan.render_with(&mut ClosureArgumentValue {
                 name,
                 object,
-                c_types,
+                c_types: c_types.to_vec(),
                 bridge,
                 context,
             }),
@@ -556,7 +563,7 @@ impl Argument {
         };
         let direct = direct::NativeSlot::from_direct_value(ty, bridge, context)?;
         Ok(Self {
-            declarations: vec![TypeSyntax::new(c_type).declaration(name.as_str())?],
+            declarations: vec![TypeFragment::declaration(c_type, name.as_str())?],
             object,
             expression: direct.box_expression(name),
             primitive: direct.primitive(),
@@ -590,8 +597,8 @@ impl Argument {
         let expression = payload.expression();
         Ok(Self {
             declarations: vec![
-                TypeSyntax::new(pointer).declaration(pointer_name.as_str())?,
-                TypeSyntax::new(length).declaration(length_name.as_str())?,
+                TypeFragment::declaration(pointer, pointer_name.as_str())?,
+                TypeFragment::declaration(length, length_name.as_str())?,
             ],
             object,
             expression,
@@ -623,8 +630,8 @@ impl Argument {
         let element = direct_vector::Element::from_element(element, bridge, context)?;
         Ok(Self {
             declarations: vec![
-                TypeSyntax::new(pointer).declaration(pointer_name.as_str())?,
-                TypeSyntax::new(length).declaration(length_name.as_str())?,
+                TypeFragment::declaration(pointer, pointer_name.as_str())?,
+                TypeFragment::declaration(length, length_name.as_str())?,
             ],
             object,
             expression: c::Expression::call(
@@ -694,15 +701,15 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentArity {
     }
 }
 
-struct ClosureArgumentValue<'ctype, 'bridge, 'context, 'bindings> {
+struct ClosureArgumentValue<'render> {
     name: Identifier,
     object: Identifier,
-    c_types: &'ctype [c::Type],
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+    c_types: Vec<c::Type>,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'_, '_, '_, '_> {
+impl<'plan, 'render> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'render> {
     type Output = Result<Argument>;
 
     fn direct(&mut self, ty: &DirectValueType, _: ()) -> Self::Output {
@@ -710,7 +717,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'
             self.name.clone(),
             self.object.clone(),
             ty,
-            self.c_types,
+            &self.c_types,
             self.bridge,
             self.context,
         )
@@ -725,7 +732,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'
     ) -> Self::Output {
         match shape {
             native::BufferShape::Slice => {
-                Argument::encoded(self.name.clone(), self.object.clone(), codec, self.c_types)
+                Argument::encoded(self.name.clone(), self.object.clone(), codec, &self.c_types)
             }
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -759,7 +766,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'
             self.name.clone(),
             self.object.clone(),
             element,
-            self.c_types,
+            &self.c_types,
             self.bridge,
             self.context,
         )
@@ -790,7 +797,7 @@ impl FallibleReturn {
         let success = FallibleSuccess::new(plan, return_out, bridge, context)?;
         let error = FallibleError::new(error)?;
         let declarations = return_out
-            .map(|ty| TypeSyntax::new(ty).declaration("return_out"))
+            .map(|ty| TypeFragment::declaration(ty, "return_out"))
             .transpose()?
             .into_iter()
             .collect();
@@ -862,7 +869,7 @@ impl FallibleSuccess {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         plan.render_with(&mut FallibleSuccessValue {
-            return_out,
+            return_out: return_out.cloned(),
             bridge,
             context,
         })
@@ -909,7 +916,7 @@ impl FallibleSuccess {
         Ok(Self {
             out: Some(Identifier::parse("return_out")?),
             value: Some(Identifier::parse("return_success")?),
-            c_type: Some(TypeSyntax::new(out_type).anonymous()?),
+            c_type: Some(TypeFragment::anonymous(out_type)?),
             default_value: Some(direct.default_value().clone()),
             parser: Some(direct.parser().clone()),
             wire: false,
@@ -991,13 +998,13 @@ impl FallibleSuccess {
     }
 }
 
-struct FallibleSuccessValue<'out, 'bridge, 'context, 'bindings> {
-    return_out: Option<&'out c::Type>,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct FallibleSuccessValue<'render> {
+    return_out: Option<c::Type>,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'_, '_, '_, '_> {
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'render> {
     type Output = Result<FallibleSuccess>;
 
     fn void(&mut self) -> Self::Output {
@@ -1014,7 +1021,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
         match slot {
             ReturnValueSlot::OutPointer => FallibleSuccess::direct(
                 ty,
-                FallibleSuccess::out_type(self.return_out)?,
+                FallibleSuccess::out_type(self.return_out.as_ref())?,
                 self.bridge,
                 self.context,
             ),
@@ -1035,7 +1042,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
     ) -> Self::Output {
         match (slot, shape) {
             (ReturnValueSlot::OutPointer, native::BufferShape::Buffer) => {
-                FallibleSuccess::wire(codec, FallibleSuccess::out_type(self.return_out)?)
+                FallibleSuccess::wire(codec, FallibleSuccess::out_type(self.return_out.as_ref())?)
             }
             (ReturnValueSlot::OutPointer, _) | (ReturnValueSlot::ReturnSlot, _) => {
                 Self::unsupported()
@@ -1070,7 +1077,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
     }
 }
 
-impl FallibleSuccessValue<'_, '_, '_, '_> {
+impl<'render> FallibleSuccessValue<'render> {
     fn unsupported() -> Result<FallibleSuccess> {
         Err(Error::UnsupportedTarget {
             target: "python",
@@ -1132,7 +1139,7 @@ struct ReturnValue {
 impl ReturnValue {
     fn fallible_error(c_type: &c::Type) -> Result<Self> {
         Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(c_type)?,
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
@@ -1154,7 +1161,7 @@ impl ReturnValue {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         plan.render_with(&mut ClosureReturnValue {
-            c_type,
+            c_type: c_type.clone(),
             bridge,
             context,
         })
@@ -1219,7 +1226,7 @@ impl ReturnValue {
         raw_wire: bool,
     ) -> Result<Self> {
         Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(c_type)?,
             parser: Some(parser),
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
@@ -1235,18 +1242,18 @@ impl ReturnValue {
     }
 }
 
-struct ClosureReturnValue<'ctype, 'bridge, 'context, 'bindings> {
-    c_type: &'ctype c::Type,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct ClosureReturnValue<'render> {
+    c_type: c::Type,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_, '_, '_, '_> {
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'render> {
     type Output = Result<ReturnValue>;
 
     fn void(&mut self) -> Self::Output {
         Ok(ReturnValue {
-            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(&self.c_type)?,
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: None,
@@ -1267,7 +1274,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
         }
         let direct = direct::NativeSlot::from_direct_value(ty, self.bridge, self.context)?;
         Ok(ReturnValue {
-            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(&self.c_type)?,
             parser: Some(direct.parser().clone()),
             default_value: direct.default_value().clone(),
             value: Some(Identifier::parse("return_value")?),
@@ -1291,7 +1298,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
     ) -> Self::Output {
         match (slot, shape) {
             (ReturnValueSlot::ReturnSlot, native::BufferShape::Buffer) => {
-                ReturnValue::encoded(self.c_type, codec)
+                ReturnValue::encoded(&self.c_type, codec)
             }
             (ReturnValueSlot::ReturnSlot, _) | (ReturnValueSlot::OutPointer, _) => {
                 Self::unsupported()
@@ -1316,7 +1323,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
         let primitive = primitive::Runtime::new(primitive);
         ReturnValue::wire(
-            self.c_type,
+            &self.c_type,
             primitive.optional_wire_encoder()?,
             None,
             Some(primitive),
@@ -1329,7 +1336,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
     fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
         let element = direct_vector::Element::from_element(element, self.bridge, self.context)?;
         ReturnValue::wire(
-            self.c_type,
+            &self.c_type,
             element.vector_encoder().clone(),
             Some(element),
             None,
@@ -1344,7 +1351,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
     }
 }
 
-impl ClosureReturnValue<'_, '_, '_, '_> {
+impl<'render> ClosureReturnValue<'render> {
     fn unsupported() -> Result<ReturnValue> {
         Err(Error::UnsupportedTarget {
             target: "python",

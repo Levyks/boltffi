@@ -61,12 +61,12 @@ impl Conversion {
     }
 }
 
-struct Renderer<'bridge, 'context> {
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'context, Native>,
+struct Renderer<'render> {
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl Renderer<'_, '_> {
+impl<'render> Renderer<'render> {
     fn direct_type(&self, ty: &DirectValueType) -> Result<Conversion> {
         let direct = direct::NativeSlot::from_direct_value(ty, self.bridge, self.context)?;
         Ok(Conversion {
@@ -116,7 +116,7 @@ impl Renderer<'_, '_> {
     }
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'_, '_> {
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'render> {
     type Output = Result<Conversion>;
 
     fn void(&mut self) -> Self::Output {

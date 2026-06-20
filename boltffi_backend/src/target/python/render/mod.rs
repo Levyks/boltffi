@@ -89,20 +89,20 @@ struct SetupTemplate {
     extension_source_literal: Literal,
 }
 
-pub struct Package<'binding, 'bridge> {
-    bindings: &'binding Bindings<Native>,
-    declarations: PackageDeclarations<'binding>,
-    bridge: &'bridge PythonCExtBridgeContract,
+pub struct Package<'bindings> {
+    bindings: &'bindings Bindings<Native>,
+    declarations: PackageDeclarations<'bindings>,
+    bridge: &'bindings PythonCExtBridgeContract,
     module: PackageModule,
     distribution: String,
     version: Option<String>,
     library: String,
 }
 
-impl<'binding, 'bridge> Package<'binding, 'bridge> {
+impl<'bindings> Package<'bindings> {
     pub fn new(
-        bindings: &'binding Bindings<Native>,
-        bridge: &'bridge PythonCExtBridgeContract,
+        bindings: &'bindings Bindings<Native>,
+        bridge: &'bindings PythonCExtBridgeContract,
         module: PackageModule,
         distribution: String,
         version: Option<String>,
@@ -242,18 +242,18 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
 }
 
 #[derive(Default)]
-struct PackageDeclarations<'binding> {
-    records: Vec<&'binding RecordDecl<Native>>,
-    enums: Vec<&'binding EnumDecl<Native>>,
-    classes: Vec<&'binding ClassDecl<Native>>,
-    constants: Vec<&'binding ConstantDecl<Native>>,
-    functions: Vec<&'binding FunctionDecl<Native>>,
-    streams: Vec<&'binding StreamDecl<Native>>,
-    customs: Vec<&'binding CustomTypeDecl>,
+struct PackageDeclarations<'bindings> {
+    records: Vec<&'bindings RecordDecl<Native>>,
+    enums: Vec<&'bindings EnumDecl<Native>>,
+    classes: Vec<&'bindings ClassDecl<Native>>,
+    constants: Vec<&'bindings ConstantDecl<Native>>,
+    functions: Vec<&'bindings FunctionDecl<Native>>,
+    streams: Vec<&'bindings StreamDecl<Native>>,
+    customs: Vec<&'bindings CustomTypeDecl>,
 }
 
-impl<'binding> PackageDeclarations<'binding> {
-    fn new(bindings: &'binding Bindings<Native>) -> Self {
+impl<'bindings> PackageDeclarations<'bindings> {
+    fn new(bindings: &'bindings Bindings<Native>) -> Self {
         bindings
             .decls()
             .iter()
@@ -261,7 +261,7 @@ impl<'binding> PackageDeclarations<'binding> {
             .fold(Self::default(), Self::insert)
     }
 
-    fn insert(mut self, declaration: DeclarationRef<'binding, Native>) -> Self {
+    fn insert(mut self, declaration: DeclarationRef<'bindings, Native>) -> Self {
         match declaration {
             DeclarationRef::Record(record) => self.records.push(record),
             DeclarationRef::Enum(enumeration) => self.enums.push(enumeration),
@@ -276,7 +276,7 @@ impl<'binding> PackageDeclarations<'binding> {
     }
 }
 
-impl<'binding, 'bridge> Package<'binding, 'bridge> {
+impl<'bindings> Package<'bindings> {
     pub fn record_name(&self, record_id: RecordId) -> Result<Identifier> {
         self.declarations
             .records
@@ -352,12 +352,12 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             })
     }
 
-    pub fn custom_representation(&self, custom_type: CustomTypeId) -> Result<&'binding TypeRef> {
+    pub fn custom_representation(&self, custom_type: CustomTypeId) -> Result<&'bindings TypeRef> {
         self.custom_type(custom_type)
             .map(CustomTypeDecl::representation)
     }
 
-    pub fn custom_type(&self, custom_type: CustomTypeId) -> Result<&'binding CustomTypeDecl> {
+    pub fn custom_type(&self, custom_type: CustomTypeId) -> Result<&'bindings CustomTypeDecl> {
         self.declarations
             .customs
             .iter()
@@ -374,12 +374,12 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
     }
 }
 
-impl<'binding, 'bridge> Package<'binding, 'bridge> {
+impl<'bindings> Package<'bindings> {
     fn module_name(&self) -> String {
         self.module.as_str().to_owned()
     }
 
-    fn functions(&self) -> Vec<&'binding FunctionDecl<Native>> {
+    fn functions(&self) -> Vec<&'bindings FunctionDecl<Native>> {
         self.declarations
             .functions
             .iter()
@@ -438,7 +438,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             .collect()
     }
 
-    fn streams_for_class(&self, class: ClassId) -> Vec<&'binding StreamDecl<Native>> {
+    fn streams_for_class(&self, class: ClassId) -> Vec<&'bindings StreamDecl<Native>> {
         self.declarations
             .streams
             .iter()

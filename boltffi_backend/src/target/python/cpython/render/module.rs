@@ -42,17 +42,17 @@ struct NativeModuleTemplate {
     cleanup: Vec<Statement>,
 }
 
-pub struct NativeModule<'bridge, 'context, 'decl> {
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'context, Native>,
-    declarations: Vec<RenderedDeclaration<'decl, Native>>,
+pub struct NativeModule<'render, 'bindings> {
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'bindings, Native>,
+    declarations: Vec<RenderedDeclaration<'bindings, Native>>,
 }
 
-impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
+impl<'render, 'bindings> NativeModule<'render, 'bindings> {
     pub fn new(
-        bridge: &'bridge PythonCExtBridgeContract,
-        context: &'context RenderContext<'context, Native>,
-        declarations: Vec<RenderedDeclaration<'decl, Native>>,
+        bridge: &'render PythonCExtBridgeContract,
+        context: &'render RenderContext<'bindings, Native>,
+        declarations: Vec<RenderedDeclaration<'bindings, Native>>,
     ) -> Self {
         Self {
             bridge,
@@ -116,10 +116,10 @@ struct ModuleDeclarations {
 }
 
 impl ModuleDeclarations {
-    fn collect(
+    fn collect<'decl, 'render>(
         bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<'_, Native>,
-        declarations: &[RenderedDeclaration<'_, Native>],
+        context: &RenderContext<'render, Native>,
+        declarations: &[RenderedDeclaration<'decl, Native>],
     ) -> Result<Self> {
         declarations
             .iter()
@@ -220,7 +220,7 @@ impl ModuleDeclarations {
             .collect()
     }
 
-    fn support(&self) -> SupportArtifacts<'_> {
+    fn support<'module>(&'module self) -> SupportArtifacts<'module> {
         SupportArtifacts {
             records: self.records.iter().map(Rendered::declaration).collect(),
             enums: self.enums.iter().map(Rendered::declaration).collect(),
@@ -232,11 +232,11 @@ impl ModuleDeclarations {
         }
     }
 
-    fn collect_declaration(
+    fn collect_declaration<'decl, 'render>(
         mut self,
         bridge: &PythonCExtBridgeContract,
-        context: &RenderContext<'_, Native>,
-        declaration: &RenderedDeclaration<'_, Native>,
+        context: &RenderContext<'render, Native>,
+        declaration: &RenderedDeclaration<'decl, Native>,
     ) -> Result<Self> {
         match declaration.declaration() {
             DeclarationRef::Record(record) => self.records.push(Rendered::new(
@@ -279,7 +279,7 @@ struct Rendered<T> {
 }
 
 impl<T> Rendered<T> {
-    fn new(declaration: T, rendered: &RenderedDeclaration<'_, Native>) -> Self {
+    fn new<'decl>(declaration: T, rendered: &RenderedDeclaration<'decl, Native>) -> Self {
         Self {
             declaration,
             source: rendered.emitted().primary_chunk().as_str().to_owned(),
@@ -302,7 +302,7 @@ struct CodecDecoder {
 }
 
 impl CodecDecoder {
-    fn from_adapter(adapter: &ReadAdapter<'_>) -> Result<Self> {
+    fn from_adapter<'adapter>(adapter: &ReadAdapter<'adapter>) -> Result<Self> {
         Ok(Self {
             key: adapter.key().c_literal(),
             function: adapter.key().c_decoder()?,
@@ -325,7 +325,7 @@ struct CodecEncoder {
 }
 
 impl CodecEncoder {
-    fn from_adapter(adapter: &WriteAdapter<'_>) -> Result<Self> {
+    fn from_adapter<'adapter>(adapter: &WriteAdapter<'adapter>) -> Result<Self> {
         Ok(Self {
             key: adapter.key().c_literal(),
             function: adapter.key().c_encoder()?,
@@ -351,7 +351,7 @@ struct SupportArtifacts<'module> {
     functions: Vec<&'module function::Function>,
 }
 
-impl SupportArtifacts<'_> {
+impl<'module> SupportArtifacts<'module> {
     fn has_encoded_records(&self) -> bool {
         self.records
             .iter()
@@ -629,7 +629,10 @@ struct ModuleSupport {
 }
 
 impl ModuleSupport {
-    fn new(bridge: &PythonCExtBridgeContract, artifacts: SupportArtifacts<'_>) -> Result<Self> {
+    fn new<'module>(
+        bridge: &PythonCExtBridgeContract,
+        artifacts: SupportArtifacts<'module>,
+    ) -> Result<Self> {
         let encoded_records = artifacts.has_encoded_records();
         let data_enums = artifacts.has_data_enums();
         let async_functions = artifacts.uses_async_protocol();

@@ -181,12 +181,12 @@ impl host::HostBackend for PythonCExtHost {
         Ok(Emitted::primary(""))
     }
 
-    fn assemble(
+    fn assemble<'decl>(
         &self,
         bindings: &Bindings<Self::Surface>,
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
-        declarations: Vec<RenderedDeclaration<'_, Self::Surface>>,
+        declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
         let diagnostics = declarations
             .iter()
@@ -301,11 +301,11 @@ mod tests {
         file(output, "_native.c")
     }
 
-    fn file<'output>(output: &'output GeneratedOutput, path: &str) -> &'output str {
+    fn file(output: &GeneratedOutput, path: impl AsRef<Path>) -> &str {
         output
             .files()
             .iter()
-            .find(|file| file.path().as_path() == Path::new(path))
+            .find(|file| file.path().as_path() == path.as_ref())
             .map(|file| file.contents())
             .expect("generated file")
     }

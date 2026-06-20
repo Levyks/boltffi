@@ -1,14 +1,15 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    CallbackDecl, CallbackId, ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl,
-    ExecutionDecl, HandlePresence, HandleTarget, ImportedMethodDecl, IntoRust, Native, OutOfRust,
-    OutgoingParam, ParamDecl, ParamPlanRender, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender,
-    ReturnValueSlot, TypeRef, VTableSlot, WritePlan, native,
+    CallbackDecl, CallbackId, CanonicalName, ClosureReturn, DirectValueType,
+    DirectVectorElementType, ErrorDecl, ExecutionDecl, HandlePresence, HandleTarget,
+    ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl, ParamPlanRender,
+    Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, VTableSlot,
+    WritePlan, native,
 };
 
 use crate::{
     bridge::{
-        c::{self, Expression, Identifier, Literal, TypeFragment, syntax::TypeSyntax},
+        c::{self, Expression, Identifier, Literal, TypeFragment},
         python_cext::PythonCExtBridgeContract,
     },
     core::{Emitted, Error, RenderContext, Result},
@@ -97,8 +98,7 @@ impl Callback {
         .collect();
         Ok(Self {
             symbols,
-            vtable_type: TypeSyntax::new(&c::Type::named(c_callback.vtable().name())?)
-                .anonymous()?,
+            vtable_type: TypeFragment::anonymous(&c::Type::named(c_callback.vtable().name())?)?,
             register_storage: register.storage_name().clone(),
             create_handle_storage: create_handle.storage_name().clone(),
             copy_buffer_storage: copy_buffer.storage_name().clone(),
@@ -233,7 +233,7 @@ impl Symbols {
         &self.clone
     }
 
-    fn method(&self, name: &boltffi_binding::CanonicalName) -> Result<Identifier> {
+    fn method(&self, name: &CanonicalName) -> Result<Identifier> {
         Identifier::parse(format!(
             "{}_{}",
             self.method_prefix,
@@ -299,7 +299,7 @@ impl Method {
                     let fallible_return = FallibleReturn::new(
                         method.callable().returns().plan(),
                         method.callable().error(),
-                        parts.return_out,
+                        parts.return_out.as_ref(),
                         bridge,
                         context,
                     )?;
@@ -317,8 +317,8 @@ impl Method {
                 let completion = AsyncCompletion::new(
                     method.callable().returns().plan(),
                     method.callable().error(),
-                    parts.completion,
-                    parts.completion_data,
+                    &parts.completion,
+                    &parts.completion_data,
                     bridge,
                     context,
                 )?;
@@ -335,7 +335,7 @@ impl Method {
             .callable()
             .params()
             .iter()
-            .zip(c_params)
+            .zip(c_params.iter())
             .map(|(parameter, c_types)| MethodParam::new(parameter, c_types, bridge, context))
             .collect::<Result<Vec<_>>>()?;
         let returns = match &completion {
@@ -453,15 +453,18 @@ impl Method {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct MethodSignature<'field> {
-    returns: &'field c::Type,
-    params: &'field [c::Type],
+struct MethodSignature {
+    returns: c::Type,
+    params: Vec<c::Type>,
 }
 
-impl<'field> MethodSignature<'field> {
-    fn from_field(field: &'field c::Field) -> Result<Self> {
+impl MethodSignature {
+    fn from_field(field: &c::Field) -> Result<Self> {
         match field.ty() {
-            c::Type::FunctionPointer { returns, params } => Ok(Self { returns, params }),
+            c::Type::FunctionPointer { returns, params } => Ok(Self {
+                returns: returns.as_ref().clone(),
+                params: params.clone(),
+            }),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "callback vtable slot is not a function pointer",
@@ -470,10 +473,10 @@ impl<'field> MethodSignature<'field> {
     }
 
     fn returns(&self) -> &c::Type {
-        self.returns
+        &self.returns
     }
 
-    fn value_params(&self, arity: &[usize]) -> Result<Vec<&'field [c::Type]>> {
+    fn value_params(&self, arity: &[usize]) -> Result<Vec<Vec<c::Type>>> {
         let value_param_count = arity.iter().sum::<usize>();
         let value_start =
             self.params
@@ -494,12 +497,12 @@ impl<'field> MethodSignature<'field> {
             .scan(value_start, |offset, count| {
                 let start = *offset;
                 *offset += *count;
-                Some(&self.params[start..*offset])
+                Some(self.params[start..*offset].to_vec())
             })
             .collect())
     }
 
-    fn async_value_params(&self, arity: &[usize]) -> Result<AsyncSignature<'field>> {
+    fn async_value_params(&self, arity: &[usize]) -> Result<AsyncSignature> {
         let value_param_count = arity.iter().sum::<usize>();
         let value_start = 1;
         let value_end = value_start + value_param_count;
@@ -511,7 +514,7 @@ impl<'field> MethodSignature<'field> {
                 shape: "async callback method parameter ABI mismatch",
             });
         }
-        if !matches!(self.returns, c::Type::Void) {
+        if !matches!(&self.returns, c::Type::Void) {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "async callback method return ABI mismatch",
@@ -523,11 +526,11 @@ impl<'field> MethodSignature<'field> {
                 .scan(value_start, |offset, count| {
                     let start = *offset;
                     *offset += *count;
-                    Some(&self.params[start..*offset])
+                    Some(self.params[start..*offset].to_vec())
                 })
                 .collect(),
-            completion: &self.params[completion_index],
-            completion_data: &self.params[completion_data_index],
+            completion: self.params[completion_index].clone(),
+            completion_data: self.params[completion_data_index].clone(),
         })
     }
 
@@ -535,7 +538,7 @@ impl<'field> MethodSignature<'field> {
         &self,
         plan: &ReturnPlan<Native, IntoRust>,
         arity: &[usize],
-    ) -> Result<FallibleSignature<'field>> {
+    ) -> Result<FallibleSignature> {
         let return_param_count = Self::return_param_count(plan)?;
         let value_param_count = arity.iter().sum::<usize>();
         let value_start = 1 + return_param_count;
@@ -546,13 +549,13 @@ impl<'field> MethodSignature<'field> {
             });
         }
         Ok(FallibleSignature {
-            return_out: (return_param_count == 1).then_some(&self.params[1]),
+            return_out: (return_param_count == 1).then(|| self.params[1].clone()),
             params: arity
                 .iter()
                 .scan(value_start, |offset, count| {
                     let start = *offset;
                     *offset += *count;
-                    Some(&self.params[start..*offset])
+                    Some(self.params[start..*offset].to_vec())
                 })
                 .collect(),
         })
@@ -630,16 +633,16 @@ impl CallbackSuccessOutCount {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct AsyncSignature<'field> {
-    params: Vec<&'field [c::Type]>,
-    completion: &'field c::Type,
-    completion_data: &'field c::Type,
+struct AsyncSignature {
+    params: Vec<Vec<c::Type>>,
+    completion: c::Type,
+    completion_data: c::Type,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct FallibleSignature<'field> {
-    params: Vec<&'field [c::Type]>,
-    return_out: Option<&'field c::Type>,
+struct FallibleSignature {
+    params: Vec<Vec<c::Type>>,
+    return_out: Option<c::Type>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -679,7 +682,7 @@ impl MethodParam {
             OutgoingParam::Value(plan) => plan.render_with(&mut MethodParamValue {
                 name,
                 object,
-                c_types,
+                c_types: c_types.to_vec(),
                 bridge,
                 context,
             }),
@@ -731,7 +734,7 @@ impl MethodParam {
         let direct = direct::NativeSlot::from_direct_value(ty, bridge, context)?;
         let expression = direct.box_expression(name.clone());
         Ok(Self {
-            declarations: vec![TypeSyntax::new(&c_types[0]).declaration(name.as_str())?],
+            declarations: vec![TypeFragment::declaration(&c_types[0], name.as_str())?],
             name,
             object,
             expression,
@@ -766,8 +769,8 @@ impl MethodParam {
         let expression = payload.expression();
         Ok(Self {
             declarations: vec![
-                TypeSyntax::new(pointer).declaration(pointer_name.as_str())?,
-                TypeSyntax::new(length).declaration(length_name.as_str())?,
+                TypeFragment::declaration(pointer, pointer_name.as_str())?,
+                TypeFragment::declaration(length, length_name.as_str())?,
             ],
             name,
             object,
@@ -800,8 +803,8 @@ impl MethodParam {
         let element = direct_vector::Element::from_element(element, bridge, context)?;
         Ok(Self {
             declarations: vec![
-                TypeSyntax::new(pointer).declaration(pointer_name.as_str())?,
-                TypeSyntax::new(length).declaration(length_name.as_str())?,
+                TypeFragment::declaration(pointer, pointer_name.as_str())?,
+                TypeFragment::declaration(length, length_name.as_str())?,
             ],
             name,
             object,
@@ -869,15 +872,15 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamArity {
     }
 }
 
-struct MethodParamValue<'ctype, 'bridge, 'context, 'bindings> {
+struct MethodParamValue<'render> {
     name: Identifier,
     object: Identifier,
-    c_types: &'ctype [c::Type],
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+    c_types: Vec<c::Type>,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamValue<'_, '_, '_, '_> {
+impl<'plan, 'render> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamValue<'render> {
     type Output = Result<MethodParam>;
 
     fn direct(&mut self, ty: &DirectValueType, _: ()) -> Self::Output {
@@ -885,7 +888,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamValue<'_, '
             self.name.clone(),
             self.object.clone(),
             ty,
-            self.c_types,
+            &self.c_types,
             self.bridge,
             self.context,
         )
@@ -900,7 +903,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamValue<'_, '
     ) -> Self::Output {
         match shape {
             native::BufferShape::Slice => {
-                MethodParam::encoded(self.name.clone(), self.object.clone(), codec, self.c_types)
+                MethodParam::encoded(self.name.clone(), self.object.clone(), codec, &self.c_types)
             }
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -934,7 +937,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for MethodParamValue<'_, '
             self.name.clone(),
             self.object.clone(),
             element,
-            self.c_types,
+            &self.c_types,
             self.bridge,
             self.context,
         )
@@ -965,7 +968,7 @@ impl FallibleReturn {
         let success = FallibleSuccess::new(plan, return_out, bridge, context)?;
         let error = FallibleError::new(error)?;
         let declarations = return_out
-            .map(|ty| TypeSyntax::new(ty).declaration("return_out"))
+            .map(|ty| TypeFragment::declaration(ty, "return_out"))
             .transpose()?
             .into_iter()
             .collect();
@@ -1037,7 +1040,7 @@ impl FallibleSuccess {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         plan.render_with(&mut FallibleSuccessValue {
-            return_out,
+            return_out: return_out.cloned(),
             bridge,
             context,
         })
@@ -1084,7 +1087,7 @@ impl FallibleSuccess {
         Ok(Self {
             out: Some(Identifier::parse("return_out")?),
             value: Some(Identifier::parse("return_success")?),
-            c_type: Some(TypeSyntax::new(out_type).anonymous()?),
+            c_type: Some(TypeFragment::anonymous(out_type)?),
             default_value: Some(direct.default_value().clone()),
             parser: Some(direct.parser().clone()),
             wire: false,
@@ -1166,13 +1169,13 @@ impl FallibleSuccess {
     }
 }
 
-struct FallibleSuccessValue<'out, 'bridge, 'context, 'bindings> {
-    return_out: Option<&'out c::Type>,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct FallibleSuccessValue<'render> {
+    return_out: Option<c::Type>,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'_, '_, '_, '_> {
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'render> {
     type Output = Result<FallibleSuccess>;
 
     fn void(&mut self) -> Self::Output {
@@ -1189,7 +1192,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
         match slot {
             ReturnValueSlot::OutPointer => FallibleSuccess::direct(
                 ty,
-                FallibleSuccess::out_type(self.return_out)?,
+                FallibleSuccess::out_type(self.return_out.as_ref())?,
                 self.bridge,
                 self.context,
             ),
@@ -1210,7 +1213,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
     ) -> Self::Output {
         match (slot, shape) {
             (ReturnValueSlot::OutPointer, native::BufferShape::Buffer) => {
-                FallibleSuccess::wire(codec, FallibleSuccess::out_type(self.return_out)?)
+                FallibleSuccess::wire(codec, FallibleSuccess::out_type(self.return_out.as_ref())?)
             }
             (ReturnValueSlot::OutPointer, _) | (ReturnValueSlot::ReturnSlot, _) => {
                 Self::unsupported()
@@ -1245,7 +1248,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
     }
 }
 
-impl FallibleSuccessValue<'_, '_, '_, '_> {
+impl<'render> FallibleSuccessValue<'render> {
     fn unsupported() -> Result<FallibleSuccess> {
         Err(Error::UnsupportedTarget {
             target: "python",
@@ -1322,8 +1325,8 @@ impl AsyncCompletion {
             }
         };
         Ok(Self {
-            declaration: TypeSyntax::new(completion).declaration("completion")?,
-            data_declaration: TypeSyntax::new(completion_data).declaration("completion_data")?,
+            declaration: TypeFragment::declaration(completion, "completion")?,
+            data_declaration: TypeFragment::declaration(completion_data, "completion_data")?,
             callback: Identifier::parse("completion")?,
             data: Identifier::parse("completion_data")?,
             payload,
@@ -1332,12 +1335,12 @@ impl AsyncCompletion {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CompletionSignature<'signature> {
-    payload: Option<&'signature c::Type>,
+struct CompletionSignature {
+    payload: Option<c::Type>,
 }
 
-impl<'signature> CompletionSignature<'signature> {
-    fn new(completion: &'signature c::Type) -> Result<Self> {
+impl CompletionSignature {
+    fn new(completion: &c::Type) -> Result<Self> {
         let c::Type::FunctionPointer { returns, params } = completion else {
             return Err(Error::UnsupportedTarget {
                 target: "python",
@@ -1365,12 +1368,12 @@ impl<'signature> CompletionSignature<'signature> {
             });
         }
         Ok(Self {
-            payload: params.get(2),
+            payload: params.get(2).cloned(),
         })
     }
 
-    fn payload(&self) -> Option<&'signature c::Type> {
-        self.payload
+    fn payload(&self) -> Option<&c::Type> {
+        self.payload.as_ref()
     }
 }
 
@@ -1407,7 +1410,7 @@ impl CompletionPayload {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         plan.render_with(&mut AsyncCompletionPayload {
-            payload,
+            payload: payload.cloned(),
             bridge,
             context,
         })
@@ -1698,7 +1701,7 @@ impl CompletionPayload {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         plan.render_with(&mut AsyncCompletionSuccess {
-            payload,
+            payload: payload.clone(),
             bridge,
             context,
         })
@@ -1777,7 +1780,7 @@ impl CompletionPayload {
     }
 
     fn with_payload_type(mut self, payload: &c::Type) -> Result<Self> {
-        let payload_type = TypeSyntax::new(payload).anonymous()?;
+        let payload_type = TypeFragment::anonymous(payload)?;
         let zero = Expression::literal(Literal::compound_zero());
         self.c_type = Some(payload_type.clone());
         if self.default_value.as_ref() == Some(&zero) {
@@ -1787,13 +1790,13 @@ impl CompletionPayload {
     }
 }
 
-struct AsyncCompletionPayload<'payload, 'bridge, 'context, 'bindings> {
-    payload: Option<&'payload c::Type>,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct AsyncCompletionPayload<'render> {
+    payload: Option<c::Type>,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload<'_, '_, '_, '_> {
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload<'render> {
     type Output = Result<CompletionPayload>;
 
     fn void(&mut self) -> Self::Output {
@@ -1812,7 +1815,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload
         }
         CompletionPayload::direct(
             ty,
-            self.payload.ok_or(Error::UnsupportedTarget {
+            self.payload.as_ref().ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "async direct callback completion without payload",
             })?,
@@ -1831,7 +1834,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload
         match (slot, shape) {
             (ReturnValueSlot::ReturnSlot, native::BufferShape::Buffer) => CompletionPayload::wire(
                 codec,
-                self.payload.ok_or(Error::UnsupportedTarget {
+                self.payload.as_ref().ok_or(Error::UnsupportedTarget {
                     target: "python",
                     shape: "async encoded callback completion without payload",
                 })?,
@@ -1859,7 +1862,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
         CompletionPayload::scalar_option(
             primitive,
-            self.payload.ok_or(Error::UnsupportedTarget {
+            self.payload.as_ref().ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "async optional callback completion without payload",
             })?,
@@ -1869,7 +1872,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload
     fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
         CompletionPayload::vector(
             element,
-            self.payload.ok_or(Error::UnsupportedTarget {
+            self.payload.as_ref().ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "async vector callback completion without payload",
             })?,
@@ -1883,7 +1886,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionPayload
     }
 }
 
-impl AsyncCompletionPayload<'_, '_, '_, '_> {
+impl<'render> AsyncCompletionPayload<'render> {
     fn unsupported() -> Result<CompletionPayload> {
         Err(Error::UnsupportedTarget {
             target: "python",
@@ -1892,23 +1895,23 @@ impl AsyncCompletionPayload<'_, '_, '_, '_> {
     }
 }
 
-struct AsyncCompletionSuccess<'payload, 'bridge, 'context, 'bindings> {
-    payload: &'payload c::Type,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct AsyncCompletionSuccess<'render> {
+    payload: c::Type,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionSuccess<'_, '_, '_, '_> {
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionSuccess<'render> {
     type Output = Result<CompletionPayload>;
 
     fn void(&mut self) -> Self::Output {
-        CompletionPayload::wire_empty(self.payload)
+        CompletionPayload::wire_empty(&self.payload)
     }
 
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         match slot {
             ReturnValueSlot::OutPointer => {
-                CompletionPayload::direct_bytes(ty, self.payload, self.bridge, self.context)
+                CompletionPayload::direct_bytes(ty, &self.payload, self.bridge, self.context)
             }
             ReturnValueSlot::ReturnSlot => Self::unsupported(),
             _ => Err(Error::UnsupportedTarget {
@@ -1927,7 +1930,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionSuccess
     ) -> Self::Output {
         match (slot, shape) {
             (ReturnValueSlot::OutPointer, native::BufferShape::Buffer) => {
-                CompletionPayload::wire(codec, self.payload)
+                CompletionPayload::wire(codec, &self.payload)
             }
             (ReturnValueSlot::OutPointer, _) | (ReturnValueSlot::ReturnSlot, _) => {
                 Self::unsupported()
@@ -1962,7 +1965,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for AsyncCompletionSuccess
     }
 }
 
-impl AsyncCompletionSuccess<'_, '_, '_, '_> {
+impl<'render> AsyncCompletionSuccess<'render> {
     fn unsupported() -> Result<CompletionPayload> {
         Err(Error::UnsupportedTarget {
             target: "python",
@@ -1990,7 +1993,7 @@ struct MethodReturn {
 impl MethodReturn {
     fn async_void(c_type: &c::Type) -> Result<Self> {
         Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(c_type)?,
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: None,
@@ -2007,7 +2010,7 @@ impl MethodReturn {
 
     fn fallible_error(c_type: &c::Type) -> Result<Self> {
         Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(c_type)?,
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
@@ -2029,7 +2032,7 @@ impl MethodReturn {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         plan.render_with(&mut CallbackMethodReturnValue {
-            c_type,
+            c_type: c_type.clone(),
             bridge,
             context,
         })
@@ -2094,7 +2097,7 @@ impl MethodReturn {
         raw_wire: bool,
     ) -> Result<Self> {
         Ok(Self {
-            c_type: TypeSyntax::new(c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(c_type)?,
             parser: Some(parser),
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
@@ -2110,20 +2113,20 @@ impl MethodReturn {
     }
 }
 
-struct CallbackMethodReturnValue<'ctype, 'bridge, 'context, 'bindings> {
-    c_type: &'ctype c::Type,
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct CallbackMethodReturnValue<'render> {
+    c_type: c::Type,
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
-    for CallbackMethodReturnValue<'_, '_, '_, '_>
+impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust>
+    for CallbackMethodReturnValue<'render>
 {
     type Output = Result<MethodReturn>;
 
     fn void(&mut self) -> Self::Output {
         Ok(MethodReturn {
-            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(&self.c_type)?,
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: None,
@@ -2144,7 +2147,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
         }
         let direct = direct::NativeSlot::from_direct_value(ty, self.bridge, self.context)?;
         Ok(MethodReturn {
-            c_type: TypeSyntax::new(self.c_type).anonymous()?,
+            c_type: TypeFragment::anonymous(&self.c_type)?,
             parser: Some(direct.parser().clone()),
             default_value: direct.default_value().clone(),
             value: Some(Identifier::parse("return_value")?),
@@ -2168,7 +2171,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
     ) -> Self::Output {
         match (slot, shape) {
             (ReturnValueSlot::ReturnSlot, native::BufferShape::Buffer) => {
-                MethodReturn::encoded(self.c_type, codec)
+                MethodReturn::encoded(&self.c_type, codec)
             }
             (ReturnValueSlot::ReturnSlot, _) | (ReturnValueSlot::OutPointer, _) => {
                 Self::unsupported()
@@ -2193,7 +2196,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
         let primitive = primitive::Runtime::new(primitive);
         MethodReturn::wire(
-            self.c_type,
+            &self.c_type,
             primitive.optional_wire_encoder()?,
             None,
             Some(primitive),
@@ -2206,7 +2209,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
     fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
         let element = direct_vector::Element::from_element(element, self.bridge, self.context)?;
         MethodReturn::wire(
-            self.c_type,
+            &self.c_type,
             element.vector_encoder().clone(),
             Some(element),
             None,
@@ -2221,7 +2224,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust>
     }
 }
 
-impl CallbackMethodReturnValue<'_, '_, '_, '_> {
+impl<'render> CallbackMethodReturnValue<'render> {
     fn unsupported() -> Result<MethodReturn> {
         Err(Error::UnsupportedTarget {
             target: "python",

@@ -33,10 +33,10 @@ pub struct AssociatedCallable {
 }
 
 impl AssociatedCallable {
-    pub fn from_class_initializer(
+    pub fn from_class_initializer<'package>(
         initializer: &InitializerDecl<Native>,
         symbols: &class_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let parameters = initializer
             .callable()
@@ -69,10 +69,10 @@ impl AssociatedCallable {
         })
     }
 
-    pub fn from_class_method(
+    pub fn from_class_method<'package>(
         method: &ExportedMethodDecl<Native, NativeSymbol>,
         symbols: &class_render::Symbols,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let receiver = method.callable().receiver().is_some();
         let parameters = method
@@ -108,10 +108,10 @@ impl AssociatedCallable {
         })
     }
 
-    pub fn from_value_initializer(
+    pub fn from_value_initializer<'package>(
         initializer: &InitializerDecl<Native>,
         native_name: Identifier,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let parameters = Self::parameters(initializer.callable().params(), package)?;
         let returned = ReturnStub::from_callable(initializer.callable(), package)?;
@@ -139,12 +139,12 @@ impl AssociatedCallable {
         })
     }
 
-    pub fn from_value_method(
+    pub fn from_value_method<'package>(
         method: &ExportedMethodDecl<Native, NativeSymbol>,
         native_name: Identifier,
         receiver: Option<Expression>,
         mutated_receiver_type: Option<TypeAnnotation>,
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Self> {
         let parameters = Self::parameters(method.callable().params(), package)?;
         let returned = match mutated_receiver_type {
@@ -269,9 +269,9 @@ impl AssociatedCallable {
         ))
     }
 
-    fn parameters(
+    fn parameters<'package>(
         parameters: &[ParamDecl<Native, IntoRust>],
-        package: &Package<'_, '_>,
+        package: &'package Package<'package>,
     ) -> Result<Vec<ParameterStub>> {
         parameters
             .iter()

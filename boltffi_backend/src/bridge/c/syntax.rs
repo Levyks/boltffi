@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{borrow::Borrow, fmt};
 
 use crate::core::{LanguageSyntax, Result, syntax::sealed};
 
@@ -30,18 +30,6 @@ pub struct Literal(String);
 /// C argument list syntax.
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ArgumentList(Vec<Expression>);
-
-pub struct TypeSyntax<'ty> {
-    ty: &'ty Type,
-}
-
-pub struct FunctionSyntax<'function> {
-    function: &'function Function,
-}
-
-struct ParameterSyntax<'parameter> {
-    parameter: &'parameter Parameter,
-}
 
 impl LanguageSyntax for Syntax {
     const KEYWORDS: &'static [&'static str] = &[
@@ -178,13 +166,9 @@ impl ArgumentList {
     }
 }
 
-impl<'ty> TypeSyntax<'ty> {
-    pub fn new(ty: &'ty Type) -> Self {
-        Self { ty }
-    }
-
-    pub fn anonymous(&self) -> Result<TypeFragment> {
-        Ok(TypeFragment::new(match self.ty {
+impl TypeFragment {
+    pub(crate) fn anonymous(ty: &Type) -> Result<TypeFragment> {
+        Ok(TypeFragment::new(match ty {
             Type::Void => "void".to_owned(),
             Type::Bool => "bool".to_owned(),
             Type::Int8 => "int8_t".to_owned(),
@@ -208,8 +192,8 @@ impl<'ty> TypeSyntax<'ty> {
             Type::WaitResult => "WaitResult".to_owned(),
             Type::CallbackHandle => "BoltFFICallbackHandle".to_owned(),
             Type::Named(name) => name.to_string(),
-            Type::ConstPointer(inner) => format!("const {} *", Self::new(inner).anonymous()?),
-            Type::MutPointer(inner) => format!("{} *", Self::new(inner).anonymous()?),
+            Type::ConstPointer(inner) => format!("const {} *", Self::anonymous(inner)?),
+            Type::MutPointer(inner) => format!("{} *", Self::anonymous(inner)?),
             Type::FunctionPointer { returns, params } => {
                 Self::function_pointer_declaration("", returns, params.iter())?
                     .to_string()
@@ -219,38 +203,38 @@ impl<'ty> TypeSyntax<'ty> {
         }))
     }
 
-    pub fn declaration(&self, name: &str) -> Result<Statement> {
+    pub(crate) fn declaration(ty: &Type, name: &str) -> Result<Statement> {
         let name = Identifier::escape(name)?;
-        Ok(Statement::new(match self.ty {
+        Ok(Statement::new(match ty {
             Type::FunctionPointer { returns, params } => {
-                Self::function_pointer_declaration(name.as_str(), returns, params.iter())?
-                    .to_string()
+                Self::function_pointer_declaration(name.as_str(), returns, params)?.to_string()
             }
             Type::ConstPointer(inner) => {
-                format!("const {} *{}", Self::new(inner).anonymous()?, name)
+                format!("const {} *{}", Self::anonymous(inner)?, name)
             }
-            Type::MutPointer(inner) => format!("{} *{}", Self::new(inner).anonymous()?, name),
-            _ => format!("{} {}", self.anonymous()?, name),
+            Type::MutPointer(inner) => format!("{} *{}", Self::anonymous(inner)?, name),
+            _ => format!("{} {}", Self::anonymous(ty)?, name),
         }))
     }
 
-    pub fn function(&self, name: &str, params: &str) -> Result<Statement> {
+    pub(crate) fn function(ty: &Type, name: &str, params: &str) -> Result<Statement> {
         Ok(Statement::new(format!(
             "{} {name}({params})",
-            self.anonymous()?
+            Self::anonymous(ty)?
         )))
     }
-}
 
-impl TypeSyntax<'_> {
-    pub fn function_pointer_declaration<'params>(
+    pub(crate) fn function_pointer_declaration<P>(
         name: &str,
         returns: &Type,
-        params: impl IntoIterator<Item = &'params Type>,
-    ) -> Result<Statement> {
+        params: impl IntoIterator<Item = P>,
+    ) -> Result<Statement>
+    where
+        P: Borrow<Type>,
+    {
         let params = params
             .into_iter()
-            .map(|ty| TypeSyntax { ty }.anonymous())
+            .map(|param| Self::anonymous(param.borrow()))
             .collect::<Result<Vec<_>>>()?;
         let params = match params.is_empty() {
             true => "void".to_owned(),
@@ -262,42 +246,40 @@ impl TypeSyntax<'_> {
         };
         Ok(Statement::new(format!(
             "{} (*{name})({params})",
-            TypeSyntax { ty: returns }.anonymous()?
+            Self::anonymous(returns)?
         )))
     }
 }
 
-impl<'function> FunctionSyntax<'function> {
-    pub fn new(function: &'function Function) -> Self {
-        Self { function }
+impl Statement {
+    pub(crate) fn function_declaration(function: &Function) -> Result<Self> {
+        let name = Identifier::parse(function.name())?;
+        TypeFragment::function(
+            function.returns(),
+            name.as_str(),
+            &Self::named_params(function)?,
+        )
     }
 
-    pub fn declaration(&self) -> Result<Statement> {
-        let name = Identifier::parse(self.function.name())?;
-        TypeSyntax::new(self.function.returns()).function(name.as_str(), &self.named_params()?)
-    }
-
-    pub fn pointer_typedef(&self, name: &str) -> Result<Statement> {
+    pub(crate) fn function_pointer_typedef(function: &Function, name: &str) -> Result<Self> {
         let name = Identifier::parse(name)?;
         Ok(Statement::new(format!(
             "typedef {}",
-            TypeSyntax::function_pointer_declaration(
+            TypeFragment::function_pointer_declaration(
                 name.as_str(),
-                self.function.returns(),
-                self.function.params().iter().map(Parameter::ty)
+                function.returns(),
+                function.params().iter().map(Parameter::ty)
             )?
         )))
     }
 
-    fn named_params(&self) -> Result<String> {
-        match self.function.params().is_empty() {
+    fn named_params(function: &Function) -> Result<String> {
+        match function.params().is_empty() {
             true => Ok("void".to_owned()),
-            false => self
-                .function
+            false => function
                 .params()
                 .iter()
-                .map(ParameterSyntax::new)
-                .map(|parameter| parameter.declaration())
+                .map(|parameter| TypeFragment::declaration(parameter.ty(), parameter.name()))
                 .collect::<Result<Vec<_>>>()
                 .map(|params| {
                     params
@@ -307,15 +289,5 @@ impl<'function> FunctionSyntax<'function> {
                         .join(", ")
                 }),
         }
-    }
-}
-
-impl<'parameter> ParameterSyntax<'parameter> {
-    fn new(parameter: &'parameter Parameter) -> Self {
-        Self { parameter }
-    }
-
-    fn declaration(&self) -> Result<Statement> {
-        TypeSyntax::new(self.parameter.ty()).declaration(self.parameter.name())
     }
 }

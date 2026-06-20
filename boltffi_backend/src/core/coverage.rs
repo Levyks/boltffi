@@ -83,7 +83,7 @@ pub struct DeclarationLabel {
 
 impl DeclarationLabel {
     /// Creates a label from a binding declaration.
-    pub fn from_ref<S: Surface>(declaration: DeclarationRef<'_, S>) -> Self {
+    pub fn from_ref<'decl, S: Surface>(declaration: DeclarationRef<'decl, S>) -> Self {
         let (kind, name) = match declaration {
             DeclarationRef::Record(record) => ("record", record.name()),
             DeclarationRef::Enum(enumeration) => ("enum", enumeration.name()),

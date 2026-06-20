@@ -12,12 +12,12 @@ use crate::{
     },
 };
 
-pub struct Reader<'package, 'binding, 'bridge> {
-    package: &'package Package<'binding, 'bridge>,
+pub struct Reader<'package> {
+    package: &'package Package<'package>,
 }
 
-impl<'package, 'binding, 'bridge> Reader<'package, 'binding, 'bridge> {
-    pub fn new(package: &'package Package<'binding, 'bridge>) -> Self {
+impl<'package> Reader<'package> {
+    pub fn new(package: &'package Package<'package>) -> Self {
         Self { package }
     }
 
@@ -38,7 +38,7 @@ impl<'package, 'binding, 'bridge> Reader<'package, 'binding, 'bridge> {
     }
 }
 
-impl CodecRead for Reader<'_, '_, '_> {
+impl<'package> CodecRead for Reader<'package> {
     type Expr = Result<Expression>;
 
     fn primitive(&mut self, primitive: Primitive) -> Self::Expr {
@@ -106,8 +106,7 @@ impl CodecRead for Reader<'_, '_, '_> {
         })
     }
 
-    fn callback_handle(&mut self, id: CallbackId) -> Self::Expr {
-        id.raw();
+    fn callback_handle(&mut self, _: CallbackId) -> Self::Expr {
         Err(Error::UnsupportedTarget {
             target: "python",
             shape: "callback handle in wire reader",
@@ -138,8 +137,7 @@ impl CodecRead for Reader<'_, '_, '_> {
         ))
     }
 
-    fn sequence(&mut self, len: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
-        len.node();
+    fn sequence(&mut self, _: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
         self.sequence_expression(element?)
     }
 

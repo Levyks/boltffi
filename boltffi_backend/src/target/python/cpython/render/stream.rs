@@ -1,6 +1,6 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ByteSize, DirectValueType, Native, NativeSymbol, Primitive, ReadPlan, StreamDecl,
+    ByteSize, ClassId, DirectValueType, Native, NativeSymbol, Primitive, ReadPlan, StreamDecl,
     StreamItemPlan, StreamItemPlanRender, TypeRef, native,
 };
 
@@ -149,7 +149,7 @@ struct Receiver {
 }
 
 impl Receiver {
-    fn new(owner: boltffi_binding::ClassId, context: &RenderContext<Native>) -> Result<Self> {
+    fn new(owner: ClassId, context: &RenderContext<Native>) -> Result<Self> {
         let handle =
             context
                 .class(owner)
@@ -262,12 +262,12 @@ impl Item {
     }
 }
 
-struct StreamItem<'bridge, 'context, 'bindings> {
-    bridge: &'bridge PythonCExtBridgeContract,
-    context: &'context RenderContext<'bindings, Native>,
+struct StreamItem<'render> {
+    bridge: &'render PythonCExtBridgeContract,
+    context: &'render RenderContext<'render, Native>,
 }
 
-impl<'plan> StreamItemPlanRender<'plan, Native> for StreamItem<'_, '_, '_> {
+impl<'plan, 'render> StreamItemPlanRender<'plan, Native> for StreamItem<'render> {
     type Output = Result<Item>;
 
     fn direct(&mut self, ty: &'plan DirectValueType, _: ByteSize) -> Self::Output {

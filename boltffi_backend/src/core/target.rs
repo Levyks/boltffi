@@ -455,12 +455,12 @@ mod tests {
             Ok(Emitted::placeholder())
         }
 
-        fn assemble(
+        fn assemble<'decl>(
             &self,
             _bindings: &Bindings<Self::Surface>,
             _bridge: &Self::Bridge,
             _context: &RenderContext<Self::Surface>,
-            _declarations: Vec<RenderedDeclaration<'_, Self::Surface>>,
+            _declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
         ) -> Result<GeneratedOutput> {
             Ok(GeneratedOutput::empty())
         }
