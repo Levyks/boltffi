@@ -33,8 +33,9 @@ use super::{
     metadata, methods,
     surface::SurfaceLower,
     symbol::{
-        self, CallbackLocalLifecycle, CallbackSlot, SymbolAllocator, VTABLE_CLONE_SLOT_NAME,
-        VTABLE_FREE_SLOT_NAME, WASM_CALLBACK_IMPORT_MODULE,
+        CallbackLocalLifecycle, CallbackSlot, SymbolAllocator, VTABLE_CLONE_SLOT_NAME,
+        VTABLE_FREE_SLOT_NAME, WASM_CALLBACK_IMPORT_MODULE, callback_wasm_import_clone_name,
+        callback_wasm_import_free_name,
     },
 };
 
@@ -43,12 +44,13 @@ use super::{
 /// The `CallbackProtocolBuilder` extension lives behind [`SurfaceLower`]'s
 /// sealed private supertrait set, so the `S: SurfaceLower` bound is the only
 /// constraint callers need to satisfy.
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<CallbackDecl<S>>, LowerError> {
-    index.traits()
+    index
+        .traits()
         .iter()
         .map(|callback| lower_one::<S>(index, ids, allocator, callback))
         .collect()
@@ -87,24 +89,15 @@ fn local_protocol<S: SurfaceLower>(
     let module_segments = local_module_segments(callback);
     let handle = local_function(
         &module_segments,
-        symbol::callback_local_function_name(
-            callback.id.as_str(),
-            symbol::CallbackLocalLifecycle::Handle,
-        ),
+        CallbackLocalLifecycle::Handle.function_name(callback.id.as_str()),
     );
     let free = local_function(
         &module_segments,
-        symbol::callback_local_function_name(
-            callback.id.as_str(),
-            symbol::CallbackLocalLifecycle::Free,
-        ),
+        CallbackLocalLifecycle::Free.function_name(callback.id.as_str()),
     );
     let clone = local_function(
         &module_segments,
-        symbol::callback_local_function_name(
-            callback.id.as_str(),
-            symbol::CallbackLocalLifecycle::Clone,
-        ),
+        CallbackLocalLifecycle::Clone.function_name(callback.id.as_str()),
     );
     let methods = callback
         .methods
@@ -118,7 +111,7 @@ fn local_protocol<S: SurfaceLower>(
                 metadata::decl_meta(method.doc.as_ref(), method.deprecated.as_ref()),
                 local_function(
                     &module_segments,
-                    symbol::callback_local_method_name(callback.id.as_str(), &slot),
+                    slot.local_method_name(callback.id.as_str()),
                 ),
                 callable::lower_local_callback_method::<S>(
                     index,
@@ -134,12 +127,12 @@ fn local_protocol<S: SurfaceLower>(
 }
 
 #[derive(Clone, Copy)]
-struct LocalCallbackProtocolSource<'a> {
-    source: &'a SourceTrait,
+struct LocalCallbackProtocolSource<'source> {
+    source: &'source SourceTrait,
 }
 
-impl<'a> LocalCallbackProtocolSource<'a> {
-    fn new(source: &'a SourceTrait) -> Option<Self> {
+impl<'source> LocalCallbackProtocolSource<'source> {
+    fn new(source: &'source SourceTrait) -> Option<Self> {
         source
             .methods
             .iter()
@@ -157,12 +150,12 @@ impl<'a> LocalCallbackProtocolSource<'a> {
     }
 }
 
-struct LocalCallbackParameter<'a> {
-    definition: &'a ParameterDef,
+struct LocalCallbackParameter<'source> {
+    definition: &'source ParameterDef,
 }
 
-impl<'a> LocalCallbackParameter<'a> {
-    fn new(definition: &'a ParameterDef) -> Self {
+impl<'source> LocalCallbackParameter<'source> {
+    fn new(definition: &'source ParameterDef) -> Self {
         Self { definition }
     }
 
@@ -178,12 +171,12 @@ impl<'a> LocalCallbackParameter<'a> {
     }
 }
 
-struct LocalCallbackReturn<'a> {
-    definition: &'a ReturnDef,
+struct LocalCallbackReturn<'source> {
+    definition: &'source ReturnDef,
 }
 
-impl<'a> LocalCallbackReturn<'a> {
-    fn new(definition: &'a ReturnDef) -> Self {
+impl<'source> LocalCallbackReturn<'source> {
+    fn new(definition: &'source ReturnDef) -> Self {
         Self { definition }
     }
 
@@ -198,12 +191,12 @@ impl<'a> LocalCallbackReturn<'a> {
     }
 }
 
-struct IncomingClosureParameter<'a> {
-    signature: &'a FnSig,
+struct IncomingClosureParameter<'source> {
+    signature: &'source FnSig,
 }
 
-impl<'a> IncomingClosureParameter<'a> {
-    fn new(type_expr: &'a TypeExpr) -> Option<Self> {
+impl<'source> IncomingClosureParameter<'source> {
+    fn new(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::Boxed(inner) => Self::boxed_dyn(inner),
             TypeExpr::Option(inner) => match inner.as_ref() {
@@ -214,7 +207,7 @@ impl<'a> IncomingClosureParameter<'a> {
         }
     }
 
-    fn boxed_dyn(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn boxed_dyn(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::Dyn(bounds) => match &bounds.base {
                 BaseTrait::Function(function) => Some(Self {
@@ -231,12 +224,12 @@ impl<'a> IncomingClosureParameter<'a> {
     }
 }
 
-struct ReturnedClosure<'a> {
-    signature: &'a FnSig,
+struct ReturnedClosure<'source> {
+    signature: &'source FnSig,
 }
 
-impl<'a> ReturnedClosure<'a> {
-    fn new(type_expr: &'a TypeExpr) -> Option<Self> {
+impl<'source> ReturnedClosure<'source> {
+    fn new(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::FnPtr(signature) => Some(Self { signature }),
             TypeExpr::Boxed(inner) => Self::boxed_dyn(inner),
@@ -248,7 +241,7 @@ impl<'a> ReturnedClosure<'a> {
         }
     }
 
-    fn boxed_dyn(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn boxed_dyn(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::Dyn(bounds) => match &bounds.base {
                 BaseTrait::Function(function) => Some(Self {
@@ -265,12 +258,12 @@ impl<'a> ReturnedClosure<'a> {
     }
 }
 
-struct CallbackClosureSignature<'a> {
-    signature: &'a FnSig,
+struct CallbackClosureSignature<'source> {
+    signature: &'source FnSig,
 }
 
-impl<'a> CallbackClosureSignature<'a> {
-    fn new(signature: &'a FnSig) -> Self {
+impl<'source> CallbackClosureSignature<'source> {
+    fn new(signature: &'source FnSig) -> Self {
         Self { signature }
     }
 
@@ -283,12 +276,12 @@ impl<'a> CallbackClosureSignature<'a> {
     }
 }
 
-struct ClosureInvokeReturn<'a> {
-    definition: &'a ReturnDef,
+struct ClosureInvokeReturn<'source> {
+    definition: &'source ReturnDef,
 }
 
-impl<'a> ClosureInvokeReturn<'a> {
-    fn new(definition: &'a ReturnDef) -> Self {
+impl<'source> ClosureInvokeReturn<'source> {
+    fn new(definition: &'source ReturnDef) -> Self {
         Self { definition }
     }
 
@@ -300,12 +293,12 @@ impl<'a> ClosureInvokeReturn<'a> {
     }
 }
 
-struct CallbackValueType<'a> {
-    type_expr: &'a TypeExpr,
+struct CallbackValueType<'source> {
+    type_expr: &'source TypeExpr,
 }
 
-impl<'a> CallbackValueType<'a> {
-    fn new(type_expr: &'a TypeExpr) -> Self {
+impl<'source> CallbackValueType<'source> {
+    fn new(type_expr: &'source TypeExpr) -> Self {
         Self { type_expr }
     }
 
@@ -344,12 +337,12 @@ impl<'a> CallbackValueType<'a> {
     }
 }
 
-struct CallbackHandleParameter<'a> {
-    type_expr: &'a TypeExpr,
+struct CallbackHandleParameter<'source> {
+    type_expr: &'source TypeExpr,
 }
 
-impl<'a> CallbackHandleParameter<'a> {
-    fn new(type_expr: &'a TypeExpr) -> Self {
+impl<'source> CallbackHandleParameter<'source> {
+    fn new(type_expr: &'source TypeExpr) -> Self {
         Self { type_expr }
     }
 
@@ -364,12 +357,12 @@ impl<'a> CallbackHandleParameter<'a> {
     }
 }
 
-struct CallbackBoxedType<'a> {
-    inner: &'a TypeExpr,
+struct CallbackBoxedType<'source> {
+    inner: &'source TypeExpr,
 }
 
-impl<'a> CallbackBoxedType<'a> {
-    fn new(inner: &'a TypeExpr) -> Self {
+impl<'source> CallbackBoxedType<'source> {
+    fn new(inner: &'source TypeExpr) -> Self {
         Self { inner }
     }
 
@@ -431,7 +424,7 @@ fn reject_slot_collisions(callback: &SourceTrait) -> Result<(), LowerError> {
 /// supertrait of [`SurfaceLower`] so the public lowering API stays a
 /// shape-picker contract; the protocol constructor is reachable only
 /// through the sealed bound.
-pub(super) trait CallbackProtocolBuilder: Surface {
+pub trait CallbackProtocolBuilder: Surface {
     fn build_callback_protocol(
         index: &Index,
         ids: &DeclarationIds,
@@ -447,11 +440,8 @@ impl CallbackProtocolBuilder for Native {
         allocator: &mut SymbolAllocator,
         callback: &SourceTrait,
     ) -> Result<Self::CallbackProtocol, LowerError> {
-        let register =
-            allocator.mint(symbol::callback_register_symbol_name(callback.id.as_str()))?;
-        let create_handle = allocator.mint(symbol::callback_create_handle_symbol_name(
-            callback.id.as_str(),
-        ))?;
+        let register = allocator.mint_callback_register(callback.id.as_str())?;
+        let create_handle = allocator.mint_callback_create_handle(callback.id.as_str())?;
         let methods = methods::lower_callback_methods::<Self, VTableSlot, _>(
             index,
             ids,
@@ -487,16 +477,14 @@ impl CallbackProtocolBuilder for Wasm32 {
         callback: &SourceTrait,
     ) -> Result<Self::CallbackProtocol, LowerError> {
         let module = ImportModule::parse(WASM_CALLBACK_IMPORT_MODULE.to_owned())?;
-        let create_handle = allocator.mint(symbol::callback_create_handle_symbol_name(
-            callback.id.as_str(),
-        ))?;
+        let create_handle = allocator.mint_callback_create_handle(callback.id.as_str())?;
         let free = wasm_import(
             &module,
-            symbol::callback_wasm_import_free_name(callback.id.as_str()),
+            callback_wasm_import_free_name(callback.id.as_str()),
         )?;
         let clone = wasm_import(
             &module,
-            symbol::callback_wasm_import_clone_name(callback.id.as_str()),
+            callback_wasm_import_clone_name(callback.id.as_str()),
         )?;
         let callback_id = callback.id.as_str();
         let methods = methods::lower_callback_methods::<Self, ImportSymbol, _>(
@@ -539,21 +527,12 @@ fn wasm_callback_method_surface(
 ) -> Result<methods::CallbackMethodSurface<Wasm32, ImportSymbol>, LowerError> {
     match method.execution {
         ExecutionKind::Sync => Ok(methods::CallbackMethodSurface::new(
-            wasm_import(
-                module,
-                symbol::callback_wasm_import_method_name(callback_id, slot),
-            )?,
+            wasm_import(module, slot.wasm_import_method_name(callback_id))?,
             ExecutionDecl::synchronous(),
         )),
         ExecutionKind::Async => {
-            let target = wasm_import(
-                module,
-                symbol::callback_wasm_import_start_name(callback_id, slot),
-            )?;
-            let complete = allocator.mint(symbol::callback_wasm_complete_symbol_name(
-                callback_id,
-                slot,
-            ))?;
+            let target = wasm_import(module, slot.wasm_import_start_name(callback_id))?;
+            let complete = allocator.mint_callback_complete(callback_id, slot)?;
             Ok(methods::CallbackMethodSurface::new(
                 target,
                 ExecutionDecl::asynchronous(wasm32::AsyncProtocol::CallbackCompletion { complete }),

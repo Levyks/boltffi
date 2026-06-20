@@ -22,12 +22,13 @@ use super::{
 /// [`SymbolId`]: crate::SymbolId
 /// [`NativeSymbol`]: crate::NativeSymbol
 /// [`Bindings<S>`]: crate::Bindings
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<EnumDecl<S>>, LowerError> {
-    index.enums()
+    index
+        .enums()
         .iter()
         .map(|enumeration| lower_one(index, ids, allocator, enumeration))
         .collect()
@@ -38,7 +39,7 @@ pub(super) fn lower<S: SurfaceLower>(
 ///
 /// Exposed to the codec lane so a nested `TypeExpr::Enum(id)` agrees
 /// with the enum's own declaration on `CStyleEnum` vs `DataEnum`.
-pub(super) fn is_c_style(enumeration: &SourceEnum) -> bool {
+pub fn is_c_style(enumeration: &SourceEnum) -> bool {
     enumeration
         .variants
         .iter()
@@ -46,7 +47,7 @@ pub(super) fn is_c_style(enumeration: &SourceEnum) -> bool {
         && effective_integer_repr(enumeration).is_some()
 }
 
-pub(super) fn c_style_repr(enumeration: &SourceEnum) -> Option<IntegerRepr> {
+pub fn c_style_repr(enumeration: &SourceEnum) -> Option<IntegerRepr> {
     is_c_style(enumeration)
         .then(|| effective_integer_repr(enumeration))
         .flatten()

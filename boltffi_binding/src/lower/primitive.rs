@@ -2,14 +2,14 @@ use boltffi_ast::{Primitive as SourcePrimitive, ReprAttr, ReprItem, TypeExpr};
 
 use crate::{DirectFieldType, IntegerRepr, Primitive};
 
-pub(super) fn direct_field_type(type_expr: &TypeExpr) -> Option<DirectFieldType> {
+pub fn direct_field_type(type_expr: &TypeExpr) -> Option<DirectFieldType> {
     match type_expr {
         TypeExpr::Primitive(primitive) => DirectFieldType::new((*primitive).into()),
         _ => None,
     }
 }
 
-pub(super) fn integer_repr(repr: &ReprAttr) -> Option<IntegerRepr> {
+pub fn integer_repr(repr: &ReprAttr) -> Option<IntegerRepr> {
     repr.items.iter().find_map(|item| match item {
         ReprItem::Primitive(SourcePrimitive::I8) => Some(IntegerRepr::I8),
         ReprItem::Primitive(SourcePrimitive::U8) => Some(IntegerRepr::U8),
@@ -25,7 +25,7 @@ pub(super) fn integer_repr(repr: &ReprAttr) -> Option<IntegerRepr> {
     })
 }
 
-pub(super) fn has_repr_c(repr: &ReprAttr) -> bool {
+pub fn has_repr_c(repr: &ReprAttr) -> bool {
     repr.items.iter().any(|item| matches!(item, ReprItem::C))
 }
 

@@ -6,9 +6,9 @@ use boltffi_binding::{
     CallbackDecl, CallbackLocalFunction, CallbackLocalMethodDecl, CallbackLocalProtocol,
     CanonicalName, ClosureForm, ClosureParameter, ClosureReturn, CodecNode, DirectValueType,
     DirectVectorElementType, Direction, ErrorDecl, ExecutionDecl, ExportedCallable, HandlePresence,
-    HandleTarget, ImportedCallable, ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam,
-    ParamDecl, ParamDirection, ParamPlan, Primitive, ReturnPlan, TypeRef, VTableSlot, Wasm32,
-    native, wasm32,
+    HandleTarget, ImportSymbol, ImportedCallable, ImportedMethodDecl, IntoRust, Native, OutOfRust,
+    OutgoingParam, ParamDecl, ParamDirection, ParamPlan, Primitive, ReadPlan, ReturnPlan, TypeRef,
+    VTableSlot, Wasm32, native, wasm32,
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
@@ -963,7 +963,7 @@ where
         names: &LocalCallbackNames,
     ) -> Result<LocalNativeMethod, Error> {
         let slot_ident = RustIdent::new(slot.as_str())?;
-        let function_ident = RustIdent::new(local_function_name(function)?)?;
+        let function_ident = RustIdent::from_local_function(function)?;
         let parameters = self.parameters()?;
         let return_tokens = self.return_tokens()?;
         let ffi_parameters = parameters.ffi_parameters;
@@ -995,7 +995,7 @@ where
         })
     }
 
-    fn wasm_import(&self, import: &boltffi_binding::ImportSymbol) -> Result<TokenStream, Error> {
+    fn wasm_import(&self, import: &ImportSymbol) -> Result<TokenStream, Error> {
         let import = WasmImport::new(import)?;
         let parameters = self.parameters()?;
         let import_parameters = parameters.wasm_import_parameters();
@@ -1014,10 +1014,7 @@ where
         }))
     }
 
-    fn wasm_foreign_method(
-        &self,
-        import: &boltffi_binding::ImportSymbol,
-    ) -> Result<TokenStream, Error> {
+    fn wasm_foreign_method(&self, import: &ImportSymbol) -> Result<TokenStream, Error> {
         let method_ident = RustIdent::new(self.source.name.spelling())?;
         let receiver = ReceiverTokens::new(self.source.receiver)?.tokens();
         let source_parameters = self.source_parameters()?;
@@ -1064,7 +1061,7 @@ where
         let receiver = ReceiverTokens::new(self.source.receiver)?.tokens();
         let source_parameters = self.source_parameters()?;
         let return_signature = self.return_signature()?;
-        let function_ident = RustIdent::new(local_function_name(function)?)?;
+        let function_ident = RustIdent::from_local_function(function)?;
         let parameters = self.parameters()?;
         let return_tokens = self.return_tokens()?;
         let setup = parameters.foreign_setup;
@@ -1085,7 +1082,7 @@ where
         function: &CallbackLocalFunction,
         names: &LocalCallbackNames,
     ) -> Result<TokenStream, Error> {
-        let function_ident = RustIdent::new(local_function_name(function)?)?;
+        let function_ident = RustIdent::from_local_function(function)?;
         let parameters = self.parameters()?;
         let return_tokens = self.return_tokens()?;
         let ffi_parameters = parameters.ffi_parameters;
@@ -1346,7 +1343,7 @@ impl<'expansion, 'lowered, S: CallbackMethodSurface> MethodParameter<'expansion,
 
     fn foreign_encoded_tokens(
         &self,
-        codec: &boltffi_binding::ReadPlan,
+        codec: &ReadPlan,
         shape: S::BufferShape,
     ) -> Result<ForeignMethodParameterTokens, Error> {
         match self.source.passing {
@@ -1489,7 +1486,7 @@ impl<'lowered> NativeOutgoingClosure<'lowered> {
             }
         }
         let source = rust_api::Closure::new(&self.source.type_expr, self.closure.presence())?;
-        let closure = RustOwnedClosure::new(source, self.closure.form())?;
+        let closure = RustOwnedClosure::new(&source, self.closure.form())?;
         let ident = RustIdent::new(self.source.name.spelling())?.into_ident();
         let registration_names = wrapper::names::NativeClosureRegistration::new(&ident);
         let call = registration_names.call();
@@ -1583,7 +1580,7 @@ impl<'lowered> WasmOutgoingClosure<'lowered> {
 
     fn tokens(self) -> Result<ForeignMethodParameterTokens, Error> {
         let source = rust_api::Closure::new(&self.source.type_expr, self.closure.presence())?;
-        let closure = RustOwnedClosure::new(source, self.closure.form())?;
+        let closure = RustOwnedClosure::new(&source, self.closure.form())?;
         let ident = RustIdent::new(self.source.name.spelling())?.into_ident();
         let handle = wrapper::names::Parameter::new(&ident).handle();
         let registration = self.closure.registration().shape();
@@ -1654,7 +1651,7 @@ struct RustOwnedClosure {
 }
 
 impl RustOwnedClosure {
-    fn new(source: rust_api::Closure<'_>, form: ClosureForm) -> Result<Self, Error> {
+    fn new(source: &rust_api::Closure, form: ClosureForm) -> Result<Self, Error> {
         if source.function() != form {
             return Err(Error::SourceSyntaxMismatch(
                 "source closure parameter form does not match binding closure",
@@ -1880,7 +1877,7 @@ where
         presence: HandlePresence,
     },
     ScalarOption {
-        primitive: boltffi_binding::Primitive,
+        primitive: Primitive,
     },
     DirectVec,
     Closure {
@@ -2065,7 +2062,7 @@ where
                 } => Self::handle_abi(target, carrier, presence),
                 InfallibleMethodReturn::ScalarOption { primitive } => {
                     source.scalar_option(primitive)?;
-                    let result = wrapper::names::Wrapper::new(Span::call_site()).result();
+                    let result = wrapper::names::Locals::new(Span::call_site()).result();
                     let optional =
                         <wrapper::returns::scalar_option::Renderer as Render<S, _>>::render(
                             wrapper::returns::scalar_option::Renderer,
@@ -2075,7 +2072,7 @@ where
                 }
                 InfallibleMethodReturn::DirectVec => {
                     source.direct_vec()?;
-                    let result = wrapper::names::Wrapper::new(Span::call_site()).result();
+                    let result = wrapper::names::Locals::new(Span::call_site()).result();
                     let sequence =
                         <wrapper::returns::direct_vec::Renderer as Render<S, _>>::render(
                             wrapper::returns::direct_vec::Renderer,
@@ -2315,7 +2312,7 @@ where
 
     fn native_async_encoded_value(
         &self,
-        codec: &boltffi_binding::CodecNode,
+        codec: &CodecNode,
         bytes: TokenStream,
     ) -> Result<TokenStream, Error> {
         let source = self.source.value_type()?;
@@ -2332,10 +2329,7 @@ where
         )
     }
 
-    fn wasm_async_encoded_value(
-        &self,
-        codec: &boltffi_binding::CodecNode,
-    ) -> Result<TokenStream, Error> {
+    fn wasm_async_encoded_value(&self, codec: &CodecNode) -> Result<TokenStream, Error> {
         let source = self.source.value_type()?;
         let rust_type = rust_api::TypeTokens::new(source.as_ref())?.into_type();
         wrapper::encoded::incoming::Value::new(codec, self.expansion).expression(
@@ -2350,10 +2344,7 @@ where
         )
     }
 
-    fn wasm_async_scalar_option_value(
-        &self,
-        primitive: boltffi_binding::Primitive,
-    ) -> Result<TokenStream, Error> {
+    fn wasm_async_scalar_option_value(&self, primitive: Primitive) -> Result<TokenStream, Error> {
         self.source.scalar_option(primitive)?;
         let rust_type = self.direct_source_type()?;
         Ok(quote! {
@@ -3156,7 +3147,7 @@ where
     fn foreign_fallible_body(
         &self,
         call: TokenStream,
-        error_codec: &boltffi_binding::CodecNode,
+        error_codec: &CodecNode,
         error_shape: S::BufferShape,
     ) -> Result<TokenStream, Error> {
         let error_slot = S::callback_encoded_error(error_shape)?;
@@ -3188,7 +3179,7 @@ where
     fn local_proxy_fallible_body(
         &self,
         call: TokenStream,
-        error_codec: &boltffi_binding::CodecNode,
+        error_codec: &CodecNode,
         error_shape: S::BufferShape,
     ) -> Result<TokenStream, Error> {
         let error_slot = S::callback_encoded_error(error_shape)?;
@@ -3240,7 +3231,7 @@ where
                 carrier,
                 presence,
             } => {
-                let result = wrapper::names::Wrapper::new(Span::call_site()).result();
+                let result = wrapper::names::Locals::new(Span::call_site()).result();
                 let value = self.local_handle_value(target, carrier, presence, result.clone())?;
                 Ok(LocalMethodBody::new(quote! {
                     {
@@ -3251,7 +3242,7 @@ where
             }
             InfallibleMethodReturn::ScalarOption { primitive } => {
                 self.source.scalar_option(primitive)?;
-                let result = wrapper::names::Wrapper::new(Span::call_site()).result();
+                let result = wrapper::names::Locals::new(Span::call_site()).result();
                 let optional = <wrapper::returns::scalar_option::Renderer as Render<S, _>>::render(
                     wrapper::returns::scalar_option::Renderer,
                     wrapper::returns::scalar_option::Input::new(primitive, result.clone()),
@@ -3266,7 +3257,7 @@ where
             }
             InfallibleMethodReturn::DirectVec => {
                 self.source.direct_vec()?;
-                let result = wrapper::names::Wrapper::new(Span::call_site()).result();
+                let result = wrapper::names::Locals::new(Span::call_site()).result();
                 let sequence = <wrapper::returns::direct_vec::Renderer as Render<S, _>>::render(
                     wrapper::returns::direct_vec::Renderer,
                     wrapper::returns::direct_vec::Input::new(result.clone()),
@@ -3280,7 +3271,7 @@ where
                 }))
             }
             InfallibleMethodReturn::Closure { closure } => {
-                let result = wrapper::names::Wrapper::new(owner.span()).closure();
+                let result = wrapper::names::Locals::new(owner.span()).closure();
                 let writer = <wrapper::returns::closure::Write as Render<S, _>>::render(
                     wrapper::returns::closure::Write,
                     wrapper::returns::closure::WriteInput::returned(
@@ -3308,7 +3299,7 @@ where
         &self,
         owner: Ident,
         call: TokenStream,
-        error_codec: &boltffi_binding::CodecNode,
+        error_codec: &CodecNode,
         error_shape: S::BufferShape,
         _error_ty: &TypeRef,
     ) -> Result<LocalMethodBody, Error> {
@@ -3551,7 +3542,7 @@ where
                 carrier,
                 presence,
             } => {
-                let success = wrapper::names::Wrapper::new(Span::call_site()).success();
+                let success = wrapper::names::Locals::new(Span::call_site()).success();
                 let value = self.local_handle_value(target, carrier, presence, success)?;
                 Ok(LocalMethodBody::new(quote! {
                     if !__boltffi_success_out.is_null() {
@@ -3567,7 +3558,7 @@ where
                     wrapper::returns::closure::WriteInput::success(
                         closure,
                         self.source.fallible()?.ok_closure(closure.presence())?,
-                        wrapper::names::Wrapper::new(Span::call_site()).success(),
+                        wrapper::names::Locals::new(Span::call_site()).success(),
                         owner,
                         self.expansion,
                     ),
@@ -3802,27 +3793,27 @@ trait CallbackMethodSurface: RenderSurface {
 
     fn foreign_closure_return_body<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         call: TokenStream,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
     fn foreign_closure_success_storage<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
     fn foreign_closure_success_value<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error>;
 
     fn decode_callback_encoded_out_pointer<'lowered>(
         shape: Self::BufferShape,
         value: TokenStream,
-        codec: &'lowered boltffi_binding::CodecNode,
+        codec: &'lowered CodecNode,
         rust_type: Type,
         source: &'lowered TypeExpr,
         expansion: &Expansion<'lowered, Self>,
@@ -4002,11 +3993,11 @@ impl CallbackMethodSurface for Native {
 
     fn foreign_closure_return_body<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         call: TokenStream,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
-        let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
+        let value = wrapper::names::Locals::new(Span::call_site()).closure();
         let slot_names = wrapper::names::ClosureRegistration::new(&value);
         let invoke = slot_names.call();
         let context = slot_names.context();
@@ -4068,10 +4059,10 @@ impl CallbackMethodSurface for Native {
 
     fn foreign_closure_success_storage<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
-        let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
+        let value = wrapper::names::Locals::new(Span::call_site()).closure();
         let tokens = <wrapper::param::closure::Renderer as Render<Native, _>>::render(
             wrapper::param::closure::Renderer,
             wrapper::param::closure::Input::returned(
@@ -4114,10 +4105,10 @@ impl CallbackMethodSurface for Native {
 
     fn foreign_closure_success_value<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
-        let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
+        let value = wrapper::names::Locals::new(Span::call_site()).closure();
         let slot_names = wrapper::names::ClosureRegistration::new(&value);
         let invoke = slot_names.call();
         let context = slot_names.context();
@@ -4151,7 +4142,7 @@ impl CallbackMethodSurface for Native {
     fn decode_callback_encoded_out_pointer<'lowered>(
         shape: Self::BufferShape,
         value: TokenStream,
-        codec: &'lowered boltffi_binding::CodecNode,
+        codec: &'lowered CodecNode,
         rust_type: Type,
         source: &'lowered TypeExpr,
         expansion: &Expansion<'lowered, Self>,
@@ -4386,11 +4377,11 @@ impl CallbackMethodSurface for Wasm32 {
 
     fn foreign_closure_return_body<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         call: TokenStream,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
-        let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
+        let value = wrapper::names::Locals::new(Span::call_site()).closure();
         let tokens = <wrapper::param::closure::Renderer as Render<Wasm32, _>>::render(
             wrapper::param::closure::Renderer,
             wrapper::param::closure::Input::returned(
@@ -4421,7 +4412,7 @@ impl CallbackMethodSurface for Wasm32 {
 
     fn foreign_closure_success_storage<'lowered>(
         _closure: &'lowered ClosureReturn<Self, IntoRust>,
-        _source: rust_api::Closure<'lowered>,
+        _source: rust_api::Closure,
         _expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         Ok(quote! {
@@ -4431,10 +4422,10 @@ impl CallbackMethodSurface for Wasm32 {
 
     fn foreign_closure_success_value<'lowered>(
         closure: &'lowered ClosureReturn<Self, IntoRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
-        let value = wrapper::names::Wrapper::new(Span::call_site()).closure();
+        let value = wrapper::names::Locals::new(Span::call_site()).closure();
         let tokens = <wrapper::param::closure::Renderer as Render<Wasm32, _>>::render(
             wrapper::param::closure::Renderer,
             wrapper::param::closure::Input::returned(
@@ -4461,13 +4452,13 @@ impl CallbackMethodSurface for Wasm32 {
     fn decode_callback_encoded_out_pointer<'lowered>(
         shape: Self::BufferShape,
         value: TokenStream,
-        codec: &'lowered boltffi_binding::CodecNode,
+        codec: &'lowered CodecNode,
         rust_type: Type,
         source: &'lowered TypeExpr,
         expansion: &Expansion<'lowered, Self>,
     ) -> Result<TokenStream, Error> {
         match shape {
-            wasm32::BufferShape::Packed => packed_encoded_value(
+            wasm32::BufferShape::Packed => PackedEncodedValue::new(
                 value,
                 codec,
                 rust_type,
@@ -4476,7 +4467,8 @@ impl CallbackMethodSurface for Wasm32 {
                 quote! {
                     panic!("callback method success conversion failed: {:?}", error)
                 },
-            ),
+            )
+            .expression(),
             wasm32::BufferShape::Slice => Err(Error::UnsupportedExpansion(
                 "wasm callback encoded out-pointer",
             )),
@@ -4546,13 +4538,13 @@ impl CallbackEncodedError {
         }
     }
 
-    fn decode<S: RenderSurface>(
+    fn decode<'lowered, S: RenderSurface>(
         &self,
         value: TokenStream,
-        codec: &boltffi_binding::CodecNode,
+        codec: &CodecNode,
         rust_type: Type,
         source: &TypeExpr,
-        expansion: &Expansion<'_, S>,
+        expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
         match self {
             Self::NativeBuffer => wrapper::encoded::incoming::Value::new(codec, expansion)
@@ -4564,7 +4556,7 @@ impl CallbackEncodedError {
                         panic!("callback method error conversion failed: {:?}", error)
                     },
                 )),
-            Self::WasmPacked => packed_encoded_value(
+            Self::WasmPacked => PackedEncodedValue::new(
                 value,
                 codec,
                 rust_type,
@@ -4573,7 +4565,8 @@ impl CallbackEncodedError {
                 quote! {
                     panic!("callback method error conversion failed: {:?}", error)
                 },
-            ),
+            )
+            .expression(),
         }
     }
 }
@@ -4629,13 +4622,13 @@ impl CallbackEncodedReturn {
         }
     }
 
-    fn foreign_body<S: RenderSurface>(
+    fn foreign_body<'lowered, S: RenderSurface>(
         &self,
         call: TokenStream,
-        codec: &boltffi_binding::CodecNode,
+        codec: &CodecNode,
         rust_type: Type,
         source: &TypeExpr,
-        expansion: &Expansion<'_, S>,
+        expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
         match self {
             Self::NativeBuffer => {
@@ -4692,13 +4685,13 @@ impl CallbackEncodedReturn {
         }
     }
 
-    fn local_proxy_body<S: RenderSurface>(
+    fn local_proxy_body<'lowered, S: RenderSurface>(
         &self,
         call: TokenStream,
-        codec: &boltffi_binding::CodecNode,
+        codec: &CodecNode,
         rust_type: Type,
         source: &TypeExpr,
-        expansion: &Expansion<'_, S>,
+        expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
         match self {
             Self::NativeBuffer => {
@@ -4727,7 +4720,7 @@ impl CallbackEncodedReturn {
                     ::boltffi::__private::take_packed_utf8_string(#call)
                 }
             }),
-            Self::WasmOutBuffer => packed_encoded_value(
+            Self::WasmOutBuffer => PackedEncodedValue::new(
                 call,
                 codec,
                 rust_type,
@@ -4736,15 +4729,16 @@ impl CallbackEncodedReturn {
                 quote! {
                     panic!("callback method return conversion failed: {:?}", error)
                 },
-            ),
+            )
+            .expression(),
         }
     }
 
-    fn local_body<S: RenderSurface>(
+    fn local_body<'lowered, S: RenderSurface>(
         &self,
         call: TokenStream,
-        codec: &boltffi_binding::CodecNode,
-        expansion: &Expansion<'_, S>,
+        codec: &CodecNode,
+        expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
         let buffer = wrapper::encoded::outgoing::Value::new(codec, expansion).buffer(call)?;
         Ok(match self {
@@ -4860,7 +4854,7 @@ impl LocalCallbackNames {
         trait_ident: &Ident,
         uppercase: &str,
     ) -> Result<Self, Error> {
-        let handle_ident = RustIdent::new(local_function_name(protocol.handle())?)?;
+        let handle_ident = RustIdent::from_local_function(protocol.handle())?;
         Ok(Self {
             proxy_ident: format_ident!("Local{}", trait_ident),
             vtable_static: format_ident!("__BOLTFFI_LOCAL_{}_VTABLE", uppercase),
@@ -4868,33 +4862,49 @@ impl LocalCallbackNames {
             registry_ident: format_ident!("__BOLTFFI_LOCAL_{}_REGISTRY", uppercase),
             next_ident: format_ident!("__BOLTFFI_LOCAL_{}_NEXT_HANDLE", uppercase),
             lookup_ident: format_ident!("{}_lookup", handle_ident.as_ident()),
-            free_ident: RustIdent::new(local_function_name(protocol.free())?)?.into_ident(),
-            clone_ident: RustIdent::new(local_function_name(protocol.clone_fn())?)?.into_ident(),
+            free_ident: RustIdent::from_local_function(protocol.free())?.into_ident(),
+            clone_ident: RustIdent::from_local_function(protocol.clone_fn())?.into_ident(),
             handle_ident: handle_ident.into_ident(),
         })
     }
 }
 
-fn local_function_name(function: &CallbackLocalFunction) -> Result<&str, Error> {
-    function
-        .segments()
-        .last()
-        .map(|segment| segment.as_str())
-        .ok_or(Error::SourceSyntaxMismatch(
-            "callback local function path is empty",
-        ))
+struct PackedEncodedValue<'expansion, 'lowered, S: RenderSurface> {
+    packed: TokenStream,
+    codec: &'lowered CodecNode,
+    rust_type: Type,
+    source: &'lowered TypeExpr,
+    expansion: &'expansion Expansion<'lowered, S>,
+    failure: TokenStream,
 }
 
-fn packed_encoded_value<S: RenderSurface>(
-    packed: TokenStream,
-    codec: &boltffi_binding::CodecNode,
-    rust_type: Type,
-    source: &TypeExpr,
-    expansion: &Expansion<'_, S>,
-    failure: TokenStream,
-) -> Result<TokenStream, Error> {
-    wrapper::encoded::incoming::Value::new(codec, expansion)
-        .packed_expression(&rust_type, source, packed, failure)
+impl<'expansion, 'lowered, S: RenderSurface> PackedEncodedValue<'expansion, 'lowered, S> {
+    fn new(
+        packed: TokenStream,
+        codec: &'lowered CodecNode,
+        rust_type: Type,
+        source: &'lowered TypeExpr,
+        expansion: &'expansion Expansion<'lowered, S>,
+        failure: TokenStream,
+    ) -> Self {
+        Self {
+            packed,
+            codec,
+            rust_type,
+            source,
+            expansion,
+            failure,
+        }
+    }
+
+    fn expression(self) -> Result<TokenStream, Error> {
+        wrapper::encoded::incoming::Value::new(self.codec, self.expansion).packed_expression(
+            &self.rust_type,
+            self.source,
+            self.packed,
+            self.failure,
+        )
+    }
 }
 
 struct RustIdent(Ident);
@@ -4904,6 +4914,17 @@ impl RustIdent {
         parse_str::<Ident>(name)
             .map(Self)
             .map_err(|_| Error::SourceSyntaxMismatch("generated callback identifier is not Rust"))
+    }
+
+    fn from_local_function(function: &CallbackLocalFunction) -> Result<Self, Error> {
+        function
+            .segments()
+            .last()
+            .map(|segment| segment.as_str())
+            .ok_or(Error::SourceSyntaxMismatch(
+                "callback local function path is empty",
+            ))
+            .and_then(Self::new)
     }
 
     fn as_ident(&self) -> &Ident {
@@ -4927,7 +4948,7 @@ struct WasmImport {
 }
 
 impl WasmImport {
-    fn new(import: &boltffi_binding::ImportSymbol) -> Result<Self, Error> {
+    fn new(import: &ImportSymbol) -> Result<Self, Error> {
         Ok(Self {
             module: LitStr::new(import.module().as_str(), Span::call_site()),
             ident: RustIdent::new(import.name().as_str())?.0,

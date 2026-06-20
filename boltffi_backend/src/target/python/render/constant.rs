@@ -19,10 +19,7 @@ pub struct ConstantStub {
 }
 
 impl ConstantStub {
-    pub fn from_declaration<'package>(
-        constant: &ConstantDecl<Native>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_declaration(constant: &ConstantDecl<Native>, package: &Package) -> Result<Self> {
         match constant.value() {
             ConstantValueDecl::Inline { ty, value, .. } => {
                 Self::from_inline(constant, ty, value, package)
@@ -60,11 +57,11 @@ impl ConstantStub {
         )
     }
 
-    fn from_inline<'package>(
+    fn from_inline(
         constant: &ConstantDecl<Native>,
         ty: &TypeRef,
         value: &DefaultValue,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         Ok(Self {
             python_name: Name::new(constant.name()).function()?,
@@ -80,7 +77,7 @@ struct ConstantExpression {
 }
 
 impl ConstantExpression {
-    fn new<'package>(value: &DefaultValue, package: &'package Package<'package>) -> Result<Self> {
+    fn new(value: &DefaultValue, package: &Package) -> Result<Self> {
         Ok(Self {
             expression: match value {
                 DefaultValue::Bool(value) => Expression::literal(Literal::bool(*value)),

@@ -9,7 +9,7 @@ use crate::experimental::{
     expansion::{DeclarationPair, Expansion},
     rust_api,
     surface::RenderSurface,
-    wrapper::{self, Render},
+    wrapper::{self, Render, names},
 };
 
 use super::export;
@@ -97,9 +97,8 @@ where
     }
 
     fn function_ident(source: &FunctionDef) -> Result<Ident, Error> {
-        parse_str(source.name.spelling()).map_err(|_| {
-            Error::SourceSyntaxMismatch("source function name is not a Rust identifier")
-        })
+        names::SourceSpelling::new(&source.name)
+            .ident("source function name is not a Rust identifier")
     }
 
     fn rust_call(&self, function_ident: Ident) -> export::RustCall {

@@ -19,12 +19,13 @@ use super::{
 /// [`SymbolId`]: crate::SymbolId
 /// [`NativeSymbol`]: crate::NativeSymbol
 /// [`Bindings<S>`]: crate::Bindings
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<RecordDecl<S>>, LowerError> {
-    index.records()
+    index
+        .records()
         .iter()
         .map(|record| lower_one(index, ids, allocator, record))
         .collect()
@@ -35,7 +36,7 @@ pub(super) fn lower<S: SurfaceLower>(
 /// Exposed to the codec lane so a nested `TypeExpr::Record(id)` can
 /// pick `DirectRecord` vs `EncodedRecord` from the same predicate the
 /// record's own declaration uses.
-pub(super) fn is_direct(record: &SourceRecord) -> bool {
+pub fn is_direct(record: &SourceRecord) -> bool {
     primitive::has_repr_c(&record.repr)
         && !record.fields.is_empty()
         && record

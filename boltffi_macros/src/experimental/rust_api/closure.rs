@@ -12,16 +12,16 @@ pub enum ClosureSourceForm {
     FunctionPointer,
 }
 
-#[derive(Clone, Copy)]
-pub struct Closure<'source> {
+#[derive(Clone)]
+pub struct Closure {
     form: ClosureSourceForm,
     function: ClosureForm,
-    signature: &'source FnSig,
-    source: &'source TypeExpr,
+    signature: FnSig,
+    source: TypeExpr,
 }
 
-impl<'source> Closure<'source> {
-    pub fn new(type_expr: &'source TypeExpr, presence: HandlePresence) -> Result<Self, Error> {
+impl Closure {
+    pub fn new(type_expr: &TypeExpr, presence: HandlePresence) -> Result<Self, Error> {
         match presence {
             HandlePresence::Required => Self::required(type_expr),
             HandlePresence::Nullable => match type_expr {
@@ -42,28 +42,28 @@ impl<'source> Closure<'source> {
         self.function
     }
 
-    pub const fn signature(&self) -> &'source FnSig {
-        self.signature
+    pub const fn signature(&self) -> &FnSig {
+        &self.signature
     }
 
     pub fn ty(&self) -> Result<Type, Error> {
-        TypeTokens::new(self.source).map(TypeTokens::into_type)
+        TypeTokens::new(&self.source).map(TypeTokens::into_type)
     }
 
-    fn required(type_expr: &'source TypeExpr) -> Result<Self, Error> {
+    fn required(type_expr: &TypeExpr) -> Result<Self, Error> {
         match type_expr {
             TypeExpr::FnPtr(signature) => Ok(Self {
                 form: ClosureSourceForm::FunctionPointer,
                 function: ClosureForm::FunctionPointer,
-                signature,
-                source: type_expr,
+                signature: signature.as_ref().clone(),
+                source: type_expr.clone(),
             }),
             TypeExpr::ImplTrait(bounds) => match &bounds.base {
                 BaseTrait::Function(function_trait) => Ok(Self {
                     form: ClosureSourceForm::ImplTrait,
                     function: ClosureForm::from(function_trait.kind),
-                    signature: &function_trait.signature,
-                    source: type_expr,
+                    signature: function_trait.signature.clone(),
+                    source: type_expr.clone(),
                 }),
                 BaseTrait::Named { .. } => Err(Error::SourceSyntaxMismatch(
                     "source type is not an inline closure",
@@ -74,8 +74,8 @@ impl<'source> Closure<'source> {
                     BaseTrait::Function(function_trait) => Ok(Self {
                         form: ClosureSourceForm::BoxedDyn,
                         function: ClosureForm::from(function_trait.kind),
-                        signature: &function_trait.signature,
-                        source: type_expr,
+                        signature: function_trait.signature.clone(),
+                        source: type_expr.clone(),
                     }),
                     BaseTrait::Named { .. } => Err(Error::SourceSyntaxMismatch(
                         "source closure type is not a boxed closure trait object",
@@ -91,15 +91,15 @@ impl<'source> Closure<'source> {
         }
     }
 
-    fn nullable(inner: &'source TypeExpr, source: &'source TypeExpr) -> Result<Self, Error> {
+    fn nullable(inner: &TypeExpr, source: &TypeExpr) -> Result<Self, Error> {
         match inner {
             TypeExpr::Boxed(boxed) => match boxed.as_ref() {
                 TypeExpr::Dyn(bounds) => match &bounds.base {
                     BaseTrait::Function(function_trait) => Ok(Self {
                         form: ClosureSourceForm::NullableBoxedDyn,
                         function: ClosureForm::from(function_trait.kind),
-                        signature: &function_trait.signature,
-                        source,
+                        signature: function_trait.signature.clone(),
+                        source: source.clone(),
                     }),
                     BaseTrait::Named { .. } => Err(Error::SourceSyntaxMismatch(
                         "nullable closure source type is not Option<Box<dyn Fn*>>",

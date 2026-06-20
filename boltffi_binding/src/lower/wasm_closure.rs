@@ -9,7 +9,7 @@ use super::{
     symbol::{self, SymbolAllocator},
 };
 
-pub(super) fn incoming_registration(
+pub fn incoming_registration(
     closure: &FnSig,
 ) -> Result<wasm32::IncomingClosureRegistration, LowerError> {
     let module = ImportModule::parse(symbol::WASM_CALLBACK_IMPORT_MODULE.to_owned())?;
@@ -19,7 +19,7 @@ pub(super) fn incoming_registration(
     Ok(wasm32::IncomingClosureRegistration::new(call, free))
 }
 
-pub(super) fn outgoing_registration(
+pub fn outgoing_registration(
     allocator: &mut SymbolAllocator,
     closure: &FnSig,
 ) -> Result<wasm32::OutgoingClosureRegistration, LowerError> {
@@ -50,13 +50,13 @@ fn export_symbol(
     ))
 }
 
-struct ClosureSignature<'a> {
-    params: &'a [TypeExpr],
-    returns: &'a ReturnDef,
+struct ClosureSignature<'signature> {
+    params: &'signature [TypeExpr],
+    returns: &'signature ReturnDef,
 }
 
-impl<'a> ClosureSignature<'a> {
-    fn from_closure(closure: &'a FnSig) -> Self {
+impl<'signature> ClosureSignature<'signature> {
+    fn from_closure(closure: &'signature FnSig) -> Self {
         Self {
             params: &closure.parameters,
             returns: &closure.returns,
@@ -103,7 +103,7 @@ fn write_return_signature(formatter: &mut fmt::Formatter<'_>, returns: &ReturnDe
     }
 }
 
-struct ClosureTypeSignature<'a>(&'a TypeExpr);
+struct ClosureTypeSignature<'signature>(&'signature TypeExpr);
 
 impl<'signature> fmt::Display for ClosureTypeSignature<'signature> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

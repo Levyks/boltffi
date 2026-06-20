@@ -62,8 +62,8 @@ impl Render<Wasm32, Input> for Renderer {
 
     fn render(self, input: Input) -> Result<Self::Output, Error> {
         let value = input.value;
-        let present = names::Wrapper::new(value.span()).value();
-        let some = Scalar::new(input.primitive, &present).tokens()?;
+        let present = names::Locals::new(value.span()).value();
+        let some = Scalar::new(input.primitive, present.clone()).tokens()?;
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: Vec::new(),
@@ -155,8 +155,8 @@ impl Render<Wasm32, IncomingInput> for Incoming {
 
     fn render(self, input: IncomingInput) -> Result<Self::Output, Error> {
         let value = input.value;
-        let result = names::Wrapper::new(Span::call_site()).result();
-        let some = Scalar::new(input.primitive, &result).tokens()?;
+        let result = names::Locals::new(Span::call_site()).result();
+        let some = Scalar::new(input.primitive, result.clone()).tokens()?;
         Ok(quote! {
             {
                 let #result = #value;
@@ -170,13 +170,13 @@ impl Render<Wasm32, IncomingInput> for Incoming {
     }
 }
 
-pub struct Scalar<'value> {
+pub struct Scalar {
     primitive: Primitive,
-    value: &'value syn::Ident,
+    value: syn::Ident,
 }
 
-impl<'value> Scalar<'value> {
-    pub fn new(primitive: Primitive, value: &'value syn::Ident) -> Self {
+impl Scalar {
+    pub fn new(primitive: Primitive, value: syn::Ident) -> Self {
         Self { primitive, value }
     }
 

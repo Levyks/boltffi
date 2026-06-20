@@ -42,16 +42,17 @@ use super::{
     index::Index,
     metadata,
     surface::SurfaceLower,
-    symbol::{SymbolAllocator, constant_accessor_symbol_name},
+    symbol::{SymbolAllocator, to_snake_case},
     types,
 };
 
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<ConstantDecl<S>>, LowerError> {
-    index.constants()
+    index
+        .constants()
         .iter()
         .map(|constant| lower_one::<S>(index, ids, allocator, constant))
         .collect()
@@ -92,7 +93,7 @@ fn lower_value_decl<S: SurfaceLower>(
             Ok(ConstantValueDecl::inline(ty, value))
         }
         None => {
-            let symbol = allocator.mint(constant_accessor_symbol_name(constant.id.as_str()))?;
+            let symbol = allocator.mint_constant_accessor(constant.id.as_str())?;
             let callable =
                 callable::lower_constant_accessor::<S>(index, ids, allocator, &constant.type_expr)?;
             Ok(ConstantValueDecl::accessor(symbol, Box::new(callable)))
@@ -233,41 +234,11 @@ fn canonical_name_matches_segment(name: &SourceName, segment: &str) -> bool {
 }
 
 fn source_name_parts(segment: &str) -> Vec<String> {
-    snake_case(segment.strip_prefix("r#").unwrap_or(segment))
+    to_snake_case(segment.strip_prefix("r#").unwrap_or(segment))
         .split('_')
         .filter(|part| !part.is_empty())
         .map(ToOwned::to_owned)
         .collect()
-}
-
-fn snake_case(name: &str) -> String {
-    let characters = name.chars().collect::<Vec<_>>();
-    characters.iter().enumerate().fold(
-        String::with_capacity(name.len()),
-        |mut normalized, (index, character)| {
-            if *character == '_' {
-                if !normalized.is_empty() && !normalized.ends_with('_') {
-                    normalized.push('_');
-                }
-                return normalized;
-            }
-
-            if character.is_uppercase() && index > 0 {
-                let previous = characters[index - 1];
-                let next = characters.get(index + 1).copied();
-                let previous_is_word = previous.is_lowercase() || previous.is_ascii_digit();
-                let acronym_boundary =
-                    previous.is_uppercase() && next.is_some_and(char::is_lowercase);
-
-                if (previous_is_word || acronym_boundary) && !normalized.ends_with('_') {
-                    normalized.push('_');
-                }
-            }
-
-            normalized.extend(character.to_lowercase());
-            normalized
-        },
-    )
 }
 
 #[derive(Clone, Copy)]

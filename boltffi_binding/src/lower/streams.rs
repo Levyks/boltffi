@@ -25,16 +25,17 @@ use super::{
     index::Index,
     layout, metadata, records,
     surface::SurfaceLower,
-    symbol::{self, StreamLifecycle, SymbolAllocator},
+    symbol::{StreamLifecycle, SymbolAllocator},
     types,
 };
 
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<StreamDecl<S>>, LowerError> {
-    index.streams()
+    index
+        .streams()
         .iter()
         .map(|stream| lower_one::<S>(index, ids, allocator, stream))
         .collect()
@@ -179,21 +180,12 @@ fn build_protocol(
     allocator: &mut SymbolAllocator,
     source_id: &str,
 ) -> Result<StreamProtocol, LowerError> {
-    let subscribe = allocator.mint(symbol::stream_symbol_name(
-        source_id,
-        StreamLifecycle::Subscribe,
-    ))?;
-    let pop_batch = allocator.mint(symbol::stream_symbol_name(
-        source_id,
-        StreamLifecycle::PopBatch,
-    ))?;
-    let wait = allocator.mint(symbol::stream_symbol_name(source_id, StreamLifecycle::Wait))?;
-    let poll = allocator.mint(symbol::stream_symbol_name(source_id, StreamLifecycle::Poll))?;
-    let unsubscribe = allocator.mint(symbol::stream_symbol_name(
-        source_id,
-        StreamLifecycle::Unsubscribe,
-    ))?;
-    let free = allocator.mint(symbol::stream_symbol_name(source_id, StreamLifecycle::Free))?;
+    let subscribe = allocator.mint_stream(source_id, StreamLifecycle::Subscribe)?;
+    let pop_batch = allocator.mint_stream(source_id, StreamLifecycle::PopBatch)?;
+    let wait = allocator.mint_stream(source_id, StreamLifecycle::Wait)?;
+    let poll = allocator.mint_stream(source_id, StreamLifecycle::Poll)?;
+    let unsubscribe = allocator.mint_stream(source_id, StreamLifecycle::Unsubscribe)?;
+    let free = allocator.mint_stream(source_id, StreamLifecycle::Free)?;
     Ok(StreamProtocol::new(
         subscribe,
         pop_batch,

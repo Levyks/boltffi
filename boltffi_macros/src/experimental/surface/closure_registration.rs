@@ -3,28 +3,28 @@ use boltffi_binding::{ImportSymbol, Native, NativeSymbol, Surface, Wasm32, nativ
 use crate::experimental::error::Error;
 
 /// A render lane for a foreign-provided closure registering with Rust.
-pub enum IncomingClosureLane<'registration> {
+pub enum IncomingClosureLane {
     /// Invoke function pointer, context pointer, and release function.
     InvokeContextRelease,
     /// Handle backed by imported invoke and release functions.
     HandleImports {
         /// Import Rust calls to invoke the closure.
-        call: &'registration ImportSymbol,
+        call: ImportSymbol,
         /// Import Rust calls when the closure handle is released.
-        free: &'registration ImportSymbol,
+        free: ImportSymbol,
     },
 }
 
 /// A render lane for a Rust-provided closure registering with foreign code.
-pub enum OutgoingClosureLane<'registration> {
+pub enum OutgoingClosureLane {
     /// Invoke function pointer, context pointer, and release function.
     InvokeContextRelease,
     /// Handle backed by exported invoke and release functions.
     HandleExports {
         /// Export foreign code calls to invoke the closure.
-        call: &'registration NativeSymbol,
+        call: NativeSymbol,
         /// Export foreign code calls when releasing the closure handle.
-        free: &'registration NativeSymbol,
+        free: NativeSymbol,
     },
 }
 
@@ -35,20 +35,20 @@ pub enum OutgoingClosureLane<'registration> {
 /// resolves each value to the render lane the wrapper emits.
 pub trait ClosureCrossings: Surface {
     /// Resolves a foreign-provided closure registration to its render lane.
-    fn incoming_closure_lane<'registration>(
-        registration: &'registration Self::IncomingClosureRegistration,
-    ) -> Result<IncomingClosureLane<'registration>, Error>;
+    fn incoming_closure_lane(
+        registration: &Self::IncomingClosureRegistration,
+    ) -> Result<IncomingClosureLane, Error>;
 
     /// Resolves a Rust-provided closure registration to its render lane.
-    fn outgoing_closure_lane<'registration>(
-        registration: &'registration Self::OutgoingClosureRegistration,
-    ) -> Result<OutgoingClosureLane<'registration>, Error>;
+    fn outgoing_closure_lane(
+        registration: &Self::OutgoingClosureRegistration,
+    ) -> Result<OutgoingClosureLane, Error>;
 }
 
 impl ClosureCrossings for Native {
-    fn incoming_closure_lane<'registration>(
-        registration: &'registration native::ClosureRegistration,
-    ) -> Result<IncomingClosureLane<'registration>, Error> {
+    fn incoming_closure_lane(
+        registration: &native::ClosureRegistration,
+    ) -> Result<IncomingClosureLane, Error> {
         match registration {
             native::ClosureRegistration::InvokeContextRelease => {
                 Ok(IncomingClosureLane::InvokeContextRelease)
@@ -59,9 +59,9 @@ impl ClosureCrossings for Native {
         }
     }
 
-    fn outgoing_closure_lane<'registration>(
-        registration: &'registration native::ClosureRegistration,
-    ) -> Result<OutgoingClosureLane<'registration>, Error> {
+    fn outgoing_closure_lane(
+        registration: &native::ClosureRegistration,
+    ) -> Result<OutgoingClosureLane, Error> {
         match registration {
             native::ClosureRegistration::InvokeContextRelease => {
                 Ok(OutgoingClosureLane::InvokeContextRelease)
@@ -74,21 +74,21 @@ impl ClosureCrossings for Native {
 }
 
 impl ClosureCrossings for Wasm32 {
-    fn incoming_closure_lane<'registration>(
-        registration: &'registration wasm32::IncomingClosureRegistration,
-    ) -> Result<IncomingClosureLane<'registration>, Error> {
+    fn incoming_closure_lane(
+        registration: &wasm32::IncomingClosureRegistration,
+    ) -> Result<IncomingClosureLane, Error> {
         Ok(IncomingClosureLane::HandleImports {
-            call: registration.call(),
-            free: registration.free(),
+            call: registration.call().clone(),
+            free: registration.free().clone(),
         })
     }
 
-    fn outgoing_closure_lane<'registration>(
-        registration: &'registration wasm32::OutgoingClosureRegistration,
-    ) -> Result<OutgoingClosureLane<'registration>, Error> {
+    fn outgoing_closure_lane(
+        registration: &wasm32::OutgoingClosureRegistration,
+    ) -> Result<OutgoingClosureLane, Error> {
         Ok(OutgoingClosureLane::HandleExports {
-            call: registration.call(),
-            free: registration.free(),
+            call: registration.call().clone(),
+            free: registration.free().clone(),
         })
     }
 }

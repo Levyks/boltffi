@@ -20,14 +20,14 @@ pub struct Write;
 
 pub struct Input<'expansion, 'lowered, S: RenderSurface> {
     closure: &'lowered ClosureReturn<S, OutOfRust>,
-    source: rust_api::Closure<'lowered>,
+    source: rust_api::Closure,
     invocation: RustInvocation,
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
 pub struct WriteInput<'expansion, 'lowered, S: RenderSurface> {
     closure: &'lowered ClosureReturn<S, OutOfRust>,
-    source: rust_api::Closure<'lowered>,
+    source: rust_api::Closure,
     value: Ident,
     owner: Ident,
     channel: ClosureReturnChannel,
@@ -50,7 +50,7 @@ pub struct WriteTokens {
 impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
     pub fn new(
         closure: &'lowered ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         invocation: RustInvocation,
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
@@ -66,7 +66,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Input<'expansion, 'lowered, S> {
 impl<'expansion, 'lowered, S: RenderSurface> WriteInput<'expansion, 'lowered, S> {
     pub fn returned(
         closure: &'lowered ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         value: Ident,
         owner: Ident,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -83,7 +83,7 @@ impl<'expansion, 'lowered, S: RenderSurface> WriteInput<'expansion, 'lowered, S>
 
     pub fn success(
         closure: &'lowered ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         value: Ident,
         owner: Ident,
         expansion: &'expansion Expansion<'lowered, S>,
@@ -100,7 +100,7 @@ impl<'expansion, 'lowered, S: RenderSurface> WriteInput<'expansion, 'lowered, S>
 
     fn new(
         closure: &'lowered ClosureReturn<S, OutOfRust>,
-        source: rust_api::Closure<'lowered>,
+        source: rust_api::Closure,
         value: Ident,
         owner: Ident,
         channel: ClosureReturnChannel,
@@ -150,7 +150,7 @@ where
             writebacks,
             ..
         } = input.invocation;
-        let value = names::Wrapper::new(span).closure();
+        let value = names::Locals::new(span).closure();
         let writer = <Write as Render<S, _>>::render(
             Write,
             WriteInput::returned(
@@ -186,7 +186,7 @@ impl<'expansion, 'lowered> Render<Native, WriteInput<'expansion, 'lowered, Nativ
         input: WriteInput<'expansion, 'lowered, Native>,
     ) -> Result<Self::Output, Error> {
         match input.closure.registration().shape() {
-            native::ClosureRegistration::InvokeContextRelease => NativeClosure::new(input).tokens(),
+            native::ClosureRegistration::InvokeContextRelease => input.render_native(),
             _ => Err(Error::UnsupportedExpansion(
                 "unknown native closure return registration",
             )),
@@ -201,26 +201,18 @@ impl<'expansion, 'lowered> Render<Wasm32, WriteInput<'expansion, 'lowered, Wasm3
         self,
         input: WriteInput<'expansion, 'lowered, Wasm32>,
     ) -> Result<Self::Output, Error> {
-        WasmClosure::new(input).tokens()
+        input.render_wasm32()
     }
 }
 
-struct NativeClosure<'expansion, 'lowered> {
-    input: WriteInput<'expansion, 'lowered, Native>,
-}
-
-impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
-    fn new(input: WriteInput<'expansion, 'lowered, Native>) -> Self {
-        Self { input }
-    }
-
-    fn tokens(self) -> Result<WriteTokens, Error> {
-        let returned_closure = ReturnedClosure::new(self.input.source, self.input.closure)?;
+impl<'expansion, 'lowered> WriteInput<'expansion, 'lowered, Native> {
+    fn render_native(self) -> Result<WriteTokens, Error> {
+        let returned_closure = ReturnedClosure::new(&self.source, self.closure)?;
         let invoke = wrapper::closure::Invoke::<Native>::new(
-            self.input.closure.invoke(),
-            self.input.source.signature(),
+            self.closure.invoke(),
+            self.source.signature(),
             &returned_closure.signature,
-            self.input.expansion,
+            self.expansion,
         )?;
         let return_tokens = invoke.return_tokens()?;
         let failure = return_tokens.failure();
@@ -228,12 +220,12 @@ impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
         let parameter_items = invoke_parameters.items().to_vec();
         let return_ffi_parameters = return_tokens.ffi_parameters();
         let return_ffi_parameter_types = return_tokens.ffi_parameter_types();
-        let storage = format_ident!("__BoltffiClosureReturn{}", self.input.value);
-        let channel = self.input.channel.suffix();
-        let registration = names::ReturnedClosureRegistration::new(&self.input.owner, channel);
+        let storage = format_ident!("__BoltffiClosureReturn{}", self.value);
+        let channel = self.channel.suffix();
+        let registration = names::ReturnedClosureRegistration::new(&self.owner, channel);
         let call = registration.call();
         let release = registration.release();
-        let locals = names::Wrapper::new(self.input.span);
+        let locals = names::Locals::new(self.span);
         let output = locals.return_out();
         let context = locals.closure_context();
         let ffi_parameter_types = invoke_parameters
@@ -257,7 +249,7 @@ impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
         let context_binding = returned_closure.context_binding(quote! {
             __boltffi_context as *mut #context_type
         });
-        let context_value = returned_closure.context_value(&self.input.value)?;
+        let context_value = returned_closure.context_value(&self.value)?;
         let write_present = quote! {
             let #context = Box::into_raw(Box::new(#context_value)) as *mut ::core::ffi::c_void;
             unsafe {
@@ -269,7 +261,7 @@ impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
             }
         };
         let write_body = returned_closure.write_body(
-            &self.input.value,
+            &self.value,
             write_present,
             quote! {
                 unsafe {
@@ -328,32 +320,24 @@ impl<'expansion, 'lowered> NativeClosure<'expansion, 'lowered> {
     }
 }
 
-struct WasmClosure<'expansion, 'lowered> {
-    input: WriteInput<'expansion, 'lowered, Wasm32>,
-}
-
-impl<'expansion, 'lowered> WasmClosure<'expansion, 'lowered> {
-    fn new(input: WriteInput<'expansion, 'lowered, Wasm32>) -> Self {
-        Self { input }
-    }
-
-    fn tokens(self) -> Result<WriteTokens, Error> {
-        let returned_closure = ReturnedClosure::new(self.input.source, self.input.closure)?;
+impl<'expansion, 'lowered> WriteInput<'expansion, 'lowered, Wasm32> {
+    fn render_wasm32(self) -> Result<WriteTokens, Error> {
+        let returned_closure = ReturnedClosure::new(&self.source, self.closure)?;
         let invoke = wrapper::closure::Invoke::<Wasm32>::new(
-            self.input.closure.invoke(),
-            self.input.source.signature(),
+            self.closure.invoke(),
+            self.source.signature(),
             &returned_closure.signature,
-            self.input.expansion,
+            self.expansion,
         )?;
         let return_tokens = invoke.return_tokens()?;
         let failure = return_tokens.failure();
         let invoke_parameters = invoke.parameters(&failure)?;
         let parameter_items = invoke_parameters.items().to_vec();
         let return_ffi_parameters = return_tokens.ffi_parameters();
-        let registration = self.input.closure.registration().shape();
-        let call = Ident::new(registration.call().name().as_str(), self.input.span);
-        let release = Ident::new(registration.free().name().as_str(), self.input.span);
-        let output = names::Wrapper::new(self.input.span).return_out();
+        let registration = self.closure.registration().shape();
+        let call = Ident::new(registration.call().name().as_str(), self.span);
+        let release = Ident::new(registration.free().name().as_str(), self.span);
+        let output = names::Locals::new(self.span).return_out();
         let ffi_parameters = invoke_parameters
             .ffi_parameters()
             .iter()
@@ -369,14 +353,14 @@ impl<'expansion, 'lowered> WasmClosure<'expansion, 'lowered> {
         let context_binding = returned_closure.context_binding(quote! {
             __boltffi_context as usize as *mut #context_type
         });
-        let context_value = returned_closure.context_value(&self.input.value)?;
+        let context_value = returned_closure.context_value(&self.value)?;
         let write_present = quote! {
             unsafe {
                 *#output = Box::into_raw(Box::new(#context_value)) as usize as u32;
             }
         };
         let write_body = returned_closure.write_body(
-            &self.input.value,
+            &self.value,
             write_present,
             quote! {
                 unsafe {
@@ -433,7 +417,7 @@ struct ReturnedClosure {
 
 impl ReturnedClosure {
     fn new<S: RenderSurface>(
-        source: rust_api::Closure<'_>,
+        source: &rust_api::Closure,
         closure: &ClosureReturn<S, OutOfRust>,
     ) -> Result<Self, Error> {
         if source.function() != closure.form() {

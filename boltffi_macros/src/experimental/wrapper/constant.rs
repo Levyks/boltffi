@@ -1,14 +1,13 @@
 use boltffi_ast::ConstantDef;
 use boltffi_binding::{ConstantDecl, ConstantValueDecl};
 use proc_macro2::TokenStream;
-use syn::parse_str;
 
 use crate::experimental::{
     error::Error,
     expansion::{DeclarationPair, Expansion},
     rust_api,
     surface::RenderSurface,
-    wrapper::{self, Render, export},
+    wrapper::{self, Render, export, names},
 };
 
 pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
@@ -64,8 +63,7 @@ where
     }
 
     fn constant_ident(source: &ConstantDef) -> Result<syn::Ident, Error> {
-        parse_str(source.name.spelling()).map_err(|_| {
-            Error::SourceSyntaxMismatch("source constant name is not a Rust identifier")
-        })
+        names::SourceSpelling::new(&source.name)
+            .ident("source constant name is not a Rust identifier")
     }
 }

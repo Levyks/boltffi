@@ -4,7 +4,7 @@ use boltffi_binding::{
     Wasm32, native, wasm32,
 };
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{Type, parse_quote};
 
 use crate::experimental::{
@@ -74,7 +74,7 @@ impl<'expansion, 'lowered> Render<Native, Input<'expansion, 'lowered, Native>> f
     type Output = TokenStream;
 
     fn render(self, input: Input<'expansion, 'lowered, Native>) -> Result<Self::Output, Error> {
-        NativeAsync::new(input).tokens()
+        input.render_native()
     }
 }
 
@@ -82,20 +82,12 @@ impl<'expansion, 'lowered> Render<Wasm32, Input<'expansion, 'lowered, Wasm32>> f
     type Output = TokenStream;
 
     fn render(self, input: Input<'expansion, 'lowered, Wasm32>) -> Result<Self::Output, Error> {
-        WasmAsync::new(input).tokens()
+        input.render_wasm32()
     }
 }
 
-struct NativeAsync<'expansion, 'lowered> {
-    input: Input<'expansion, 'lowered, Native>,
-}
-
-impl<'expansion, 'lowered> NativeAsync<'expansion, 'lowered> {
-    fn new(input: Input<'expansion, 'lowered, Native>) -> Self {
-        Self { input }
-    }
-
-    fn tokens(self) -> Result<TokenStream, Error> {
+impl<'expansion, 'lowered> Input<'expansion, 'lowered, Native> {
+    fn render_native(self) -> Result<TokenStream, Error> {
         let ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
             poll,
             complete,
@@ -103,40 +95,32 @@ impl<'expansion, 'lowered> NativeAsync<'expansion, 'lowered> {
             free,
             panic_message,
             ..
-        }) = self.input.callable.execution()
+        }) = self.callable.execution()
         else {
             return Err(Error::UnsupportedExpansion("native async protocol"));
         };
 
         AsyncExports::new(
-            self.input.symbol,
-            self.input.callable,
-            self.input.source,
-            self.input.rust_call,
-            self.input.receiver,
-            self.input.visibility,
-            self.input.expansion,
+            self.symbol,
+            self.callable,
+            self.source,
+            self.rust_call,
+            self.receiver,
+            self.visibility,
+            self.expansion,
         )?
         .tokens(NativeProtocol {
-            poll,
-            complete,
-            cancel,
-            free,
-            panic_message,
+            poll: poll.clone(),
+            complete: complete.clone(),
+            cancel: cancel.clone(),
+            free: free.clone(),
+            panic_message: panic_message.clone(),
         })
     }
 }
 
-struct WasmAsync<'expansion, 'lowered> {
-    input: Input<'expansion, 'lowered, Wasm32>,
-}
-
-impl<'expansion, 'lowered> WasmAsync<'expansion, 'lowered> {
-    fn new(input: Input<'expansion, 'lowered, Wasm32>) -> Self {
-        Self { input }
-    }
-
-    fn tokens(self) -> Result<TokenStream, Error> {
+impl<'expansion, 'lowered> Input<'expansion, 'lowered, Wasm32> {
+    fn render_wasm32(self) -> Result<TokenStream, Error> {
         let ExecutionDecl::Asynchronous(wasm32::AsyncProtocol::PollHandle {
             poll_sync,
             complete,
@@ -144,26 +128,26 @@ impl<'expansion, 'lowered> WasmAsync<'expansion, 'lowered> {
             free,
             panic_message,
             ..
-        }) = self.input.callable.execution()
+        }) = self.callable.execution()
         else {
             return Err(Error::UnsupportedExpansion("wasm async protocol"));
         };
 
         AsyncExports::new(
-            self.input.symbol,
-            self.input.callable,
-            self.input.source,
-            self.input.rust_call,
-            self.input.receiver,
-            self.input.visibility,
-            self.input.expansion,
+            self.symbol,
+            self.callable,
+            self.source,
+            self.rust_call,
+            self.receiver,
+            self.visibility,
+            self.expansion,
         )?
         .tokens(WasmProtocol {
-            poll_sync,
-            complete,
-            cancel,
-            free,
-            panic_message,
+            poll_sync: poll_sync.clone(),
+            complete: complete.clone(),
+            cancel: cancel.clone(),
+            free: free.clone(),
+            panic_message: panic_message.clone(),
         })
     }
 }
@@ -249,7 +233,7 @@ where
     {
         let cfg = S::cfg_attr();
         let visibility = &self.visibility;
-        let start_ident = format_ident!("{}", self.symbol.name().as_str());
+        let start_ident = names::Symbol::new(self.symbol).ident();
         let rust_return_type = &self.rust_return_type;
         CapturedParameters::new(self.callable.params()).validate()?;
         if !self.receiver.writebacks().is_empty() {
@@ -386,22 +370,22 @@ trait AsyncProtocol {
     ) -> TokenStream;
 }
 
-struct NativeProtocol<'symbols> {
-    poll: &'symbols NativeSymbol,
-    complete: &'symbols NativeSymbol,
-    cancel: &'symbols NativeSymbol,
-    free: &'symbols NativeSymbol,
-    panic_message: &'symbols NativeSymbol,
+struct NativeProtocol {
+    poll: NativeSymbol,
+    complete: NativeSymbol,
+    cancel: NativeSymbol,
+    free: NativeSymbol,
+    panic_message: NativeSymbol,
 }
 
-impl AsyncProtocol for NativeProtocol<'_> {
+impl AsyncProtocol for NativeProtocol {
     fn poll<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
         let cfg = S::cfg_attr();
-        let ident = symbol_ident(self.poll);
+        let ident = names::Symbol::new(&self.poll).ident();
         quote! {
             #cfg
             #[unsafe(no_mangle)]
@@ -427,7 +411,11 @@ impl AsyncProtocol for NativeProtocol<'_> {
         rust_return_type: &Type,
         complete: Complete,
     ) -> TokenStream {
-        complete.tokens::<S>(visibility, symbol_ident(self.complete), rust_return_type)
+        complete.tokens::<S>(
+            visibility,
+            names::Symbol::new(&self.complete).ident(),
+            rust_return_type,
+        )
     }
 
     fn panic_message<S: RenderSurface>(
@@ -435,11 +423,8 @@ impl AsyncProtocol for NativeProtocol<'_> {
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
-        panic_message::<S>(
-            visibility,
-            symbol_ident(self.panic_message),
-            rust_return_type,
-        )
+        FutureSupport::new(visibility, rust_return_type)
+            .panic_message::<S>(names::Symbol::new(&self.panic_message).ident())
     }
 
     fn cancel<S: RenderSurface>(
@@ -447,7 +432,8 @@ impl AsyncProtocol for NativeProtocol<'_> {
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
-        cancel::<S>(visibility, symbol_ident(self.cancel), rust_return_type)
+        FutureSupport::new(visibility, rust_return_type)
+            .cancel::<S>(names::Symbol::new(&self.cancel).ident())
     }
 
     fn free<S: RenderSurface>(
@@ -455,26 +441,27 @@ impl AsyncProtocol for NativeProtocol<'_> {
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
-        free::<S>(visibility, symbol_ident(self.free), rust_return_type)
+        FutureSupport::new(visibility, rust_return_type)
+            .free::<S>(names::Symbol::new(&self.free).ident())
     }
 }
 
-struct WasmProtocol<'symbols> {
-    poll_sync: &'symbols NativeSymbol,
-    complete: &'symbols NativeSymbol,
-    cancel: &'symbols NativeSymbol,
-    free: &'symbols NativeSymbol,
-    panic_message: &'symbols NativeSymbol,
+struct WasmProtocol {
+    poll_sync: NativeSymbol,
+    complete: NativeSymbol,
+    cancel: NativeSymbol,
+    free: NativeSymbol,
+    panic_message: NativeSymbol,
 }
 
-impl AsyncProtocol for WasmProtocol<'_> {
+impl AsyncProtocol for WasmProtocol {
     fn poll<S: RenderSurface>(
         &self,
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
         let cfg = S::cfg_attr();
-        let ident = symbol_ident(self.poll_sync);
+        let ident = names::Symbol::new(&self.poll_sync).ident();
         quote! {
             #cfg
             #[unsafe(no_mangle)]
@@ -494,7 +481,11 @@ impl AsyncProtocol for WasmProtocol<'_> {
         rust_return_type: &Type,
         complete: Complete,
     ) -> TokenStream {
-        complete.tokens::<S>(visibility, symbol_ident(self.complete), rust_return_type)
+        complete.tokens::<S>(
+            visibility,
+            names::Symbol::new(&self.complete).ident(),
+            rust_return_type,
+        )
     }
 
     fn panic_message<S: RenderSurface>(
@@ -502,11 +493,8 @@ impl AsyncProtocol for WasmProtocol<'_> {
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
-        panic_message::<S>(
-            visibility,
-            symbol_ident(self.panic_message),
-            rust_return_type,
-        )
+        FutureSupport::new(visibility, rust_return_type)
+            .panic_message::<S>(names::Symbol::new(&self.panic_message).ident())
     }
 
     fn cancel<S: RenderSurface>(
@@ -514,7 +502,8 @@ impl AsyncProtocol for WasmProtocol<'_> {
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
-        cancel::<S>(visibility, symbol_ident(self.cancel), rust_return_type)
+        FutureSupport::new(visibility, rust_return_type)
+            .cancel::<S>(names::Symbol::new(&self.cancel).ident())
     }
 
     fn free<S: RenderSurface>(
@@ -522,7 +511,8 @@ impl AsyncProtocol for WasmProtocol<'_> {
         visibility: &TokenStream,
         rust_return_type: &Type,
     ) -> TokenStream {
-        free::<S>(visibility, symbol_ident(self.free), rust_return_type)
+        FutureSupport::new(visibility, rust_return_type)
+            .free::<S>(names::Symbol::new(&self.free).ident())
     }
 }
 
@@ -629,7 +619,7 @@ impl PlainComplete {
         scalar_option::Renderer: Render<S, scalar_option::Input, Output = wrapper::returns::Tokens>
             + Render<S, scalar_option::Empty, Output = wrapper::returns::Tokens>,
     {
-        let result = names::Wrapper::new(proc_macro2::Span::call_site()).result();
+        let result = names::Locals::new(proc_macro2::Span::call_site()).result();
         match callable.returns().plan() {
             ReturnPlan::Void => Ok(Self {
                 items: Vec::new(),
@@ -860,7 +850,7 @@ impl FallibleComplete {
         let ErrorDecl::EncodedViaReturnSlot { codec, shape, .. } = callable.error() else {
             return Err(Error::UnsupportedExpansion("async error channel"));
         };
-        let error = names::Wrapper::new(proc_macro2::Span::call_site()).error();
+        let error = names::Locals::new(proc_macro2::Span::call_site()).error();
         let encoded_error = <encoded::Renderer as Render<S, _>>::render(
             encoded::Renderer,
             encoded::Input::new(codec, *shape, error.clone(), expansion),
@@ -934,60 +924,64 @@ impl FallibleComplete {
     }
 }
 
-fn panic_message<S: RenderSurface>(
-    visibility: &TokenStream,
-    ident: syn::Ident,
-    rust_return_type: &Type,
-) -> TokenStream {
-    let cfg = S::cfg_attr();
-    quote! {
-        #cfg
-        #[unsafe(no_mangle)]
-        #visibility unsafe extern "C" fn #ident(
-            handle: ::boltffi::__private::RustFutureHandle,
-        ) -> ::boltffi::__private::FfiBuf {
-            match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<#rust_return_type>(handle) } {
-                Some(message) => ::boltffi::__private::FfiBuf::wire_encode(&message),
-                None => ::boltffi::__private::FfiBuf::empty(),
+struct FutureSupport<'render> {
+    visibility: &'render TokenStream,
+    rust_return_type: &'render Type,
+}
+
+impl<'render> FutureSupport<'render> {
+    fn new(visibility: &'render TokenStream, rust_return_type: &'render Type) -> Self {
+        Self {
+            visibility,
+            rust_return_type,
+        }
+    }
+
+    fn panic_message<S: RenderSurface>(&self, ident: syn::Ident) -> TokenStream {
+        let cfg = S::cfg_attr();
+        let visibility = self.visibility;
+        let rust_return_type = self.rust_return_type;
+        quote! {
+            #cfg
+            #[unsafe(no_mangle)]
+            #visibility unsafe extern "C" fn #ident(
+                handle: ::boltffi::__private::RustFutureHandle,
+            ) -> ::boltffi::__private::FfiBuf {
+                match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<#rust_return_type>(handle) } {
+                    Some(message) => ::boltffi::__private::FfiBuf::wire_encode(&message),
+                    None => ::boltffi::__private::FfiBuf::empty(),
+                }
             }
         }
     }
-}
 
-fn cancel<S: RenderSurface>(
-    visibility: &TokenStream,
-    ident: syn::Ident,
-    rust_return_type: &Type,
-) -> TokenStream {
-    let cfg = S::cfg_attr();
-    quote! {
-        #cfg
-        #[unsafe(no_mangle)]
-        #visibility unsafe extern "C" fn #ident(handle: ::boltffi::__private::RustFutureHandle) {
-            unsafe {
-                ::boltffi::__private::rustfuture::rust_future_cancel::<#rust_return_type>(handle)
+    fn cancel<S: RenderSurface>(&self, ident: syn::Ident) -> TokenStream {
+        let cfg = S::cfg_attr();
+        let visibility = self.visibility;
+        let rust_return_type = self.rust_return_type;
+        quote! {
+            #cfg
+            #[unsafe(no_mangle)]
+            #visibility unsafe extern "C" fn #ident(handle: ::boltffi::__private::RustFutureHandle) {
+                unsafe {
+                    ::boltffi::__private::rustfuture::rust_future_cancel::<#rust_return_type>(handle)
+                }
             }
         }
     }
-}
 
-fn free<S: RenderSurface>(
-    visibility: &TokenStream,
-    ident: syn::Ident,
-    rust_return_type: &Type,
-) -> TokenStream {
-    let cfg = S::cfg_attr();
-    quote! {
-        #cfg
-        #[unsafe(no_mangle)]
-        #visibility unsafe extern "C" fn #ident(handle: ::boltffi::__private::RustFutureHandle) {
-            unsafe {
-                ::boltffi::__private::rustfuture::rust_future_free::<#rust_return_type>(handle)
+    fn free<S: RenderSurface>(&self, ident: syn::Ident) -> TokenStream {
+        let cfg = S::cfg_attr();
+        let visibility = self.visibility;
+        let rust_return_type = self.rust_return_type;
+        quote! {
+            #cfg
+            #[unsafe(no_mangle)]
+            #visibility unsafe extern "C" fn #ident(handle: ::boltffi::__private::RustFutureHandle) {
+                unsafe {
+                    ::boltffi::__private::rustfuture::rust_future_free::<#rust_return_type>(handle)
+                }
             }
         }
     }
-}
-
-fn symbol_ident(symbol: &NativeSymbol) -> syn::Ident {
-    format_ident!("{}", symbol.name().as_str())
 }

@@ -12,7 +12,7 @@ use super::{LowerError, enums, ids::DeclarationIds, index::Index, records, types
 /// `Vec<T>` measures its element count from the outer value while the
 /// element codec recurses with [`ValueRef::self_value`] for the
 /// per-element binding.
-pub(super) fn node(
+pub fn node(
     index: &Index,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,
@@ -146,7 +146,7 @@ pub(super) fn node(
 /// Wraps [`node`] with the read/write framing every encoded field and
 /// whole-record codec carries. `value` is reused for the [`WritePlan`]
 /// so generated code does not have to re-derive the path expression.
-pub(super) fn plan(
+pub fn plan(
     index: &Index,
     ids: &DeclarationIds,
     type_expr: &TypeExpr,

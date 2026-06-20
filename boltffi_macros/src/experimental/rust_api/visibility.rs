@@ -5,17 +5,19 @@ use syn::{Path, parse_str};
 
 use crate::experimental::error::Error;
 
-pub struct VisibilityTokens<'source> {
-    visibility: &'source Visibility,
+pub struct VisibilityTokens {
+    visibility: Visibility,
 }
 
-impl<'source> VisibilityTokens<'source> {
-    pub const fn new(visibility: &'source Visibility) -> Self {
-        Self { visibility }
+impl VisibilityTokens {
+    pub fn new(visibility: &Visibility) -> Self {
+        Self {
+            visibility: visibility.clone(),
+        }
     }
 
     pub fn into_tokens(self) -> Result<TokenStream, Error> {
-        match self.visibility {
+        match &self.visibility {
             Visibility::Private => Ok(TokenStream::new()),
             Visibility::Public => Ok(quote! { pub }),
             Visibility::Restricted(path) => {

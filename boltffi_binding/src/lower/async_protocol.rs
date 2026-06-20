@@ -26,7 +26,7 @@
 use crate::{Native, NativeSymbol, Surface, Wasm32, native, wasm32};
 
 use super::LowerError;
-use super::symbol::{self, AsyncLifecycle, SymbolAllocator};
+use super::symbol::{AsyncLifecycle, SymbolAllocator};
 
 /// Surface-specific construction of [`Surface::AsyncProtocol`].
 ///
@@ -39,7 +39,7 @@ use super::symbol::{self, AsyncLifecycle, SymbolAllocator};
 /// operation. The builder mints every lifecycle symbol with that name
 /// as the prefix so an async callable's full symbol set is contiguous
 /// in the symbol table.
-pub(super) trait AsyncProtocolBuilder: Surface {
+pub trait AsyncProtocolBuilder: Surface {
     fn build_protocol(
         allocator: &mut SymbolAllocator,
         start_symbol_name: &str,
@@ -93,8 +93,5 @@ fn mint_lifecycle(
     start_symbol_name: &str,
     action: AsyncLifecycle,
 ) -> Result<NativeSymbol, LowerError> {
-    allocator.mint(symbol::async_lifecycle_symbol_name(
-        start_symbol_name,
-        action,
-    ))
+    allocator.mint_async_lifecycle(start_symbol_name, action)
 }

@@ -101,14 +101,16 @@ impl Render<Wasm32, CarrierInput<wasm32::HandleCarrier>> for Carrier {
 }
 
 /// A generated Rust path to a local callback function.
-pub struct CallbackLocalPath<'function> {
-    function: &'function CallbackLocalFunction,
+pub struct CallbackLocalPath {
+    function: CallbackLocalFunction,
 }
 
-impl<'function> CallbackLocalPath<'function> {
+impl CallbackLocalPath {
     /// Creates a path renderer for a lowered local callback function.
-    pub const fn new(function: &'function CallbackLocalFunction) -> Self {
-        Self { function }
+    pub fn new(function: &CallbackLocalFunction) -> Self {
+        Self {
+            function: function.clone(),
+        }
     }
 
     /// Returns the generated helper identifier.

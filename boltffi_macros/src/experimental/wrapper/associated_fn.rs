@@ -3,14 +3,14 @@ use boltffi_binding::{
     ExecutionDecl, ExportedCallable, ExportedMethodDecl, InitializerDecl, NativeSymbol,
 };
 use proc_macro2::TokenStream;
-use syn::{Ident, parse_quote, parse_str};
+use syn::{Ident, parse_quote};
 
 use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
     surface::RenderSurface,
-    wrapper::{self, Render, export},
+    wrapper::{self, Render, export, names},
 };
 
 pub trait Owner<'expansion, 'lowered, S: RenderSurface> {
@@ -240,7 +240,8 @@ impl<'lowered, S: RenderSurface> Export<'lowered, S> {
             ));
         }
 
-        let method = method_ident(self.source_method)?;
+        let method = names::SourceSpelling::new(&self.source_method.name)
+            .ident("source method name is not a Rust identifier")?;
         let source_callable = owner.source_callable(self.source_method);
         let (receiver, rust_call) = owner.receiver(ReceiverExport::new(
             self.callable,
@@ -277,9 +278,4 @@ impl<'lowered, S: RenderSurface> Export<'lowered, S> {
         )
         .render()
     }
-}
-
-fn method_ident(source: &MethodDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source method name is not a Rust identifier"))
 }

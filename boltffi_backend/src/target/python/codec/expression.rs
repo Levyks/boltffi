@@ -15,17 +15,14 @@ pub struct Expression {
 }
 
 impl Expression {
-    pub fn read<'package>(plan: &ReadPlan, package: &'package Package<'package>) -> Result<Self> {
+    pub fn read(plan: &ReadPlan, package: &Package) -> Result<Self> {
         let mut reader = Reader::new(package);
         Ok(Self {
             expression: plan.render_with(&mut reader)?,
         })
     }
 
-    pub fn read_sequence<'package>(
-        item: &ReadPlan,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn read_sequence(item: &ReadPlan, package: &Package) -> Result<Self> {
         let mut reader = Reader::new(package);
         let item = item.render_with(&mut reader)?;
         Ok(Self {
@@ -33,24 +30,18 @@ impl Expression {
         })
     }
 
-    pub fn write<'package>(plan: &WritePlan, package: &'package Package<'package>) -> Result<Self> {
+    pub fn write(plan: &WritePlan, package: &Package) -> Result<Self> {
         let mut writer = Writer::new(package);
         Ok(Self {
             expression: Writer::single(plan.render_with(&mut writer))?,
         })
     }
 
-    pub fn write_argument<'package>(
-        plan: &WritePlan,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn write_argument(plan: &WritePlan, package: &Package) -> Result<Self> {
         Self::write(plan, package)
     }
 
-    pub fn read_return<'package>(
-        plan: &ReadPlan,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn read_return(plan: &ReadPlan, package: &Package) -> Result<Self> {
         Self::read(plan, package)
     }
 

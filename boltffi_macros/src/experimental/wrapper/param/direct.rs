@@ -14,24 +14,24 @@ use super::Tokens;
 pub struct Renderer;
 pub struct Record;
 
-pub struct Input<'lowered> {
-    ty: &'lowered DirectValueType,
+pub struct Input {
+    ty: DirectValueType,
     receive: Receive,
     rust_type: Type,
     ident: Ident,
     failure: TokenStream,
 }
 
-impl<'lowered> Input<'lowered> {
+impl Input {
     pub fn new(
-        ty: &'lowered DirectValueType,
+        ty: &DirectValueType,
         receive: Receive,
         rust_type: Type,
         ident: Ident,
         failure: TokenStream,
     ) -> Self {
         Self {
-            ty,
+            ty: ty.clone(),
             receive,
             rust_type,
             ident,
@@ -58,15 +58,15 @@ impl RecordInput {
     }
 }
 
-impl<'lowered, S> Render<S, Input<'lowered>> for Renderer
+impl<S> Render<S, Input> for Renderer
 where
     S: RenderSurface,
     Record: Render<S, RecordInput, Output = Tokens>,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'lowered>) -> Result<Self::Output, Error> {
-        match input.ty {
+    fn render(self, input: Input) -> Result<Self::Output, Error> {
+        match &input.ty {
             DirectValueType::Primitive(primitive) => {
                 PrimitiveParam::new(*primitive, input.receive, input.ident).tokens::<S>()
             }

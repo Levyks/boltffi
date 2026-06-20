@@ -54,10 +54,7 @@ impl<'lowered> Expander<'lowered> {
     }
 
     /// Expands wrappers for the native surface.
-    pub fn native<'expansion>(
-        &self,
-        expansion: &'expansion Expansion<'lowered, Native>,
-    ) -> Result<TokenStream, Error> {
+    pub fn native(&self, expansion: &Expansion<'lowered, Native>) -> Result<TokenStream, Error> {
         let wrappers =
             SurfaceExpander::new(self.source, self.support, &self.visible_paths, expansion)
                 .expand()?;
@@ -70,10 +67,7 @@ impl<'lowered> Expander<'lowered> {
     }
 
     /// Expands wrappers for the wasm32 surface.
-    pub fn wasm32<'expansion>(
-        &self,
-        expansion: &'expansion Expansion<'lowered, Wasm32>,
-    ) -> Result<TokenStream, Error> {
+    pub fn wasm32(&self, expansion: &Expansion<'lowered, Wasm32>) -> Result<TokenStream, Error> {
         let wrappers =
             SurfaceExpander::new(self.source, self.support, &self.visible_paths, expansion)
                 .expand()?;
@@ -86,10 +80,10 @@ impl<'lowered> Expander<'lowered> {
     }
 
     /// Expands wrappers for native and wasm32 in one token stream.
-    pub fn all<'native, 'wasm32>(
+    pub fn all(
         &self,
-        native: &'native Expansion<'lowered, Native>,
-        wasm32: &'wasm32 Expansion<'lowered, Wasm32>,
+        native: &Expansion<'lowered, Native>,
+        wasm32: &Expansion<'lowered, Wasm32>,
     ) -> Result<TokenStream, Error> {
         let native = Self::surface_module(
             format_ident!("__boltffi_native"),
@@ -136,8 +130,8 @@ where
         >,
     wrapper::param::direct::Record:
         Render<S, wrapper::param::direct::RecordInput, Output = wrapper::param::Tokens>,
-    for<'source_type> wrapper::param::direct::Renderer:
-        Render<S, wrapper::param::direct::Input<'source_type>, Output = wrapper::param::Tokens>,
+    wrapper::param::direct::Renderer:
+        Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
     wrapper::arguments::SyncRenderer: Render<
             S,
             wrapper::arguments::Input<'expansion, 'lowered, S>,

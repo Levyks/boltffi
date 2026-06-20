@@ -13,22 +13,22 @@ use super::Tokens;
 
 pub struct Renderer;
 
-pub struct Input<'lowered> {
-    element: &'lowered DirectVectorElementType,
+pub struct Input {
+    element: DirectVectorElementType,
     rust_element: Type,
     ident: Ident,
     failure: TokenStream,
 }
 
-impl<'lowered> Input<'lowered> {
+impl Input {
     pub fn new(
-        element: &'lowered DirectVectorElementType,
+        element: &DirectVectorElementType,
         rust_element: Type,
         ident: Ident,
         failure: TokenStream,
     ) -> Self {
         Self {
-            element,
+            element: element.clone(),
             rust_element,
             ident,
             failure,
@@ -36,14 +36,14 @@ impl<'lowered> Input<'lowered> {
     }
 }
 
-impl<'lowered, S> Render<S, Input<'lowered>> for Renderer
+impl<S> Render<S, Input> for Renderer
 where
     S: RenderSurface,
 {
     type Output = Tokens;
 
-    fn render(self, input: Input<'lowered>) -> Result<Self::Output, Error> {
-        match input.element {
+    fn render(self, input: Input) -> Result<Self::Output, Error> {
+        match &input.element {
             DirectVectorElementType::Primitive(primitive) => {
                 PrimitiveVec::new(primitive.primitive(), input.ident).tokens()
             }

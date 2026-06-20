@@ -13,17 +13,17 @@ pub struct Value<'expansion, 'lowered, S: RenderSurface> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-pub struct Input<'decode> {
-    target: &'decode rust_api::DecodeTarget,
-    binding: &'decode Ident,
-    pointer: &'decode Ident,
-    length: &'decode Ident,
-    failure: &'decode TokenStream,
+pub struct Input {
+    target: rust_api::DecodeTarget,
+    binding: Ident,
+    pointer: Ident,
+    length: Ident,
+    failure: TokenStream,
 }
 
-pub struct Bytes<'rust> {
-    rust_type: &'rust Type,
-    source: &'rust TypeExpr,
+pub struct Bytes {
+    rust_type: Type,
+    source: TypeExpr,
     bytes: TokenStream,
     failure: TokenStream,
 }
@@ -36,14 +36,14 @@ impl<'expansion, 'lowered, S: RenderSurface> Value<'expansion, 'lowered, S> {
         Self { codec, expansion }
     }
 
-    pub fn decode(&self, input: Input<'_>) -> Result<TokenStream, Error> {
+    pub fn decode(&self, input: Input) -> Result<TokenStream, Error> {
         super::require_runtime_wire(self.codec)?;
         input.target.incoming_encoded_type().require_supported()?;
         match input.target.borrow() {
             rust_api::DecodeBorrow::Owned => input.owned(
                 self.codec,
                 input.target.owned(),
-                input.binding,
+                &input.binding,
                 false,
                 self.expansion,
             ),
@@ -51,12 +51,12 @@ impl<'expansion, 'lowered, S: RenderSurface> Value<'expansion, 'lowered, S> {
         }
     }
 
-    pub fn expression(&self, bytes: Bytes<'_>) -> Result<TokenStream, Error> {
+    pub fn expression(&self, bytes: Bytes) -> Result<TokenStream, Error> {
         super::require_runtime_wire(self.codec)?;
-        rust_api::IncomingEncodedType::new(bytes.source).require_supported()?;
+        rust_api::IncomingEncodedType::new(&bytes.source).require_supported()?;
         let incoming = super::custom::Incoming::new(self.codec, self.expansion);
         let converted = incoming.convert(quote! { __boltffi_decoded })?;
-        let rust_type = bytes.rust_type;
+        let rust_type = &bytes.rust_type;
         let decode_type = incoming
             .decoded_type()?
             .unwrap_or_else(|| quote! { #rust_type });
@@ -116,36 +116,36 @@ impl<'expansion, 'lowered, S: RenderSurface> Value<'expansion, 'lowered, S> {
     }
 }
 
-impl<'rust> Bytes<'rust> {
+impl Bytes {
     pub fn new(
-        rust_type: &'rust Type,
-        source: &'rust TypeExpr,
+        rust_type: &Type,
+        source: &TypeExpr,
         bytes: TokenStream,
         failure: TokenStream,
     ) -> Self {
         Self {
-            rust_type,
-            source,
+            rust_type: rust_type.clone(),
+            source: source.clone(),
             bytes,
             failure,
         }
     }
 }
 
-impl<'decode> Input<'decode> {
-    pub const fn new(
-        target: &'decode rust_api::DecodeTarget,
-        binding: &'decode Ident,
-        pointer: &'decode Ident,
-        length: &'decode Ident,
-        failure: &'decode TokenStream,
+impl Input {
+    pub fn new(
+        target: &rust_api::DecodeTarget,
+        binding: &Ident,
+        pointer: &Ident,
+        length: &Ident,
+        failure: &TokenStream,
     ) -> Self {
         Self {
-            target,
-            binding,
-            pointer,
-            length,
-            failure,
+            target: target.clone(),
+            binding: binding.clone(),
+            pointer: pointer.clone(),
+            length: length.clone(),
+            failure: failure.clone(),
         }
     }
 
@@ -155,7 +155,7 @@ impl<'decode> Input<'decode> {
         borrow: rust_api::DecodeBorrow,
         expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
-        let storage = names::Parameter::new(self.binding).storage();
+        let storage = names::Parameter::new(&self.binding).storage();
         let owned = self.owned(
             codec,
             self.target.owned(),
@@ -163,7 +163,7 @@ impl<'decode> Input<'decode> {
             borrow.mutable(),
             expansion,
         )?;
-        let binding = self.binding;
+        let binding = &self.binding;
         let borrow = self.borrow(&storage, borrow)?;
         Ok(quote! {
             #owned
@@ -179,9 +179,9 @@ impl<'decode> Input<'decode> {
         mutable: bool,
         expansion: &Expansion<'lowered, S>,
     ) -> Result<TokenStream, Error> {
-        let pointer = self.pointer;
-        let length = self.length;
-        let failure = self.failure;
+        let pointer = &self.pointer;
+        let length = &self.length;
+        let failure = &self.failure;
         let mutability = mutable.then(|| quote! { mut });
         let incoming = super::custom::Incoming::new(codec, expansion);
         let converted = incoming.convert(quote! { __boltffi_decoded })?;

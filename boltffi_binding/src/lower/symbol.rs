@@ -1,44 +1,54 @@
-//! Native symbol minting and id allocation for the lowering pass.
-//!
-//! Every callable the lowered IR exposes references one or more native
-//! symbols by id. Ids are sequential integers assigned in the order the
-//! pass mints them. Names use separate lanes for user callables,
-//! initializers, and runtime lifecycle functions so source members named
-//! `free`, `release`, or `new` cannot collide with symbols the runtime
-//! needs for ownership management.
-
 use boltffi_ast::SourceName;
 
 use crate::{NativeSymbol, SymbolId, SymbolName};
 
 use super::LowerError;
 
-/// Symbol prefix shared by every binding the contract exposes.
 pub const FFI_PREFIX: &str = "boltffi";
 
 #[derive(Clone, Copy)]
-pub enum SymbolOwner<'a> {
-    Record(&'a str),
-    Enum(&'a str),
-    Class(&'a str),
-    Callback(&'a str),
+pub enum SymbolOwner<'source> {
+    Record(&'source str),
+    Enum(&'source str),
+    Class(&'source str),
+    Callback(&'source str),
 }
 
-impl<'a> SymbolOwner<'a> {
-    pub const fn record(source_id: &'a str) -> Self {
+impl<'source> SymbolOwner<'source> {
+    pub const fn record(source_id: &'source str) -> Self {
         Self::Record(source_id)
     }
 
-    pub const fn enumeration(source_id: &'a str) -> Self {
+    pub const fn enumeration(source_id: &'source str) -> Self {
         Self::Enum(source_id)
     }
 
-    pub const fn class(source_id: &'a str) -> Self {
+    pub const fn class(source_id: &'source str) -> Self {
         Self::Class(source_id)
     }
 
-    pub const fn callback(source_id: &'a str) -> Self {
+    pub const fn callback(source_id: &'source str) -> Self {
         Self::Callback(source_id)
+    }
+
+    pub fn method_symbol_name(self, member: &SourceName) -> String {
+        format!(
+            "{}_method_{}_{}_{}",
+            FFI_PREFIX,
+            self.family(),
+            symbol_path(self.source_id()),
+            source_member_name(member)
+        )
+    }
+
+    pub fn initializer_symbol_name(self, initializer: &SourceName) -> String {
+        format!(
+            "{}_init_{}_{}_{}",
+            FFI_PREFIX,
+            self.family(),
+            symbol_path(self.source_id()),
+            source_member_name(initializer)
+        )
     }
 
     fn family(self) -> &'static str {
@@ -50,7 +60,7 @@ impl<'a> SymbolOwner<'a> {
         }
     }
 
-    fn source_id(self) -> &'a str {
+    fn source_id(self) -> &'source str {
         match self {
             Self::Record(source_id)
             | Self::Enum(source_id)
@@ -60,11 +70,6 @@ impl<'a> SymbolOwner<'a> {
     }
 }
 
-/// Hands out [`SymbolId`]s in the order callers mint native symbols.
-///
-/// Ids are stable inside one [`crate::Bindings`](crate::Bindings) value
-/// but carry no meaning outside it; their job is to keep equal symbols
-/// equal across the contract's symbol table.
 pub struct SymbolAllocator {
     next: u32,
 }
@@ -74,12 +79,113 @@ impl SymbolAllocator {
         Self { next: 0 }
     }
 
-    /// Mints a [`NativeSymbol`] from a constructed FFI name, allocating
-    /// a fresh [`SymbolId`].
     pub fn mint(&mut self, name: String) -> Result<NativeSymbol, LowerError> {
         let id = self.next_id();
         let parsed = SymbolName::parse(name)?;
         Ok(NativeSymbol::new(id, parsed))
+    }
+
+    pub fn mint_function(&mut self, function_id: &str) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!(
+            "{}_function_{}",
+            FFI_PREFIX,
+            symbol_path(function_id)
+        ))
+    }
+
+    pub fn mint_constant_accessor(
+        &mut self,
+        constant_id: &str,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!("{}_const_{}", FFI_PREFIX, symbol_path(constant_id)))
+    }
+
+    pub fn mint_class_release(&mut self, class_id: &str) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!(
+            "{}_release_class_{}",
+            FFI_PREFIX,
+            symbol_path(class_id)
+        ))
+    }
+
+    pub fn mint_method(
+        &mut self,
+        owner: SymbolOwner,
+        member: &SourceName,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(owner.method_symbol_name(member))
+    }
+
+    pub fn mint_initializer(
+        &mut self,
+        owner: SymbolOwner,
+        initializer: &SourceName,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(owner.initializer_symbol_name(initializer))
+    }
+
+    pub fn mint_callback_register(
+        &mut self,
+        callback_id: &str,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!(
+            "{}_register_callback_{}",
+            FFI_PREFIX,
+            symbol_path(callback_id)
+        ))
+    }
+
+    pub fn mint_callback_create_handle(
+        &mut self,
+        callback_id: &str,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!(
+            "{}_create_callback_{}",
+            FFI_PREFIX,
+            symbol_path(callback_id)
+        ))
+    }
+
+    pub fn mint_callback_complete(
+        &mut self,
+        callback_id: &str,
+        slot: &CallbackSlot,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!(
+            "{}_callback_{}_{}_complete",
+            FFI_PREFIX,
+            symbol_path(callback_id),
+            slot.as_str()
+        ))
+    }
+
+    pub fn mint_stream(
+        &mut self,
+        stream_id: &str,
+        action: StreamLifecycle,
+    ) -> Result<NativeSymbol, LowerError> {
+        self.mint(format!(
+            "{}_stream_{}_{}",
+            FFI_PREFIX,
+            symbol_path(stream_id),
+            action.suffix()
+        ))
+    }
+
+    pub fn mint_async_lifecycle(
+        &mut self,
+        start_symbol_name: &str,
+        action: AsyncLifecycle,
+    ) -> Result<NativeSymbol, LowerError> {
+        let start_without_prefix = start_symbol_name
+            .strip_prefix(&format!("{FFI_PREFIX}_"))
+            .unwrap_or(start_symbol_name);
+        self.mint(format!(
+            "{}_async_{}_{}",
+            FFI_PREFIX,
+            start_without_prefix,
+            action.suffix()
+        ))
     }
 
     pub const fn next_group_id(&self) -> u32 {
@@ -93,80 +199,11 @@ impl SymbolAllocator {
     }
 }
 
-/// Builds the symbol used for a named method owned by `owner`.
-pub fn member_symbol_name(owner: SymbolOwner, member_name: &str) -> String {
-    format!(
-        "{}_method_{}_{}_{}",
-        FFI_PREFIX,
-        owner.family(),
-        symbol_path(owner.source_id()),
-        member_name
-    )
-}
-
-pub fn source_member_name(name: &SourceName) -> String {
+fn source_member_name(name: &SourceName) -> String {
     name.parts()
         .map(|part| to_snake_case(part.as_str()))
         .collect::<Vec<_>>()
         .join("_")
-}
-
-/// Builds the symbol used for an initializer owned by `owner`.
-pub fn initializer_symbol_name(owner: SymbolOwner, initializer_name: &str) -> String {
-    format!(
-        "{}_init_{}_{}_{}",
-        FFI_PREFIX,
-        owner.family(),
-        symbol_path(owner.source_id()),
-        initializer_name
-    )
-}
-
-/// Builds the symbol used to drop a class handle on the Rust side.
-pub fn class_release_symbol_name(class_id: &str) -> String {
-    format!("{}_release_class_{}", FFI_PREFIX, symbol_path(class_id))
-}
-
-/// Builds the symbol foreign code links to invoke a free function.
-///
-/// Free functions have no owning type, so the symbol carries only the
-/// `function` lane and the path. The path is the source id snake-cased,
-/// matching the convention every other lane uses.
-pub fn function_symbol_name(function_id: &str) -> String {
-    format!("{}_function_{}", FFI_PREFIX, symbol_path(function_id))
-}
-
-/// Builds the symbol foreign code links to read a constant whose value
-/// is delivered through an accessor rather than an inline literal.
-///
-/// Constants have no owning type, so the symbol carries only the `const`
-/// lane and the source id snake-cased, matching the convention the
-/// free-function lane uses.
-pub fn constant_accessor_symbol_name(constant_id: &str) -> String {
-    format!("{}_const_{}", FFI_PREFIX, symbol_path(constant_id))
-}
-
-/// Builds the Rust-side symbol that installs a foreign-provided vtable.
-pub fn callback_register_symbol_name(callback_id: &str) -> String {
-    format!(
-        "{}_register_callback_{}",
-        FFI_PREFIX,
-        symbol_path(callback_id)
-    )
-}
-
-/// Builds the Rust-side symbol that mints a callback handle bound to a
-/// foreign implementation.
-pub fn callback_create_handle_symbol_name(callback_id: &str) -> String {
-    format!(
-        "{}_create_callback_{}",
-        FFI_PREFIX,
-        symbol_path(callback_id)
-    )
-}
-
-pub fn callback_local_handle_name(callback_id: &str) -> String {
-    callback_local_function_name(callback_id, CallbackLocalLifecycle::Handle)
 }
 
 #[derive(Clone, Copy)]
@@ -184,80 +221,32 @@ impl CallbackLocalLifecycle {
             Self::Clone => "clone",
         }
     }
+
+    pub fn function_name(self, callback_id: &str) -> String {
+        format!(
+            "__{}_local_{}_{}",
+            FFI_PREFIX,
+            symbol_path(callback_id),
+            self.suffix()
+        )
+    }
 }
 
-pub fn callback_local_function_name(callback_id: &str, function: CallbackLocalLifecycle) -> String {
-    format!(
-        "__{}_local_{}_{}",
-        FFI_PREFIX,
-        symbol_path(callback_id),
-        function.suffix()
-    )
-}
-
-pub fn callback_local_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    format!(
-        "__{}_local_{}_{}",
-        FFI_PREFIX,
-        symbol_path(callback_id),
-        slot.as_str()
-    )
-}
-
-/// Builds the wasm import name foreign code provides for one method.
-///
-/// Takes a [`CallbackSlot`], so the value is guaranteed to be the
-/// canonical snake-cased slot name. The native vtable slot and the
-/// wasm import suffix for the same method are byte-equal by
-/// construction; there is no `&str` precondition for a caller to
-/// remember or violate.
-pub fn callback_wasm_import_method_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    wasm_callback_import_name("method", &symbol_path(callback_id), slot.as_str())
-}
-
-pub fn callback_wasm_import_start_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    wasm_callback_import_name("async_start", &symbol_path(callback_id), slot.as_str())
-}
-
-pub fn callback_wasm_complete_symbol_name(callback_id: &str, slot: &CallbackSlot) -> String {
-    format!(
-        "{}_callback_{}_{}_complete",
-        FFI_PREFIX,
-        symbol_path(callback_id),
-        slot.as_str()
-    )
-}
-
-/// Builds the wasm import name foreign code provides to drop a handle.
 pub fn callback_wasm_import_free_name(callback_id: &str) -> String {
     wasm_callback_import_name("lifecycle", &symbol_path(callback_id), "free")
 }
 
-/// Builds the wasm import name foreign code provides to duplicate a handle.
 pub fn callback_wasm_import_clone_name(callback_id: &str) -> String {
     wasm_callback_import_name("lifecycle", &symbol_path(callback_id), "clone")
 }
 
-/// Names one symbol in the consumer-side stream protocol.
-///
-/// Every stream the contract exposes mints one symbol per action below.
-/// The action suffix is appended to the stream's snake-cased canonical
-/// id so the six symbols attached to one stream group together when
-/// grepped: a stream `demo::events` mints
-/// `boltffi_stream_demo_events_subscribe`, `..._pop_batch`, and so on.
 #[derive(Clone, Copy)]
 pub enum StreamLifecycle {
-    /// Opens a subscription and returns the session handle.
     Subscribe,
-    /// Drains a batch of buffered items into the foreign side.
     PopBatch,
-    /// Blocks the foreign caller until at least one item is ready.
     Wait,
-    /// Reports readiness without blocking.
     Poll,
-    /// Closes a subscription.
     Unsubscribe,
-    /// Drops the stream itself.
     Free,
 }
 
@@ -274,44 +263,13 @@ impl StreamLifecycle {
     }
 }
 
-/// Builds the symbol foreign code links to invoke one stream-protocol
-/// action.
-///
-/// `stream_id` is the canonical Rust path of the source declaration.
-/// Class-owned streams already carry the class path in their id, so the
-/// resulting symbol distinguishes them from standalone streams without
-/// a separate lane.
-pub fn stream_symbol_name(stream_id: &str, action: StreamLifecycle) -> String {
-    format!(
-        "{}_stream_{}_{}",
-        FFI_PREFIX,
-        symbol_path(stream_id),
-        action.suffix()
-    )
-}
-
-/// Names one symbol in the async lifecycle protocol of a single callable.
-///
-/// The lifecycle symbols share the start callable's symbol name as a
-/// prefix in the async lane so every symbol attached to one async
-/// operation groups when grepped or sorted without sharing the user's
-/// callable namespace: a method `compute` on `demo::Engine` mints
-/// `boltffi_async_method_record_demo_engine_compute_poll`,
-/// `..._complete`, and so on.
 #[derive(Clone, Copy)]
 pub enum AsyncLifecycle {
-    /// Foreign-side step that advances the async state without blocking.
     Poll,
-    /// Wasm-side step that advances the async state synchronously.
     PollSync,
-    /// Foreign-side step that extracts the resolved value once ready.
     Complete,
-    /// Foreign-side step that requests cancellation.
     Cancel,
-    /// Foreign-side step that releases the async state.
     Free,
-    /// Foreign-side step that retrieves the panic message after a
-    /// failed operation.
     Panic,
 }
 
@@ -328,33 +286,10 @@ impl AsyncLifecycle {
     }
 }
 
-/// Builds a lifecycle symbol name from the start callable's symbol name.
-pub fn async_lifecycle_symbol_name(start_symbol_name: &str, action: AsyncLifecycle) -> String {
-    let start_without_prefix = start_symbol_name
-        .strip_prefix(&format!("{FFI_PREFIX}_"))
-        .unwrap_or(start_symbol_name);
-    format!(
-        "{}_async_{}_{}",
-        FFI_PREFIX,
-        start_without_prefix,
-        action.suffix()
-    )
-}
-
-/// The canonical snake-cased name of a callback method's dispatch slot.
-///
-/// Every surface (native vtable slot, wasm import suffix) builds its
-/// dispatch identifier from this same string, so wrapping the value in
-/// a private newtype removes the convention that callers must normalize
-/// a raw method ident before reaching the per-surface constructor. The
-/// only path to a [`CallbackSlot`] runs through
-/// [`CallbackSlot::from_method_name`], which applies [`to_snake_case`]
-/// once.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CallbackSlot(String);
 
 impl CallbackSlot {
-    /// Normalizes a raw source method ident into the canonical slot name.
     pub fn from_method_name(method_name: &str) -> Self {
         Self(to_snake_case(method_name))
     }
@@ -363,19 +298,32 @@ impl CallbackSlot {
         Self(source_member_name(name))
     }
 
-    /// Returns the canonical slot name.
+    pub fn local_method_name(&self, callback_id: &str) -> String {
+        format!(
+            "__{}_local_{}_{}",
+            FFI_PREFIX,
+            symbol_path(callback_id),
+            self.as_str()
+        )
+    }
+
+    pub fn wasm_import_method_name(&self, callback_id: &str) -> String {
+        wasm_callback_import_name("method", &symbol_path(callback_id), self.as_str())
+    }
+
+    pub fn wasm_import_start_name(&self, callback_id: &str) -> String {
+        wasm_callback_import_name("async_start", &symbol_path(callback_id), self.as_str())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// Wasm import module foreign callback implementations are linked from.
 pub const WASM_CALLBACK_IMPORT_MODULE: &str = "env";
 
-/// Vtable slot the runtime fills with the foreign-provided free fn.
 pub const VTABLE_FREE_SLOT_NAME: &str = "free";
 
-/// Vtable slot the runtime fills with the foreign-provided clone fn.
 pub const VTABLE_CLONE_SLOT_NAME: &str = "clone";
 
 fn symbol_path(source_id: &str) -> String {
@@ -398,19 +346,6 @@ pub fn wasm_closure_export_name(group_id: u32, signature: &str, action: &str) ->
     )
 }
 
-/// Lowercases `name` and inserts an underscore at every word boundary.
-///
-/// Word boundaries are:
-///
-/// - A lowercase or digit followed by an uppercase character, e.g.
-///   `MyRecord` → `my_record`.
-/// - An uppercase character at the end of an acronym, identified by
-///   the next character being lowercase, e.g. `HTTPHeader` →
-///   `http_header`, `XMLParser` → `xml_parser`.
-///
-/// Pure runs of uppercase characters (`HTTP`) collapse to lowercase
-/// without internal underscores. Strings that already use snake_case
-/// pass through unchanged.
 pub fn to_snake_case(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let initial = String::with_capacity(name.len() + chars.len() / 2);
@@ -471,15 +406,19 @@ mod tests {
     #[test]
     fn callback_local_handle_name_uses_local_callback_namespace() {
         assert_eq!(
-            callback_local_handle_name("demo::progress::ProgressListener"),
+            CallbackLocalLifecycle::Handle.function_name("demo::progress::ProgressListener"),
             "__boltffi_local_demo_progress_progress_listener_handle"
         );
     }
 
     #[test]
     fn member_symbol_name_uses_owner_and_member() {
+        let member = SourceName::from_canonical(boltffi_ast::CanonicalName::new(vec![
+            boltffi_ast::NamePart::new("translate"),
+        ]));
+
         assert_eq!(
-            member_symbol_name(SymbolOwner::record("demo::MyRecord"), "translate"),
+            SymbolOwner::record("demo::MyRecord").method_symbol_name(&member),
             "boltffi_method_record_demo_my_record_translate"
         );
     }
@@ -496,32 +435,44 @@ mod tests {
 
     #[test]
     fn initializer_symbol_name_uses_initializer_lane() {
+        let initializer = SourceName::from_canonical(boltffi_ast::CanonicalName::new(vec![
+            boltffi_ast::NamePart::new("new"),
+        ]));
+
         assert_eq!(
-            initializer_symbol_name(SymbolOwner::record("demo::Point"), "new"),
+            SymbolOwner::record("demo::Point").initializer_symbol_name(&initializer),
             "boltffi_init_record_demo_point_new"
         );
     }
 
     #[test]
     fn constant_accessor_symbol_name_uses_const_lane() {
-        assert_eq!(
-            constant_accessor_symbol_name("demo::MAGIC"),
-            "boltffi_const_demo_magic"
-        );
+        let mut allocator = SymbolAllocator::new();
+        let symbol = allocator
+            .mint_constant_accessor("demo::MAGIC")
+            .expect("valid symbol");
+
+        assert_eq!(symbol.name().as_str(), "boltffi_const_demo_magic");
     }
 
     #[test]
     fn class_release_symbol_name_uses_release_lane() {
-        assert_eq!(
-            class_release_symbol_name("demo::Engine"),
-            "boltffi_release_class_demo_engine"
-        );
+        let mut allocator = SymbolAllocator::new();
+        let symbol = allocator
+            .mint_class_release("demo::Engine")
+            .expect("valid symbol");
+
+        assert_eq!(symbol.name().as_str(), "boltffi_release_class_demo_engine");
     }
 
     #[test]
     fn symbol_paths_include_source_namespaces() {
+        let member = SourceName::from_canonical(boltffi_ast::CanonicalName::new(vec![
+            boltffi_ast::NamePart::new("fetch"),
+        ]));
+
         assert_eq!(
-            member_symbol_name(SymbolOwner::class("demo::nested::HTTPClient"), "fetch"),
+            SymbolOwner::class("demo::nested::HTTPClient").method_symbol_name(&member),
             "boltffi_method_class_demo_nested_http_client_fetch"
         );
     }
@@ -550,16 +501,30 @@ mod tests {
 
     #[test]
     fn async_lifecycle_symbol_names_append_runtime_suffixes() {
+        let mut allocator = SymbolAllocator::new();
+
         assert_eq!(
-            async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::Poll),
+            allocator
+                .mint_async_lifecycle("boltffi_function_demo_spin", AsyncLifecycle::Poll)
+                .expect("valid symbol")
+                .name()
+                .as_str(),
             "boltffi_async_function_demo_spin_poll"
         );
         assert_eq!(
-            async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::PollSync),
+            allocator
+                .mint_async_lifecycle("boltffi_function_demo_spin", AsyncLifecycle::PollSync)
+                .expect("valid symbol")
+                .name()
+                .as_str(),
             "boltffi_async_function_demo_spin_poll_sync"
         );
         assert_eq!(
-            async_lifecycle_symbol_name("boltffi_function_demo_spin", AsyncLifecycle::Complete),
+            allocator
+                .mint_async_lifecycle("boltffi_function_demo_spin", AsyncLifecycle::Complete)
+                .expect("valid symbol")
+                .name()
+                .as_str(),
             "boltffi_async_function_demo_spin_complete"
         );
     }
@@ -567,12 +532,18 @@ mod tests {
     #[test]
     fn wasm_async_callback_names_use_start_import_and_complete_export() {
         let slot = CallbackSlot::from_method_name("onEvent");
+        let mut allocator = SymbolAllocator::new();
+
         assert_eq!(
-            callback_wasm_import_start_name("demo::Listener", &slot),
+            slot.wasm_import_start_name("demo::Listener"),
             "__boltffi_callback_async_start_demo_listener_on_event"
         );
         assert_eq!(
-            callback_wasm_complete_symbol_name("demo::Listener", &slot),
+            allocator
+                .mint_callback_complete("demo::Listener", &slot)
+                .expect("valid symbol")
+                .name()
+                .as_str(),
             "boltffi_callback_demo_listener_on_event_complete"
         );
     }

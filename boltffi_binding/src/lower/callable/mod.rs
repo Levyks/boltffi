@@ -61,14 +61,14 @@ use boltffi_ast::{
 };
 
 use crate::{
-    ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, Direction, ExecutionDecl,
-    ExportedCallable, ForeignBody, HandlePresence, ImportedCallable, IntoRust, OutOfRust, Receive,
-    RustBody,
+    ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, DirectVectorElementType,
+    Direction, ExecutionDecl, ExportedCallable, ForeignBody, HandlePresence, ImportedCallable,
+    IntoRust, OutOfRust, Primitive, Receive, RustBody,
 };
 
 use super::{
-    LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, surface::SurfaceLower,
-    symbol::SymbolAllocator,
+    LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, records,
+    surface::SurfaceLower, symbol::SymbolAllocator,
 };
 
 /// Names the declaration that owns a callable.
@@ -77,7 +77,7 @@ use super::{
 /// drive the symbol-naming convention. Carries a borrow into the
 /// source AST so the lowering pass does not duplicate identity.
 #[derive(Clone, Copy)]
-pub(super) enum CallableOwner<'src> {
+pub enum CallableOwner<'src> {
     /// Owned by a record.
     Record(&'src boltffi_ast::RecordDef),
     /// Owned by an enum.
@@ -114,7 +114,7 @@ impl<'src> CallableOwner<'src> {
         }
     }
 
-    pub(super) fn owns_type_expr(self, type_expr: &boltffi_ast::TypeExpr) -> bool {
+    pub fn owns_type_expr(self, type_expr: &boltffi_ast::TypeExpr) -> bool {
         match (self, type_expr) {
             (Self::Trait(_) | Self::Function, boltffi_ast::TypeExpr::SelfType) => false,
             (_, boltffi_ast::TypeExpr::SelfType) => true,
@@ -135,6 +135,50 @@ impl<'src> CallableOwner<'src> {
     }
 }
 
+enum ValueSpecialization {
+    ScalarOption(Primitive),
+    DirectVector(DirectVectorElementType),
+}
+
+impl ValueSpecialization {
+    fn from_type_expr(
+        index: &Index,
+        ids: &DeclarationIds,
+        type_expr: &TypeExpr,
+    ) -> Result<Option<Self>, LowerError> {
+        match type_expr {
+            TypeExpr::Option(inner) => Ok(Self::primitive(inner).map(Self::ScalarOption)),
+            TypeExpr::Vec(inner) => Self::direct_vector_element(index, ids, inner)
+                .map(|element| element.map(Self::DirectVector)),
+            _ => Ok(None),
+        }
+    }
+
+    fn primitive(type_expr: &TypeExpr) -> Option<Primitive> {
+        if let TypeExpr::Primitive(primitive) = type_expr {
+            Some(Primitive::from(*primitive))
+        } else {
+            None
+        }
+    }
+
+    fn direct_vector_element(
+        index: &Index,
+        ids: &DeclarationIds,
+        type_expr: &TypeExpr,
+    ) -> Result<Option<DirectVectorElementType>, LowerError> {
+        match type_expr {
+            TypeExpr::Primitive(primitive) => Ok(DirectVectorElementType::primitive(
+                Primitive::from(*primitive),
+            )),
+            TypeExpr::Record { id, .. } if index.record(id).is_some_and(records::is_direct) => {
+                Ok(Some(DirectVectorElementType::record(ids.record(id)?)))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
 /// Lowers a Rust-implemented [`MethodDef`] into an
 /// [`ExportedCallable<S>`].
 ///
@@ -146,7 +190,7 @@ impl<'src> CallableOwner<'src> {
 ///
 /// The owner context resolves `Self` inside parameter and return type
 /// expressions. The receiver follows the source.
-pub(super) fn lower_exported_method<S: SurfaceLower>(
+pub fn lower_exported_method<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -155,7 +199,8 @@ pub(super) fn lower_exported_method<S: SurfaceLower>(
     start_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters = params::lower::<S, IntoRust>(index, ids, allocator, owner, &method.parameters)?;
+    let parameters =
+        params::lower::<S, IntoRust>(index, ids, allocator, owner, &method.parameters)?;
     let (returns, error) = returns::lower::<S, _>(index, ids, allocator, owner, &method.returns)?;
     let execution = lower_execution::<S>(allocator, method.execution, start_symbol_name)?;
 
@@ -171,7 +216,7 @@ pub(super) fn lower_exported_method<S: SurfaceLower>(
 /// methods: Rust pushes arguments out and reads the return back in.
 /// Their dispatch target is not a [`NativeSymbol`](crate::NativeSymbol)
 /// but a per-surface slot ([`crate::VTableSlot`] on native, an
-pub(super) fn lower_imported_method<S: SurfaceLower>(
+pub fn lower_imported_method<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -180,7 +225,8 @@ pub(super) fn lower_imported_method<S: SurfaceLower>(
     execution: ExecutionDecl<S>,
 ) -> Result<ImportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters = params::lower::<S, OutOfRust>(index, ids, allocator, owner, &method.parameters)?;
+    let parameters =
+        params::lower::<S, OutOfRust>(index, ids, allocator, owner, &method.parameters)?;
     let (returns, error) =
         returns::lower::<S, IntoRust>(index, ids, allocator, owner, &method.returns)?;
 
@@ -189,14 +235,15 @@ pub(super) fn lower_imported_method<S: SurfaceLower>(
     )?)
 }
 
-pub(super) fn lower_local_callback_method<S: SurfaceLower>(
+pub fn lower_local_callback_method<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
     owner: CallableOwner,
     method: &MethodDef,
 ) -> Result<ExportedCallable<S>, LowerError> {
-    let parameters = params::lower::<S, IntoRust>(index, ids, allocator, owner, &method.parameters)?;
+    let parameters =
+        params::lower::<S, IntoRust>(index, ids, allocator, owner, &method.parameters)?;
     let (returns, error) =
         returns::lower::<S, OutOfRust>(index, ids, allocator, owner, &method.returns)?;
 
@@ -405,7 +452,7 @@ where
 /// methods; `start_symbol_name` names the start symbol foreign code
 /// links to invoke the operation, and the lifecycle symbols are minted
 /// with that name as prefix.
-pub(super) fn lower_function<S: SurfaceLower>(
+pub fn lower_function<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -432,7 +479,7 @@ pub(super) fn lower_function<S: SurfaceLower>(
 /// reads the value by calling it once. The owner context is
 /// [`CallableOwner::Function`], so any `Self` in the constant type is
 /// rejected; top-level constants do not carry `Self`.
-pub(super) fn lower_constant_accessor<S: SurfaceLower>(
+pub fn lower_constant_accessor<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -475,21 +522,21 @@ fn lower_receiver(receiver: Receiver) -> Option<Receive> {
 }
 
 #[derive(Clone, Copy)]
-struct ClosureSource<'a> {
+struct ClosureSource<'source> {
     form: ClosureForm,
-    signature: &'a FnSig,
+    signature: &'source FnSig,
     presence: HandlePresence,
 }
 
-impl<'a> ClosureSource<'a> {
-    fn from_type_expr(type_expr: &'a TypeExpr) -> Option<Self> {
+impl<'source> ClosureSource<'source> {
+    fn from_type_expr(type_expr: &'source TypeExpr) -> Option<Self> {
         Self::required(type_expr).or_else(|| match type_expr {
             TypeExpr::Option(inner) => Self::required(inner).map(Self::nullable),
             _ => None,
         })
     }
 
-    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn required(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::FnPtr(signature) => Some(Self {
                 form: ClosureForm::FunctionPointer,
@@ -526,20 +573,20 @@ impl<'a> ClosureSource<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct ClassHandleSource<'a> {
-    id: &'a ClassId,
+struct ClassHandleSource<'source> {
+    id: &'source ClassId,
     presence: HandlePresence,
 }
 
-impl<'a> ClassHandleSource<'a> {
-    fn from_type_expr(type_expr: &'a TypeExpr) -> Option<Self> {
+impl<'source> ClassHandleSource<'source> {
+    fn from_type_expr(type_expr: &'source TypeExpr) -> Option<Self> {
         Self::required(type_expr).or_else(|| match type_expr {
             TypeExpr::Option(inner) => Self::required(inner).map(Self::nullable),
             _ => None,
         })
     }
 
-    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn required(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::Class { id, .. } => Some(Self {
                 id,
@@ -556,20 +603,20 @@ impl<'a> ClassHandleSource<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct CallbackHandleSource<'a> {
-    id: &'a TraitId,
+struct CallbackHandleSource<'source> {
+    id: &'source TraitId,
     presence: HandlePresence,
 }
 
-impl<'a> CallbackHandleSource<'a> {
-    fn from_type_expr(type_expr: &'a TypeExpr) -> Option<Self> {
+impl<'source> CallbackHandleSource<'source> {
+    fn from_type_expr(type_expr: &'source TypeExpr) -> Option<Self> {
         Self::required(type_expr).or_else(|| match type_expr {
             TypeExpr::Option(inner) => Self::required(inner).map(Self::nullable),
             _ => None,
         })
     }
 
-    fn bare_dyn(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn bare_dyn(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::Dyn(bounds) => match &bounds.base {
                 BaseTrait::Named { id, .. } => Some(Self {
@@ -582,7 +629,7 @@ impl<'a> CallbackHandleSource<'a> {
         }
     }
 
-    fn required(type_expr: &'a TypeExpr) -> Option<Self> {
+    fn required(type_expr: &'source TypeExpr) -> Option<Self> {
         match type_expr {
             TypeExpr::ImplTrait(bounds) => match &bounds.base {
                 BaseTrait::Named { id, .. } => Some(Self {
@@ -619,7 +666,7 @@ impl<'a> CallbackHandleSource<'a> {
 /// closure parameters and returns, optional/sequence inner) all
 /// recurse so a method like `fn neighbours(&self) -> Vec<Self>`
 /// resolves correctly.
-pub(super) fn substitute_self_type(
+pub fn substitute_self_type(
     owner: CallableOwner,
     type_expr: &boltffi_ast::TypeExpr,
 ) -> Result<boltffi_ast::TypeExpr, LowerError> {
@@ -666,10 +713,7 @@ pub(super) fn substitute_self_type(
     })
 }
 
-fn substitute_self_signature(
-    owner: CallableOwner,
-    signature: &FnSig,
-) -> Result<FnSig, LowerError> {
+fn substitute_self_signature(owner: CallableOwner, signature: &FnSig) -> Result<FnSig, LowerError> {
     Ok(FnSig::new(
         signature
             .parameters

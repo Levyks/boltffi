@@ -3,7 +3,7 @@ mod pair;
 
 use boltffi_ast::{ClassDef, ConstantDef, EnumDef, FunctionDef, RecordDef, StreamDef, TraitDef};
 use boltffi_binding::{
-    CallbackDecl, CallbackId, ClassDecl, ConstantDecl, CustomTypeDecl, CustomTypeId,
+    Bindings, CallbackDecl, CallbackId, ClassDecl, ConstantDecl, CustomTypeDecl, CustomTypeId,
     EncodedRecordDecl, EnumDecl, FunctionDecl, LoweredBindings, RecordDecl, RecordId, StreamDecl,
     Surface,
 };
@@ -33,7 +33,7 @@ impl<'lowered, S: Surface> Expansion<'lowered, S> {
     }
 
     /// Returns the lowered binding declarations.
-    pub fn bindings(&self) -> &'lowered boltffi_binding::Bindings<S> {
+    pub fn bindings(&self) -> &'lowered Bindings<S> {
         self.lowered.bindings()
     }
 
@@ -429,8 +429,8 @@ mod tests {
                 wrapper::async_call::Input<'expansion, 'lowered, S>,
                 Output = TokenStream,
             >,
-        for<'ty> wrapper::param::direct::Renderer:
-            wrapper::Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
+        wrapper::param::direct::Renderer:
+            wrapper::Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
         for<'expansion> wrapper::param::encoded::Renderer: wrapper::Render<
                 S,
                 wrapper::param::encoded::Input<'expansion, 'lowered, S>,

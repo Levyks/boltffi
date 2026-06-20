@@ -173,7 +173,7 @@ impl<'source> Parameter<'source> {
         DecodeTarget::new(self.definition.passing, receive, self.type_expr().as_ref())
     }
 
-    pub fn closure(self, presence: HandlePresence) -> Result<Closure<'source>, Error> {
+    pub fn closure(self, presence: HandlePresence) -> Result<Closure, Error> {
         Closure::new(&self.definition.type_expr, presence)
     }
 
@@ -189,11 +189,8 @@ impl<'source> Parameter<'source> {
     ) -> Result<ClassHandle, Error> {
         self.handle(target, presence)?;
         let source_type = self.type_expr();
-        let type_expr = match presence {
-            HandlePresence::Required => source_type.as_ref(),
-            HandlePresence::Nullable => option_inner(source_type.as_ref())?,
-            _ => return Err(Error::UnsupportedExpansion("unknown class handle presence")),
-        };
+        let handle = Handle::new(source_type.as_ref());
+        let type_expr = handle.source_for_presence(presence)?;
         let ty = match (self.definition.passing, receive) {
             (ParameterPassing::Value, Receive::ByValue)
             | (ParameterPassing::Ref, Receive::ByRef)
@@ -216,15 +213,8 @@ impl<'source> Parameter<'source> {
     ) -> Result<CallbackObject, Error> {
         self.handle(target, presence)?;
         let source_type = self.type_expr();
-        let type_expr = match presence {
-            HandlePresence::Required => source_type.as_ref(),
-            HandlePresence::Nullable => option_inner(source_type.as_ref())?,
-            _ => {
-                return Err(Error::UnsupportedExpansion(
-                    "unknown callback handle presence",
-                ));
-            }
-        };
+        let handle = Handle::new(source_type.as_ref());
+        let type_expr = handle.source_for_presence(presence)?;
         CallbackObject::new(presence, type_expr)
     }
 
@@ -267,8 +257,7 @@ impl<'source> Parameter<'source> {
     }
 
     fn type_expr(&self) -> Cow<'source, TypeExpr> {
-        let self_type = self.owner.map(CallableOwner::self_type);
-        substituted_type(&self.definition.type_expr, self_type.as_ref())
+        SelfTypeSubstitution::from_owner(self.owner).type_expr(&self.definition.type_expr)
     }
 }
 
@@ -321,6 +310,62 @@ impl CallbackCarrier {
             )),
         }
     }
+
+    fn object_inner(source: &TypeExpr) -> Option<&TypeExpr> {
+        match source {
+            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner)
+                if matches!(
+                    inner.as_ref(),
+                    TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. })
+                ) =>
+            {
+                Some(inner)
+            }
+            _ => None,
+        }
+    }
+
+    fn value_type(self, source: &TypeExpr) -> Result<Type, Error> {
+        match self {
+            Self::BoxedDyn | Self::ArcDyn => TypeTokens::new(source).map(TypeTokens::into_type),
+            Self::ImplTrait => self.proxy_type(source),
+        }
+    }
+
+    fn proxy_type(self, source: &TypeExpr) -> Result<Type, Error> {
+        let bounds = match source {
+            TypeExpr::ImplTrait(bounds) => bounds,
+            TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => {
+                let TypeExpr::Dyn(bounds) = inner.as_ref() else {
+                    return Err(Error::SourceSyntaxMismatch(
+                        "source callback handle is not a trait object container",
+                    ));
+                };
+                bounds
+            }
+            _ => {
+                return Err(Error::SourceSyntaxMismatch(
+                    "source type is not a callback handle",
+                ));
+            }
+        };
+        let BaseTrait::Named { path, .. } = &bounds.base else {
+            return Err(Error::SourceSyntaxMismatch(
+                "source callback handle is not a named callback trait",
+            ));
+        };
+        let segment = path.last().ok_or(Error::SourceSyntaxMismatch(
+            "source callback trait path is empty",
+        ))?;
+        if !segment.arguments.is_empty() {
+            return Err(Error::UnsupportedExpansion(
+                "generic impl-trait callback handle",
+            ));
+        }
+        parse_str(&format!("Foreign{}", segment.name.as_str())).map_err(|_| {
+            Error::SourceSyntaxMismatch("callback foreign proxy type is not Rust syntax")
+        })
+    }
 }
 
 pub struct CallbackObject {
@@ -333,8 +378,8 @@ pub struct CallbackObject {
 impl CallbackObject {
     fn new(presence: HandlePresence, type_expr: &TypeExpr) -> Result<Self, Error> {
         let form = CallbackCarrier::from_type_expr(type_expr)?;
-        let value = callback_value_type(form, type_expr)?;
-        let proxy = callback_proxy_type(type_expr)?;
+        let value = form.value_type(type_expr)?;
+        let proxy = form.proxy_type(type_expr)?;
         Ok(Self {
             value,
             proxy,
@@ -377,7 +422,7 @@ impl CallbackReturn {
         Ok(Self {
             form,
             presence,
-            proxy: callback_proxy_type(type_expr)?,
+            proxy: form.proxy_type(type_expr)?,
         })
     }
 
@@ -444,21 +489,19 @@ impl<'source> Return<'source> {
     }
 
     pub fn value_type(self) -> Result<Cow<'source, TypeExpr>, Error> {
-        let self_type = self.owner.map(CallableOwner::self_type);
+        let substitution = SelfTypeSubstitution::from_owner(self.owner);
         match self.definition {
             CallableReturn::Declaration(ReturnDef::Value(type_expr)) => {
-                Ok(substituted_type(type_expr, self_type.as_ref()))
+                Ok(substitution.type_expr(type_expr))
             }
             CallableReturn::Declaration(ReturnDef::Void) => Err(Error::SourceSyntaxMismatch(
                 "source return does not have a value type",
             )),
-            CallableReturn::Constant(type_expr) => {
-                Ok(substituted_type(type_expr, self_type.as_ref()))
-            }
+            CallableReturn::Constant(type_expr) => Ok(substitution.type_expr(type_expr)),
         }
     }
 
-    pub fn closure(self, presence: HandlePresence) -> Result<Closure<'source>, Error> {
+    pub fn closure(self, presence: HandlePresence) -> Result<Closure, Error> {
         match self.value_type()? {
             Cow::Borrowed(type_expr) => Closure::new(type_expr, presence),
             Cow::Owned(_) => Err(Error::UnsupportedExpansion(
@@ -558,7 +601,7 @@ impl<'source> Fallible<'source> {
         TypeTokens::new(self.error()).map(TypeTokens::into_type)
     }
 
-    pub fn ok_closure(&self, presence: HandlePresence) -> Result<Closure<'source>, Error> {
+    pub fn ok_closure(&self, presence: HandlePresence) -> Result<Closure, Error> {
         match self {
             Self::Borrowed { ok, .. } => Closure::new(ok, presence),
             Self::Owned { .. } => Err(Error::UnsupportedExpansion(
@@ -618,159 +661,157 @@ impl<'source> CallableOwner<'source> {
     }
 }
 
-fn substituted_return<'source>(
-    return_def: &'source ReturnDef,
-    self_type: Option<&TypeExpr>,
-) -> Cow<'source, ReturnDef> {
-    let ReturnDef::Value(type_expr) = return_def else {
-        return Cow::Borrowed(return_def);
-    };
-    match substituted_type(type_expr, self_type) {
-        Cow::Borrowed(_) => Cow::Borrowed(return_def),
-        Cow::Owned(type_expr) => Cow::Owned(ReturnDef::Value(type_expr)),
-    }
+struct SelfTypeSubstitution {
+    self_type: Option<TypeExpr>,
 }
 
-fn substituted_type<'source>(
-    type_expr: &'source TypeExpr,
-    self_type: Option<&TypeExpr>,
-) -> Cow<'source, TypeExpr> {
-    let Some(self_type) = self_type else {
-        return Cow::Borrowed(type_expr);
-    };
-    match type_expr {
-        TypeExpr::SelfType => Cow::Owned(self_type.clone()),
-        TypeExpr::Boxed(inner) => substituted_wrapped(TypeExpr::boxed, type_expr, inner, self_type),
-        TypeExpr::Arc(inner) => substituted_wrapped(TypeExpr::arc, type_expr, inner, self_type),
-        TypeExpr::Vec(element) => substituted_wrapped(TypeExpr::vec, type_expr, element, self_type),
-        TypeExpr::Slice(element) => {
-            substituted_wrapped(TypeExpr::slice, type_expr, element, self_type)
+impl SelfTypeSubstitution {
+    fn from_owner(owner: Option<CallableOwner<'_>>) -> Self {
+        Self {
+            self_type: owner.map(CallableOwner::self_type),
         }
-        TypeExpr::Option(inner) => {
-            substituted_wrapped(TypeExpr::option, type_expr, inner, self_type)
+    }
+
+    fn type_expr<'source>(&self, type_expr: &'source TypeExpr) -> Cow<'source, TypeExpr> {
+        let Some(self_type) = self.self_type.as_ref() else {
+            return Cow::Borrowed(type_expr);
+        };
+        match type_expr {
+            TypeExpr::SelfType => Cow::Owned(self_type.clone()),
+            TypeExpr::Boxed(inner) => self.wrapped(TypeExpr::boxed, type_expr, inner),
+            TypeExpr::Arc(inner) => self.wrapped(TypeExpr::arc, type_expr, inner),
+            TypeExpr::Vec(element) => self.wrapped(TypeExpr::vec, type_expr, element),
+            TypeExpr::Slice(element) => self.wrapped(TypeExpr::slice, type_expr, element),
+            TypeExpr::Option(inner) => self.wrapped(TypeExpr::option, type_expr, inner),
+            TypeExpr::Result { ok, err } => self.result(type_expr, ok, err),
+            TypeExpr::Tuple(elements) => self.tuple(type_expr, elements),
+            TypeExpr::Map { kind, key, value } => self.map(type_expr, *kind, key, value),
+            TypeExpr::Dyn(bounds) => self.bounds(TypeExpr::Dyn, bounds, type_expr),
+            TypeExpr::ImplTrait(bounds) => self.bounds(TypeExpr::ImplTrait, bounds, type_expr),
+            TypeExpr::FnPtr(signature) => match self.signature(signature) {
+                Some(signature) => Cow::Owned(TypeExpr::fn_ptr(signature)),
+                None => Cow::Borrowed(type_expr),
+            },
+            _ => Cow::Borrowed(type_expr),
         }
-        TypeExpr::Result { ok, err } => substituted_result(type_expr, ok, err, self_type),
-        TypeExpr::Tuple(elements) => substituted_tuple(type_expr, elements, self_type),
-        TypeExpr::Map { kind, key, value } => {
-            substituted_map(type_expr, *kind, key, value, self_type)
+    }
+
+    fn return_def<'source>(&self, return_def: &'source ReturnDef) -> Cow<'source, ReturnDef> {
+        let ReturnDef::Value(type_expr) = return_def else {
+            return Cow::Borrowed(return_def);
+        };
+        match self.type_expr(type_expr) {
+            Cow::Borrowed(_) => Cow::Borrowed(return_def),
+            Cow::Owned(type_expr) => Cow::Owned(ReturnDef::Value(type_expr)),
         }
-        TypeExpr::Dyn(bounds) => substituted_bounds(TypeExpr::Dyn, bounds, self_type, type_expr),
-        TypeExpr::ImplTrait(bounds) => {
-            substituted_bounds(TypeExpr::ImplTrait, bounds, self_type, type_expr)
+    }
+
+    fn wrapped<'source>(
+        &self,
+        build: impl Fn(TypeExpr) -> TypeExpr,
+        original: &'source TypeExpr,
+        inner: &'source TypeExpr,
+    ) -> Cow<'source, TypeExpr> {
+        match self.type_expr(inner) {
+            Cow::Borrowed(_) => Cow::Borrowed(original),
+            Cow::Owned(inner) => Cow::Owned(build(inner)),
         }
-        TypeExpr::FnPtr(signature) => match substituted_signature(signature, self_type) {
-            Some(signature) => Cow::Owned(TypeExpr::fn_ptr(signature)),
-            None => Cow::Borrowed(type_expr),
-        },
-        _ => Cow::Borrowed(type_expr),
     }
-}
 
-fn substituted_wrapped<'source>(
-    build: impl Fn(TypeExpr) -> TypeExpr,
-    original: &'source TypeExpr,
-    inner: &'source TypeExpr,
-    self_type: &TypeExpr,
-) -> Cow<'source, TypeExpr> {
-    match substituted_type(inner, Some(self_type)) {
-        Cow::Borrowed(_) => Cow::Borrowed(original),
-        Cow::Owned(inner) => Cow::Owned(build(inner)),
+    fn result<'source>(
+        &self,
+        original: &'source TypeExpr,
+        ok: &'source TypeExpr,
+        err: &'source TypeExpr,
+    ) -> Cow<'source, TypeExpr> {
+        let ok = self.type_expr(ok);
+        let err = self.type_expr(err);
+        match (&ok, &err) {
+            (Cow::Borrowed(_), Cow::Borrowed(_)) => Cow::Borrowed(original),
+            _ => Cow::Owned(TypeExpr::result(ok.into_owned(), err.into_owned())),
+        }
     }
-}
 
-fn substituted_result<'source>(
-    original: &'source TypeExpr,
-    ok: &'source TypeExpr,
-    err: &'source TypeExpr,
-    self_type: &TypeExpr,
-) -> Cow<'source, TypeExpr> {
-    let ok = substituted_type(ok, Some(self_type));
-    let err = substituted_type(err, Some(self_type));
-    match (&ok, &err) {
-        (Cow::Borrowed(_), Cow::Borrowed(_)) => Cow::Borrowed(original),
-        _ => Cow::Owned(TypeExpr::result(ok.into_owned(), err.into_owned())),
-    }
-}
-
-fn substituted_tuple<'source>(
-    original: &'source TypeExpr,
-    elements: &'source [TypeExpr],
-    self_type: &TypeExpr,
-) -> Cow<'source, TypeExpr> {
-    let elements = elements
-        .iter()
-        .map(|element| substituted_type(element, Some(self_type)))
-        .collect::<Vec<_>>();
-    match elements
-        .iter()
-        .all(|element| matches!(element, Cow::Borrowed(_)))
-    {
-        true => Cow::Borrowed(original),
-        false => Cow::Owned(TypeExpr::tuple(
-            elements
-                .into_iter()
-                .map(Cow::into_owned)
-                .collect::<Vec<_>>(),
-        )),
-    }
-}
-
-fn substituted_map<'source>(
-    original: &'source TypeExpr,
-    kind: MapKind,
-    key: &'source TypeExpr,
-    value: &'source TypeExpr,
-    self_type: &TypeExpr,
-) -> Cow<'source, TypeExpr> {
-    let key = substituted_type(key, Some(self_type));
-    let value = substituted_type(value, Some(self_type));
-    match (&key, &value) {
-        (Cow::Borrowed(_), Cow::Borrowed(_)) => Cow::Borrowed(original),
-        _ => Cow::Owned(TypeExpr::map(kind, key.into_owned(), value.into_owned())),
-    }
-}
-
-fn substituted_bounds<'source>(
-    build: impl Fn(TraitBounds) -> TypeExpr,
-    bounds: &'source TraitBounds,
-    self_type: &TypeExpr,
-    original: &'source TypeExpr,
-) -> Cow<'source, TypeExpr> {
-    let BaseTrait::Function(function_trait) = &bounds.base else {
-        return Cow::Borrowed(original);
-    };
-    let Some(signature) = substituted_signature(&function_trait.signature, self_type) else {
-        return Cow::Borrowed(original);
-    };
-    let mut bounds = bounds.clone();
-    let BaseTrait::Function(function_trait) = &mut bounds.base else {
-        return Cow::Borrowed(original);
-    };
-    function_trait.signature = signature;
-    Cow::Owned(build(bounds))
-}
-
-fn substituted_signature(signature: &FnSig, self_type: &TypeExpr) -> Option<FnSig> {
-    let parameters = signature
-        .parameters
-        .iter()
-        .map(|parameter| substituted_type(parameter, Some(self_type)))
-        .collect::<Vec<_>>();
-    let returns = substituted_return(&signature.returns, Some(self_type));
-    match (
-        parameters
+    fn tuple<'source>(
+        &self,
+        original: &'source TypeExpr,
+        elements: &'source [TypeExpr],
+    ) -> Cow<'source, TypeExpr> {
+        let elements = elements
             .iter()
-            .all(|parameter| matches!(parameter, Cow::Borrowed(_))),
-        matches!(returns, Cow::Borrowed(_)),
-    ) {
-        (true, true) => None,
-        _ => Some(FnSig::new(
+            .map(|element| self.type_expr(element))
+            .collect::<Vec<_>>();
+        match elements
+            .iter()
+            .all(|element| matches!(element, Cow::Borrowed(_)))
+        {
+            true => Cow::Borrowed(original),
+            false => Cow::Owned(TypeExpr::tuple(
+                elements
+                    .into_iter()
+                    .map(Cow::into_owned)
+                    .collect::<Vec<_>>(),
+            )),
+        }
+    }
+
+    fn map<'source>(
+        &self,
+        original: &'source TypeExpr,
+        kind: MapKind,
+        key: &'source TypeExpr,
+        value: &'source TypeExpr,
+    ) -> Cow<'source, TypeExpr> {
+        let key = self.type_expr(key);
+        let value = self.type_expr(value);
+        match (&key, &value) {
+            (Cow::Borrowed(_), Cow::Borrowed(_)) => Cow::Borrowed(original),
+            _ => Cow::Owned(TypeExpr::map(kind, key.into_owned(), value.into_owned())),
+        }
+    }
+
+    fn bounds<'source>(
+        &self,
+        build: impl Fn(TraitBounds) -> TypeExpr,
+        bounds: &'source TraitBounds,
+        original: &'source TypeExpr,
+    ) -> Cow<'source, TypeExpr> {
+        let BaseTrait::Function(function_trait) = &bounds.base else {
+            return Cow::Borrowed(original);
+        };
+        let Some(signature) = self.signature(&function_trait.signature) else {
+            return Cow::Borrowed(original);
+        };
+        let mut bounds = bounds.clone();
+        let BaseTrait::Function(function_trait) = &mut bounds.base else {
+            return Cow::Borrowed(original);
+        };
+        function_trait.signature = signature;
+        Cow::Owned(build(bounds))
+    }
+
+    fn signature(&self, signature: &FnSig) -> Option<FnSig> {
+        let parameters = signature
+            .parameters
+            .iter()
+            .map(|parameter| self.type_expr(parameter))
+            .collect::<Vec<_>>();
+        let returns = self.return_def(&signature.returns);
+        match (
             parameters
-                .into_iter()
-                .map(Cow::into_owned)
-                .collect::<Vec<_>>(),
-            returns.into_owned(),
-        )),
+                .iter()
+                .all(|parameter| matches!(parameter, Cow::Borrowed(_))),
+            matches!(returns, Cow::Borrowed(_)),
+        ) {
+            (true, true) => None,
+            _ => Some(FnSig::new(
+                parameters
+                    .into_iter()
+                    .map(Cow::into_owned)
+                    .collect::<Vec<_>>(),
+                returns.into_owned(),
+            )),
+        }
     }
 }
 
@@ -783,28 +824,30 @@ impl<'source> Handle<'source> {
         Self { source }
     }
 
-    fn matches(self, target: &HandleTarget, presence: HandlePresence) -> Result<(), Error> {
+    fn matches(&self, target: &HandleTarget, presence: HandlePresence) -> Result<(), Error> {
+        self.source_for_presence(presence)
+            .and_then(|source| Self::required_matches(source, target))
+    }
+
+    fn source_for_presence(&self, presence: HandlePresence) -> Result<&'source TypeExpr, Error> {
         match presence {
-            HandlePresence::Required => required_handle_matches(self.source, target),
-            HandlePresence::Nullable => {
-                option_inner(self.source).and_then(|inner| required_handle_matches(inner, target))
-            }
+            HandlePresence::Required => Ok(self.source),
+            HandlePresence::Nullable => match self.source {
+                TypeExpr::Option(inner) => Ok(inner),
+                _ => Err(Error::SourceSyntaxMismatch("source type is not optional")),
+            },
             _ => Err(Error::UnsupportedExpansion("unknown handle presence")),
         }
     }
 
     fn return_shape(
-        self,
+        &self,
         target: &HandleTarget,
         presence: HandlePresence,
     ) -> Result<HandleReturn, Error> {
         match target {
             HandleTarget::Class(_) => {
-                let type_expr = match presence {
-                    HandlePresence::Required => self.source,
-                    HandlePresence::Nullable => option_inner(self.source)?,
-                    _ => return Err(Error::UnsupportedExpansion("unknown handle presence")),
-                };
+                let type_expr = self.source_for_presence(presence)?;
                 self.matches(target, presence)?;
                 TypeTokens::new(type_expr)
                     .map(TypeTokens::into_type)
@@ -812,11 +855,7 @@ impl<'source> Handle<'source> {
                     .map(HandleReturn::Class)
             }
             HandleTarget::Callback(_) => {
-                let type_expr = match presence {
-                    HandlePresence::Required => self.source,
-                    HandlePresence::Nullable => option_inner(self.source)?,
-                    _ => return Err(Error::UnsupportedExpansion("unknown handle presence")),
-                };
+                let type_expr = self.source_for_presence(presence)?;
                 self.matches(target, presence)?;
                 CallbackReturn::new(presence, type_expr)
                     .map(Box::new)
@@ -825,87 +864,23 @@ impl<'source> Handle<'source> {
             _ => Err(Error::UnsupportedExpansion("unknown handle return target")),
         }
     }
-}
 
-fn required_handle_matches(source: &TypeExpr, target: &HandleTarget) -> Result<(), Error> {
-    match (source, target) {
-        (TypeExpr::Class { .. }, HandleTarget::Class(_)) => Ok(()),
-        (TypeExpr::ImplTrait(bounds), HandleTarget::Callback(_))
-            if matches!(&bounds.base, BaseTrait::Named { .. }) =>
-        {
-            Ok(())
+    fn required_matches(source: &TypeExpr, target: &HandleTarget) -> Result<(), Error> {
+        match (source, target) {
+            (TypeExpr::Class { .. }, HandleTarget::Class(_)) => Ok(()),
+            (TypeExpr::ImplTrait(bounds), HandleTarget::Callback(_))
+                if matches!(&bounds.base, BaseTrait::Named { .. }) =>
+            {
+                Ok(())
+            }
+            (TypeExpr::Boxed(_) | TypeExpr::Arc(_), HandleTarget::Callback(_))
+                if CallbackCarrier::object_inner(source).is_some() =>
+            {
+                Ok(())
+            }
+            _ => Err(Error::SourceSyntaxMismatch(
+                "source handle type does not match binding handle target",
+            )),
         }
-        (TypeExpr::Boxed(_) | TypeExpr::Arc(_), HandleTarget::Callback(_))
-            if callback_object_inner(source).is_some() =>
-        {
-            Ok(())
-        }
-        _ => Err(Error::SourceSyntaxMismatch(
-            "source handle type does not match binding handle target",
-        )),
-    }
-}
-
-fn callback_object_inner(source: &TypeExpr) -> Option<&TypeExpr> {
-    match source {
-        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner)
-            if matches!(
-                inner.as_ref(),
-                TypeExpr::Dyn(bounds) if matches!(&bounds.base, BaseTrait::Named { .. })
-            ) =>
-        {
-            Some(inner)
-        }
-        _ => None,
-    }
-}
-
-fn callback_value_type(form: CallbackCarrier, source: &TypeExpr) -> Result<Type, Error> {
-    match form {
-        CallbackCarrier::BoxedDyn | CallbackCarrier::ArcDyn => {
-            TypeTokens::new(source).map(TypeTokens::into_type)
-        }
-        CallbackCarrier::ImplTrait => callback_proxy_type(source),
-    }
-}
-
-fn callback_proxy_type(source: &TypeExpr) -> Result<Type, Error> {
-    let bounds = match source {
-        TypeExpr::ImplTrait(bounds) => bounds,
-        TypeExpr::Boxed(inner) | TypeExpr::Arc(inner) => {
-            let TypeExpr::Dyn(bounds) = inner.as_ref() else {
-                return Err(Error::SourceSyntaxMismatch(
-                    "source callback handle is not a trait object container",
-                ));
-            };
-            bounds
-        }
-        _ => {
-            return Err(Error::SourceSyntaxMismatch(
-                "source type is not a callback handle",
-            ));
-        }
-    };
-    let BaseTrait::Named { path, .. } = &bounds.base else {
-        return Err(Error::SourceSyntaxMismatch(
-            "source callback handle is not a named callback trait",
-        ));
-    };
-    let segment = path.last().ok_or(Error::SourceSyntaxMismatch(
-        "source callback trait path is empty",
-    ))?;
-    if !segment.arguments.is_empty() {
-        return Err(Error::UnsupportedExpansion(
-            "generic impl-trait callback handle",
-        ));
-    }
-    parse_str(&format!("Foreign{}", segment.name.as_str()))
-        .map_err(|_| Error::SourceSyntaxMismatch("callback foreign proxy type is not Rust syntax"))
-}
-
-fn option_inner(type_expr: &TypeExpr) -> Result<&TypeExpr, Error> {
-    match type_expr {
-        TypeExpr::Option(inner) => Ok(inner),
-        _ => Err(Error::SourceSyntaxMismatch("source type is not optional")),
     }
 }

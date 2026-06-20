@@ -5,7 +5,7 @@ use boltffi_binding::{
 };
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Ident, Type, parse_str};
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -143,9 +143,14 @@ where
         Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
 {
     fn render(self) -> Result<TokenStream, Error> {
-        let record = record_ident(self.source)?;
-        let size = layout_size(self.binding.layout().size().get())?;
-        let alignment = layout_size(self.binding.layout().alignment().get())?;
+        let record = names::SourceSpelling::new(&self.source.name)
+            .ident("source record name is not a Rust identifier")?;
+        let layout = LayoutCheck::new(
+            self.binding.layout().size().get(),
+            self.binding.layout().alignment().get(),
+        )?;
+        let size = layout.size();
+        let alignment = layout.alignment();
         let exports = associated_fn::Renderer::new(
             RecordOwner {
                 source: self.source,
@@ -256,7 +261,8 @@ where
         Render<S, wrapper::returns::FailureInput<'expansion, 'lowered, S>, Output = TokenStream>,
 {
     fn render(self) -> Result<TokenStream, Error> {
-        let record = record_ident(self.source)?;
+        let record = names::SourceSpelling::new(&self.source.name)
+            .ident("source record name is not a Rust identifier")?;
         let fields = self.fields()?;
         let wire_sizes = fields
             .iter()
@@ -356,7 +362,8 @@ where
 impl<'expansion, 'lowered, S: RenderSurface> EncodedField<'expansion, 'lowered, S> {
     fn tokens(self) -> Result<EncodedFieldTokens, Error> {
         self.validate_key()?;
-        let field = field_ident(self.source)?;
+        let field = names::SourceSpelling::new(&self.source.name)
+            .ident("source field name is not a Rust identifier")?;
         let generated = names::RecordField::new(&field);
         let decoded = generated.decoded();
         let used = generated.used();
@@ -552,8 +559,9 @@ impl<'receiver> ReceiverKind<'receiver> {
     {
         match (self, receive) {
             (Self::Direct, Some(receive)) => {
-                let rust_type = record_type(source)?;
-                let receiver = names::Wrapper::new(method.span()).receiver();
+                let rust_type = names::SourceSpelling::new(&source.name)
+                    .ty("source record name is not a Rust type")?;
+                let receiver = names::Locals::new(method.span()).receiver();
                 let requires_failure_return =
                     matches!(S::DIRECT_RECORD_PARAMS, DirectRecordCrossing::Pointer);
                 let failure_token = if requires_failure_return {
@@ -614,7 +622,7 @@ impl<'receiver> ReceiverKind<'receiver> {
                     source.id.clone(),
                     SourcePath::single(source.name.spelling()),
                 );
-                let receiver = names::Wrapper::new(method.span()).receiver();
+                let receiver = names::Locals::new(method.span()).receiver();
                 let tokens = <wrapper::param::encoded::Renderer as Render<S, _>>::render(
                     wrapper::param::encoded::Renderer,
                     wrapper::param::encoded::Input::new(
@@ -750,6 +758,33 @@ struct ReceiverWriteback {
     requires_failure_return: bool,
 }
 
+struct LayoutCheck {
+    size: usize,
+    alignment: usize,
+}
+
+impl LayoutCheck {
+    fn new(size: u64, alignment: u64) -> Result<Self, Error> {
+        Ok(Self {
+            size: Self::bytes(size)?,
+            alignment: Self::bytes(alignment)?,
+        })
+    }
+
+    const fn size(&self) -> usize {
+        self.size
+    }
+
+    const fn alignment(&self) -> usize {
+        self.alignment
+    }
+
+    fn bytes(bytes: u64) -> Result<usize, Error> {
+        usize::try_from(bytes)
+            .map_err(|_| Error::SourceSyntaxMismatch("record layout is too large"))
+    }
+}
+
 impl ReceiverWriteback {
     fn none() -> Self {
         Self {
@@ -759,23 +794,4 @@ impl ReceiverWriteback {
             requires_failure_return: false,
         }
     }
-}
-
-fn record_ident(source: &RecordDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source record name is not a Rust identifier"))
-}
-
-fn record_type(source: &RecordDef) -> Result<Type, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source record name is not a Rust type"))
-}
-
-fn field_ident(source: &FieldDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source field name is not a Rust identifier"))
-}
-
-fn layout_size(bytes: u64) -> Result<usize, Error> {
-    usize::try_from(bytes).map_err(|_| Error::SourceSyntaxMismatch("record layout is too large"))
 }

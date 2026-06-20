@@ -1,10 +1,11 @@
 use boltffi_ast::{ClassDef, StreamDef, TypeExpr};
 use boltffi_binding::{
-    ClassDecl, CodecNode, DirectValueType, NativeSymbol, Op, StreamDecl, StreamItemPlan, ValueRef,
+    ClassDecl, CodecNode, DirectValueType, NativeSymbol, Op, StreamDecl, StreamItemPlan,
+    StreamProtocol, ValueRef,
 };
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{Ident, Type, parse_str};
+use quote::quote;
+use syn::{Ident, Type};
 
 use crate::experimental::{
     error::Error,
@@ -21,24 +22,24 @@ pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     expansion: &'expansion Expansion<'lowered, S>,
 }
 
-struct StreamSymbols<'lowered> {
-    subscribe: &'lowered NativeSymbol,
-    pop_batch: &'lowered NativeSymbol,
-    wait: &'lowered NativeSymbol,
-    poll: &'lowered NativeSymbol,
-    unsubscribe: &'lowered NativeSymbol,
-    free: &'lowered NativeSymbol,
+struct StreamSymbols {
+    subscribe: NativeSymbol,
+    pop_batch: NativeSymbol,
+    wait: NativeSymbol,
+    poll: NativeSymbol,
+    unsubscribe: NativeSymbol,
+    free: NativeSymbol,
 }
 
-struct SubscribeExport<'stream> {
-    method: &'stream Ident,
-    receiver: &'stream Ident,
-    stream_handle_type: &'stream TokenStream,
-    stream_handle_zero: &'stream TokenStream,
+struct SubscribeExport {
+    method: Ident,
+    receiver: Ident,
+    stream_handle_type: TokenStream,
+    stream_handle_zero: TokenStream,
 }
 
-struct StreamItemType<'source> {
-    source: &'source TypeExpr,
+struct StreamItemType {
+    source: TypeExpr,
 }
 
 enum Subscription<'lowered, S: RenderSurface> {
@@ -93,9 +94,10 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     {
         self.validate_subscription()?;
         let cfg = S::cfg_attr();
-        let method = method_ident(self.stream.source())?;
-        let wrapper_names = names::Wrapper::new(method.span());
-        let receiver = wrapper_names.receiver();
+        let method = names::SourceSpelling::new(&self.stream.source().name)
+            .ident("source stream name is not a Rust identifier")?;
+        let locals = names::Locals::new(method.span());
+        let receiver = locals.receiver();
         let item_type = StreamItemType::new(&self.stream.source().item_type).into_type()?;
         let stream_handle = <wrapper::handle::Carrier as Render<S, _>>::render(
             wrapper::handle::Carrier,
@@ -105,17 +107,17 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
         let stream_handle_zero = stream_handle.zero();
         let symbols = StreamSymbols::new(self.stream.binding().protocol());
         let subscribe = self.subscribe(SubscribeExport {
-            method: &method,
-            receiver: &receiver,
-            stream_handle_type,
-            stream_handle_zero,
+            method,
+            receiver,
+            stream_handle_type: stream_handle_type.clone(),
+            stream_handle_zero: stream_handle_zero.clone(),
         })?;
         let pop_batch = self.pop_batch(
             &item_type,
             stream_handle_type,
             stream_handle_zero,
-            &wrapper_names.stream_items(),
-            &wrapper_names.stream_output_slots(),
+            &locals.stream_items(),
+            &locals.stream_output_slots(),
         )?;
         let wait = symbols.wait();
         let poll = symbols.poll();
@@ -220,7 +222,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
         }
     }
 
-    fn subscribe(&self, subscribe: SubscribeExport<'_>) -> Result<TokenStream, Error>
+    fn subscribe(&self, subscribe: SubscribeExport) -> Result<TokenStream, Error>
     where
         wrapper::handle::Carrier: Render<
                 S,
@@ -243,9 +245,10 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
                 }
             }),
             Subscription::Method(owner) => {
-                let class = class_ident(owner.source())?;
+                let class = names::SourceSpelling::new(&owner.source().name)
+                    .ident("source class name is not a Rust identifier")?;
                 let handle_type = names::Class::new(&class).handle();
-                let receiver_handle = names::Parameter::new(receiver).handle();
+                let receiver_handle = names::Parameter::new(&receiver).handle();
                 let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
                     wrapper::handle::Carrier,
                     wrapper::handle::CarrierInput::new(owner.binding().handle()),
@@ -405,13 +408,15 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     }
 }
 
-impl<'source> StreamItemType<'source> {
-    const fn new(source: &'source TypeExpr) -> Self {
-        Self { source }
+impl StreamItemType {
+    fn new(source: &TypeExpr) -> Self {
+        Self {
+            source: source.clone(),
+        }
     }
 
     fn into_type(self) -> Result<Type, Error> {
-        rust_api::TypeTokens::new(&Self::owned(self.source)).map(|tokens| tokens.into_type())
+        rust_api::TypeTokens::new(&Self::owned(&self.source)).map(|tokens| tokens.into_type())
     }
 
     fn owned(source: &TypeExpr) -> TypeExpr {
@@ -433,53 +438,39 @@ impl<'source> StreamItemType<'source> {
     }
 }
 
-impl<'lowered> StreamSymbols<'lowered> {
-    fn new(protocol: &'lowered boltffi_binding::StreamProtocol) -> Self {
+impl StreamSymbols {
+    fn new(protocol: &StreamProtocol) -> Self {
         Self {
-            subscribe: protocol.subscribe(),
-            pop_batch: protocol.pop_batch(),
-            wait: protocol.wait(),
-            poll: protocol.poll(),
-            unsubscribe: protocol.unsubscribe(),
-            free: protocol.free(),
+            subscribe: protocol.subscribe().clone(),
+            pop_batch: protocol.pop_batch().clone(),
+            wait: protocol.wait().clone(),
+            poll: protocol.poll().clone(),
+            unsubscribe: protocol.unsubscribe().clone(),
+            free: protocol.free().clone(),
         }
     }
 
     fn subscribe(&self) -> Ident {
-        symbol_ident(self.subscribe)
+        names::Symbol::new(&self.subscribe).ident()
     }
 
     fn pop_batch(&self) -> Ident {
-        symbol_ident(self.pop_batch)
+        names::Symbol::new(&self.pop_batch).ident()
     }
 
     fn wait(&self) -> Ident {
-        symbol_ident(self.wait)
+        names::Symbol::new(&self.wait).ident()
     }
 
     fn poll(&self) -> Ident {
-        symbol_ident(self.poll)
+        names::Symbol::new(&self.poll).ident()
     }
 
     fn unsubscribe(&self) -> Ident {
-        symbol_ident(self.unsubscribe)
+        names::Symbol::new(&self.unsubscribe).ident()
     }
 
     fn free(&self) -> Ident {
-        symbol_ident(self.free)
+        names::Symbol::new(&self.free).ident()
     }
-}
-
-fn class_ident(source: &ClassDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source class name is not a Rust identifier"))
-}
-
-fn method_ident(source: &StreamDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source stream name is not a Rust identifier"))
-}
-
-fn symbol_ident(symbol: &NativeSymbol) -> Ident {
-    format_ident!("{}", symbol.name().as_str())
 }

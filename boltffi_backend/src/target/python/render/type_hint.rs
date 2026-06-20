@@ -16,17 +16,11 @@ pub struct TypeHint {
 }
 
 impl TypeHint {
-    pub fn from_type_ref<'package>(
-        ty: &TypeRef,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_type_ref(ty: &TypeRef, package: &Package) -> Result<Self> {
         ty.render_with(&mut TypeRefHint::value(package))
     }
 
-    pub fn from_direct_value<'package>(
-        ty: &DirectValueType,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_direct_value(ty: &DirectValueType, package: &Package) -> Result<Self> {
         match ty {
             DirectValueType::Primitive(primitive) => Self::from_primitive(*primitive),
             DirectValueType::Record(record) => Ok(Self::new(TypeAnnotation::identifier(
@@ -42,17 +36,11 @@ impl TypeHint {
         }
     }
 
-    pub fn from_parameter<'package>(
-        plan: &ParamPlan<Native, IntoRust>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_parameter(plan: &ParamPlan<Native, IntoRust>, package: &Package) -> Result<Self> {
         plan.render_with(&mut ParameterHint { package })
     }
 
-    pub fn from_return<'package>(
-        plan: &ReturnPlan<Native, OutOfRust>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_return(plan: &ReturnPlan<Native, OutOfRust>, package: &Package) -> Result<Self> {
         plan.render_with(&mut ReturnHint { package })
     }
 
@@ -87,32 +75,29 @@ impl TypeHint {
         self.uses_sequence
     }
 
-    fn from_parameter_type_ref<'package>(
-        ty: &TypeRef,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    fn from_parameter_type_ref(ty: &TypeRef, package: &Package) -> Result<Self> {
         ty.render_with(&mut TypeRefHint::parameter(package))
     }
 
-    fn from_direct_vector_parameter<'package>(
+    fn from_direct_vector_parameter(
         element: &DirectVectorElementType,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         let element = Self::from_direct_vector_element(element, package)?;
         Ok(Self::sequence(TypeAnnotation::sequence(element.annotation)))
     }
 
-    fn from_direct_vector_return<'package>(
+    fn from_direct_vector_return(
         element: &DirectVectorElementType,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         let element = Self::from_direct_vector_element(element, package)?;
         Ok(Self::new(TypeAnnotation::list(element.annotation)))
     }
 
-    fn from_direct_vector_element<'package>(
+    fn from_direct_vector_element(
         element: &DirectVectorElementType,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         match element {
             DirectVectorElementType::Primitive(primitive) => {

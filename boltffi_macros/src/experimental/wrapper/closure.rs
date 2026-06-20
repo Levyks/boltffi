@@ -156,8 +156,8 @@ struct Parameter<'expansion, 'lowered, S: RenderSurface> {
 impl<'expansion, 'lowered, S: RenderSurface> Parameter<'expansion, 'lowered, S> {
     fn direct_tokens(&self) -> Result<Option<ParameterTokens>, Error>
     where
-        for<'direct> wrapper::param::direct::Renderer:
-            Render<S, wrapper::param::direct::Input<'direct>, Output = wrapper::param::Tokens>,
+        wrapper::param::direct::Renderer:
+            Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
         wrapper::param::closure::Renderer: Render<
                 S,
                 wrapper::param::closure::Input<'expansion, 'lowered, S>,
@@ -477,7 +477,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Return<'expansion, 'lowered, S> {
                 Output = returns::encoded::Tokens,
             > + Render<S, returns::encoded::Empty<S>, Output = returns::encoded::Tokens>,
     {
-        let error_ident = names::Wrapper::new(Span::call_site()).error();
+        let error_ident = names::Locals::new(Span::call_site()).error();
         let error = <returns::encoded::Renderer as Render<S, _>>::render(
             returns::encoded::Renderer,
             returns::encoded::Input::new(error_codec, error_shape, error_ident, self.expansion),
@@ -568,7 +568,7 @@ impl<'expansion, 'lowered> Render<Native, Return<'expansion, 'lowered, Native>> 
                     ..
                 },
             ) => {
-                let success_ident = names::Wrapper::new(Span::call_site()).success();
+                let success_ident = names::Locals::new(Span::call_site()).success();
                 let success = <returns::encoded::Renderer as Render<Native, _>>::render(
                     returns::encoded::Renderer,
                     returns::encoded::Input::new(
@@ -669,7 +669,7 @@ impl<'expansion, 'lowered> Render<Wasm32, Return<'expansion, 'lowered, Wasm32>> 
                     ..
                 },
             ) => {
-                let success_ident = names::Wrapper::new(Span::call_site()).success();
+                let success_ident = names::Locals::new(Span::call_site()).success();
                 let success = <returns::encoded::Renderer as Render<Wasm32, _>>::render(
                     returns::encoded::Renderer,
                     returns::encoded::Input::new(
@@ -859,7 +859,7 @@ enum FallibleSuccess {
 
 impl FallibleSuccess {
     fn ffi_parameters(&self) -> Vec<TokenStream> {
-        let out = names::Wrapper::new(Span::call_site()).success_out();
+        let out = names::Locals::new(Span::call_site()).success_out();
         self.ffi_parameter_types()
             .into_iter()
             .map(|ty| quote! { #out: #ty })
@@ -878,7 +878,7 @@ impl FallibleSuccess {
     }
 
     fn body(&self, error: &EncodedError, call: TokenStream) -> TokenStream {
-        let locals = names::Wrapper::new(Span::call_site());
+        let locals = names::Locals::new(Span::call_site());
         let success_out = locals.success_out();
         let success_ident = locals.success();
         let empty_error = &error.empty_value;

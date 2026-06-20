@@ -80,7 +80,7 @@ impl Render<Wasm32, Input> for Renderer {
     fn render(self, input: Input) -> Result<Self::Output, Error> {
         let ident = &input.ident;
         let rust_type = &input.rust_type;
-        let value = Scalar::new(input.primitive, ident).some_value()?;
+        let value = Scalar::new(input.primitive, ident.clone()).some_value()?;
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: vec![quote! { #ident: f64 }],
@@ -98,13 +98,13 @@ impl Render<Wasm32, Input> for Renderer {
     }
 }
 
-struct Scalar<'value> {
+struct Scalar {
     primitive: Primitive,
-    value: &'value Ident,
+    value: Ident,
 }
 
-impl<'value> Scalar<'value> {
-    fn new(primitive: Primitive, value: &'value Ident) -> Self {
+impl Scalar {
+    fn new(primitive: Primitive, value: Ident) -> Self {
         Self { primitive, value }
     }
 

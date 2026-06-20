@@ -1,18 +1,28 @@
+use boltffi_ast::SourceName;
+use boltffi_binding::NativeSymbol;
 use proc_macro2::Span;
 use quote::format_ident;
-use syn::{Ident, PathArguments, Type};
+use syn::{Ident, PathArguments, Type, parse_str};
 
 use crate::experimental::error::Error;
 
-pub struct Wrapper {
+pub struct Locals {
     span: Span,
 }
 
-pub struct Class<'source> {
-    source: &'source Ident,
+pub struct Class {
+    source: Ident,
 }
 
-impl Wrapper {
+pub struct Symbol {
+    spelling: String,
+}
+
+pub struct SourceSpelling {
+    spelling: String,
+}
+
+impl Locals {
     pub const fn new(span: Span) -> Self {
         Self { span }
     }
@@ -62,12 +72,42 @@ impl Wrapper {
     }
 }
 
-impl<'source> Class<'source> {
-    pub const fn new(source: &'source Ident) -> Self {
-        Self { source }
+impl SourceSpelling {
+    pub fn new(name: &SourceName) -> Self {
+        Self {
+            spelling: name.spelling().to_owned(),
+        }
     }
 
-    pub fn from_type_path(class: &'source Type) -> Result<Self, Error> {
+    pub fn ident(&self, mismatch: &'static str) -> Result<Ident, Error> {
+        parse_str(&self.spelling).map_err(|_| Error::SourceSyntaxMismatch(mismatch))
+    }
+
+    pub fn ty(&self, mismatch: &'static str) -> Result<Type, Error> {
+        parse_str(&self.spelling).map_err(|_| Error::SourceSyntaxMismatch(mismatch))
+    }
+}
+
+impl Symbol {
+    pub fn new(symbol: &NativeSymbol) -> Self {
+        Self {
+            spelling: symbol.name().as_str().to_owned(),
+        }
+    }
+
+    pub fn ident(&self) -> Ident {
+        format_ident!("{}", self.spelling)
+    }
+}
+
+impl Class {
+    pub fn new(source: &Ident) -> Self {
+        Self {
+            source: source.clone(),
+        }
+    }
+
+    pub fn from_type_path(class: &Type) -> Result<Self, Error> {
         let Type::Path(path) = class else {
             return Err(Error::SourceSyntaxMismatch("class type is not a path"));
         };
@@ -100,13 +140,15 @@ impl<'source> Class<'source> {
     }
 }
 
-pub struct ClosureRegistration<'source> {
-    source: &'source Ident,
+pub struct ClosureRegistration {
+    source: Ident,
 }
 
-impl<'source> ClosureRegistration<'source> {
-    pub const fn new(source: &'source Ident) -> Self {
-        Self { source }
+impl ClosureRegistration {
+    pub fn new(source: &Ident) -> Self {
+        Self {
+            source: source.clone(),
+        }
     }
 
     pub fn call(&self) -> Ident {
@@ -132,13 +174,15 @@ impl<'source> ClosureRegistration<'source> {
     }
 }
 
-pub struct NativeClosureRegistration<'source> {
-    source: &'source Ident,
+pub struct NativeClosureRegistration {
+    source: Ident,
 }
 
-impl<'source> NativeClosureRegistration<'source> {
-    pub const fn new(source: &'source Ident) -> Self {
-        Self { source }
+impl NativeClosureRegistration {
+    pub fn new(source: &Ident) -> Self {
+        Self {
+            source: source.clone(),
+        }
     }
 
     pub fn call(&self) -> Ident {
@@ -163,14 +207,17 @@ impl<'source> NativeClosureRegistration<'source> {
     }
 }
 
-pub struct ReturnedClosureRegistration<'source> {
-    owner: &'source Ident,
-    channel: &'source str,
+pub struct ReturnedClosureRegistration {
+    owner: Ident,
+    channel: &'static str,
 }
 
-impl<'source> ReturnedClosureRegistration<'source> {
-    pub const fn new(owner: &'source Ident, channel: &'source str) -> Self {
-        Self { owner, channel }
+impl ReturnedClosureRegistration {
+    pub fn new(owner: &Ident, channel: &'static str) -> Self {
+        Self {
+            owner: owner.clone(),
+            channel,
+        }
     }
 
     pub fn call(&self) -> Ident {
@@ -192,13 +239,15 @@ impl<'source> ReturnedClosureRegistration<'source> {
     }
 }
 
-pub struct Parameter<'source> {
-    source: &'source Ident,
+pub struct Parameter {
+    source: Ident,
 }
 
-impl<'source> Parameter<'source> {
-    pub const fn new(source: &'source Ident) -> Self {
-        Self { source }
+impl Parameter {
+    pub fn new(source: &Ident) -> Self {
+        Self {
+            source: source.clone(),
+        }
     }
 
     pub fn pointer(&self) -> Ident {
@@ -266,13 +315,15 @@ impl ClosureArgument {
     }
 }
 
-pub struct RecordField<'source> {
-    source: &'source Ident,
+pub struct RecordField {
+    source: Ident,
 }
 
-impl<'source> RecordField<'source> {
-    pub const fn new(source: &'source Ident) -> Self {
-        Self { source }
+impl RecordField {
+    pub fn new(source: &Ident) -> Self {
+        Self {
+            source: source.clone(),
+        }
     }
 
     pub fn decoded(&self) -> Ident {

@@ -12,40 +12,40 @@ pub enum PollStyle {
 }
 
 /// Lifecycle symbols of a poll-handle async protocol.
-pub struct PollHandleSymbols<'symbols> {
-    poll: &'symbols NativeSymbol,
-    complete: &'symbols NativeSymbol,
-    cancel: &'symbols NativeSymbol,
-    free: &'symbols NativeSymbol,
-    panic_message: &'symbols NativeSymbol,
+pub struct PollHandleSymbols {
+    poll: NativeSymbol,
+    complete: NativeSymbol,
+    cancel: NativeSymbol,
+    free: NativeSymbol,
+    panic_message: NativeSymbol,
     style: PollStyle,
 }
 
-impl<'symbols> PollHandleSymbols<'symbols> {
+impl PollHandleSymbols {
     /// Returns the symbol that advances the operation.
-    pub fn poll(&self) -> &'symbols NativeSymbol {
-        self.poll
+    pub fn poll(&self) -> &NativeSymbol {
+        &self.poll
     }
 
     /// Returns the symbol that extracts the resolved value once ready.
-    pub fn complete(&self) -> &'symbols NativeSymbol {
-        self.complete
+    pub fn complete(&self) -> &NativeSymbol {
+        &self.complete
     }
 
     /// Returns the symbol that requests cancellation.
-    pub fn cancel(&self) -> &'symbols NativeSymbol {
-        self.cancel
+    pub fn cancel(&self) -> &NativeSymbol {
+        &self.cancel
     }
 
     /// Returns the symbol that releases the async state.
-    pub fn free(&self) -> &'symbols NativeSymbol {
-        self.free
+    pub fn free(&self) -> &NativeSymbol {
+        &self.free
     }
 
     /// Returns the symbol that retrieves the panic message after a failed
     /// operation.
-    pub fn panic_message(&self) -> &'symbols NativeSymbol {
-        self.panic_message
+    pub fn panic_message(&self) -> &NativeSymbol {
+        &self.panic_message
     }
 
     /// Returns how the foreign side drives the poll loop.
@@ -57,11 +57,11 @@ impl<'symbols> PollHandleSymbols<'symbols> {
 /// How async callables run their lifecycle on a surface.
 pub trait AsyncLifecycle: Surface {
     /// Resolves a protocol to its poll-handle lifecycle symbols.
-    fn poll_handle(protocol: &Self::AsyncProtocol) -> Result<PollHandleSymbols<'_>, Error>;
+    fn poll_handle(protocol: &Self::AsyncProtocol) -> Result<PollHandleSymbols, Error>;
 }
 
 impl AsyncLifecycle for Native {
-    fn poll_handle(protocol: &native::AsyncProtocol) -> Result<PollHandleSymbols<'_>, Error> {
+    fn poll_handle(protocol: &native::AsyncProtocol) -> Result<PollHandleSymbols, Error> {
         match protocol {
             native::AsyncProtocol::PollHandle {
                 poll,
@@ -71,11 +71,11 @@ impl AsyncLifecycle for Native {
                 panic_message,
                 ..
             } => Ok(PollHandleSymbols {
-                poll,
-                complete,
-                cancel,
-                free,
-                panic_message,
+                poll: poll.clone(),
+                complete: complete.clone(),
+                cancel: cancel.clone(),
+                free: free.clone(),
+                panic_message: panic_message.clone(),
                 style: PollStyle::Continuation,
             }),
             _ => Err(Error::UnsupportedExpansion("native async protocol")),
@@ -84,7 +84,7 @@ impl AsyncLifecycle for Native {
 }
 
 impl AsyncLifecycle for Wasm32 {
-    fn poll_handle(protocol: &wasm32::AsyncProtocol) -> Result<PollHandleSymbols<'_>, Error> {
+    fn poll_handle(protocol: &wasm32::AsyncProtocol) -> Result<PollHandleSymbols, Error> {
         match protocol {
             wasm32::AsyncProtocol::PollHandle {
                 poll_sync,
@@ -94,11 +94,11 @@ impl AsyncLifecycle for Wasm32 {
                 panic_message,
                 ..
             } => Ok(PollHandleSymbols {
-                poll: poll_sync,
-                complete,
-                cancel,
-                free,
-                panic_message,
+                poll: poll_sync.clone(),
+                complete: complete.clone(),
+                cancel: cancel.clone(),
+                free: free.clone(),
+                panic_message: panic_message.clone(),
                 style: PollStyle::Synchronous,
             }),
             _ => Err(Error::UnsupportedExpansion("wasm async protocol")),

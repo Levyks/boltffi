@@ -184,7 +184,7 @@ where
             writebacks,
             ..
         } = input.invocation;
-        let locals = names::Wrapper::new(span);
+        let locals = names::Locals::new(span);
         match input.returns.plan() {
             ReturnPlan::Void => Ok(Tokens {
                 items: Vec::new(),
@@ -474,7 +474,7 @@ impl<'expansion, 'lowered, S: RenderSurface> ErrorFailure<'expansion, 'lowered, 
             ErrorDecl::EncodedViaReturnSlot { codec, shape, .. }
                 if matches!(codec.root(), CodecNode::String) =>
             {
-                let error = names::Wrapper::new(proc_macro2::Span::call_site()).error();
+                let error = names::Locals::new(proc_macro2::Span::call_site()).error();
                 let encoded = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,
                     encoded::Input::string(codec, *shape, error.clone(), self.expansion),

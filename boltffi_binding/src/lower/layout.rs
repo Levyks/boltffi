@@ -11,7 +11,7 @@ use super::{LowerError, error::UnsupportedType, primitive};
 /// alignment seen as the record's own. The trailing size is rounded up
 /// to that alignment so an array of these records lays out without
 /// internal padding.
-pub(super) fn compute(record: &SourceRecord) -> Result<RecordLayout, LowerError> {
+pub fn compute(record: &SourceRecord) -> Result<RecordLayout, LowerError> {
     let (offset, alignment, fields) = record.fields.iter().try_fold(
         (0_u64, 1_u64, Vec::new()),
         |(offset, alignment, mut fields), field| {

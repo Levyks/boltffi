@@ -1,8 +1,8 @@
 use boltffi_ast::{ReturnDef, TypeExpr};
 
 use crate::{
-    DirectValueType, DirectVectorElementType, Direction, ElementMeta, ErrorDecl, HandleTarget,
-    ParamDirection, Primitive, ReturnDecl, ReturnPlan, ValueRef,
+    DirectValueType, Direction, ElementMeta, ErrorDecl, HandleTarget, ParamDirection, Primitive,
+    ReturnDecl, ReturnPlan, ValueRef,
 };
 
 use super::super::{
@@ -11,13 +11,13 @@ use super::super::{
 };
 
 use super::{
-    CallableOwner, CallbackHandleSource, ClassHandleSource, ClosureSource, params::LowerClosure,
-    substitute_self_type,
+    CallableOwner, CallbackHandleSource, ClassHandleSource, ClosureSource, ValueSpecialization,
+    params::LowerClosure, substitute_self_type,
 };
 
 /// The return and error pair produced by [`lower`] for one source
 /// [`ReturnDef`].
-pub(super) type Lowered<S, D> = (ReturnDecl<S, D>, ErrorDecl<S, D>);
+pub type Lowered<S, D> = (ReturnDecl<S, D>, ErrorDecl<S, D>);
 
 /// Lowers a source [`ReturnDef`] into the pair the enclosing
 /// [`CallableDecl`](crate::CallableDecl) records: a
@@ -35,7 +35,7 @@ pub(super) type Lowered<S, D> = (ReturnDecl<S, D>, ErrorDecl<S, D>);
 /// is the same in either slot), so the direction `D` decides
 /// structurally whether the invoke contract is foreign- or
 /// Rust-implemented.
-pub(super) fn lower<S: SurfaceLower, D: Direction + LowerClosure<S>>(
+pub fn lower<S: SurfaceLower, D: Direction + LowerClosure<S>>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -100,38 +100,16 @@ fn specialize_return<S: SurfaceLower, D: Direction>(
 where
     D::Opposite: ParamDirection<S>,
 {
-    Ok(match type_expr {
-        TypeExpr::Option(inner) => {
-            primitive(inner).map(|primitive| ReturnPlan::ScalarOptionViaReturnSlot { primitive })
+    let specialization = ValueSpecialization::from_type_expr(index, ids, type_expr)?;
+    Ok(match specialization {
+        Some(ValueSpecialization::ScalarOption(primitive)) => {
+            Some(ReturnPlan::ScalarOptionViaReturnSlot { primitive })
         }
-        TypeExpr::Vec(inner) => direct_vec_element(index, ids, inner)?
-            .map(|element| ReturnPlan::DirectVecViaReturnSlot { element }),
-        _ => None,
+        Some(ValueSpecialization::DirectVector(element)) => {
+            Some(ReturnPlan::DirectVecViaReturnSlot { element })
+        }
+        None => None,
     })
-}
-
-fn primitive(type_expr: &TypeExpr) -> Option<Primitive> {
-    if let TypeExpr::Primitive(p) = type_expr {
-        Some(Primitive::from(*p))
-    } else {
-        None
-    }
-}
-
-fn direct_vec_element(
-    index: &Index,
-    ids: &DeclarationIds,
-    type_expr: &TypeExpr,
-) -> Result<Option<DirectVectorElementType>, LowerError> {
-    match type_expr {
-        TypeExpr::Primitive(primitive) => Ok(DirectVectorElementType::primitive(Primitive::from(
-            *primitive,
-        ))),
-        TypeExpr::Record { id, .. } if index.record(id).is_some_and(records::is_direct) => {
-            Ok(Some(DirectVectorElementType::record(ids.record(id)?)))
-        }
-        _ => Ok(None),
-    }
 }
 
 fn lower_error<S: SurfaceLower, D: Direction>(

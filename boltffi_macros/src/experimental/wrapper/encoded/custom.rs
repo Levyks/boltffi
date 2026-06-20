@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use boltffi_binding::{
     BuiltinType, CallbackId, ClassId, CodecNode, CodecRead, CustomConverterPath,
     CustomConverterPathRoot, CustomTypeConverter, CustomTypeId, ElementCount, EnumId, MapKind, Op,
@@ -32,13 +30,13 @@ pub struct IncomingConversion {
     changed: bool,
 }
 
-struct IncomingConverter<'expansion, 'lowered, S: RenderSurface> {
-    expansion: &'expansion Expansion<'lowered, S>,
+struct IncomingConverter<'expansion, S: RenderSurface> {
+    expansion: &'expansion Expansion<'expansion, S>,
 }
 
-struct OutgoingConverter<'expansion, 'lowered, S: RenderSurface, M> {
-    expansion: &'expansion Expansion<'lowered, S>,
-    mode: PhantomData<M>,
+struct OutgoingConverter<'expansion, S: RenderSurface> {
+    expansion: &'expansion Expansion<'expansion, S>,
+    mode: OutgoingValueMode,
 }
 
 struct IncomingTransform {
@@ -68,30 +66,16 @@ enum OutgoingTransform {
     },
 }
 
-struct OwnedValue;
+struct ConverterRenderer;
 
-struct BorrowedValue;
-
-struct ConverterRenderer<'lowered> {
-    converter: &'lowered CustomTypeConverter,
-}
-
-struct PathRenderer<'lowered> {
-    path: &'lowered CustomConverterPath,
-}
+struct PathRenderer;
 
 struct RepresentationType;
 
-trait OutgoingMode {
-    fn custom(converter: TokenStream) -> OutgoingTransform;
-
-    fn optional(value: TokenStream, inner: TokenStream) -> TokenStream;
-
-    fn sequence(value: TokenStream, element: TokenStream) -> TokenStream;
-
-    fn tuple_field(value: TokenStream, index: Index) -> TokenStream;
-
-    fn map(value: TokenStream, key: TokenStream, item: TokenStream) -> TokenStream;
+#[derive(Clone, Copy)]
+enum OutgoingValueMode {
+    Owned,
+    Borrowed,
 }
 
 impl IncomingConversion {
@@ -166,36 +150,33 @@ impl OutgoingTransform {
         !matches!(self, Self::Identity)
     }
 
-    fn apply<M>(&self, value: TokenStream) -> TokenStream
-    where
-        M: OutgoingMode,
-    {
+    fn apply(&self, value: TokenStream, mode: OutgoingValueMode) -> TokenStream {
         match self {
             Self::Identity => value,
             Self::ReferenceConverter(converter) => quote! { (#converter)(&#value) },
             Self::ValueConverter(converter) => quote! { (#converter)(#value) },
             Self::Optional(inner) => {
-                let inner = inner.apply::<M>(quote! { value });
-                M::optional(value, inner)
+                let inner = inner.apply(quote! { value }, mode);
+                mode.optional(value, inner)
             }
             Self::Sequence(element) => {
-                let element = element.apply::<M>(quote! { value });
-                M::sequence(value, element)
+                let element = element.apply(quote! { value }, mode);
+                mode.sequence(value, element)
             }
             Self::Tuple(elements) => {
                 let values = elements
                     .iter()
                     .enumerate()
                     .map(|(index, element)| {
-                        let field = M::tuple_field(value.clone(), Index::from(index));
-                        element.apply::<M>(field)
+                        let field = mode.tuple_field(value.clone(), Index::from(index));
+                        element.apply(field, mode)
                     })
                     .collect::<Vec<_>>();
                 quote! { (#(#values,)*) }
             }
             Self::Result { ok, err } => {
-                let ok = ok.apply::<M>(quote! { value });
-                let err = err.apply::<M>(quote! { error });
+                let ok = ok.apply(quote! { value }, mode);
+                let err = err.apply(quote! { error }, mode);
                 quote! {
                     match #value {
                         Ok(value) => Ok(#ok),
@@ -204,16 +185,17 @@ impl OutgoingTransform {
                 }
             }
             Self::Map { key, value: item } => {
-                let key = key.apply::<M>(quote! { key });
-                let item = item.apply::<M>(quote! { value });
-                M::map(value, key, item)
+                let key = key.apply(quote! { key }, mode);
+                let item = item.apply(quote! { value }, mode);
+                mode.map(value, key, item)
             }
             Self::CustomRepresentation {
                 custom,
                 representation,
             } => {
-                let custom = custom.apply::<M>(value);
-                let representation = representation.apply::<M>(quote! { __boltffi_representation });
+                let custom = custom.apply(value, mode);
+                let representation =
+                    representation.apply(quote! { __boltffi_representation }, mode);
                 quote! {
                     {
                         let __boltffi_representation = #custom;
@@ -225,81 +207,71 @@ impl OutgoingTransform {
     }
 }
 
-impl<'expansion, 'lowered, S: RenderSurface> IncomingConverter<'expansion, 'lowered, S> {
-    fn new(expansion: &'expansion Expansion<'lowered, S>) -> Self {
+impl<'expansion, S: RenderSurface> IncomingConverter<'expansion, S> {
+    fn new(expansion: &'expansion Expansion<'expansion, S>) -> Self {
         Self { expansion }
     }
 }
 
-impl<'expansion, 'lowered, S: RenderSurface, M> OutgoingConverter<'expansion, 'lowered, S, M> {
-    fn new(expansion: &'expansion Expansion<'lowered, S>) -> Self {
-        Self {
-            expansion,
-            mode: PhantomData,
-        }
+impl<'expansion, S: RenderSurface> OutgoingConverter<'expansion, S> {
+    fn new(expansion: &'expansion Expansion<'expansion, S>, mode: OutgoingValueMode) -> Self {
+        Self { expansion, mode }
     }
 }
 
-impl OutgoingMode for OwnedValue {
-    fn custom(converter: TokenStream) -> OutgoingTransform {
-        OutgoingTransform::ReferenceConverter(converter)
-    }
-
-    fn optional(value: TokenStream, inner: TokenStream) -> TokenStream {
-        quote! { #value.map(|value| #inner) }
-    }
-
-    fn sequence(value: TokenStream, element: TokenStream) -> TokenStream {
-        quote! {
-            #value
-                .into_iter()
-                .map(|value| #element)
-                .collect::<Vec<_>>()
+impl OutgoingValueMode {
+    fn custom(self, converter: TokenStream) -> OutgoingTransform {
+        match self {
+            Self::Owned => OutgoingTransform::ReferenceConverter(converter),
+            Self::Borrowed => OutgoingTransform::ValueConverter(converter),
         }
     }
 
-    fn tuple_field(value: TokenStream, index: Index) -> TokenStream {
-        quote! { (#value).#index }
-    }
-
-    fn map(value: TokenStream, key: TokenStream, item: TokenStream) -> TokenStream {
-        quote! {
-            #value
-                .into_iter()
-                .map(|(key, value)| (#key, #item))
-                .collect::<Vec<_>>()
-        }
-    }
-}
-
-impl OutgoingMode for BorrowedValue {
-    fn custom(converter: TokenStream) -> OutgoingTransform {
-        OutgoingTransform::ValueConverter(converter)
-    }
-
-    fn optional(value: TokenStream, inner: TokenStream) -> TokenStream {
-        quote! { #value.as_ref().map(|value| #inner) }
-    }
-
-    fn sequence(value: TokenStream, element: TokenStream) -> TokenStream {
-        quote! {
-            #value
-                .iter()
-                .map(|value| #element)
-                .collect::<Vec<_>>()
+    fn optional(self, value: TokenStream, inner: TokenStream) -> TokenStream {
+        match self {
+            Self::Owned => quote! { #value.map(|value| #inner) },
+            Self::Borrowed => quote! { #value.as_ref().map(|value| #inner) },
         }
     }
 
-    fn tuple_field(value: TokenStream, index: Index) -> TokenStream {
-        quote! { &(#value).#index }
+    fn sequence(self, value: TokenStream, element: TokenStream) -> TokenStream {
+        match self {
+            Self::Owned => quote! {
+                #value
+                    .into_iter()
+                    .map(|value| #element)
+                    .collect::<Vec<_>>()
+            },
+            Self::Borrowed => quote! {
+                #value
+                    .iter()
+                    .map(|value| #element)
+                    .collect::<Vec<_>>()
+            },
+        }
     }
 
-    fn map(value: TokenStream, key: TokenStream, item: TokenStream) -> TokenStream {
-        quote! {
-            #value
-                .iter()
-                .map(|(key, value)| (#key, #item))
-                .collect::<Vec<_>>()
+    fn tuple_field(self, value: TokenStream, index: Index) -> TokenStream {
+        match self {
+            Self::Owned => quote! { (#value).#index },
+            Self::Borrowed => quote! { &(#value).#index },
+        }
+    }
+
+    fn map(self, value: TokenStream, key: TokenStream, item: TokenStream) -> TokenStream {
+        match self {
+            Self::Owned => quote! {
+                #value
+                    .into_iter()
+                    .map(|(key, value)| (#key, #item))
+                    .collect::<Vec<_>>()
+            },
+            Self::Borrowed => quote! {
+                #value
+                    .iter()
+                    .map(|(key, value)| (#key, #item))
+                    .collect::<Vec<_>>()
+            },
         }
     }
 }
@@ -330,7 +302,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Incoming<'expansion, 'lowered, S> {
     }
 }
 
-impl<S: RenderSurface> CodecRead for IncomingConverter<'_, '_, S> {
+impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S> {
     type Expr = Result<IncomingTransform, Error>;
 
     fn primitive(&mut self, _: Primitive) -> Self::Expr {
@@ -372,7 +344,7 @@ impl<S: RenderSurface> CodecRead for IncomingConverter<'_, '_, S> {
     fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
         let representation = representation?;
         let custom = self.expansion.custom_type(id)?;
-        let converter = ConverterRenderer::new(custom.converters().try_from_ffi()).render()?;
+        let converter = ConverterRenderer.render(custom.converters().try_from_ffi())?;
         if !representation.changed {
             return Ok(IncomingTransform::new(converter, true, true));
         }
@@ -599,11 +571,7 @@ impl<S: RenderSurface> CodecRead for IncomingConverter<'_, '_, S> {
     }
 }
 
-impl<S, M> CodecRead for OutgoingConverter<'_, '_, S, M>
-where
-    S: RenderSurface,
-    M: OutgoingMode,
-{
+impl<'expansion, S: RenderSurface> CodecRead for OutgoingConverter<'expansion, S> {
     type Expr = Result<OutgoingTransform, Error>;
 
     fn primitive(&mut self, _: Primitive) -> Self::Expr {
@@ -645,8 +613,8 @@ where
     fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
         let representation = representation?;
         let custom = self.expansion.custom_type(id)?;
-        let converter = ConverterRenderer::new(custom.converters().into_ffi()).render()?;
-        let custom = M::custom(converter);
+        let converter = ConverterRenderer.render(custom.converters().into_ffi())?;
+        let custom = self.mode.custom(converter);
         match representation.changed() {
             true => Ok(OutgoingTransform::CustomRepresentation {
                 custom: Box::new(custom),
@@ -722,10 +690,11 @@ impl<'expansion, 'lowered, S: RenderSurface> Outgoing<'expansion, 'lowered, S> {
     }
 
     pub fn convert(&self, value: TokenStream) -> Result<TokenStream, Error> {
-        let transform = self
-            .codec
-            .render_read_with(&mut OutgoingConverter::<S, OwnedValue>::new(self.expansion))?;
-        Ok(transform.apply::<OwnedValue>(value))
+        let transform = self.codec.render_read_with(&mut OutgoingConverter::new(
+            self.expansion,
+            OutgoingValueMode::Owned,
+        ))?;
+        Ok(transform.apply(value, OutgoingValueMode::Owned))
     }
 }
 
@@ -742,25 +711,20 @@ impl<'expansion, 'lowered, S: RenderSurface> BorrowedOutgoing<'expansion, 'lower
     }
 
     pub fn convert(&self, value: TokenStream) -> Result<TokenStream, Error> {
-        let transform =
-            self.codec
-                .render_read_with(&mut OutgoingConverter::<S, BorrowedValue>::new(
-                    self.expansion,
-                ))?;
-        Ok(transform.apply::<BorrowedValue>(value))
+        let transform = self.codec.render_read_with(&mut OutgoingConverter::new(
+            self.expansion,
+            OutgoingValueMode::Borrowed,
+        ))?;
+        Ok(transform.apply(value, OutgoingValueMode::Borrowed))
     }
 }
 
-impl<'lowered> ConverterRenderer<'lowered> {
-    const fn new(converter: &'lowered CustomTypeConverter) -> Self {
-        Self { converter }
-    }
-
-    fn render(self) -> Result<TokenStream, Error> {
-        match self.converter {
-            CustomTypeConverter::Path(path) => PathRenderer::new(path).render(),
+impl ConverterRenderer {
+    fn render(self, converter: &CustomTypeConverter) -> Result<TokenStream, Error> {
+        match converter {
+            CustomTypeConverter::Path(path) => PathRenderer.render(path),
             CustomTypeConverter::TraitMethod(converter) => {
-                let receiver = PathRenderer::new(converter.receiver()).render_type()?;
+                let receiver = PathRenderer.render_type(converter.receiver())?;
                 let method =
                     parse_str::<syn::Ident>(converter.method().as_str()).map_err(|_| {
                         Error::SourceSyntaxMismatch("custom converter method is not Rust syntax")
@@ -777,29 +741,25 @@ impl<'lowered> ConverterRenderer<'lowered> {
     }
 }
 
-impl<'lowered> PathRenderer<'lowered> {
-    const fn new(path: &'lowered CustomConverterPath) -> Self {
-        Self { path }
-    }
-
-    fn render(self) -> Result<TokenStream, Error> {
-        parse_str::<ExprPath>(&self.source()?)
+impl PathRenderer {
+    fn render(self, path: &CustomConverterPath) -> Result<TokenStream, Error> {
+        parse_str::<ExprPath>(&self.source(path)?)
             .map(|path| quote! { #path })
             .map_err(|_| Error::SourceSyntaxMismatch("custom converter path is not Rust syntax"))
     }
 
-    fn render_type(self) -> Result<syn::Type, Error> {
-        parse_str::<syn::Type>(&self.source()?).map_err(|_| {
+    fn render_type(self, path: &CustomConverterPath) -> Result<syn::Type, Error> {
+        parse_str::<syn::Type>(&self.source(path)?).map_err(|_| {
             Error::SourceSyntaxMismatch("custom converter receiver is not Rust syntax")
         })
     }
 
-    fn source(&self) -> Result<String, Error> {
-        Ok(self.prefix()? + &self.segments())
+    fn source(&self, path: &CustomConverterPath) -> Result<String, Error> {
+        Ok(self.prefix(path)? + &self.segments(path))
     }
 
-    fn prefix(&self) -> Result<String, Error> {
-        Ok(match self.path.root() {
+    fn prefix(&self, path: &CustomConverterPath) -> Result<String, Error> {
+        Ok(match path.root() {
             CustomConverterPathRoot::Relative => String::new(),
             CustomConverterPathRoot::Crate => "crate::".to_owned(),
             CustomConverterPathRoot::Self_ => "self::".to_owned(),
@@ -818,9 +778,8 @@ impl<'lowered> PathRenderer<'lowered> {
         })
     }
 
-    fn segments(&self) -> String {
-        self.path
-            .segments()
+    fn segments(&self, path: &CustomConverterPath) -> String {
+        path.segments()
             .iter()
             .map(|segment| segment.as_str())
             .collect::<Vec<_>>()

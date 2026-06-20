@@ -339,7 +339,7 @@ impl<C> HandleFailure<C> {
     fn tokens<S>(self) -> Result<TokenStream, Error>
     where
         C: Copy,
-        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
+        S: RenderSurface<HandleCarrier = C>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
     {

@@ -26,9 +26,9 @@ pub struct ParameterStub {
 }
 
 impl ParameterStub {
-    pub fn from_declaration<'package>(
+    pub fn from_declaration(
         parameter: &ParamDecl<Native, IntoRust>,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         let name = Name::new(parameter.name()).function()?;
         let IncomingParam::Value(plan) = parameter.payload() else {
@@ -76,10 +76,10 @@ impl ParameterStub {
         NameScope::new(label).insert_all(parameters.iter().map(Self::parameter_name))
     }
 
-    fn argument<'package>(
+    fn argument(
         plan: &ParamPlan<Native, IntoRust>,
         name: &CanonicalName,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Expression> {
         plan.render_with(&mut StubArgument {
             name: Name::new(name).function()?,
@@ -87,10 +87,7 @@ impl ParameterStub {
         })
     }
 
-    fn uses_wire<'package>(
-        plan: &ParamPlan<Native, IntoRust>,
-        package: &'package Package<'package>,
-    ) -> Result<bool> {
+    fn uses_wire(plan: &ParamPlan<Native, IntoRust>, package: &Package) -> Result<bool> {
         plan.render_with(&mut WireHelperUse { package })
     }
 }

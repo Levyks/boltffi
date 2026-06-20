@@ -30,10 +30,10 @@ pub struct ClassStream {
 }
 
 impl ClassStream {
-    pub fn from_declaration<'package>(
+    pub fn from_declaration(
         declaration: &StreamDecl<Native>,
         class_name: &Identifier,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         let symbols = stream_render::Symbols::new(declaration)?;
         let item = StreamItem::from_plan(declaration.item(), package)?;
@@ -82,10 +82,7 @@ struct StreamItem {
 }
 
 impl StreamItem {
-    fn from_plan<'package>(
-        plan: &StreamItemPlan<Native>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    fn from_plan(plan: &StreamItemPlan<Native>, package: &Package) -> Result<Self> {
         plan.render_with(&mut PackageStreamItem { package })
     }
 

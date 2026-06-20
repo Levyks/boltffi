@@ -33,11 +33,9 @@ use super::{
     LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, metadata, types,
 };
 
-pub(super) fn lower(
-    index: &Index,
-    ids: &DeclarationIds,
-) -> Result<Vec<CustomTypeDecl>, LowerError> {
-    index.customs()
+pub fn lower(index: &Index, ids: &DeclarationIds) -> Result<Vec<CustomTypeDecl>, LowerError> {
+    index
+        .customs()
         .iter()
         .map(|custom| lower_one(ids, custom))
         .collect()

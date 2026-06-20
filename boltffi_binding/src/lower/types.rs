@@ -12,7 +12,7 @@ use super::{LowerError, error::UnsupportedType, ids::DeclarationIds};
 /// caller already built. Source shapes that have no IR encoding yet are
 /// rejected here so callers can rely on a successful return for the
 /// shape, not the codec.
-pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRef, LowerError> {
+pub fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRef, LowerError> {
     Ok(match type_expr {
         TypeExpr::Primitive(primitive) => TypeRef::Primitive(Primitive::from(*primitive)),
         TypeExpr::String => TypeRef::String,
@@ -88,6 +88,6 @@ pub(super) fn lower(ids: &DeclarationIds, type_expr: &TypeExpr) -> Result<TypeRe
     })
 }
 
-pub(super) fn is_byte_primitive(type_expr: &TypeExpr) -> bool {
+pub fn is_byte_primitive(type_expr: &TypeExpr) -> bool {
     matches!(type_expr, TypeExpr::Primitive(boltffi_ast::Primitive::U8))
 }

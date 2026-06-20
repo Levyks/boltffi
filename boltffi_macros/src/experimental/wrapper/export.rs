@@ -1,13 +1,13 @@
 use boltffi_binding::{ExecutionDecl, ExportedCallable, NativeSymbol, Receive};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use crate::experimental::{
     error::Error,
     expansion::Expansion,
     rust_api,
     surface::RenderSurface,
-    wrapper::{self, Render},
+    wrapper::{self, Render, names},
 };
 
 pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
@@ -136,7 +136,7 @@ where
                 self.expansion,
             ),
         )?;
-        let export_ident = format_ident!("{}", self.symbol.name().as_str());
+        let export_ident = names::Symbol::new(self.symbol).ident();
         let ffi_parameters = self
             .receiver
             .ffi_parameters

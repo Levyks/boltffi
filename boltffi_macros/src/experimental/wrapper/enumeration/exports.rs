@@ -1,10 +1,11 @@
 use boltffi_ast::{EnumDef, MethodDef, Path as SourcePath, TypeExpr};
 use boltffi_binding::{
-    DirectValueType, ExportedMethodDecl, InitializerDecl, NativeSymbol, Receive, WritePlan,
+    DirectValueType, ExportedMethodDecl, InitializerDecl, NativeSymbol, Receive, SurfaceLower,
+    WritePlan,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Ident, Type, parse_str};
+use syn::Ident;
 
 use crate::experimental::{
     error::Error,
@@ -70,8 +71,8 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
             >,
         wrapper::async_call::Renderer:
             Render<S, wrapper::async_call::Input<'expansion, 'lowered, S>, Output = TokenStream>,
-        for<'ty> wrapper::param::direct::Renderer:
-            Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
+        wrapper::param::direct::Renderer:
+            Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
         wrapper::param::encoded::Renderer: Render<
                 S,
                 wrapper::param::encoded::Input<'expansion, 'lowered, S>,
@@ -96,8 +97,8 @@ impl<'expansion, 'lowered, S> associated_fn::Owner<'expansion, 'lowered, S> for 
 where
     'lowered: 'expansion,
     S: RenderSurface,
-    for<'ty> wrapper::param::direct::Renderer:
-        Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
+    wrapper::param::direct::Renderer:
+        Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
     wrapper::param::encoded::Renderer: Render<
             S,
             wrapper::param::encoded::Input<'expansion, 'lowered, S>,
@@ -148,8 +149,8 @@ impl<'lowered> Receiver<'lowered> {
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
         S: RenderSurface,
-        for<'ty> wrapper::param::direct::Renderer:
-            Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
+        wrapper::param::direct::Renderer:
+            Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
         wrapper::param::encoded::Renderer: Render<
                 S,
                 wrapper::param::encoded::Input<'expansion, 'lowered, S>,
@@ -173,16 +174,17 @@ impl<'lowered> Receiver<'lowered> {
     ) -> Result<(export::ReceiverTokens, export::RustCall), Error>
     where
         S: RenderSurface,
-        for<'ty> wrapper::param::direct::Renderer:
-            Render<S, wrapper::param::direct::Input<'ty>, Output = wrapper::param::Tokens>,
+        wrapper::param::direct::Renderer:
+            Render<S, wrapper::param::direct::Input, Output = wrapper::param::Tokens>,
     {
         if receive == Receive::ByMutRef {
             return Err(Error::UnsupportedExpansion(
                 "mutable enum receiver without writeback",
             ));
         }
-        let rust_type = enum_type(source)?;
-        let receiver = names::Wrapper::new(method.span()).receiver();
+        let rust_type =
+            names::SourceSpelling::new(&source.name).ty("source enum name is not a Rust type")?;
+        let receiver = names::Locals::new(method.span()).receiver();
         let tokens = <wrapper::param::direct::Renderer as Render<S, _>>::render(
             wrapper::param::direct::Renderer,
             wrapper::param::direct::Input::new(
@@ -226,7 +228,7 @@ impl<'lowered> Receiver<'lowered> {
                 "mutable encoded enum receiver without writeback",
             ));
         }
-        let receiver = names::Wrapper::new(method.span()).receiver();
+        let receiver = names::Locals::new(method.span()).receiver();
         let source_type = TypeExpr::enumeration(
             source.id.clone(),
             SourcePath::single(source.name.spelling()),
@@ -235,7 +237,7 @@ impl<'lowered> Receiver<'lowered> {
             wrapper::param::encoded::Renderer,
             wrapper::param::encoded::Input::new(
                 codec,
-                <S as boltffi_binding::SurfaceLower>::encoded_param_shape(),
+                <S as SurfaceLower>::encoded_param_shape(),
                 rust_api::DecodeTarget::by_value(&source_type)?,
                 receiver.clone(),
                 failure.render()?,
@@ -252,9 +254,4 @@ impl<'lowered> Receiver<'lowered> {
             export::RustCall::method(receiver, method),
         ))
     }
-}
-
-fn enum_type(source: &EnumDef) -> Result<Type, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source enum name is not a Rust type"))
 }

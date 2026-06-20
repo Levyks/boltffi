@@ -3,13 +3,8 @@ use boltffi_ast::{ClassDef as SourceClass, ClassThreadSafety as SourceClassThrea
 use crate::{CanonicalName, ClassDecl, ClassDeclParts, ClassThreadSafety, InvalidClassDecl};
 
 use super::{
-    LowerError,
-    error::UnsupportedType,
-    ids::DeclarationIds,
-    index::Index,
-    metadata, methods,
-    surface::SurfaceLower,
-    symbol::{SymbolAllocator, class_release_symbol_name},
+    LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, metadata, methods,
+    surface::SurfaceLower, symbol::SymbolAllocator,
 };
 
 /// Lowers every class in the source contract.
@@ -20,12 +15,13 @@ use super::{
 ///
 /// [`SymbolId`]: crate::SymbolId
 /// [`Bindings<S>`]: crate::Bindings
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<ClassDecl<S>>, LowerError> {
-    index.classes()
+    index
+        .classes()
         .iter()
         .map(|class| lower_one(index, ids, allocator, class))
         .collect()
@@ -39,7 +35,7 @@ fn lower_one<S: SurfaceLower>(
 ) -> Result<ClassDecl<S>, LowerError> {
     let class_id = ids.class(&class.id)?;
     let canonical = CanonicalName::from(&class.name);
-    let release = allocator.mint(class_release_symbol_name(class.id.as_str()))?;
+    let release = allocator.mint_class_release(class.id.as_str())?;
     let initializers = methods::lower_class_initializers::<S>(index, ids, allocator, class)?;
     let class_methods = methods::lower_class_methods::<S>(index, ids, allocator, class)?;
 

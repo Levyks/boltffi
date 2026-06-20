@@ -13,21 +13,17 @@ use boltffi_ast::{CallableForm, FunctionDef as SourceFunction};
 use crate::{CanonicalName, FunctionDecl};
 
 use super::{
-    LowerError, callable,
-    error::LowerErrorKind,
-    ids::DeclarationIds,
-    index::Index,
-    metadata,
-    surface::SurfaceLower,
-    symbol::{SymbolAllocator, function_symbol_name},
+    LowerError, callable, error::LowerErrorKind, ids::DeclarationIds, index::Index, metadata,
+    surface::SurfaceLower, symbol::SymbolAllocator,
 };
 
-pub(super) fn lower<S: SurfaceLower>(
+pub fn lower<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
 ) -> Result<Vec<FunctionDecl<S>>, LowerError> {
-    index.functions()
+    index
+        .functions()
         .iter()
         .map(|function| lower_one::<S>(index, ids, allocator, function))
         .collect()
@@ -44,7 +40,7 @@ fn lower_one<S: SurfaceLower>(
     }
 
     let function_id = ids.function(&function.id)?;
-    let symbol = allocator.mint(function_symbol_name(function.id.as_str()))?;
+    let symbol = allocator.mint_function(function.id.as_str())?;
     let callable_decl =
         callable::lower_function::<S>(index, ids, allocator, function, symbol.name().as_str())?;
     Ok(FunctionDecl::new(

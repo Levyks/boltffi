@@ -27,10 +27,7 @@ impl ReturnStub {
         }
     }
 
-    pub fn from_callable<'package>(
-        callable: &ExportedCallable<Native>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_callable(callable: &ExportedCallable<Native>, package: &Package) -> Result<Self> {
         match callable.error() {
             ErrorDecl::None(_) => Self::from_plan(callable.returns().plan(), package),
             ErrorDecl::EncodedViaReturnSlot {
@@ -48,10 +45,7 @@ impl ReturnStub {
         }
     }
 
-    pub fn from_plan<'package>(
-        plan: &ReturnPlan<Native, OutOfRust>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_plan(plan: &ReturnPlan<Native, OutOfRust>, package: &Package) -> Result<Self> {
         Ok(Self {
             annotation: TypeHint::from_return(plan, package)?.into_annotation(),
             value: ReturnedValue::from_plan(plan, package)?,
@@ -76,10 +70,7 @@ impl ReturnStub {
         self.value.uses_wire_helpers()
     }
 
-    fn from_success_plan<'package>(
-        plan: &ReturnPlan<Native, OutOfRust>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    fn from_success_plan(plan: &ReturnPlan<Native, OutOfRust>, package: &Package) -> Result<Self> {
         Ok(Self {
             annotation: TypeHint::from_return(plan, package)?.into_annotation(),
             value: ReturnedValue::from_success_plan(plan, package)?,
@@ -99,19 +90,16 @@ impl ReturnedValue {
         Self::ClassHandle(class_name)
     }
 
-    pub fn from_plan<'package>(
-        plan: &ReturnPlan<Native, OutOfRust>,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    pub fn from_plan(plan: &ReturnPlan<Native, OutOfRust>, package: &Package) -> Result<Self> {
         plan.render_with(&mut ReturnedValueRender::new(
             package,
             ReturnDelivery::Callable,
         ))
     }
 
-    pub fn from_success_plan<'package>(
+    pub fn from_success_plan(
         plan: &ReturnPlan<Native, OutOfRust>,
-        package: &'package Package<'package>,
+        package: &Package,
     ) -> Result<Self> {
         plan.render_with(&mut ReturnedValueRender::new(
             package,
@@ -168,10 +156,7 @@ impl ReturnedValue {
         }
     }
 
-    fn from_encoded_plan<'package>(
-        codec: &ReadPlan,
-        package: &'package Package<'package>,
-    ) -> Result<Self> {
+    fn from_encoded_plan(codec: &ReadPlan, package: &Package) -> Result<Self> {
         CodecExpression::read_return(codec, package)
             .map(|decode| Self::Wire(decode.into_expression()))
     }

@@ -23,17 +23,14 @@ use super::{
     index::Index,
     metadata,
     surface::SurfaceLower,
-    symbol::{
-        CallbackSlot, SymbolAllocator, SymbolOwner, initializer_symbol_name, member_symbol_name,
-        source_member_name,
-    },
+    symbol::{CallbackSlot, SymbolAllocator, SymbolOwner},
 };
 
 /// Lowers every initializer-shaped method on `record`.
 ///
 /// Initializer ids are assigned after non-initializer methods are removed,
 /// so the initializer table is dense in the exact order renderers observe.
-pub(super) fn lower_record_initializers<S: SurfaceLower>(
+pub fn lower_record_initializers<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -55,7 +52,7 @@ pub(super) fn lower_record_initializers<S: SurfaceLower>(
 ///
 /// Method ids are assigned after initializer-shaped methods are removed,
 /// so the method table is dense in the exact order renderers observe.
-pub(super) fn lower_record_methods<S: SurfaceLower>(
+pub fn lower_record_methods<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -81,7 +78,7 @@ pub(super) fn lower_record_methods<S: SurfaceLower>(
 }
 
 /// Lowers every initializer-shaped method on `enumeration`.
-pub(super) fn lower_enum_initializers<S: SurfaceLower>(
+pub fn lower_enum_initializers<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -100,7 +97,7 @@ pub(super) fn lower_enum_initializers<S: SurfaceLower>(
 }
 
 /// Lowers every non-initializer method on `enumeration`.
-pub(super) fn lower_enum_methods<S: SurfaceLower>(
+pub fn lower_enum_methods<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -130,7 +127,7 @@ pub(super) fn lower_enum_methods<S: SurfaceLower>(
 /// Class initializers construct the class handle target rather than a
 /// value-shaped record. The callable still carries the native crossing
 /// selected for the `Self` return.
-pub(super) fn lower_class_initializers<S: SurfaceLower>(
+pub fn lower_class_initializers<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -152,7 +149,7 @@ pub(super) fn lower_class_initializers<S: SurfaceLower>(
 ///
 /// Owned class receivers are rejected until the handle ownership-transfer
 /// protocol is represented in the binding IR.
-pub(super) fn lower_class_methods<S: SurfaceLower>(
+pub fn lower_class_methods<S: SurfaceLower>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -228,7 +225,7 @@ fn lower_initializer<S: SurfaceLower>(
     id: InitializerId,
     returns: TypeRef,
 ) -> Result<InitializerDecl<S>, LowerError> {
-    let symbol = mint_initializer_symbol(allocator, owner, method)?;
+    let symbol = allocator.mint_initializer(symbol_owner(owner), &method.name)?;
     let callable_decl = callable::lower_exported_method::<S>(
         index,
         ids,
@@ -255,7 +252,7 @@ fn lower_method<S: SurfaceLower>(
     method: &MethodDef,
     id: MethodId,
 ) -> Result<ExportedMethodDecl<S, NativeSymbol>, LowerError> {
-    let symbol = mint_method_symbol(allocator, owner, method)?;
+    let symbol = allocator.mint_method(symbol_owner(owner), &method.name)?;
     let callable_decl = callable::lower_exported_method::<S>(
         index,
         ids,
@@ -273,25 +270,6 @@ fn lower_method<S: SurfaceLower>(
     ))
 }
 
-fn mint_method_symbol(
-    allocator: &mut SymbolAllocator,
-    owner: callable::CallableOwner,
-    method: &MethodDef,
-) -> Result<NativeSymbol, LowerError> {
-    let symbol_name = member_symbol_name(symbol_owner(owner), &source_member_name(&method.name));
-    allocator.mint(symbol_name)
-}
-
-fn mint_initializer_symbol(
-    allocator: &mut SymbolAllocator,
-    owner: callable::CallableOwner,
-    method: &MethodDef,
-) -> Result<NativeSymbol, LowerError> {
-    let symbol_name =
-        initializer_symbol_name(symbol_owner(owner), &source_member_name(&method.name));
-    allocator.mint(symbol_name)
-}
-
 /// Lowers every method on `callback` with a per-surface dispatch
 /// target.
 ///
@@ -307,7 +285,7 @@ fn mint_initializer_symbol(
 /// surface is the canonical snake-cased name. A future caller of the
 /// per-surface name constructors cannot bypass normalization because
 /// they cannot construct a [`CallbackSlot`] from arbitrary text.
-pub(super) fn lower_callback_methods<S: SurfaceLower, T, F>(
+pub fn lower_callback_methods<S: SurfaceLower, T, F>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -349,13 +327,13 @@ where
         .collect()
 }
 
-pub(super) struct CallbackMethodSurface<S: SurfaceLower, T> {
+pub struct CallbackMethodSurface<S: SurfaceLower, T> {
     target: T,
     execution: ExecutionDecl<S>,
 }
 
 impl<S: SurfaceLower, T> CallbackMethodSurface<S, T> {
-    pub(super) fn new(target: T, execution: ExecutionDecl<S>) -> Self {
+    pub fn new(target: T, execution: ExecutionDecl<S>) -> Self {
         Self { target, execution }
     }
 }

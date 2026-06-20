@@ -1,9 +1,9 @@
 use boltffi_ast::{ParameterDef, ParameterPassing, TypeExpr};
 
 use crate::{
-    CanonicalName, ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType,
-    Direction, ElementMeta, HandleTarget, IntoRust, OutOfRust, ParamDecl, ParamDirection,
-    ParamPlan, Primitive, Receive, ValueRef,
+    CanonicalName, ClosureParameter, ClosureReturn, DirectValueType, Direction, ElementMeta,
+    HandleTarget, IntoRust, OutOfRust, ParamDecl, ParamDirection, ParamPlan, Primitive, Receive,
+    ValueRef,
 };
 
 use super::super::{
@@ -12,7 +12,8 @@ use super::super::{
 };
 
 use super::{
-    CallableOwner, CallbackHandleSource, ClassHandleSource, ClosureSource, substitute_self_type,
+    CallableOwner, CallbackHandleSource, ClassHandleSource, ClosureSource, ValueSpecialization,
+    substitute_self_type,
 };
 
 /// Lowers the parameter list of a callable in direction `D`.
@@ -32,7 +33,7 @@ use super::{
 ///
 /// [`ImportedCallable<S>`]: crate::ImportedCallable
 /// [`ExportedCallable<S>`]: crate::ExportedCallable
-pub(super) fn lower<S: SurfaceLower, D: Direction + LowerClosure<S>>(
+pub fn lower<S: SurfaceLower, D: Direction + LowerClosure<S>>(
     index: &Index,
     ids: &DeclarationIds,
     allocator: &mut SymbolAllocator,
@@ -97,39 +98,14 @@ fn specialize_param<S: SurfaceLower, D: Direction>(
     if !matches!(receive, Receive::ByValue) {
         return Ok(None);
     }
-    Ok(match type_expr {
-        TypeExpr::Option(inner) => {
-            primitive(inner).map(|primitive| ParamPlan::ScalarOption { primitive })
+    let specialization = ValueSpecialization::from_type_expr(index, ids, type_expr)?;
+    Ok(match specialization {
+        Some(ValueSpecialization::ScalarOption(primitive)) => {
+            Some(ParamPlan::ScalarOption { primitive })
         }
-        TypeExpr::Vec(inner) => {
-            direct_vec_element(index, ids, inner)?.map(|element| ParamPlan::DirectVec { element })
-        }
-        _ => None,
+        Some(ValueSpecialization::DirectVector(element)) => Some(ParamPlan::DirectVec { element }),
+        None => None,
     })
-}
-
-fn primitive(type_expr: &TypeExpr) -> Option<Primitive> {
-    if let TypeExpr::Primitive(p) = type_expr {
-        Some(Primitive::from(*p))
-    } else {
-        None
-    }
-}
-
-fn direct_vec_element(
-    index: &Index,
-    ids: &DeclarationIds,
-    type_expr: &TypeExpr,
-) -> Result<Option<DirectVectorElementType>, LowerError> {
-    match type_expr {
-        TypeExpr::Primitive(primitive) => Ok(DirectVectorElementType::primitive(Primitive::from(
-            *primitive,
-        ))),
-        TypeExpr::Record { id, .. } if index.record(id).is_some_and(records::is_direct) => {
-            Ok(Some(DirectVectorElementType::record(ids.record(id)?)))
-        }
-        _ => Ok(None),
-    }
 }
 
 fn receive_for_passing(passing: ParameterPassing) -> Receive {
@@ -245,7 +221,7 @@ fn lower_plan<S: SurfaceLower, D: Direction>(
 /// Two wrapping helpers — [`Self::lower_closure_param`] for parameter
 /// slots and [`Self::lower_closure_return`] for return slots — produce
 /// the right position-shaped IR variant.
-pub(crate) trait LowerClosure<S: SurfaceLower>: ParamDirection<S> + Sized
+pub trait LowerClosure<S: SurfaceLower>: ParamDirection<S> + Sized
 where
     Self::Opposite: ParamDirection<S>,
 {

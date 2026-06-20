@@ -9,14 +9,14 @@ use crate::{
 
 use super::{LowerError, error::UnsupportedType};
 
-pub(super) fn decl_meta(
+pub fn decl_meta(
     doc: Option<&SourceDocComment>,
     deprecated: Option<&SourceDeprecationInfo>,
 ) -> DeclMeta {
     DeclMeta::new(doc.map(DocComment::from), deprecated.map(Into::into))
 }
 
-pub(super) fn element_meta(
+pub fn element_meta(
     doc: Option<&SourceDocComment>,
     deprecated: Option<&SourceDeprecationInfo>,
     default: Option<&SourceDefaultValue>,
@@ -68,7 +68,7 @@ impl TryFrom<&SourceDefaultValue> for DefaultValue {
 /// parses through `f64::from_str`. Returns `None` for unparseable
 /// literals; callers route that to a categorical rejection. `FloatValue`
 /// stores the f64 bits, so f32 source literals round-trip through f64.
-pub(super) fn parse_float_literal(literal: &SourceFloatLiteral) -> Option<FloatValue> {
+pub fn parse_float_literal(literal: &SourceFloatLiteral) -> Option<FloatValue> {
     let raw = literal.source.as_str();
     let trimmed = raw
         .trim_end_matches("f64")

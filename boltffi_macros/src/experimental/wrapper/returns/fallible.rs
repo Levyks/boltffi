@@ -147,7 +147,7 @@ impl<'expansion, 'lowered, S: RenderSurface> EncodedError<'expansion, 'lowered, 
                 Output = handle::ValueTokens,
             >,
     {
-        let locals = names::Wrapper::new(self.invocation.span);
+        let locals = names::Locals::new(self.invocation.span);
         let error_ident = locals.error();
         let error = <encoded::Renderer as Render<S, _>>::render(
             encoded::Renderer,
@@ -183,7 +183,7 @@ impl<'expansion, 'lowered, S: RenderSurface> EncodedError<'expansion, 'lowered, 
             writebacks,
             ..
         } = self.invocation;
-        let result = names::Wrapper::new(span).result();
+        let result = names::Locals::new(span).result();
         let result_value = if writebacks.is_empty() {
             quote! { #call }
         } else {
@@ -232,7 +232,7 @@ where
     type Output = SuccessTokens;
 
     fn render(self, input: SuccessInput<'expansion, 'lowered, S>) -> Result<Self::Output, Error> {
-        let locals = names::Wrapper::new(input.span);
+        let locals = names::Locals::new(input.span);
         let success_ident = locals.success();
         match input.returns.plan() {
             ReturnPlan::Void => Ok(SuccessTokens {

@@ -94,8 +94,8 @@ impl Tokens {
 impl<'expansion, 'lowered, S> Render<S, Input<'expansion, 'lowered, S>> for Renderer
 where
     S: RenderSurface,
-    direct::Renderer: Render<S, direct::Input<'lowered>, Output = Tokens>,
-    direct_vec::Renderer: Render<S, direct_vec::Input<'lowered>, Output = Tokens>,
+    direct::Renderer: Render<S, direct::Input, Output = Tokens>,
+    direct_vec::Renderer: Render<S, direct_vec::Input, Output = Tokens>,
     closure::Renderer: Render<S, closure::Input<'expansion, 'lowered, S>, Output = Tokens>,
     encoded::Renderer: Render<S, encoded::Input<'expansion, 'lowered, S>, Output = Tokens>,
     handle::Renderer: Render<S, handle::Input<'lowered, S::HandleCarrier>, Output = Tokens>,

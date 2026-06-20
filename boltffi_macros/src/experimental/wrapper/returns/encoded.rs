@@ -184,13 +184,13 @@ impl Render<Wasm32, Empty<Wasm32>> for Renderer {
 }
 
 impl Renderer {
-    fn render_native(
+    fn render_native<'lowered>(
         self,
         codec: &CodecNode,
         shape: native::BufferShape,
         value: syn::Ident,
         value_binding: RustValueBinding,
-        expansion: &Expansion<'_, Native>,
+        expansion: &Expansion<'lowered, Native>,
     ) -> Result<Tokens, Error> {
         match shape {
             native::BufferShape::Buffer => {
@@ -210,13 +210,13 @@ impl Renderer {
         }
     }
 
-    fn render_wasm(
+    fn render_wasm<'lowered>(
         self,
         codec: &CodecNode,
         shape: wasm32::BufferShape,
         value: syn::Ident,
         value_binding: RustValueBinding,
-        expansion: &Expansion<'_, Wasm32>,
+        expansion: &Expansion<'lowered, Wasm32>,
     ) -> Result<Tokens, Error> {
         match shape {
             wasm32::BufferShape::Packed => {
@@ -244,10 +244,10 @@ enum RustValueBinding {
 }
 
 impl RustValueBinding {
-    fn buffer<S: RenderSurface>(
+    fn buffer<'lowered, S: RenderSurface>(
         self,
         codec: &CodecNode,
-        expansion: &Expansion<'_, S>,
+        expansion: &Expansion<'lowered, S>,
         value: syn::Ident,
     ) -> Result<TokenStream, Error> {
         let value = quote! { #value };

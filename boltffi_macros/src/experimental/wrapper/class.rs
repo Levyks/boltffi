@@ -4,8 +4,8 @@ use boltffi_binding::{
     IncomingParam, IntoRust, NativeSymbol, OutOfRust, ParamPlan, Receive, ReturnPlan,
 };
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
-use syn::{Ident, parse_str};
+use quote::{quote, quote_spanned};
+use syn::Ident;
 
 use crate::experimental::{
     error::Error,
@@ -68,7 +68,8 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
     {
         let source = self.pair.source();
         let binding = self.pair.binding();
-        let class = class_ident(source)?;
+        let class = names::SourceSpelling::new(&source.name)
+            .ident("source class name is not a Rust identifier")?;
         let class_names = names::Class::new(&class);
         let handle_type = class_names.handle();
         let retained_handle_type = class_names.retained_handle();
@@ -306,7 +307,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
             >,
     {
         let cfg = S::cfg_attr();
-        let symbol = format_ident!("{}", symbol.name().as_str());
+        let symbol = names::Symbol::new(symbol).ident();
         let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
             wrapper::handle::Carrier,
             wrapper::handle::CarrierInput::new(handle),
@@ -371,7 +372,10 @@ where
 }
 
 impl ClassHandleOperations {
-    fn new<S: RenderSurface>(class: &ClassDecl<S>, expansion: &Expansion<'_, S>) -> Self {
+    fn new<'lowered, S: RenderSurface>(
+        class: &ClassDecl<S>,
+        expansion: &Expansion<'lowered, S>,
+    ) -> Self {
         expansion
             .bindings()
             .decls()
@@ -416,10 +420,10 @@ impl ClassHandleOperations {
         })
     }
 
-    fn with_class_streams<S: RenderSurface>(
+    fn with_class_streams<'lowered, S: RenderSurface>(
         mut self,
         class: &ClassDecl<S>,
-        expansion: &Expansion<'_, S>,
+        expansion: &Expansion<'lowered, S>,
     ) -> Self {
         if expansion.bindings().decls().iter().any(|declaration| {
             matches!(declaration, Decl::Stream(stream) if stream.owner() == Some(class.id()))
@@ -501,7 +505,7 @@ impl<'lowered, C: Copy> ClassOwner<'lowered, C> {
             wrapper::handle::Carrier,
             wrapper::handle::CarrierInput::new(self.handle),
         )?;
-        let receiver = names::Wrapper::new(method.span()).receiver();
+        let receiver = names::Locals::new(method.span()).receiver();
         let receiver_handle = names::Parameter::new(&receiver).handle();
         let ffi_type = carrier.ty();
         let failure = failure.render()?;
@@ -581,9 +585,4 @@ impl<'lowered, C: Copy> ClassOwner<'lowered, C> {
             _ => export::ClassReceiverBinding::Raw(self.handle_type.clone()),
         }
     }
-}
-
-fn class_ident(source: &ClassDef) -> Result<Ident, Error> {
-    parse_str(source.name.spelling())
-        .map_err(|_| Error::SourceSyntaxMismatch("source class name is not a Rust identifier"))
 }

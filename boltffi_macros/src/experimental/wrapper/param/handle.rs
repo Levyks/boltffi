@@ -6,6 +6,7 @@ use syn::Ident;
 use crate::experimental::{
     error::Error,
     rust_api,
+    surface::RenderSurface,
     wrapper::{self, Render, names},
 };
 
@@ -14,57 +15,57 @@ use super::Tokens;
 pub struct Renderer;
 struct CallbackCarrier;
 
-pub struct Plan<'lowered, C> {
-    target: &'lowered HandleTarget,
+pub struct Plan<C> {
+    target: HandleTarget,
     carrier: C,
     presence: HandlePresence,
     receive: Receive,
 }
 
 pub struct Input<'lowered, C> {
-    plan: Plan<'lowered, C>,
+    plan: Plan<C>,
     source: rust_api::Parameter<'lowered>,
     ident: Ident,
     failure: TokenStream,
 }
 
-struct CallbackHandleInput<'ident> {
-    ident: &'ident Ident,
+struct CallbackHandleInput {
+    ident: Ident,
 }
 
-impl<'ident> CallbackHandleInput<'ident> {
-    fn new(ident: &'ident Ident) -> Self {
+impl CallbackHandleInput {
+    fn new(ident: Ident) -> Self {
         Self { ident }
     }
 }
 
-impl<'ident> Render<Native, CallbackHandleInput<'ident>> for CallbackCarrier {
+impl Render<Native, CallbackHandleInput> for CallbackCarrier {
     type Output = TokenStream;
 
-    fn render(self, input: CallbackHandleInput<'ident>) -> Result<Self::Output, Error> {
+    fn render(self, input: CallbackHandleInput) -> Result<Self::Output, Error> {
         let ident = input.ident;
         Ok(quote! { #ident })
     }
 }
 
-impl<'ident> Render<Wasm32, CallbackHandleInput<'ident>> for CallbackCarrier {
+impl Render<Wasm32, CallbackHandleInput> for CallbackCarrier {
     type Output = TokenStream;
 
-    fn render(self, input: CallbackHandleInput<'ident>) -> Result<Self::Output, Error> {
+    fn render(self, input: CallbackHandleInput) -> Result<Self::Output, Error> {
         let ident = input.ident;
         Ok(quote! { ::boltffi::__private::CallbackHandle::from_wasm_handle(#ident) })
     }
 }
 
-impl<'lowered, C> Plan<'lowered, C> {
+impl<C> Plan<C> {
     pub fn new(
-        target: &'lowered HandleTarget,
+        target: &HandleTarget,
         carrier: C,
         presence: HandlePresence,
         receive: Receive,
     ) -> Self {
         Self {
-            target,
+            target: target.clone(),
             carrier,
             presence,
             receive,
@@ -74,7 +75,7 @@ impl<'lowered, C> Plan<'lowered, C> {
 
 impl<'lowered, C> Input<'lowered, C> {
     pub fn new(
-        plan: Plan<'lowered, C>,
+        plan: Plan<C>,
         source: rust_api::Parameter<'lowered>,
         ident: Ident,
         failure: TokenStream,
@@ -92,7 +93,7 @@ impl<'lowered> Render<Native, Input<'lowered, native::HandleCarrier>> for Render
     type Output = Tokens;
 
     fn render(self, input: Input<'lowered, native::HandleCarrier>) -> Result<Self::Output, Error> {
-        ClassParam::new(input).tokens::<Native>()
+        input.tokens::<Native>()
     }
 }
 
@@ -100,28 +101,20 @@ impl<'lowered> Render<Wasm32, Input<'lowered, wasm32::HandleCarrier>> for Render
     type Output = Tokens;
 
     fn render(self, input: Input<'lowered, wasm32::HandleCarrier>) -> Result<Self::Output, Error> {
-        ClassParam::new(input).tokens::<Wasm32>()
+        input.tokens::<Wasm32>()
     }
 }
 
-struct ClassParam<'lowered, C> {
-    input: Input<'lowered, C>,
-}
-
-impl<'lowered, C> ClassParam<'lowered, C> {
-    fn new(input: Input<'lowered, C>) -> Self {
-        Self { input }
-    }
-
+impl<'lowered, C> Input<'lowered, C> {
     fn tokens<S>(self) -> Result<Tokens, Error>
     where
         C: Copy,
-        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
-        for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
+        S: RenderSurface<HandleCarrier = C>,
+        CallbackCarrier: Render<S, CallbackHandleInput, Output = TokenStream>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
     {
-        match self.input.plan.target {
+        match self.plan.target {
             HandleTarget::Class(_) => self.class_tokens::<S>(),
             HandleTarget::Callback(_) => self.callback_tokens::<S>(),
             _ => Err(Error::UnsupportedExpansion(
@@ -133,22 +126,20 @@ impl<'lowered, C> ClassParam<'lowered, C> {
     fn class_tokens<S>(self) -> Result<Tokens, Error>
     where
         C: Copy,
-        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
-        for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
+        S: RenderSurface<HandleCarrier = C>,
+        CallbackCarrier: Render<S, CallbackHandleInput, Output = TokenStream>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
     {
         let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
             wrapper::handle::Carrier,
-            wrapper::handle::CarrierInput::new(self.input.plan.carrier),
+            wrapper::handle::CarrierInput::new(self.plan.carrier),
         )?;
-        let ident = &self.input.ident;
+        let ident = &self.ident;
         let ffi_type = carrier.ty();
-        let class = self.input.source.class_handle(
-            self.input.plan.target,
-            self.input.plan.presence,
-            self.input.plan.receive,
-        )?;
+        let class =
+            self.source
+                .class_handle(&self.plan.target, self.plan.presence, self.plan.receive)?;
         let conversion = self.conversion(&class, carrier.zero())?;
 
         Ok(Tokens {
@@ -164,22 +155,21 @@ impl<'lowered, C> ClassParam<'lowered, C> {
     fn callback_tokens<S>(self) -> Result<Tokens, Error>
     where
         C: Copy,
-        S: crate::experimental::surface::RenderSurface<HandleCarrier = C>,
-        for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
+        S: RenderSurface<HandleCarrier = C>,
+        CallbackCarrier: Render<S, CallbackHandleInput, Output = TokenStream>,
         wrapper::handle::Carrier:
             Render<S, wrapper::handle::CarrierInput<C>, Output = wrapper::handle::CarrierTokens>,
     {
         let carrier = <wrapper::handle::Carrier as Render<S, _>>::render(
             wrapper::handle::Carrier,
-            wrapper::handle::CarrierInput::new(self.input.plan.carrier),
+            wrapper::handle::CarrierInput::new(self.plan.carrier),
         )?;
-        let ident = &self.input.ident;
+        let ident = &self.ident;
         let ffi_type = carrier.ty();
         let callback = self
-            .input
             .source
-            .callback_object(self.input.plan.target, self.input.plan.presence)?;
-        let conversion = callback.conversion::<S>(ident, &self.input.failure)?;
+            .callback_object(&self.plan.target, self.plan.presence)?;
+        let conversion = callback.conversion::<S>(ident, &self.failure)?;
 
         Ok(Tokens {
             items: Vec::new(),
@@ -196,12 +186,12 @@ impl<'lowered, C> ClassParam<'lowered, C> {
         class: &rust_api::ClassHandle,
         zero: &TokenStream,
     ) -> Result<TokenStream, Error> {
-        let ident = &self.input.ident;
+        let ident = &self.ident;
         let ty = class.ty();
         let handle_type = names::Class::from_type_path(ty)?.handle();
         let handle_pointer = quote! { #ident as usize as *mut #handle_type };
-        let failure = &self.input.failure;
-        let null_check = matches!(self.input.plan.presence, HandlePresence::Required).then(|| {
+        let failure = &self.failure;
+        let null_check = matches!(self.plan.presence, HandlePresence::Required).then(|| {
             quote! {
                 if #ident == #zero {
                     ::boltffi::__private::set_last_error(format!(
@@ -213,7 +203,7 @@ impl<'lowered, C> ClassParam<'lowered, C> {
             }
         });
 
-        Ok(match (self.input.plan.receive, class.presence()) {
+        Ok(match (self.plan.receive, class.presence()) {
             (Receive::ByValue, HandlePresence::Required) => quote! {
                 #null_check
                 let #ident: #ty = match unsafe { #handle_type::take(#handle_pointer) } {
@@ -273,12 +263,12 @@ impl rust_api::CallbackObject {
     fn conversion<S>(&self, ident: &Ident, failure: &TokenStream) -> Result<TokenStream, Error>
     where
         S: crate::experimental::surface::RenderSurface,
-        for<'ident> CallbackCarrier: Render<S, CallbackHandleInput<'ident>, Output = TokenStream>,
+        CallbackCarrier: Render<S, CallbackHandleInput, Output = TokenStream>,
     {
         let handle = names::Parameter::new(ident).handle();
         let handle_binding = <CallbackCarrier as Render<S, _>>::render(
             CallbackCarrier,
-            CallbackHandleInput::new(ident),
+            CallbackHandleInput::new(ident.clone()),
         )?;
         let value = self.value_from_handle(&quote! { #handle })?;
         let ty = self.value();
