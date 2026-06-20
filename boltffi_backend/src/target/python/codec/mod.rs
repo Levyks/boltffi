@@ -1,6 +1,7 @@
 mod adapter;
 mod callback;
 mod expression;
+mod marshaling;
 mod operation;
 mod read;
 mod value;
@@ -11,4 +12,5 @@ pub use adapter::{
 };
 pub use callback::{BorrowedPayload, OwnedPayload};
 pub use expression::Expression;
+pub use marshaling::Marshaling;
 pub use read::EnumCodec;

@@ -1,10 +1,10 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     CallbackDecl, CallbackId, CanonicalName, ClosureReturn, DirectValueType,
-    DirectVectorElementType, ErrorDecl, ExecutionDecl, HandlePresence, HandleTarget,
-    ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl, ParamPlanRender,
-    Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, VTableSlot,
-    WritePlan, native,
+    DirectVectorElementType, ErrorChannel, ErrorDecl, ErrorPlacement, ExecutionDecl,
+    HandlePresence, HandleTarget, ImportedMethodDecl, IntoRust, Native, OutOfRust, OutgoingParam,
+    ParamDecl, ParamPlanRender, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot,
+    TypeRef, VTableSlot, WritePlan, native,
 };
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     },
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
-        codec::{BorrowedPayload, OwnedPayload},
+        codec::{BorrowedPayload, Marshaling, OwnedPayload},
         cpython::render::{direct, direct_vector, primitive},
         name_style::Name,
         syntax::Identifier as PythonIdentifier,
@@ -293,9 +293,12 @@ impl Method {
             .map(MethodParam::arity)
             .collect::<Result<Vec<_>>>()?;
         let (c_params, fallible_return, completion) = match method.callable().execution() {
-            ExecutionDecl::Synchronous(_) => match method.callable().error() {
-                ErrorDecl::None(_) => (signature.value_params(&arity)?, None, None),
-                ErrorDecl::EncodedViaReturnSlot { .. } => {
+            ExecutionDecl::Synchronous(_) => match method.callable().error().channel() {
+                ErrorChannel::None => (signature.value_params(&arity)?, None, None),
+                ErrorChannel::Encoded {
+                    placement: ErrorPlacement::ReturnSlot,
+                    ..
+                } => {
                     let parts = signature
                         .fallible_value_params(method.callable().returns().plan(), &arity)?;
                     let fallible_return = FallibleReturn::new(
@@ -372,7 +375,7 @@ impl Method {
     fn primitives(&self) -> impl Iterator<Item = primitive::Runtime> + '_ {
         self.params
             .iter()
-            .filter_map(MethodParam::primitive)
+            .filter_map(|param| param.marshaling().primitive())
             .chain(self.returns.primitive())
             .chain(
                 self.fallible_return
@@ -389,7 +392,7 @@ impl Method {
     fn wire_primitives(&self) -> impl Iterator<Item = primitive::Runtime> + '_ {
         self.params
             .iter()
-            .filter_map(MethodParam::wire_primitive)
+            .filter_map(|param| param.marshaling().wire_primitive())
             .chain(self.returns.wire_primitive())
             .chain(
                 self.fallible_return
@@ -406,7 +409,7 @@ impl Method {
     fn direct_vector_elements(&self) -> impl Iterator<Item = direct_vector::Element> + '_ {
         self.params
             .iter()
-            .filter_map(MethodParam::direct_vector_element)
+            .filter_map(|param| param.marshaling().direct_vector_element())
             .chain(self.returns.direct_vector())
             .chain(
                 self.fallible_return
@@ -421,7 +424,9 @@ impl Method {
     }
 
     fn has_string_argument(&self) -> bool {
-        self.params.iter().any(MethodParam::has_string)
+        self.params
+            .iter()
+            .any(|param| param.marshaling().has_string())
             || self.returns.has_string()
             || self.fallible_return.iter().any(FallibleReturn::has_string)
             || self
@@ -431,7 +436,9 @@ impl Method {
     }
 
     fn has_bytes_argument(&self) -> bool {
-        self.params.iter().any(MethodParam::has_bytes)
+        self.params
+            .iter()
+            .any(|param| param.marshaling().has_bytes())
             || self.returns.has_bytes()
             || self.fallible_return.iter().any(FallibleReturn::has_bytes)
             || self
@@ -441,7 +448,9 @@ impl Method {
     }
 
     fn has_raw_wire_argument(&self) -> bool {
-        self.params.iter().any(MethodParam::has_raw_wire)
+        self.params
+            .iter()
+            .any(|param| param.marshaling().has_raw_wire())
             || self.returns.has_raw_wire()
             || self
                 .fallible_return
@@ -653,12 +662,7 @@ struct MethodParam {
     name: Identifier,
     object: Identifier,
     expression: c::Expression,
-    primitive: Option<primitive::Runtime>,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+    marshaling: Marshaling,
 }
 
 impl MethodParam {
@@ -695,28 +699,8 @@ impl MethodParam {
         }
     }
 
-    fn primitive(&self) -> Option<primitive::Runtime> {
-        self.primitive
-    }
-
-    fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
-    }
-
-    fn direct_vector_element(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
-    }
-
-    fn has_string(&self) -> bool {
-        self.string
-    }
-
-    fn has_bytes(&self) -> bool {
-        self.bytes
-    }
-
-    fn has_raw_wire(&self) -> bool {
-        self.raw_wire
+    fn marshaling(&self) -> &Marshaling {
+        &self.marshaling
     }
 
     fn direct(
@@ -740,12 +724,7 @@ impl MethodParam {
             name,
             object,
             expression,
-            primitive: direct.primitive(),
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct(direct.primitive()),
         })
     }
 
@@ -764,10 +743,7 @@ impl MethodParam {
         let pointer_name = Identifier::parse(format!("{name}_ptr"))?;
         let length_name = Identifier::parse(format!("{name}_len"))?;
         let payload = BorrowedPayload::read(codec, pointer_name.clone(), length_name.clone())?;
-        let wire_primitive = payload.primitive();
-        let string = payload.has_string();
-        let bytes = payload.has_bytes();
-        let raw_wire = payload.has_raw_wire();
+        let marshaling = payload.marshaling();
         let expression = payload.expression();
         Ok(Self {
             declarations: vec![
@@ -777,12 +753,7 @@ impl MethodParam {
             name,
             object,
             expression,
-            primitive: None,
-            wire_primitive,
-            direct_vector: None,
-            string,
-            bytes,
-            raw_wire,
+            marshaling,
         })
     }
 
@@ -817,12 +788,7 @@ impl MethodParam {
                     c::Expression::identifier(length_name),
                 ]),
             ),
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: Some(element),
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct_vector(element),
         })
     }
 }
@@ -965,13 +931,15 @@ impl AsyncCompletion {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let signature = CompletionSignature::new(completion)?;
-        let payload = match error {
-            ErrorDecl::None(_) => {
+        let payload = match error.channel() {
+            ErrorChannel::None => {
                 CompletionPayload::infallible(plan, signature.payload(), bridge, context)?
             }
-            ErrorDecl::EncodedViaReturnSlot { codec, .. } => {
-                CompletionPayload::fallible(plan, codec, signature.payload(), bridge, context)?
-            }
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
+                codec,
+                ..
+            } => CompletionPayload::fallible(plan, codec, signature.payload(), bridge, context)?,
             _ => {
                 return Err(Error::UnsupportedTarget {
                     target: "python",
@@ -1049,12 +1017,7 @@ struct CompletionPayload {
     error_direct_bytes: bool,
     fallible: bool,
     void: bool,
-    primitive: Option<primitive::Runtime>,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+    marshaling: Marshaling,
 }
 
 impl CompletionPayload {
@@ -1102,27 +1065,27 @@ impl CompletionPayload {
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
-        self.primitive
+        self.marshaling.primitive()
     }
 
     fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
+        self.marshaling.wire_primitive()
     }
 
     fn direct_vector(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
+        self.marshaling.direct_vector_element()
     }
 
     fn has_string(&self) -> bool {
-        self.string
+        self.marshaling.has_string()
     }
 
     fn has_bytes(&self) -> bool {
-        self.bytes
+        self.marshaling.has_bytes()
     }
 
     fn has_raw_wire(&self) -> bool {
-        self.raw_wire
+        self.marshaling.has_raw_wire()
     }
 
     fn has_value(&self) -> bool {
@@ -1200,12 +1163,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: true,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::none(),
         }
     }
 
@@ -1232,12 +1190,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive: direct.primitive(),
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct(direct.primitive()),
         }
         .with_payload_type(payload)
     }
@@ -1266,12 +1219,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive: None,
-            wire_primitive: encoded.primitive(),
-            direct_vector: encoded.direct_vector(),
-            string: encoded.has_string(),
-            bytes: encoded.has_bytes(),
-            raw_wire: encoded.has_raw_wire(),
+            marshaling: encoded.marshaling(),
         }
         .with_payload_type(payload)
     }
@@ -1305,12 +1253,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: Some(element),
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct_vector(element),
         }
         .with_payload_type(payload)
     }
@@ -1339,12 +1282,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive: None,
-            wire_primitive: Some(primitive),
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::wire(primitive),
         }
         .with_payload_type(payload)
     }
@@ -1391,12 +1329,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::none(),
         }
         .with_payload_type(payload)
     }
@@ -1424,12 +1357,7 @@ impl CompletionPayload {
             error_direct_bytes: false,
             fallible: false,
             void: false,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::none(),
         }
         .with_payload_type(payload)
     }
@@ -1635,13 +1563,8 @@ struct MethodReturn {
     parser: Option<Identifier>,
     default_value: Expression,
     value: Option<Identifier>,
-    primitive: Option<primitive::Runtime>,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
+    marshaling: Marshaling,
     wire: bool,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
     void: bool,
 }
 
@@ -1652,13 +1575,8 @@ impl MethodReturn {
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: None,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::none(),
             wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: true,
         })
     }
@@ -1669,13 +1587,8 @@ impl MethodReturn {
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::none(),
             wire: true,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: false,
         })
     }
@@ -1694,27 +1607,27 @@ impl MethodReturn {
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
-        self.primitive
+        self.marshaling.primitive()
     }
 
     fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
+        self.marshaling.wire_primitive()
     }
 
     fn direct_vector(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
+        self.marshaling.direct_vector_element()
     }
 
     fn has_string(&self) -> bool {
-        self.string
+        self.marshaling.has_string()
     }
 
     fn has_bytes(&self) -> bool {
-        self.bytes
+        self.marshaling.has_bytes()
     }
 
     fn has_raw_wire(&self) -> bool {
-        self.raw_wire
+        self.marshaling.has_raw_wire()
     }
 
     fn has_value(&self) -> bool {
@@ -1731,38 +1644,17 @@ impl MethodReturn {
 
     fn encoded(c_type: &c::Type, codec: &WritePlan) -> Result<Self> {
         let encoded = OwnedPayload::write(codec)?;
-        Self::wire(
-            c_type,
-            encoded.parser().clone(),
-            encoded.direct_vector(),
-            encoded.primitive(),
-            encoded.has_string(),
-            encoded.has_bytes(),
-            encoded.has_raw_wire(),
-        )
+        Self::wire(c_type, encoded.parser().clone(), encoded.marshaling())
     }
 
-    fn wire(
-        c_type: &c::Type,
-        parser: Identifier,
-        direct_vector: Option<direct_vector::Element>,
-        wire_primitive: Option<primitive::Runtime>,
-        string: bool,
-        bytes: bool,
-        raw_wire: bool,
-    ) -> Result<Self> {
+    fn wire(c_type: &c::Type, parser: Identifier, marshaling: Marshaling) -> Result<Self> {
         Ok(Self {
             c_type: TypeFragment::anonymous(c_type)?,
             parser: Some(parser),
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
-            primitive: None,
-            wire_primitive,
-            direct_vector,
+            marshaling,
             wire: true,
-            string,
-            bytes,
-            raw_wire,
             void: false,
         })
     }
@@ -1785,13 +1677,8 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust>
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: None,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::none(),
             wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: true,
         })
     }
@@ -1806,13 +1693,8 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust>
             parser: Some(direct.parser().clone()),
             default_value: direct.default_value().clone(),
             value: Some(Identifier::parse("return_value")?),
-            primitive: direct.primitive(),
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::direct(direct.primitive()),
             wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: false,
         })
     }
@@ -1853,11 +1735,7 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust>
         MethodReturn::wire(
             &self.c_type,
             primitive.optional_wire_encoder()?,
-            None,
-            Some(primitive),
-            false,
-            false,
-            false,
+            Marshaling::wire(primitive),
         )
     }
 
@@ -1866,11 +1744,7 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust>
         MethodReturn::wire(
             &self.c_type,
             element.vector_encoder().clone(),
-            Some(element),
-            None,
-            false,
-            false,
-            false,
+            Marshaling::direct_vector(element),
         )
     }
 

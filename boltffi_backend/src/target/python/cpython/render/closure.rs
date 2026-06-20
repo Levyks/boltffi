@@ -1,9 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl,
-    HandlePresence, HandleTarget, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl,
-    ParamPlanRender, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef,
-    WritePlan, native,
+    ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel,
+    ErrorPlacement, HandlePresence, HandleTarget, IntoRust, Native, OutOfRust, OutgoingParam,
+    ParamDecl, ParamPlanRender, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot,
+    TypeRef, WritePlan, native,
 };
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     },
     core::{Error, RenderContext, Result},
     target::python::{
-        codec::{BorrowedPayload, OwnedPayload},
+        codec::{BorrowedPayload, Marshaling, OwnedPayload},
         cpython::render::{direct, direct_vector, primitive},
         name_style::Name,
     },
@@ -288,9 +288,12 @@ impl Signature {
             .map(|(parameter, c_types)| Argument::new(parameter, c_types, bridge, context))
             .collect::<Result<Vec<_>>>()?;
         let return_out = (return_out_count == 1).then(|| &call_params[value_end]);
-        let fallible_return = match invoke.error() {
-            ErrorDecl::None(_) => None,
-            ErrorDecl::EncodedViaReturnSlot { .. } => Some(FallibleReturn::new(
+        let fallible_return = match invoke.error().channel() {
+            ErrorChannel::None => None,
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
+                ..
+            } => Some(FallibleReturn::new(
                 invoke.returns().plan(),
                 invoke.error(),
                 return_out,
@@ -483,12 +486,7 @@ struct Argument {
     declarations: Vec<c::Statement>,
     object: Identifier,
     expression: c::Expression,
-    primitive: Option<primitive::Runtime>,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+    marshaling: Marshaling,
 }
 
 impl Argument {
@@ -526,27 +524,27 @@ impl Argument {
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
-        self.primitive
+        self.marshaling.primitive()
     }
 
     fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
+        self.marshaling.wire_primitive()
     }
 
     fn direct_vector_element(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
+        self.marshaling.direct_vector_element()
     }
 
     fn has_string(&self) -> bool {
-        self.string
+        self.marshaling.has_string()
     }
 
     fn has_bytes(&self) -> bool {
-        self.bytes
+        self.marshaling.has_bytes()
     }
 
     fn has_raw_wire(&self) -> bool {
-        self.raw_wire
+        self.marshaling.has_raw_wire()
     }
 
     fn direct(
@@ -568,12 +566,7 @@ impl Argument {
             declarations: vec![TypeFragment::declaration(c_type, name.as_str())?],
             object,
             expression: direct.box_expression(name),
-            primitive: direct.primitive(),
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct(direct.primitive()),
         })
     }
 
@@ -592,10 +585,7 @@ impl Argument {
         let pointer_name = Identifier::parse(format!("{name}_ptr"))?;
         let length_name = Identifier::parse(format!("{name}_len"))?;
         let payload = BorrowedPayload::read(codec, pointer_name.clone(), length_name.clone())?;
-        let wire_primitive = payload.primitive();
-        let string = payload.has_string();
-        let bytes = payload.has_bytes();
-        let raw_wire = payload.has_raw_wire();
+        let marshaling = payload.marshaling();
         let expression = payload.expression();
         Ok(Self {
             declarations: vec![
@@ -604,12 +594,7 @@ impl Argument {
             ],
             object,
             expression,
-            primitive: None,
-            wire_primitive,
-            direct_vector: None,
-            string,
-            bytes,
-            raw_wire,
+            marshaling,
         })
     }
 
@@ -643,12 +628,7 @@ impl Argument {
                     c::Expression::identifier(length_name),
                 ]),
             ),
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: Some(element),
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct_vector(element),
         })
     }
 }
@@ -781,13 +761,8 @@ struct ReturnValue {
     parser: Option<Identifier>,
     default_value: Expression,
     value: Option<Identifier>,
-    primitive: Option<primitive::Runtime>,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
+    marshaling: Marshaling,
     wire: bool,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
     void: bool,
 }
 
@@ -798,13 +773,8 @@ impl ReturnValue {
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::none(),
             wire: true,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: false,
         })
     }
@@ -823,27 +793,27 @@ impl ReturnValue {
     }
 
     fn primitive(&self) -> Option<primitive::Runtime> {
-        self.primitive
+        self.marshaling.primitive()
     }
 
     fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
+        self.marshaling.wire_primitive()
     }
 
     fn direct_vector(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
+        self.marshaling.direct_vector_element()
     }
 
     fn has_string(&self) -> bool {
-        self.string
+        self.marshaling.has_string()
     }
 
     fn has_bytes(&self) -> bool {
-        self.bytes
+        self.marshaling.has_bytes()
     }
 
     fn has_raw_wire(&self) -> bool {
-        self.raw_wire
+        self.marshaling.has_raw_wire()
     }
 
     fn has_value(&self) -> bool {
@@ -860,38 +830,17 @@ impl ReturnValue {
 
     fn encoded(c_type: &c::Type, codec: &WritePlan) -> Result<Self> {
         let encoded = OwnedPayload::write(codec)?;
-        Self::wire(
-            c_type,
-            encoded.parser().clone(),
-            encoded.direct_vector(),
-            encoded.primitive(),
-            encoded.has_string(),
-            encoded.has_bytes(),
-            encoded.has_raw_wire(),
-        )
+        Self::wire(c_type, encoded.parser().clone(), encoded.marshaling())
     }
 
-    fn wire(
-        c_type: &c::Type,
-        parser: Identifier,
-        direct_vector: Option<direct_vector::Element>,
-        wire_primitive: Option<primitive::Runtime>,
-        string: bool,
-        bytes: bool,
-        raw_wire: bool,
-    ) -> Result<Self> {
+    fn wire(c_type: &c::Type, parser: Identifier, marshaling: Marshaling) -> Result<Self> {
         Ok(Self {
             c_type: TypeFragment::anonymous(c_type)?,
             parser: Some(parser),
             default_value: Expression::literal(Literal::compound_zero()),
             value: Some(Identifier::parse("return_value")?),
-            primitive: None,
-            wire_primitive,
-            direct_vector,
+            marshaling,
             wire: true,
-            string,
-            bytes,
-            raw_wire,
             void: false,
         })
     }
@@ -912,13 +861,8 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturn
             parser: None,
             default_value: Expression::literal(Literal::compound_zero()),
             value: None,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::none(),
             wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: true,
         })
     }
@@ -933,13 +877,8 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturn
             parser: Some(direct.parser().clone()),
             default_value: direct.default_value().clone(),
             value: Some(Identifier::parse("return_value")?),
-            primitive: direct.primitive(),
-            wire_primitive: None,
-            direct_vector: None,
+            marshaling: Marshaling::direct(direct.primitive()),
             wire: false,
-            string: false,
-            bytes: false,
-            raw_wire: false,
             void: false,
         })
     }
@@ -980,11 +919,7 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturn
         ReturnValue::wire(
             &self.c_type,
             primitive.optional_wire_encoder()?,
-            None,
-            Some(primitive),
-            false,
-            false,
-            false,
+            Marshaling::wire(primitive),
         )
     }
 
@@ -993,11 +928,7 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturn
         ReturnValue::wire(
             &self.c_type,
             element.vector_encoder().clone(),
-            Some(element),
-            None,
-            false,
-            false,
-            false,
+            Marshaling::direct_vector(element),
         )
     }
 

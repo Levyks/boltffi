@@ -41,6 +41,7 @@ struct OutgoingConverter<'expansion, S: RenderSurface> {
 
 struct IncomingTransform {
     tokens: TokenStream,
+    representation: TokenStream,
     fallible: bool,
     changed: bool,
 }
@@ -106,17 +107,24 @@ impl IncomingConversion {
 }
 
 impl IncomingTransform {
-    fn identity() -> Self {
+    fn identity(representation: TokenStream) -> Self {
         Self {
             tokens: TokenStream::new(),
+            representation,
             fallible: false,
             changed: false,
         }
     }
 
-    fn new(tokens: TokenStream, fallible: bool, changed: bool) -> Self {
+    fn new(
+        tokens: TokenStream,
+        representation: TokenStream,
+        fallible: bool,
+        changed: bool,
+    ) -> Self {
         Self {
             tokens,
+            representation,
             fallible,
             changed,
         }
@@ -159,6 +167,10 @@ impl IncomingTransform {
 
     fn value_or_return_error(&self, value: TokenStream) -> TokenStream {
         self.apply(value).value_or_return_error()
+    }
+
+    fn representation(&self) -> TokenStream {
+        self.representation.clone()
     }
 }
 
@@ -306,12 +318,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Incoming<'expansion, 'lowered, S> {
             .codec
             .render_read_with(&mut IncomingConverter::new(self.expansion))?;
         match transform.changed {
-            true => self
-                .decoded_type()?
-                .map(|input_type| transform.apply_typed(value.clone(), input_type))
-                .ok_or(Error::UnsupportedExpansion(
-                    "custom codec representation type",
-                )),
+            true => Ok(transform.apply_typed(value, transform.representation())),
             false => Ok(transform.apply(value)),
         }
     }

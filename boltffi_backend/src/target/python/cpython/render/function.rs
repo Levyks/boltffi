@@ -1,9 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl, ExecutionDecl,
-    ExportedCallable, FunctionDecl, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native,
-    NativeSymbol, OutOfRust, ParamPlanRender, Primitive, ReadPlan, Receive, ReturnPlan,
-    ReturnPlanRender, ReturnValueSlot, TypeRef, WritePlan, native,
+    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel, ErrorPlacement,
+    ExecutionDecl, ExportedCallable, FunctionDecl, HandlePresence, HandleTarget, IncomingParam,
+    IntoRust, Native, NativeSymbol, OutOfRust, ParamPlanRender, Primitive, ReadPlan, Receive,
+    ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, WritePlan, native,
 };
 
 use crate::{
@@ -876,13 +876,17 @@ impl FallibleResult {
         loaded: &LoadedFunction,
         argument_count: usize,
     ) -> Result<Option<Self>> {
-        match callable.error() {
-            ErrorDecl::None(_) => Ok(None),
-            ErrorDecl::EncodedViaReturnSlot {
+        match callable.error().channel() {
+            ErrorChannel::None => Ok(None),
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
                 shape: native::BufferShape::Buffer,
                 ..
             } => Self::encoded(callable.returns().plan(), loaded, argument_count).map(Some),
-            ErrorDecl::EncodedViaReturnSlot { .. } => Err(Error::UnsupportedTarget {
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
+                ..
+            } => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "fallible error buffer shape",
             }),

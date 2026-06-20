@@ -1,7 +1,7 @@
 use boltffi_binding::{
-    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl, HandlePresence,
-    HandleTarget, IntoRust, Native, Primitive, ReturnPlan, ReturnPlanRender, ReturnValueSlot,
-    TypeRef, WritePlan, native,
+    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel, ErrorDecl,
+    ErrorPlacement, HandlePresence, HandleTarget, IntoRust, Native, Primitive, ReturnPlan,
+    ReturnPlanRender, ReturnValueSlot, TypeRef, WritePlan, native,
 };
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     },
     core::{Error, RenderContext, Result},
     target::python::{
-        codec::OwnedPayload,
+        codec::{Marshaling, OwnedPayload},
         cpython::render::{direct, direct_vector, primitive},
     },
 };
@@ -31,7 +31,12 @@ impl FallibleReturn {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let ErrorDecl::EncodedViaReturnSlot { codec: error, .. } = error else {
+        let ErrorChannel::Encoded {
+            placement: ErrorPlacement::ReturnSlot,
+            codec: error,
+            ..
+        } = error.channel()
+        else {
             return Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "foreign callable error channel",
@@ -52,21 +57,15 @@ impl FallibleReturn {
     }
 
     pub fn primitives(&self) -> impl Iterator<Item = primitive::Runtime> + '_ {
-        self.success.primitive().into_iter()
+        self.success.marshaling().primitive().into_iter()
     }
 
     pub fn wire_primitives(&self) -> impl Iterator<Item = primitive::Runtime> + '_ {
-        self.success
-            .wire_primitive()
-            .into_iter()
-            .chain(self.error.wire_primitive())
+        self.marshaling().wire_primitive().into_iter()
     }
 
     pub fn direct_vectors(&self) -> impl Iterator<Item = direct_vector::Element> + '_ {
-        self.success
-            .direct_vector()
-            .into_iter()
-            .chain(self.error.direct_vector())
+        self.marshaling().direct_vector_element().into_iter()
     }
 
     pub fn uses_wire_payload(&self) -> bool {
@@ -74,15 +73,19 @@ impl FallibleReturn {
     }
 
     pub fn has_string(&self) -> bool {
-        self.success.string || self.error.string
+        self.marshaling().has_string()
     }
 
     pub fn has_bytes(&self) -> bool {
-        self.success.bytes || self.error.bytes
+        self.marshaling().has_bytes()
     }
 
     pub fn has_raw_wire(&self) -> bool {
-        self.success.raw_wire || self.error.raw_wire
+        self.marshaling().has_raw_wire()
+    }
+
+    fn marshaling(&self) -> Marshaling {
+        self.success.marshaling().or(self.error.marshaling())
     }
 }
 
@@ -96,12 +99,7 @@ pub struct FallibleSuccess {
     pub wire: bool,
     pub direct: bool,
     void: bool,
-    primitive: Option<primitive::Runtime>,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+    marshaling: Marshaling,
 }
 
 impl FallibleSuccess {
@@ -118,16 +116,8 @@ impl FallibleSuccess {
         })
     }
 
-    fn primitive(&self) -> Option<primitive::Runtime> {
-        self.primitive
-    }
-
-    fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
-    }
-
-    fn direct_vector(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
+    fn marshaling(&self) -> &Marshaling {
+        &self.marshaling
     }
 
     fn void() -> Self {
@@ -140,12 +130,7 @@ impl FallibleSuccess {
             wire: false,
             direct: false,
             void: true,
-            primitive: None,
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::none(),
         }
     }
 
@@ -165,12 +150,7 @@ impl FallibleSuccess {
             wire: false,
             direct: true,
             void: false,
-            primitive: direct.primitive(),
-            wire_primitive: None,
-            direct_vector: None,
-            string: false,
-            bytes: false,
-            raw_wire: false,
+            marshaling: Marshaling::direct(direct.primitive()),
         })
     }
 
@@ -191,12 +171,7 @@ impl FallibleSuccess {
             wire: true,
             direct: false,
             void: false,
-            primitive: None,
-            wire_primitive: encoded.primitive(),
-            direct_vector: encoded.direct_vector(),
-            string: encoded.has_string(),
-            bytes: encoded.has_bytes(),
-            raw_wire: encoded.has_raw_wire(),
+            marshaling: encoded.marshaling(),
         })
     }
 
@@ -333,11 +308,7 @@ impl<'render> FallibleSuccessValue<'render> {
 pub struct FallibleError {
     pub value: Identifier,
     pub parser: Identifier,
-    wire_primitive: Option<primitive::Runtime>,
-    direct_vector: Option<direct_vector::Element>,
-    string: bool,
-    bytes: bool,
-    raw_wire: bool,
+    marshaling: Marshaling,
 }
 
 impl FallibleError {
@@ -346,19 +317,11 @@ impl FallibleError {
         Ok(Self {
             value: Identifier::parse("return_value")?,
             parser: encoded.parser().clone(),
-            wire_primitive: encoded.primitive(),
-            direct_vector: encoded.direct_vector(),
-            string: encoded.has_string(),
-            bytes: encoded.has_bytes(),
-            raw_wire: encoded.has_raw_wire(),
+            marshaling: encoded.marshaling(),
         })
     }
 
-    fn wire_primitive(&self) -> Option<primitive::Runtime> {
-        self.wire_primitive
-    }
-
-    fn direct_vector(&self) -> Option<direct_vector::Element> {
-        self.direct_vector.clone()
+    fn marshaling(&self) -> &Marshaling {
+        &self.marshaling
     }
 }

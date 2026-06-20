@@ -5,10 +5,10 @@ use std::{
 
 use boltffi_binding::{
     Bindings, CallableDecl, ClosureReturn, Decl, DirectValueType, DirectVectorElementType,
-    ErrorDecl, ExportedCallable, ForeignBody, HandlePresence, HandleTarget, ImportedCallable,
-    IncomingParam, IntoRust, Native, OutOfRust, OutgoingParam, ParamPlanRender, Primitive,
-    ReadPlan, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, TypeRef, ValueRoot,
-    WritePlan, native,
+    ErrorChannel, ErrorDecl, ExportedCallable, ForeignBody, HandlePresence, HandleTarget,
+    ImportedCallable, IncomingParam, IntoRust, Native, OutOfRust, OutgoingParam, ParamPlanRender,
+    Primitive, ReadPlan, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, TypeRef,
+    ValueRoot, WritePlan, native,
 };
 
 use crate::{
@@ -308,18 +308,14 @@ impl<'binding> CollectedAdapters<'binding> {
     }
 
     fn collect_out_of_rust_error(&mut self, error: &'binding ErrorDecl<Native, OutOfRust>) {
-        match error {
-            ErrorDecl::EncodedViaReturnSlot { codec, .. }
-            | ErrorDecl::EncodedViaOutPointer { codec, .. } => self.insert_decoder(codec),
-            _ => {}
+        if let ErrorChannel::Encoded { codec, .. } = error.channel() {
+            self.insert_decoder(codec);
         }
     }
 
     fn collect_into_rust_error(&mut self, error: &'binding ErrorDecl<Native, IntoRust>) {
-        match error {
-            ErrorDecl::EncodedViaReturnSlot { codec, .. }
-            | ErrorDecl::EncodedViaOutPointer { codec, .. } => self.insert_encoder(codec),
-            _ => {}
+        if let ErrorChannel::Encoded { codec, .. } = error.channel() {
+            self.insert_encoder(codec);
         }
     }
 

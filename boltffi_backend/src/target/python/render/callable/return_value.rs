@@ -1,7 +1,7 @@
 use boltffi_binding::{
-    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl, ExportedCallable,
-    HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan, ReturnPlan,
-    ReturnPlanRender, ReturnValueSlot, TypeRef, native,
+    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel, ErrorPlacement,
+    ExportedCallable, HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan,
+    ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
 };
 
 use crate::{
@@ -28,13 +28,17 @@ impl ReturnStub {
     }
 
     pub fn from_callable(callable: &ExportedCallable<Native>, package: &Package) -> Result<Self> {
-        match callable.error() {
-            ErrorDecl::None(_) => Self::from_plan(callable.returns().plan(), package),
-            ErrorDecl::EncodedViaReturnSlot {
+        match callable.error().channel() {
+            ErrorChannel::None => Self::from_plan(callable.returns().plan(), package),
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
                 shape: native::BufferShape::Buffer,
                 ..
             } => Self::from_success_plan(callable.returns().plan(), package),
-            ErrorDecl::EncodedViaReturnSlot { .. } => Err(Error::UnsupportedTarget {
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
+                ..
+            } => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "fallible error buffer shape",
             }),
