@@ -2,18 +2,23 @@ use std::collections::BTreeMap;
 
 use boltffi_binding::{
     Bindings, CStyleEnumDecl, CallableDecl, CallbackDecl, CallbackId, ClassDecl, ClassId,
-    ConstantDecl, ConstantValueDecl, CustomTypeId, Decl, DeclarationRef, DirectRecordDecl,
-    Direction, EnumDecl, EnumId, ErrorDecl, ExportedCallable, ExportedMethodDecl, ImportedCallable,
+    ClosureReturn, ConstantDecl, ConstantValueDecl, Decl, DeclarationRef, DirectRecordDecl,
+    DirectValueType, DirectVectorElementType, Direction, EnumDecl, EnumId, ErrorDecl,
+    ExportedCallable, ExportedMethodDecl, HandlePresence, HandleTarget, ImportedCallable,
     ImportedMethodDecl, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl,
-    ParamDirection, ParamPlan, Primitive, Receive, RecordDecl, RecordId, ReturnPlan, RustBody,
-    StreamDecl, StreamItemPlan, TypeRef, VTableSlot, native,
+    ParamDirection, ParamPlan, ParamPlanRender, Primitive, Receive, RecordDecl, RecordId,
+    ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, StreamDecl, StreamItemPlan, TypeRef,
+    VTableSlot, native,
 };
 
 use crate::core::{
     BridgeCapabilities, BridgeCapability, BridgeContract, Error, FilePath, Result, contract::sealed,
 };
 
-use super::name;
+use super::{Identifier, name};
+
+const C_BRIDGE_LAYER: &str = "c bridge";
+const C_BRIDGE_CONTRACT: &str = "c";
 
 /// C ABI contract produced for native bindings.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,7 +39,7 @@ pub struct CBridgeContract {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Record {
-    name: String,
+    name: Identifier,
     fields: Vec<Field>,
 }
 
@@ -42,7 +47,7 @@ pub struct Record {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Field {
-    name: String,
+    name: Identifier,
     ty: Type,
 }
 
@@ -57,7 +62,7 @@ pub struct SupportFunctions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Enum {
-    name: String,
+    name: Identifier,
     repr: Type,
     variants: Vec<EnumVariant>,
 }
@@ -66,7 +71,7 @@ pub struct Enum {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct EnumVariant {
-    name: String,
+    name: Identifier,
     value: i128,
 }
 
@@ -84,7 +89,7 @@ pub struct Callback {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Function {
-    name: String,
+    name: Identifier,
     params: Vec<Parameter>,
     returns: Type,
 }
@@ -93,7 +98,7 @@ pub struct Function {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Parameter {
-    name: String,
+    name: Identifier,
     ty: Type,
 }
 
@@ -146,7 +151,7 @@ pub enum Type {
     /// `BoltFFICallbackHandle`.
     CallbackHandle,
     /// A generated named C type.
-    Named(String),
+    Named(Identifier),
     /// Pointer to const data.
     ConstPointer(Box<Type>),
     /// Pointer to mutable data.
@@ -162,13 +167,12 @@ pub enum Type {
 
 #[derive(Clone, Debug, Default)]
 struct Names {
-    direct_records: BTreeMap<RecordId, String>,
-    enums: BTreeMap<EnumId, String>,
-    classes: BTreeMap<boltffi_binding::ClassId, String>,
+    direct_records: BTreeMap<RecordId, Identifier>,
+    enums: BTreeMap<EnumId, Identifier>,
+    classes: BTreeMap<boltffi_binding::ClassId, Identifier>,
     class_handles: BTreeMap<ClassId, native::HandleCarrier>,
-    callbacks: BTreeMap<boltffi_binding::CallbackId, String>,
-    streams: BTreeMap<boltffi_binding::StreamId, String>,
-    customs: BTreeMap<CustomTypeId, TypeRef>,
+    callbacks: BTreeMap<boltffi_binding::CallbackId, Identifier>,
+    streams: BTreeMap<boltffi_binding::StreamId, Identifier>,
 }
 
 #[derive(Clone, Debug)]
@@ -216,7 +220,7 @@ impl<'protocol> PollHandleSymbols<'protocol> {
 impl CBridgeContract {
     /// Builds the C ABI contract for native bindings.
     pub fn from_bindings(bindings: &Bindings<Native>, header_path: FilePath) -> Result<Self> {
-        let names = Names::new(bindings);
+        let names = Names::new(bindings)?;
         let source_direct_records =
             bindings
                 .decls()
@@ -228,7 +232,8 @@ impl CBridgeContract {
                         }
                         DeclarationRef::Record(RecordDecl::Encoded(_)) => {}
                         DeclarationRef::Record(_) => {
-                            return Err(Error::UnsupportedCAbi {
+                            return Err(Error::UnexpectedBindingShape {
+                                layer: C_BRIDGE_LAYER,
                                 shape: "unknown record declaration",
                             });
                         }
@@ -302,7 +307,7 @@ impl CBridgeContract {
         Ok(Self {
             capabilities: BridgeCapabilities::new().stable(BridgeCapability::CAbi),
             header_path,
-            support: SupportFunctions::new(),
+            support: SupportFunctions::new()?,
             direct_records,
             source_direct_records,
             source_c_style_enums,
@@ -376,7 +381,7 @@ impl sealed::BridgeContract for CBridgeContract {}
 impl Record {
     /// Returns the C typedef name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns the C fields in declaration order.
@@ -392,10 +397,10 @@ impl Record {
             .fields()
             .iter()
             .map(|field| {
-                Ok(Field::new(
+                Field::new(
                     name::Field::new(field.key()).spelling()?,
-                    names.type_ref(field.ty())?,
-                ))
+                    Type::primitive(field.ty().primitive())?,
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Self { name, fields })
@@ -405,7 +410,7 @@ impl Record {
 impl Field {
     /// Returns the field name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns the field type.
@@ -415,48 +420,48 @@ impl Field {
 }
 
 impl Field {
-    fn new(name: impl Into<String>, ty: Type) -> Self {
-        Self {
-            name: name.into(),
+    fn new(name: impl Into<String>, ty: Type) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::escape(name)?,
             ty,
-        }
+        })
     }
 }
 
 impl SupportFunctions {
     /// Creates the C ABI support function set.
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
             functions: vec![
                 Function::new(
                     "boltffi_free_string",
-                    vec![Parameter::new("string", Type::String)],
+                    vec![Parameter::new("string", Type::String)?],
                     Type::Void,
-                ),
+                )?,
                 Function::new(
                     "boltffi_free_buf",
-                    vec![Parameter::new("buf", Type::Buffer)],
+                    vec![Parameter::new("buf", Type::Buffer)?],
                     Type::Void,
-                ),
+                )?,
                 Function::new(
                     "boltffi_buf_from_bytes",
                     vec![
-                        Parameter::new("ptr", Type::ConstPointer(Box::new(Type::Uint8))),
-                        Parameter::new("len", Type::PointerWidth),
+                        Parameter::new("ptr", Type::ConstPointer(Box::new(Type::Uint8)))?,
+                        Parameter::new("len", Type::PointerWidth)?,
                     ],
                     Type::Buffer,
-                ),
+                )?,
                 Function::new(
                     "boltffi_last_error_message",
                     vec![Parameter::new(
                         "out",
                         Type::MutPointer(Box::new(Type::String)),
-                    )],
+                    )?],
                     Type::Status,
-                ),
-                Function::new("boltffi_clear_last_error", Vec::new(), Type::Void),
+                )?,
+                Function::new("boltffi_clear_last_error", Vec::new(), Type::Void)?,
             ],
-        }
+        })
     }
 
     /// Returns C ABI support functions.
@@ -465,16 +470,10 @@ impl SupportFunctions {
     }
 }
 
-impl Default for SupportFunctions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Enum {
     /// Returns the C typedef name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns the C integer representation.
@@ -504,9 +503,10 @@ impl Enum {
                             i128::from(variant.tag().get()),
                         )
                     })
-                    .collect(),
+                    .collect::<Result<Vec<_>>>()?,
             }),
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown enum declaration",
             }),
         }
@@ -525,7 +525,7 @@ impl Enum {
                         variant.discriminant().get(),
                     )
                 })
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
         })
     }
 }
@@ -533,7 +533,7 @@ impl Enum {
 impl EnumVariant {
     /// Returns the C constant name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns the integer constant value.
@@ -543,11 +543,11 @@ impl EnumVariant {
 }
 
 impl EnumVariant {
-    fn new(name: impl Into<String>, value: i128) -> Self {
-        Self {
-            name: name.into(),
+    fn new(name: impl Into<String>, value: i128) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::parse(name)?,
             value,
-        }
+        })
     }
 }
 
@@ -575,7 +575,7 @@ impl Callback {
 
 impl Callback {
     fn from_decl(callback: &CallbackDecl<Native>, names: &Names) -> Result<Self> {
-        let vtable_name = format!("{}VTable", names.callback(callback.id())?);
+        let vtable_name = Identifier::parse(format!("{}VTable", names.callback(callback.id())?))?;
         let vtable = callback.protocol().vtable();
         let free = Field::new(
             vtable.free_slot().as_str(),
@@ -583,14 +583,14 @@ impl Callback {
                 returns: Box::new(Type::Void),
                 params: vec![Type::Uint64],
             },
-        );
+        )?;
         let clone = Field::new(
             vtable.clone_slot().as_str(),
             Type::FunctionPointer {
                 returns: Box::new(Type::Uint64),
                 params: vec![Type::Uint64],
             },
-        );
+        )?;
         let methods = vtable
             .methods()
             .iter()
@@ -605,14 +605,14 @@ impl Callback {
             vec![Parameter::new(
                 "vtable",
                 Type::ConstPointer(Box::new(Type::Named(vtable_name.clone()))),
-            )],
+            )?],
             Type::Void,
-        );
+        )?;
         let create_handle = Function::new(
             callback.protocol().create_handle().name().as_str(),
-            vec![Parameter::new("handle", Type::Uint64)],
+            vec![Parameter::new("handle", Type::Uint64)?],
             Type::CallbackHandle,
-        );
+        )?;
         Ok(Self {
             id: callback.id(),
             vtable,
@@ -625,7 +625,7 @@ impl Callback {
 impl Function {
     /// Returns the C symbol name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns the parameters in C ABI order.
@@ -659,15 +659,16 @@ impl Function {
             RecordDecl::Direct(record) => (
                 record.initializers(),
                 record.methods(),
-                ReceiverAbi::direct("receiver", Type::Named(names.record(record.id())?)),
+                ReceiverAbi::direct("receiver", Type::Named(names.record(record.id())?))?,
             ),
             RecordDecl::Encoded(record) => (
                 record.initializers(),
                 record.methods(),
-                ReceiverAbi::encoded("receiver"),
+                ReceiverAbi::encoded("receiver")?,
             ),
             _ => {
-                return Err(Error::UnsupportedCAbi {
+                return Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
                     shape: "unknown record declaration",
                 });
             }
@@ -683,15 +684,16 @@ impl Function {
                 ReceiverAbi::direct(
                     "receiver",
                     Type::Named(names.enumeration(enumeration.id())?),
-                ),
+                )?,
             ),
             EnumDecl::Data(enumeration) => (
                 enumeration.initializers(),
                 enumeration.methods(),
-                ReceiverAbi::encoded("receiver"),
+                ReceiverAbi::encoded("receiver")?,
             ),
             _ => {
-                return Err(Error::UnsupportedCAbi {
+                return Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
                     shape: "unknown enum declaration",
                 });
             }
@@ -703,15 +705,15 @@ impl Function {
         let receiver = ReceiverAbi::plain([Parameter::new(
             "receiver",
             Type::handle_carrier(class.handle())?,
-        )]);
+        )?]);
         let release = Self::new(
             class.release().name().as_str(),
             vec![Parameter::new(
                 "handle",
                 Type::handle_carrier(class.handle())?,
-            )],
+            )?],
             Type::Void,
-        );
+        )?;
         let functions =
             Self::associated_functions(class.initializers(), class.methods(), receiver, names)?;
         Ok(std::iter::once(release).chain(functions).collect())
@@ -723,7 +725,8 @@ impl Function {
             ConstantValueDecl::Accessor { symbol, callable } => {
                 Self::exported(symbol, callable, Vec::new(), names)
             }
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown constant value declaration",
             }),
         }
@@ -738,7 +741,7 @@ impl Function {
                 names
                     .class_handle(owner)
                     .and_then(Type::handle_carrier)
-                    .map(|ty| Parameter::new("receiver", ty))
+                    .and_then(|ty| Parameter::new("receiver", ty))
             })
             .transpose()?
             .into_iter()
@@ -747,25 +750,26 @@ impl Function {
             StreamItemPlan::Direct { ty, .. } => Self::new(
                 protocol.pop_batch().name().as_str(),
                 vec![
-                    Parameter::new("subscription", subscription.clone()),
+                    Parameter::new("subscription", subscription.clone())?,
                     Parameter::new(
                         "output_ptr",
-                        Type::MutPointer(Box::new(names.type_ref(ty)?)),
-                    ),
-                    Parameter::new("output_capacity", Type::PointerWidth),
+                        Type::MutPointer(Box::new(names.direct_value(ty)?)),
+                    )?,
+                    Parameter::new("output_capacity", Type::PointerWidth)?,
                 ],
                 Type::PointerWidth,
-            ),
+            )?,
             StreamItemPlan::Encoded { shape, .. } => Self::new(
                 protocol.pop_batch().name().as_str(),
                 vec![
-                    Parameter::new("subscription", subscription.clone()),
-                    Parameter::new("max_count", Type::PointerWidth),
+                    Parameter::new("subscription", subscription.clone())?,
+                    Parameter::new("max_count", Type::PointerWidth)?,
                 ],
                 Signature::new(names, Vec::new()).encoded_return(*shape)?,
-            ),
+            )?,
             _ => {
-                return Err(Error::UnsupportedCAbi {
+                return Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
                     shape: "unknown stream item plan",
                 });
             }
@@ -775,41 +779,41 @@ impl Function {
                 protocol.subscribe().name().as_str(),
                 subscribe_params,
                 subscription.clone(),
-            ),
+            )?,
             pop_batch,
             Self::new(
                 protocol.wait().name().as_str(),
                 vec![
-                    Parameter::new("subscription", subscription.clone()),
-                    Parameter::new("timeout_milliseconds", Type::Uint32),
+                    Parameter::new("subscription", subscription.clone())?,
+                    Parameter::new("timeout_milliseconds", Type::Uint32)?,
                 ],
                 Type::WaitResult,
-            ),
+            )?,
             Self::new(
                 protocol.poll().name().as_str(),
                 vec![
-                    Parameter::new("subscription", subscription.clone()),
-                    Parameter::new("callback_data", Type::Uint64),
+                    Parameter::new("subscription", subscription.clone())?,
+                    Parameter::new("callback_data", Type::Uint64)?,
                     Parameter::new(
                         "callback",
                         Type::FunctionPointer {
                             returns: Box::new(Type::Void),
                             params: vec![Type::Uint64, Type::StreamPollResult],
                         },
-                    ),
+                    )?,
                 ],
                 Type::Void,
-            ),
+            )?,
             Self::new(
                 protocol.unsubscribe().name().as_str(),
-                vec![Parameter::new("subscription", subscription.clone())],
+                vec![Parameter::new("subscription", subscription.clone())?],
                 Type::Void,
-            ),
+            )?,
             Self::new(
                 protocol.free().name().as_str(),
-                vec![Parameter::new("subscription", subscription)],
+                vec![Parameter::new("subscription", subscription)?],
                 Type::Void,
-            ),
+            )?,
         ])
     }
 
@@ -857,19 +861,19 @@ impl Function {
         Signature::new(names, receiver).exported(symbol, callable)
     }
 
-    fn new(name: impl Into<String>, params: Vec<Parameter>, returns: Type) -> Self {
-        Self {
-            name: name.into(),
+    fn new(name: impl Into<String>, params: Vec<Parameter>, returns: Type) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::parse(name)?,
             params,
             returns,
-        }
+        })
     }
 }
 
 impl Parameter {
     /// Returns the parameter name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns the parameter type.
@@ -879,15 +883,20 @@ impl Parameter {
 }
 
 impl Parameter {
-    fn new(name: impl Into<String>, ty: Type) -> Self {
-        Self {
-            name: name.into(),
+    fn new(name: impl Into<String>, ty: Type) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::escape(name)?,
             ty,
-        }
+        })
     }
 }
 
 impl Type {
+    /// Creates a generated named C type.
+    pub fn named(name: impl Into<String>) -> Result<Self> {
+        Identifier::parse(name).map(Self::Named)
+    }
+
     /// Creates the C ABI type for a primitive scalar.
     pub fn primitive(primitive: Primitive) -> Result<Self> {
         match primitive {
@@ -904,7 +913,8 @@ impl Type {
             Primitive::USize => Ok(Self::PointerWidth),
             Primitive::F32 => Ok(Self::Float32),
             Primitive::F64 => Ok(Self::Float64),
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown primitive",
             }),
         }
@@ -915,7 +925,8 @@ impl Type {
             native::HandleCarrier::U64 => Ok(Self::Uint64),
             native::HandleCarrier::USize => Ok(Self::PointerWidth),
             native::HandleCarrier::CallbackHandle => Ok(Self::CallbackHandle),
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown native handle carrier",
             }),
         }
@@ -923,74 +934,84 @@ impl Type {
 }
 
 impl Names {
-    fn new(bindings: &Bindings<Native>) -> Self {
+    fn new(bindings: &Bindings<Native>) -> Result<Self> {
         bindings
             .decls()
             .iter()
-            .fold(Self::default(), |mut names, decl| {
-                names.insert(decl);
-                names
+            .try_fold(Self::default(), |mut names, decl| {
+                names.insert(decl)?;
+                Ok(names)
             })
     }
 
-    fn insert(&mut self, decl: &Decl<Native>) {
+    fn insert(&mut self, decl: &Decl<Native>) -> Result<()> {
         match DeclarationRef::from(decl) {
             DeclarationRef::Record(RecordDecl::Direct(record)) => {
-                self.direct_records
-                    .insert(record.id(), name::Spelling::new(record.name()).typedef());
+                self.direct_records.insert(
+                    record.id(),
+                    Identifier::parse(name::Spelling::new(record.name()).typedef())?,
+                );
             }
             DeclarationRef::Record(RecordDecl::Encoded(_)) => {}
             DeclarationRef::Record(_) => {}
             DeclarationRef::Enum(enumeration) => {
                 self.enums.insert(
                     enumeration.id(),
-                    name::Spelling::new(enumeration.name()).typedef(),
+                    Identifier::parse(name::Spelling::new(enumeration.name()).typedef())?,
                 );
             }
             DeclarationRef::Class(class) => {
-                self.classes
-                    .insert(class.id(), name::Spelling::new(class.name()).typedef());
+                self.classes.insert(
+                    class.id(),
+                    Identifier::parse(name::Spelling::new(class.name()).typedef())?,
+                );
                 self.class_handles.insert(class.id(), class.handle());
             }
             DeclarationRef::Callback(callback) => {
                 self.callbacks.insert(
                     callback.id(),
-                    name::Spelling::new(callback.name()).typedef(),
+                    Identifier::parse(name::Spelling::new(callback.name()).typedef())?,
                 );
             }
             DeclarationRef::Stream(stream) => {
-                self.streams
-                    .insert(stream.id(), name::Spelling::new(stream.name()).typedef());
+                self.streams.insert(
+                    stream.id(),
+                    Identifier::parse(name::Spelling::new(stream.name()).typedef())?,
+                );
             }
-            DeclarationRef::CustomType(custom) => {
-                self.customs
-                    .insert(custom.id(), custom.representation().clone());
-            }
+            DeclarationRef::CustomType(_) => {}
             DeclarationRef::Function(_) | DeclarationRef::Constant(_) => {}
         }
+        Ok(())
     }
 
-    fn record(&self, id: RecordId) -> Result<String> {
+    fn record(&self, id: RecordId) -> Result<Identifier> {
         self.direct_records
             .get(&id)
             .cloned()
-            .ok_or(Error::UnsupportedCAbi {
-                shape: "missing direct record type name",
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "missing direct record type name",
             })
     }
 
-    fn enumeration(&self, id: EnumId) -> Result<String> {
-        self.enums.get(&id).cloned().ok_or(Error::UnsupportedCAbi {
-            shape: "missing enum type name",
-        })
+    fn enumeration(&self, id: EnumId) -> Result<Identifier> {
+        self.enums
+            .get(&id)
+            .cloned()
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "missing enum type name",
+            })
     }
 
-    fn callback(&self, id: boltffi_binding::CallbackId) -> Result<String> {
+    fn callback(&self, id: boltffi_binding::CallbackId) -> Result<Identifier> {
         self.callbacks
             .get(&id)
             .cloned()
-            .ok_or(Error::UnsupportedCAbi {
-                shape: "missing callback type name",
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "missing callback type name",
             })
     }
 
@@ -998,50 +1019,533 @@ impl Names {
         self.class_handles
             .get(&id)
             .copied()
-            .ok_or(Error::UnsupportedCAbi {
-                shape: "missing class handle carrier",
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "missing class handle carrier",
             })
     }
 
-    fn type_ref(&self, ty: &TypeRef) -> Result<Type> {
+    fn direct_value(&self, ty: &DirectValueType) -> Result<Type> {
         match ty {
-            TypeRef::Primitive(primitive) => Type::primitive(*primitive),
-            TypeRef::String
-            | TypeRef::Bytes
-            | TypeRef::Builtin(_)
-            | TypeRef::Sequence(_)
-            | TypeRef::Optional(_) => Ok(Type::Buffer),
-            TypeRef::Record(id) => self.record(*id).map(Type::Named),
-            TypeRef::Enum(id) => self.enumeration(*id).map(Type::Named),
-            TypeRef::Class(id) => {
-                self.classes
-                    .get(id)
-                    .cloned()
-                    .map(Type::Named)
-                    .ok_or(Error::UnsupportedCAbi {
-                        shape: "missing class type name",
-                    })
+            DirectValueType::Primitive(primitive) => Type::primitive(*primitive),
+            DirectValueType::Record(record) => self.record(*record).map(Type::Named),
+            DirectValueType::Enum(enumeration) => self.enumeration(*enumeration).map(Type::Named),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "direct value type",
+            }),
+        }
+    }
+}
+
+enum DirectVectorElementAbi {
+    TypedElement(Type),
+    PackedBytes,
+}
+
+impl DirectVectorElementAbi {
+    fn new(element: &DirectVectorElementType) -> Result<Self> {
+        match element {
+            DirectVectorElementType::Primitive(primitive) => {
+                Type::primitive(primitive.primitive()).map(Self::TypedElement)
             }
-            TypeRef::Callback(_) => Ok(Type::CallbackHandle),
-            TypeRef::Custom(id) => self.custom_type(*id),
-            TypeRef::Tuple(_) | TypeRef::Result { .. } | TypeRef::Map { .. } => {
-                Err(Error::UnsupportedCAbi {
-                    shape: "direct tuple, result, or map C type",
-                })
-            }
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown C type reference",
+            DirectVectorElementType::Record(_) => Ok(Self::PackedBytes),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "direct vector element",
+            }),
+        }
+    }
+}
+
+struct ValueParameter<'signature, 'names> {
+    signature: &'signature Signature<'names>,
+    name: &'signature str,
+}
+
+struct ReturnParameters<'signature, 'names> {
+    signature: &'signature Signature<'names>,
+}
+
+struct CallableReturnType<'signature, 'names> {
+    signature: &'signature Signature<'names>,
+}
+
+struct InfallibleCallbackReturnType<'signature, 'names> {
+    signature: &'signature Signature<'names>,
+}
+
+struct AsyncCallbackPayloadType<'signature, 'names> {
+    signature: &'signature Signature<'names>,
+}
+
+struct FallibleAsyncCallbackSuccess;
+
+impl CallableReturnType<'_, '_> {
+    fn direct_slot(&self, slot: ReturnValueSlot, ty: &DirectValueType) -> Result<Type> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => self.signature.names.direct_value(ty),
+            ReturnValueSlot::OutPointer => Ok(Type::Status),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct return slot",
             }),
         }
     }
 
-    fn custom_type(&self, id: CustomTypeId) -> Result<Type> {
-        self.customs
-            .get(&id)
-            .ok_or(Error::UnsupportedCAbi {
-                shape: "missing custom type representation",
-            })
-            .and_then(|ty| self.type_ref(ty))
+    fn encoded_slot(&self, slot: ReturnValueSlot, shape: native::BufferShape) -> Result<Type> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => self.signature.encoded_return(shape),
+            ReturnValueSlot::OutPointer => Ok(Type::Status),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded return slot",
+            }),
+        }
+    }
+
+    fn handle_slot(&self, slot: ReturnValueSlot, carrier: native::HandleCarrier) -> Result<Type> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Type::handle_carrier(carrier),
+            ReturnValueSlot::OutPointer => Ok(Type::Status),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle return slot",
+            }),
+        }
+    }
+
+    fn buffer(&self) -> Type {
+        Type::Buffer
+    }
+
+    fn status(&self) -> Type {
+        Type::Status
+    }
+}
+
+impl<'plan, D> ParamPlanRender<'plan, Native, D> for ValueParameter<'_, '_>
+where
+    D: Direction,
+{
+    type Output = Result<Vec<Parameter>>;
+
+    fn direct(&mut self, ty: &'plan DirectValueType, _: D::Receive) -> Self::Output {
+        Ok(vec![Parameter::new(
+            self.name,
+            self.signature.names.direct_value(ty)?,
+        )?])
+    }
+
+    fn encoded(
+        &mut self,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+        _: D::Receive,
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Slice => Ok(vec![
+                Parameter::new(
+                    format!("{}_ptr", self.name),
+                    Type::ConstPointer(Box::new(Type::Uint8)),
+                )?,
+                Parameter::new(format!("{}_len", self.name), Type::PointerWidth)?,
+            ]),
+            native::BufferShape::Buffer | native::BufferShape::BufferPointer => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "native encoded parameter shape",
+                })
+            }
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "native encoded parameter shape",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+        _: D::Receive,
+    ) -> Self::Output {
+        Ok(vec![Parameter::new(
+            self.name,
+            Type::handle_carrier(carrier)?,
+        )?])
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(vec![
+            Parameter::new(
+                format!("{}_ptr", self.name),
+                Type::ConstPointer(Box::new(Type::Uint8)),
+            )?,
+            Parameter::new(format!("{}_len", self.name), Type::PointerWidth)?,
+        ])
+    }
+
+    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
+        self.signature.direct_vec_param(self.name, element)
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for ReturnParameters<'_, '_>
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Vec<Parameter>>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Vec::new())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(vec![Parameter::new(
+                "return_out",
+                Type::MutPointer(Box::new(self.signature.names.direct_value(ty)?)),
+            )?]),
+            ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct return slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => self.signature.encoded_out("return_out", shape),
+            ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded return slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(vec![Parameter::new(
+                "return_out",
+                Type::MutPointer(Box::new(Type::handle_carrier(carrier)?)),
+            )?]),
+            ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle return slot",
+            }),
+        }
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(Vec::new())
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(Vec::new())
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Ok(vec![Parameter::new(
+            "return_out",
+            Type::MutPointer(Box::new(Type::Void)),
+        )?])
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for CallableReturnType<'_, '_>
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Type>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Type::Status)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        self.direct_slot(slot, ty)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        self.encoded_slot(slot, shape)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        self.handle_slot(slot, carrier)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(self.buffer())
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(self.buffer())
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Ok(self.status())
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for InfallibleCallbackReturnType<'_, '_>
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Type>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Type::Void)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        CallableReturnType {
+            signature: self.signature,
+        }
+        .direct_slot(slot, ty)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        CallableReturnType {
+            signature: self.signature,
+        }
+        .encoded_slot(slot, shape)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        CallableReturnType {
+            signature: self.signature,
+        }
+        .handle_slot(slot, carrier)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(CallableReturnType {
+            signature: self.signature,
+        }
+        .buffer())
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(CallableReturnType {
+            signature: self.signature,
+        }
+        .buffer())
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Ok(CallableReturnType {
+            signature: self.signature,
+        }
+        .status())
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for AsyncCallbackPayloadType<'_, '_>
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Option<Type>>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(None)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Some(self.signature.names.direct_value(ty)?)),
+            ReturnValueSlot::OutPointer => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct async callback return slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Some(self.signature.encoded_return(shape)?)),
+            ReturnValueSlot::OutPointer => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded async callback return slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Some(Type::handle_carrier(carrier)?)),
+            ReturnValueSlot::OutPointer => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle async callback return slot",
+            }),
+        }
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(Some(Type::Buffer))
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(Some(Type::Buffer))
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "async callback closure return",
+        })
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for FallibleAsyncCallbackSuccess
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<()>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, _: &'plan DirectValueType) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(()),
+            ReturnValueSlot::ReturnSlot => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct fallible async callback success slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        _: native::BufferShape,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(()),
+            ReturnValueSlot::ReturnSlot => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded fallible async callback success slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(()),
+            ReturnValueSlot::ReturnSlot => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle fallible async callback success slot",
+            }),
+        }
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "fallible async callback success slot",
+        })
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "fallible async callback success slot",
+        })
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "async callback closure success",
+        })
     }
 }
 
@@ -1073,10 +1577,23 @@ impl<'names> Signature<'names> {
                 callable,
                 PollHandleSymbols::new(symbol, poll, complete, cancel, free, panic_message),
             ),
-            boltffi_binding::ExecutionDecl::Asynchronous(_) => Err(Error::UnsupportedCAbi {
+            boltffi_binding::ExecutionDecl::Asynchronous(
+                native::AsyncProtocol::NativeFuture | native::AsyncProtocol::Continuation { .. },
+            ) => Err(Error::UnsupportedCAbi {
                 shape: "native async protocol",
             }),
-            _ => Err(Error::UnsupportedCAbi {
+            boltffi_binding::ExecutionDecl::Asynchronous(
+                native::AsyncProtocol::CallbackCompletion,
+            ) => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "callback completion protocol on exported callable",
+            }),
+            boltffi_binding::ExecutionDecl::Asynchronous(_) => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown native async protocol",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown execution declaration",
             }),
         }
@@ -1092,7 +1609,7 @@ impl<'names> Signature<'names> {
             .chain(self.error_params(callable.error())?)
             .collect();
         let returns = self.return_type(callable.returns().plan(), callable.error())?;
-        Ok(Function::new(name, params, returns))
+        Function::new(name, params, returns)
     }
 
     fn async_poll_handle(
@@ -1108,12 +1625,12 @@ impl<'names> Signature<'names> {
                 .chain(self.exported_params(callable.params())?)
                 .collect(),
             Type::FutureHandle,
-        );
-        let complete_params = std::iter::once(Parameter::new("handle", Type::FutureHandle))
+        )?;
+        let complete_params = std::iter::once(Parameter::new("handle", Type::FutureHandle)?)
             .chain([Parameter::new(
                 "out_status",
                 Type::MutPointer(Box::new(Type::Status)),
-            )])
+            )?])
             .chain(self.return_params(callable.returns().plan())?)
             .collect();
         Ok(vec![
@@ -1121,38 +1638,38 @@ impl<'names> Signature<'names> {
             Function::new(
                 symbols.poll.name().as_str(),
                 vec![
-                    Parameter::new("handle", Type::FutureHandle),
-                    Parameter::new("callback_data", Type::Uint64),
+                    Parameter::new("handle", Type::FutureHandle)?,
+                    Parameter::new("callback_data", Type::Uint64)?,
                     Parameter::new(
                         "callback",
                         Type::FunctionPointer {
                             returns: Box::new(Type::Void),
                             params: vec![Type::Uint64, Type::Int8],
                         },
-                    ),
+                    )?,
                 ],
                 Type::Void,
-            ),
+            )?,
             Function::new(
                 symbols.complete.name().as_str(),
                 complete_params,
                 self.async_complete_return(callable.returns().plan(), callable.error())?,
-            ),
+            )?,
             Function::new(
                 symbols.panic_message.name().as_str(),
-                vec![Parameter::new("handle", Type::FutureHandle)],
+                vec![Parameter::new("handle", Type::FutureHandle)?],
                 Type::Buffer,
-            ),
+            )?,
             Function::new(
                 symbols.cancel.name().as_str(),
-                vec![Parameter::new("handle", Type::FutureHandle)],
+                vec![Parameter::new("handle", Type::FutureHandle)?],
                 Type::Void,
-            ),
+            )?,
             Function::new(
                 symbols.free.name().as_str(),
-                vec![Parameter::new("handle", Type::FutureHandle)],
+                vec![Parameter::new("handle", Type::FutureHandle)?],
                 Type::Void,
-            ),
+            )?,
         ])
     }
 
@@ -1194,59 +1711,29 @@ impl<'names> Signature<'names> {
     where
         D: Direction,
     {
-        match plan {
-            ParamPlan::Direct { ty, .. } => {
-                Ok(vec![Parameter::new(name, self.names.type_ref(ty)?)])
-            }
-            ParamPlan::Encoded {
-                shape: native::BufferShape::Slice,
-                ..
-            } => Ok(vec![
-                Parameter::new(
-                    format!("{name}_ptr"),
-                    Type::ConstPointer(Box::new(Type::Uint8)),
-                ),
-                Parameter::new(format!("{name}_len"), Type::PointerWidth),
-            ]),
-            ParamPlan::Encoded { .. } => Err(Error::UnsupportedCAbi {
-                shape: "native encoded parameter shape",
-            }),
-            ParamPlan::Handle { carrier, .. } => {
-                Ok(vec![Parameter::new(name, Type::handle_carrier(*carrier)?)])
-            }
-            ParamPlan::ScalarOption { .. } => Ok(vec![
-                Parameter::new(
-                    format!("{name}_ptr"),
-                    Type::ConstPointer(Box::new(Type::Uint8)),
-                ),
-                Parameter::new(format!("{name}_len"), Type::PointerWidth),
-            ]),
-            ParamPlan::DirectVec { element } => self.direct_vec_param(name, element),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown parameter plan",
-            }),
-        }
+        plan.render_with(&mut ValueParameter {
+            signature: self,
+            name,
+        })
     }
 
-    fn direct_vec_param(&self, name: &str, element: &TypeRef) -> Result<Vec<Parameter>> {
-        match element {
-            TypeRef::Primitive(_) => Ok(vec![
-                Parameter::new(
-                    format!("{name}_ptr"),
-                    Type::ConstPointer(Box::new(self.names.type_ref(element)?)),
-                ),
-                Parameter::new(format!("{name}_len"), Type::PointerWidth),
+    fn direct_vec_param(
+        &self,
+        name: &str,
+        element: &DirectVectorElementType,
+    ) -> Result<Vec<Parameter>> {
+        match DirectVectorElementAbi::new(element)? {
+            DirectVectorElementAbi::TypedElement(element) => Ok(vec![
+                Parameter::new(format!("{name}_ptr"), Type::ConstPointer(Box::new(element)))?,
+                Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
             ]),
-            TypeRef::Record(_) | TypeRef::Enum(_) => Ok(vec![
+            DirectVectorElementAbi::PackedBytes => Ok(vec![
                 Parameter::new(
                     format!("{name}_ptr"),
                     Type::ConstPointer(Box::new(Type::Uint8)),
-                ),
-                Parameter::new(format!("{name}_byte_len"), Type::PointerWidth),
+                )?,
+                Parameter::new(format!("{name}_byte_len"), Type::PointerWidth)?,
             ]),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "direct vector element",
-            }),
         }
     }
 
@@ -1301,18 +1788,18 @@ impl<'names> Signature<'names> {
                         )
                         .collect(),
                 },
-            ),
+            )?,
             Parameter::new(
                 format!("{name}_context"),
                 Type::MutPointer(Box::new(Type::Void)),
-            ),
+            )?,
             Parameter::new(
                 format!("{name}_release"),
                 Type::FunctionPointer {
                     returns: Box::new(Type::Void),
                     params: vec![Type::MutPointer(Box::new(Type::Void))],
                 },
-            ),
+            )?,
         ])
     }
 
@@ -1321,32 +1808,7 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        match plan {
-            ReturnPlan::DirectViaOutPointer { ty } => Ok(vec![Parameter::new(
-                "return_out",
-                Type::MutPointer(Box::new(self.names.type_ref(ty)?)),
-            )]),
-            ReturnPlan::EncodedViaOutPointer { shape, .. } => {
-                self.encoded_out("return_out", *shape)
-            }
-            ReturnPlan::HandleViaOutPointer { carrier, .. } => Ok(vec![Parameter::new(
-                "return_out",
-                Type::MutPointer(Box::new(Type::handle_carrier(*carrier)?)),
-            )]),
-            ReturnPlan::ClosureViaOutPointer(_) => Ok(vec![Parameter::new(
-                "return_out",
-                Type::MutPointer(Box::new(Type::Void)),
-            )]),
-            ReturnPlan::Void
-            | ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => Ok(Vec::new()),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown return plan",
-            }),
-        }
+        plan.render_with(&mut ReturnParameters { signature: self })
     }
 
     fn error_params<D>(&self, error: &ErrorDecl<Native, D>) -> Result<Vec<Parameter>>
@@ -1357,12 +1819,13 @@ impl<'names> Signature<'names> {
             ErrorDecl::StatusViaOutPointer { .. } => Ok(vec![Parameter::new(
                 "error_out",
                 Type::MutPointer(Box::new(Type::Status)),
-            )]),
+            )?]),
             ErrorDecl::EncodedViaOutPointer { shape, .. } => self.encoded_out("error_out", *shape),
             ErrorDecl::None(_)
             | ErrorDecl::StatusViaReturnSlot { .. }
             | ErrorDecl::EncodedViaReturnSlot { .. } => Ok(Vec::new()),
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown error declaration",
             }),
         }
@@ -1383,7 +1846,8 @@ impl<'names> Signature<'names> {
             ErrorDecl::None(_)
             | ErrorDecl::StatusViaOutPointer { .. }
             | ErrorDecl::EncodedViaOutPointer { .. } => self.return_slot_type(plan),
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown error declaration",
             }),
         }
@@ -1394,21 +1858,7 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        match plan {
-            ReturnPlan::Void => Ok(Type::Status),
-            ReturnPlan::DirectViaReturnSlot { ty } => self.names.type_ref(ty),
-            ReturnPlan::EncodedViaReturnSlot { shape, .. } => self.encoded_return(*shape),
-            ReturnPlan::HandleViaReturnSlot { carrier, .. } => Type::handle_carrier(*carrier),
-            ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => Ok(Type::Buffer),
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. }
-            | ReturnPlan::ClosureViaOutPointer(_) => Ok(Type::Status),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown return plan",
-            }),
-        }
+        plan.render_with(&mut CallableReturnType { signature: self })
     }
 
     fn async_complete_return<D>(
@@ -1422,10 +1872,17 @@ impl<'names> Signature<'names> {
     {
         match error {
             ErrorDecl::EncodedViaReturnSlot { shape, .. } => self.encoded_return(*shape),
-            ErrorDecl::None(_) if matches!(plan, ReturnPlan::Void) => Ok(Type::Void),
-            ErrorDecl::None(_) => self.return_slot_type(plan),
-            _ => Err(Error::UnsupportedCAbi {
+            ErrorDecl::None(_) => {
+                plan.render_with(&mut InfallibleCallbackReturnType { signature: self })
+            }
+            ErrorDecl::StatusViaReturnSlot { .. }
+            | ErrorDecl::StatusViaOutPointer { .. }
+            | ErrorDecl::EncodedViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
                 shape: "async error channel",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown async error channel",
             }),
         }
     }
@@ -1434,11 +1891,13 @@ impl<'names> Signature<'names> {
         match shape {
             native::BufferShape::Buffer => Ok(Type::Buffer),
             native::BufferShape::Slice | native::BufferShape::BufferPointer => {
-                Err(Error::UnsupportedCAbi {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
                     shape: "native encoded return shape",
                 })
             }
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown native encoded return shape",
             }),
         }
@@ -1449,13 +1908,15 @@ impl<'names> Signature<'names> {
             native::BufferShape::Buffer => Ok(vec![Parameter::new(
                 name,
                 Type::MutPointer(Box::new(Type::Buffer)),
-            )]),
+            )?]),
             native::BufferShape::Slice | native::BufferShape::BufferPointer => {
-                Err(Error::UnsupportedCAbi {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
                     shape: "native encoded out-pointer shape",
                 })
             }
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown native encoded out-pointer shape",
             }),
         }
@@ -1478,8 +1939,10 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        match (plan, error) {
-            (ReturnPlan::Void, ErrorDecl::None(_)) => Ok(Type::Void),
+        match error {
+            ErrorDecl::None(_) => {
+                plan.render_with(&mut InfallibleCallbackReturnType { signature: self })
+            }
             _ => self.return_type(plan, error),
         }
     }
@@ -1524,7 +1987,8 @@ impl<'names> Signature<'names> {
             | ErrorDecl::EncodedViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
                 shape: "async callback error channel",
             }),
-            _ => Err(Error::UnsupportedCAbi {
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
                 shape: "unknown async callback error channel",
             }),
         }
@@ -1538,29 +2002,7 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        match plan {
-            ReturnPlan::Void => Ok(None),
-            ReturnPlan::DirectViaReturnSlot { ty } => Ok(Some(self.names.type_ref(ty)?)),
-            ReturnPlan::EncodedViaReturnSlot { shape, .. } => {
-                Ok(Some(self.encoded_return(*shape)?))
-            }
-            ReturnPlan::HandleViaReturnSlot { carrier, .. } => {
-                Ok(Some(Type::handle_carrier(*carrier)?))
-            }
-            ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => Ok(Some(Type::Buffer)),
-            ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedCAbi {
-                shape: "async callback closure return",
-            }),
-            ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
-                shape: "infallible async callback out-pointer return",
-            }),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown infallible async callback return",
-            }),
-        }
+        plan.render_with(&mut AsyncCallbackPayloadType { signature: self })
     }
 
     fn validate_fallible_async_callback_success<D>(
@@ -1571,25 +2013,7 @@ impl<'names> Signature<'names> {
         D: Direction,
         D::Opposite: ParamDirection<Native>,
     {
-        match plan {
-            ReturnPlan::Void
-            | ReturnPlan::DirectViaOutPointer { .. }
-            | ReturnPlan::EncodedViaOutPointer { .. }
-            | ReturnPlan::HandleViaOutPointer { .. } => Ok(()),
-            ReturnPlan::ClosureViaOutPointer(_) => Err(Error::UnsupportedCAbi {
-                shape: "async callback closure success",
-            }),
-            ReturnPlan::DirectViaReturnSlot { .. }
-            | ReturnPlan::EncodedViaReturnSlot { .. }
-            | ReturnPlan::HandleViaReturnSlot { .. }
-            | ReturnPlan::ScalarOptionViaReturnSlot { .. }
-            | ReturnPlan::DirectVecViaReturnSlot { .. } => Err(Error::UnsupportedCAbi {
-                shape: "fallible async callback success slot",
-            }),
-            _ => Err(Error::UnsupportedCAbi {
-                shape: "unknown fallible async callback success",
-            }),
-        }
+        plan.render_with(&mut FallibleAsyncCallbackSuccess)
     }
 }
 
@@ -1601,24 +2025,24 @@ impl ReceiverAbi {
         }
     }
 
-    fn direct(name: &str, ty: Type) -> Self {
-        Self {
-            input: vec![Parameter::new(name, ty.clone())],
+    fn direct(name: &str, ty: Type) -> Result<Self> {
+        Ok(Self {
+            input: vec![Parameter::new(name, ty.clone())?],
             writeback: Some(Parameter::new(
                 format!("{name}_out"),
                 Type::MutPointer(Box::new(ty)),
-            )),
-        }
+            )?),
+        })
     }
 
-    fn encoded(name: &str) -> Self {
-        Self {
-            input: encoded_receiver(name),
+    fn encoded(name: &str) -> Result<Self> {
+        Ok(Self {
+            input: encoded_receiver(name)?,
             writeback: Some(Parameter::new(
                 format!("{name}_out"),
                 Type::MutPointer(Box::new(Type::Buffer)),
-            )),
-        }
+            )?),
+        })
     }
 
     fn parameters(&self, receive: Receive) -> Vec<Parameter> {
@@ -1648,7 +2072,7 @@ fn callback_field(method: &ImportedMethodDecl<Native, VTableSlot>, names: &Names
         .chain(return_params.into_iter().map(|parameter| parameter.ty))
         .chain(method_params.into_iter().map(|parameter| parameter.ty))
         .collect();
-    Ok(Field::new(
+    Field::new(
         method.target().as_str(),
         Type::FunctionPointer {
             returns: Box::new(signature.callback_return_type(
@@ -1657,7 +2081,7 @@ fn callback_field(method: &ImportedMethodDecl<Native, VTableSlot>, names: &Names
             )?),
             params,
         },
-    ))
+    )
 }
 
 fn async_callback_field(
@@ -1673,21 +2097,21 @@ fn async_callback_field(
         .chain(method_params.into_iter().map(|parameter| parameter.ty))
         .chain([completion, Type::MutPointer(Box::new(Type::Void))])
         .collect();
-    Ok(Field::new(
+    Field::new(
         method.target().as_str(),
         Type::FunctionPointer {
             returns: Box::new(Type::Void),
             params,
         },
-    ))
+    )
 }
 
-fn encoded_receiver(name: &str) -> Vec<Parameter> {
-    vec![
+fn encoded_receiver(name: &str) -> Result<Vec<Parameter>> {
+    Ok(vec![
         Parameter::new(
             format!("{name}_ptr"),
             Type::ConstPointer(Box::new(Type::Uint8)),
-        ),
-        Parameter::new(format!("{name}_len"), Type::PointerWidth),
-    ]
+        )?,
+        Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
+    ])
 }

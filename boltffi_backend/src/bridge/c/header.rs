@@ -36,6 +36,7 @@ impl bridge::BridgeBackend for CBridge {
     type Surface = Native;
     type Input = Bindings<Native>;
     type Contract = CBridgeContract;
+    type Syntax = super::Syntax;
 
     fn build_contract(&self, input: &Self::Input) -> Result<Self::Contract> {
         CBridgeContract::from_bindings(input, self.path.clone())

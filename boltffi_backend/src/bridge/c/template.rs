@@ -4,7 +4,7 @@ use crate::core::Result;
 
 use super::contract::{CBridgeContract, Callback, Enum, Field, Function, Record};
 use super::identifier::Identifier;
-use super::syntax::{FunctionSyntax, TypeSyntax};
+use super::syntax::{FunctionSyntax, Statement, TypeFragment, TypeSyntax};
 
 #[derive(AskamaTemplate)]
 #[template(path = "bridge/c/header.h", escape = "none")]
@@ -23,12 +23,12 @@ struct RecordView {
 }
 
 struct FieldView {
-    declaration: String,
+    declaration: Statement,
 }
 
 struct EnumView {
     name: Identifier,
-    repr: String,
+    repr: TypeFragment,
     variants: Vec<EnumVariantView>,
 }
 
@@ -39,7 +39,7 @@ struct EnumVariantView {
 }
 
 struct FunctionView {
-    declaration: String,
+    declaration: Statement,
 }
 
 pub struct Header<'abi> {
