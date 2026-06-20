@@ -287,7 +287,7 @@ impl WasmRecordParam {
                 unsafe {
                     ::core::ptr::write_unaligned(
                         #out as *mut <#rust_type as ::boltffi::__private::Passable>::In,
-                        ::boltffi::__private::Passable::pack(#ident)
+                        <#rust_type as ::boltffi::__private::Passable>::pack(#ident)
                     );
                 }
             }]),

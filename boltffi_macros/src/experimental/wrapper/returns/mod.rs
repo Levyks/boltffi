@@ -229,7 +229,7 @@ where
                 let body = if writebacks.is_empty() {
                     quote! {
                         #(#conversions)*
-                        ::boltffi::__private::Passable::pack(#call)
+                        <#rust_type as ::boltffi::__private::Passable>::pack(#call)
                     }
                 } else {
                     let result = locals.result();
@@ -237,7 +237,7 @@ where
                         #(#conversions)*
                         let #result = #call;
                         #(#writebacks)*
-                        ::boltffi::__private::Passable::pack(#result)
+                        <#rust_type as ::boltffi::__private::Passable>::pack(#result)
                     }
                 };
                 Ok(Tokens {
@@ -341,11 +341,11 @@ where
                 })
             }
             ReturnPlan::DirectVecViaReturnSlot { .. } => {
-                input.source.direct_vec()?;
+                let element = input.source.direct_vec_element_type()?;
                 let result = locals.result();
                 let sequence = <direct_vec::Renderer as Render<S, _>>::render(
                     direct_vec::Renderer,
-                    direct_vec::Input::new(result.clone()),
+                    direct_vec::Input::new(result.clone(), element),
                 )?;
                 let return_type = sequence.return_type;
                 let body = sequence.body;
@@ -400,15 +400,26 @@ where
                 return ::boltffi::__private::FfiStatus::INVALID_ARG;
             }),
             ReturnPlan::DirectViaReturnSlot {
-                ty: DirectValueType::Primitive(_),
-            } => Ok(quote! {
-                return ::core::default::Default::default();
-            }),
-            ReturnPlan::DirectViaReturnSlot { .. } => Ok(quote! {
-                return unsafe {
-                    ::core::mem::MaybeUninit::zeroed().assume_init()
-                };
-            }),
+                ty: DirectValueType::Primitive(primitive),
+            } => {
+                let ty = wrapper::type_ref::Renderer.primitive(*primitive)?;
+                Ok(quote! {
+                    return <#ty as ::core::default::Default>::default();
+                })
+            }
+            ReturnPlan::DirectViaReturnSlot { .. } => {
+                let rust_type = input
+                    .source
+                    .written_type()?
+                    .ok_or(Error::SourceSyntaxMismatch("direct return type is missing"))?;
+                Ok(quote! {
+                    return unsafe {
+                        ::core::mem::MaybeUninit::<
+                            <#rust_type as ::boltffi::__private::Passable>::Out
+                        >::zeroed().assume_init()
+                    };
+                })
+            }
             ReturnPlan::EncodedViaReturnSlot { shape, .. } => {
                 let empty = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,

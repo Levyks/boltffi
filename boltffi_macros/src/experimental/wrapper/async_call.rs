@@ -640,7 +640,7 @@ impl PlainComplete {
                     return_type: quote! { -> #ty },
                     ok_pattern: quote! { #result },
                     ok_body: quote! { #result },
-                    err_body: quote! { Default::default() },
+                    err_body: quote! { <#ty as ::core::default::Default>::default() },
                 })
             }
             ReturnPlan::DirectViaReturnSlot { .. } => Ok(Self {
@@ -648,7 +648,9 @@ impl PlainComplete {
                 ffi_parameters: Vec::new(),
                 return_type: quote! { -> <#rust_return_type as ::boltffi::__private::Passable>::Out },
                 ok_pattern: quote! { #result },
-                ok_body: quote! { ::boltffi::__private::Passable::pack(#result) },
+                ok_body: quote! {
+                    <#rust_return_type as ::boltffi::__private::Passable>::pack(#result)
+                },
                 err_body: quote! {
                     unsafe {
                         ::core::mem::MaybeUninit::zeroed().assume_init()
@@ -724,10 +726,10 @@ impl PlainComplete {
                 })
             }
             ReturnPlan::DirectVecViaReturnSlot { .. } => {
-                source.direct_vec()?;
+                let element = source.direct_vec_element_type()?;
                 let sequence = <direct_vec::Renderer as Render<S, _>>::render(
                     direct_vec::Renderer,
-                    direct_vec::Input::new(result.clone()),
+                    direct_vec::Input::new(result.clone(), element),
                 )?;
                 let empty = <direct_vec::Renderer as Render<S, _>>::render(
                     direct_vec::Renderer,

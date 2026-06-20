@@ -15,6 +15,7 @@ pub struct Incoming;
 
 pub struct Input {
     value: syn::Ident,
+    rust_element: Type,
 }
 
 pub struct IncomingInput {
@@ -23,8 +24,11 @@ pub struct IncomingInput {
 }
 
 impl Input {
-    pub fn new(value: syn::Ident) -> Self {
-        Self { value }
+    pub fn new(value: syn::Ident, rust_element: Type) -> Self {
+        Self {
+            value,
+            rust_element,
+        }
     }
 }
 
@@ -42,12 +46,13 @@ impl Render<Native, Input> for Renderer {
 
     fn render(self, input: Input) -> Result<Self::Output, Error> {
         let value = input.value;
+        let element = input.rust_element;
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: Vec::new(),
             return_type: quote! { -> ::boltffi::__private::FfiBuf },
             body: quote! {
-                <_ as ::boltffi::__private::VecTransport>::pack_vec(#value)
+                <#element as ::boltffi::__private::VecTransport>::pack_vec(#value)
             },
         })
     }
@@ -58,12 +63,13 @@ impl Render<Wasm32, Input> for Renderer {
 
     fn render(self, input: Input) -> Result<Self::Output, Error> {
         let value = input.value;
+        let element = input.rust_element;
         Ok(Tokens {
             items: Vec::new(),
             ffi_parameters: Vec::new(),
             return_type: quote! {},
             body: quote! {
-                let __boltffi_buf = <_ as ::boltffi::__private::VecTransport>::pack_vec(#value);
+                let __boltffi_buf = <#element as ::boltffi::__private::VecTransport>::pack_vec(#value);
                 ::boltffi::__private::write_return_slot(
                     __boltffi_buf.as_ptr() as u32,
                     __boltffi_buf.len() as u32,

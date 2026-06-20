@@ -1,7 +1,7 @@
 use boltffi_ast::{FieldDef, MethodDef, Path as SourcePath, RecordDef, TypeExpr};
 use boltffi_binding::{
-    CanonicalName, CodecNode, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, FieldKey,
-    Receive, RecordDecl, SurfaceLower, WritePlan,
+    CanonicalName, CodecNode, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, ExecutionDecl,
+    FieldKey, Receive, RecordDecl, SurfaceLower, WritePlan,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -328,7 +328,7 @@ where
                     } else {
                         unsafe { ::core::slice::from_raw_parts(pointer, byte_len) }
                     };
-                    ::boltffi::__private::wire::decode(bytes)
+                    ::boltffi::__private::wire::decode::<Vec<#record>>(bytes)
                         .expect("wire decode failed in VecTransport::unpack_vec")
                 }
             }
@@ -525,6 +525,7 @@ where
             self.source,
             &self.record,
             export.callable().receiver(),
+            export.callable().execution(),
             export.method().clone(),
             export.failure(),
             export.expansion(),
@@ -538,6 +539,7 @@ impl<'receiver> ReceiverKind<'receiver> {
         source: &'receiver RecordDef,
         record: &Ident,
         receive: Option<Receive>,
+        execution: &ExecutionDecl<S>,
         method: Ident,
         failure: associated_fn::ReceiverFailure<'expansion, 'receiver, S>,
         expansion: &'expansion Expansion<'receiver, S>,
@@ -623,12 +625,18 @@ impl<'receiver> ReceiverKind<'receiver> {
                     SourcePath::single(source.name.spelling()),
                 );
                 let receiver = names::Locals::new(method.span()).receiver();
+                let async_shared_receiver = receive == Receive::ByRef
+                    && matches!(execution, ExecutionDecl::Asynchronous(_));
+                let decode_target = match async_shared_receiver {
+                    true => rust_api::DecodeTarget::by_value(&source_type)?,
+                    false => rust_api::DecodeTarget::received(receive, &source_type)?,
+                };
                 let tokens = <wrapper::param::encoded::Renderer as Render<S, _>>::render(
                     wrapper::param::encoded::Renderer,
                     wrapper::param::encoded::Input::new(
                         codec,
                         <S as SurfaceLower>::encoded_param_shape(),
-                        rust_api::DecodeTarget::received(receive, &source_type)?,
+                        decode_target,
                         receiver.clone(),
                         failure.render()?,
                         expansion,
@@ -701,7 +709,7 @@ impl<'receiver> ReceiverKind<'receiver> {
                 unsafe {
                     ::core::ptr::write_unaligned(
                         #out,
-                        ::boltffi::__private::Passable::pack(#receiver)
+                        <#rust_type as ::boltffi::__private::Passable>::pack(#receiver)
                     );
                 }
             }],

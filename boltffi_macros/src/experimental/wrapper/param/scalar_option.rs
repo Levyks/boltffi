@@ -52,7 +52,7 @@ impl Render<Native, Input> for Renderer {
                 let #ident: #rust_type = if #pointer.is_null() {
                     None
                 } else {
-                    match ::boltffi::__private::wire::decode(unsafe {
+                    match ::boltffi::__private::wire::decode::<#rust_type>(unsafe {
                         ::core::slice::from_raw_parts(#pointer, #length)
                     }) {
                         Ok(value) => value,

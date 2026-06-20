@@ -271,7 +271,7 @@ where
                     body: quote! {
                         if !#out.is_null() {
                             unsafe {
-                                *#out = ::boltffi::__private::Passable::pack(#success_ident);
+                                *#out = <#ok as ::boltffi::__private::Passable>::pack(#success_ident);
                             }
                         }
                     },

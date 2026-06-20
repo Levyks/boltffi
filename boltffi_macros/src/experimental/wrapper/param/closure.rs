@@ -407,7 +407,7 @@ impl<'expansion, 'lowered, 'rust, S: RenderSurface>
                 }],
                 setup: Vec::new(),
                 call_arguments: vec![quote! {
-                    ::boltffi::__private::Passable::pack(#argument)
+                    <#rust_type as ::boltffi::__private::Passable>::pack(#argument)
                 }],
             }),
             OutgoingParam::Value(ParamPlan::Encoded { codec, .. }) => {

@@ -1330,7 +1330,7 @@ impl<'expansion, 'lowered, S: CallbackMethodSurface> MethodParameter<'expansion,
                 Ok(ForeignMethodParameterTokens::new(
                     ffi_type,
                     vec![quote! {
-                        let #packed = ::boltffi::__private::Passable::pack(#ident);
+                        let #packed = <#rust_type as ::boltffi::__private::Passable>::pack(#ident);
                     }],
                     quote! { #packed },
                 ))
@@ -2071,12 +2071,12 @@ where
                     Ok(CallbackReturnAbi::direct(optional.return_type().clone()))
                 }
                 InfallibleMethodReturn::DirectVec => {
-                    source.direct_vec()?;
+                    let element = source.direct_vec_element_type()?;
                     let result = wrapper::names::Locals::new(Span::call_site()).result();
                     let sequence =
                         <wrapper::returns::direct_vec::Renderer as Render<S, _>>::render(
                             wrapper::returns::direct_vec::Renderer,
-                            wrapper::returns::direct_vec::Input::new(result),
+                            wrapper::returns::direct_vec::Input::new(result, element),
                         )?;
                     Ok(CallbackReturnAbi::direct(sequence.return_type().clone()))
                 }
@@ -3218,9 +3218,12 @@ where
             InfallibleMethodReturn::Direct {
                 ty: DirectValueType::Primitive(_),
             } => Ok(LocalMethodBody::new(quote! { #call })),
-            InfallibleMethodReturn::Direct { .. } => Ok(LocalMethodBody::new(quote! {
-                ::boltffi::__private::Passable::pack(#call)
-            })),
+            InfallibleMethodReturn::Direct { .. } => {
+                let rust_type = self.direct_source_type()?;
+                Ok(LocalMethodBody::new(quote! {
+                    <#rust_type as ::boltffi::__private::Passable>::pack(#call)
+                }))
+            }
             InfallibleMethodReturn::Encoded { codec, shape, ty } => {
                 S::callback_encoded_return(shape, ty)?
                     .local_body(call, codec.root(), self.expansion)
@@ -3256,11 +3259,11 @@ where
                 }))
             }
             InfallibleMethodReturn::DirectVec => {
-                self.source.direct_vec()?;
+                let element = self.source.direct_vec_element_type()?;
                 let result = wrapper::names::Locals::new(Span::call_site()).result();
                 let sequence = <wrapper::returns::direct_vec::Renderer as Render<S, _>>::render(
                     wrapper::returns::direct_vec::Renderer,
-                    wrapper::returns::direct_vec::Input::new(result.clone()),
+                    wrapper::returns::direct_vec::Input::new(result.clone(), element),
                 )?;
                 let body = sequence.body();
                 Ok(LocalMethodBody::new(quote! {
@@ -3517,14 +3520,17 @@ where
                     }
                 }
             })),
-            FallibleMethodSuccess::Direct { .. } => Ok(LocalMethodBody::new(quote! {
-                if !__boltffi_success_out.is_null() {
-                    unsafe {
-                        *__boltffi_success_out =
-                            ::boltffi::__private::Passable::pack(__boltffi_success);
+            FallibleMethodSuccess::Direct { .. } => {
+                let ok = self.source.fallible()?.ok_written_type()?;
+                Ok(LocalMethodBody::new(quote! {
+                    if !__boltffi_success_out.is_null() {
+                        unsafe {
+                            *__boltffi_success_out =
+                                <#ok as ::boltffi::__private::Passable>::pack(__boltffi_success);
+                        }
                     }
-                }
-            })),
+                }))
+            }
             FallibleMethodSuccess::Encoded { codec, shape } => {
                 let buffer = wrapper::encoded::outgoing::Value::new(codec.root(), self.expansion)
                     .buffer(quote! { __boltffi_success })?;

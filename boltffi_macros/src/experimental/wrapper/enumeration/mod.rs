@@ -218,7 +218,7 @@ where
                     .map(|value| unsafe {
                         <#enumeration as ::boltffi::__private::Passable>::unpack(value)
                     })
-                    .collect()
+                    .collect::<Vec<#enumeration>>()
                 }
             }
 
@@ -375,7 +375,7 @@ where
                     } else {
                         unsafe { ::core::slice::from_raw_parts(pointer, byte_len) }
                     };
-                    ::boltffi::__private::wire::decode(bytes)
+                    ::boltffi::__private::wire::decode::<Vec<#enumeration>>(bytes)
                         .expect("wire decode failed in VecTransport::unpack_vec")
                 }
             }

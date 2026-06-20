@@ -123,11 +123,28 @@ impl IncomingTransform {
     }
 
     fn apply(&self, value: TokenStream) -> IncomingConversion {
+        self.apply_with_type(value, None)
+    }
+
+    fn apply_typed(&self, value: TokenStream, input_type: TokenStream) -> IncomingConversion {
+        self.apply_with_type(value, Some(input_type))
+    }
+
+    fn apply_with_type(
+        &self,
+        value: TokenStream,
+        input_type: Option<TokenStream>,
+    ) -> IncomingConversion {
         match self.changed {
             true => IncomingConversion {
                 tokens: {
                     let tokens = &self.tokens;
-                    quote! { (#tokens)(#value) }
+                    match input_type {
+                        Some(input_type) => quote! {
+                            (|__boltffi_value: #input_type| (#tokens)(__boltffi_value))(#value)
+                        },
+                        None => quote! { (#tokens)(#value) },
+                    }
                 },
                 fallible: self.fallible,
                 changed: true,
@@ -288,7 +305,15 @@ impl<'expansion, 'lowered, S: RenderSurface> Incoming<'expansion, 'lowered, S> {
         let transform = self
             .codec
             .render_read_with(&mut IncomingConverter::new(self.expansion))?;
-        Ok(transform.apply(value))
+        match transform.changed {
+            true => self
+                .decoded_type()?
+                .map(|input_type| transform.apply_typed(value.clone(), input_type))
+                .ok_or(Error::UnsupportedExpansion(
+                    "custom codec representation type",
+                )),
+            false => Ok(transform.apply(value)),
+        }
     }
 
     pub fn decoded_type(&self) -> Result<Option<TokenStream>, Error> {

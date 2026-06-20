@@ -780,8 +780,8 @@ impl InvokeReturn {
                 #call;
             },
             InvokeReturnKind::DirectPrimitive { .. } => quote! { #call },
-            InvokeReturnKind::DirectPassable { .. } => quote! {
-                ::boltffi::__private::Passable::pack(#call)
+            InvokeReturnKind::DirectPassable { rust_type } => quote! {
+                <#rust_type as ::boltffi::__private::Passable>::pack(#call)
             },
             InvokeReturnKind::NativeEncoded { value } => quote! {
                 {
@@ -802,11 +802,15 @@ impl InvokeReturn {
     pub fn failure(&self) -> TokenStream {
         match &self.kind {
             InvokeReturnKind::Void => quote! { return; },
-            InvokeReturnKind::DirectPrimitive { .. } => quote! {
-                return ::core::default::Default::default();
+            InvokeReturnKind::DirectPrimitive { ffi_type } => quote! {
+                return <#ffi_type as ::core::default::Default>::default();
             },
-            InvokeReturnKind::DirectPassable { .. } => quote! {
-                return unsafe { ::core::mem::MaybeUninit::zeroed().assume_init() };
+            InvokeReturnKind::DirectPassable { rust_type } => quote! {
+                return unsafe {
+                    ::core::mem::MaybeUninit::<
+                        <#rust_type as ::boltffi::__private::Passable>::Out
+                    >::zeroed().assume_init()
+                };
             },
             InvokeReturnKind::NativeEncoded { .. } => quote! {
                 return ::boltffi::__private::FfiBuf::default();
@@ -915,10 +919,10 @@ impl FallibleSuccess {
                     }
                 }
             },
-            Self::DirectPassable { .. } => quote! {
+            Self::DirectPassable { rust_type } => quote! {
                 if !#out.is_null() {
                     unsafe {
-                        *#out = ::boltffi::__private::Passable::pack(#success);
+                        *#out = <#rust_type as ::boltffi::__private::Passable>::pack(#success);
                     }
                 }
             },
