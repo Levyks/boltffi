@@ -71,8 +71,6 @@ struct ConverterRenderer;
 
 struct PathRenderer;
 
-struct RepresentationType;
-
 #[derive(Clone, Copy)]
 enum OutgoingValueMode {
     Owned,
@@ -327,8 +325,8 @@ impl<'expansion, 'lowered, S: RenderSurface> Incoming<'expansion, 'lowered, S> {
         match self.codec.contains_custom() {
             true => self
                 .codec
-                .render_read_with(&mut RepresentationType)
-                .map(Some),
+                .render_read_with(&mut IncomingConverter::new(self.expansion))
+                .map(|transform| transform.changed.then(|| transform.representation())),
             false => Ok(None),
         }
     }
@@ -337,68 +335,85 @@ impl<'expansion, 'lowered, S: RenderSurface> Incoming<'expansion, 'lowered, S> {
 impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S> {
     type Expr = Result<IncomingTransform, Error>;
 
-    fn primitive(&mut self, _: Primitive) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+    fn primitive(&mut self, primitive: Primitive) -> Self::Expr {
+        Ok(IncomingTransform::identity(
+            wrapper::type_ref::Renderer.primitive(primitive)?,
+        ))
     }
 
     fn string(&mut self) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Ok(IncomingTransform::identity(quote! { String }))
     }
 
     fn bytes(&mut self) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Ok(IncomingTransform::identity(quote! { Vec<u8> }))
     }
 
     fn direct_record(&mut self, _: RecordId) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Ok(IncomingTransform::identity(quote! { _ }))
     }
 
     fn encoded_record(&mut self, _: RecordId) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Ok(IncomingTransform::identity(quote! { _ }))
     }
 
     fn c_style_enum(&mut self, _: EnumId) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Ok(IncomingTransform::identity(quote! { _ }))
     }
 
     fn data_enum(&mut self, _: EnumId) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Ok(IncomingTransform::identity(quote! { _ }))
     }
 
     fn class_handle(&mut self, _: ClassId) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Err(Error::UnsupportedExpansion(
+            "class handle representation type",
+        ))
     }
 
     fn callback_handle(&mut self, _: CallbackId) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+        Err(Error::UnsupportedExpansion(
+            "callback handle representation type",
+        ))
     }
 
     fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
         let representation = representation?;
         let custom = self.expansion.custom_type(id)?;
         let converter = ConverterRenderer.render(custom.converters().try_from_ffi())?;
+        let representation_type = representation.representation();
         if !representation.changed {
-            return Ok(IncomingTransform::new(converter, true, true));
+            return Ok(IncomingTransform::new(
+                converter,
+                representation_type,
+                true,
+                true,
+            ));
         }
         let representation_value = representation.value_or_return_error(quote! { __boltffi_value });
         Ok(IncomingTransform::new(
             quote! {
-                |__boltffi_value| {
+                |__boltffi_value: #representation_type| {
                     let __boltffi_representation = #representation_value;
                     (#converter)(__boltffi_representation)
                 }
             },
+            representation_type,
             true,
             true,
         ))
     }
 
-    fn builtin(&mut self, _: BuiltinType) -> Self::Expr {
-        Ok(IncomingTransform::identity())
+    fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
+        Ok(IncomingTransform::identity(
+            wrapper::type_ref::Renderer.builtin(kind)?,
+        ))
     }
 
     fn optional(&mut self, inner: Self::Expr) -> Self::Expr {
         let inner = inner?;
+        let inner_type = inner.representation();
+        let representation = quote! { Option<#inner_type> };
         match inner.changed {
             true => {
                 let inner = inner.apply(quote! { value });
@@ -406,33 +421,37 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                 Ok(match inner.fallible {
                     true => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 match __boltffi_value {
                                     Some(value) => #inner_tokens.map(Some),
                                     None => Ok(None),
                                 }
                             }
                         },
+                        representation,
                         true,
                         true,
                     ),
                     false => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 __boltffi_value.map(|value| #inner_tokens)
                             }
                         },
+                        representation,
                         false,
                         true,
                     ),
                 })
             }
-            false => Ok(IncomingTransform::identity()),
+            false => Ok(IncomingTransform::identity(representation)),
         }
     }
 
     fn sequence(&mut self, _: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
         let element = element?;
+        let element_type = element.representation();
+        let representation = quote! { Vec<#element_type> };
         match element.changed {
             true => {
                 let element = element.apply(quote! { value });
@@ -440,36 +459,43 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                 Ok(match element.fallible {
                     true => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 __boltffi_value
                                     .into_iter()
                                     .map(|value| #element_tokens)
                                     .collect::<Result<Vec<_>, _>>()
                             }
                         },
+                        representation,
                         true,
                         true,
                     ),
                     false => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 __boltffi_value
                                     .into_iter()
                                     .map(|value| #element_tokens)
                                     .collect::<Vec<_>>()
                             }
                         },
+                        representation,
                         false,
                         true,
                     ),
                 })
             }
-            false => Ok(IncomingTransform::identity()),
+            false => Ok(IncomingTransform::identity(representation)),
         }
     }
 
     fn tuple(&mut self, elements: Vec<Self::Expr>) -> Self::Expr {
         let elements = elements.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let representation_elements = elements
+            .iter()
+            .map(IncomingTransform::representation)
+            .collect::<Vec<_>>();
+        let representation = quote! { (#(#representation_elements,)*) };
         let changed = elements.iter().any(|element| element.changed);
         let fallible = elements.iter().any(|element| element.fallible);
         match changed {
@@ -485,31 +511,36 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                 Ok(match fallible {
                     true => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 Ok((#(#values,)*))
                             }
                         },
+                        representation,
                         true,
                         true,
                     ),
                     false => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 (#(#values,)*)
                             }
                         },
+                        representation,
                         false,
                         true,
                     ),
                 })
             }
-            false => Ok(IncomingTransform::identity()),
+            false => Ok(IncomingTransform::identity(representation)),
         }
     }
 
     fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
         let ok = ok?;
         let err = err?;
+        let ok_type = ok.representation();
+        let err_type = err.representation();
+        let representation = quote! { Result<#ok_type, #err_type> };
         let changed = ok.changed || err.changed;
         let fallible = ok.fallible || err.fallible;
         match changed {
@@ -537,7 +568,7 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                             false => quote! { Ok(#err_arm) },
                         };
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 match __boltffi_value {
                                     Ok(value) => #ok_arm,
                                     Err(error) => #err_arm,
@@ -546,7 +577,7 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                         }
                     }
                     false => quote! {
-                        |__boltffi_value| {
+                        |__boltffi_value: #representation| {
                             match __boltffi_value {
                                 Ok(value) => #ok_arm,
                                 Err(error) => #err_arm,
@@ -554,15 +585,26 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                         }
                     },
                 };
-                Ok(IncomingTransform::new(tokens, fallible, true))
+                Ok(IncomingTransform::new(
+                    tokens,
+                    representation,
+                    fallible,
+                    true,
+                ))
             }
-            false => Ok(IncomingTransform::identity()),
+            false => Ok(IncomingTransform::identity(representation)),
         }
     }
 
-    fn map(&mut self, _: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr {
+    fn map(&mut self, kind: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr {
         let key = key?;
         let value = value?;
+        let key_type = key.representation();
+        let value_type = value.representation();
+        let representation = match kind {
+            MapKind::Hash => quote! { ::std::collections::HashMap<#key_type, #value_type> },
+            MapKind::BTree => quote! { ::std::collections::BTreeMap<#key_type, #value_type> },
+        };
         let changed = key.changed || value.changed;
         let fallible = key.fallible || value.fallible;
         match changed {
@@ -572,7 +614,7 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                 Ok(match fallible {
                     true => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 __boltffi_value
                                     .into_iter()
                                     .map(|(key, value)| {
@@ -581,24 +623,26 @@ impl<'expansion, S: RenderSurface> CodecRead for IncomingConverter<'expansion, S
                                     .collect::<Result<_, _>>()
                             }
                         },
+                        representation,
                         true,
                         true,
                     ),
                     false => IncomingTransform::new(
                         quote! {
-                            |__boltffi_value| {
+                            |__boltffi_value: #representation| {
                                 __boltffi_value
                                     .into_iter()
                                     .map(|(key, value)| (#key, #value))
                                     .collect::<_>()
                             }
                         },
+                        representation,
                         false,
                         true,
                     ),
                 })
             }
-            false => Ok(IncomingTransform::identity()),
+            false => Ok(IncomingTransform::identity(representation)),
         }
     }
 }
@@ -816,93 +860,5 @@ impl PathRenderer {
             .map(|segment| segment.as_str())
             .collect::<Vec<_>>()
             .join("::")
-    }
-}
-
-impl CodecRead for RepresentationType {
-    type Expr = Result<TokenStream, Error>;
-
-    fn primitive(&mut self, primitive: Primitive) -> Self::Expr {
-        wrapper::type_ref::Renderer.primitive(primitive)
-    }
-
-    fn string(&mut self) -> Self::Expr {
-        Ok(quote! { String })
-    }
-
-    fn bytes(&mut self) -> Self::Expr {
-        Ok(quote! { Vec<u8> })
-    }
-
-    fn direct_record(&mut self, _: RecordId) -> Self::Expr {
-        Err(Error::UnsupportedExpansion(
-            "direct record representation type",
-        ))
-    }
-
-    fn encoded_record(&mut self, _: RecordId) -> Self::Expr {
-        Err(Error::UnsupportedExpansion(
-            "encoded record representation type",
-        ))
-    }
-
-    fn c_style_enum(&mut self, _: EnumId) -> Self::Expr {
-        Err(Error::UnsupportedExpansion(
-            "c-style enum representation type",
-        ))
-    }
-
-    fn data_enum(&mut self, _: EnumId) -> Self::Expr {
-        Err(Error::UnsupportedExpansion("data enum representation type"))
-    }
-
-    fn class_handle(&mut self, _: ClassId) -> Self::Expr {
-        Err(Error::UnsupportedExpansion(
-            "class handle representation type",
-        ))
-    }
-
-    fn callback_handle(&mut self, _: CallbackId) -> Self::Expr {
-        Err(Error::UnsupportedExpansion(
-            "callback handle representation type",
-        ))
-    }
-
-    fn custom(&mut self, _: CustomTypeId, representation: Self::Expr) -> Self::Expr {
-        representation
-    }
-
-    fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
-        wrapper::type_ref::Renderer.builtin(kind)
-    }
-
-    fn optional(&mut self, inner: Self::Expr) -> Self::Expr {
-        let inner = inner?;
-        Ok(quote! { Option<#inner> })
-    }
-
-    fn sequence(&mut self, _: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
-        let element = element?;
-        Ok(quote! { Vec<#element> })
-    }
-
-    fn tuple(&mut self, elements: Vec<Self::Expr>) -> Self::Expr {
-        let elements = elements.into_iter().collect::<Result<Vec<_>, _>>()?;
-        Ok(quote! { (#(#elements,)*) })
-    }
-
-    fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
-        let ok = ok?;
-        let err = err?;
-        Ok(quote! { Result<#ok, #err> })
-    }
-
-    fn map(&mut self, kind: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr {
-        let key = key?;
-        let value = value?;
-        match kind {
-            MapKind::Hash => Ok(quote! { ::std::collections::HashMap<#key, #value> }),
-            MapKind::BTree => Ok(quote! { ::std::collections::BTreeMap<#key, #value> }),
-        }
     }
 }
