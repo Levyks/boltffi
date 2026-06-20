@@ -6,6 +6,7 @@ mod constant;
 mod direct;
 pub mod direct_vector;
 pub mod enumeration;
+mod fallible;
 pub mod function;
 mod method;
 mod module;
