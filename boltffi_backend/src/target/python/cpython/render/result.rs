@@ -1,10 +1,10 @@
 use boltffi_binding::{
-    ClosureReturn, HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan,
-    ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
+    ClosureReturn, DirectValueType, DirectVectorElementType, HandlePresence, HandleTarget, Native,
+    OutOfRust, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
 };
 
 use crate::{
-    bridge::python_cext::PythonCExtBridgeContract,
+    bridge::{c::Identifier, python_cext::PythonCExtBridgeContract},
     core::{Error, RenderContext, Result},
     target::python::cpython::render::{direct, direct_vector, primitive},
 };
@@ -12,7 +12,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Conversion {
     pub void: bool,
-    pub converter: String,
+    converter: Option<Identifier>,
     primitive: Option<primitive::Runtime>,
     owned_buffer: Option<OwnedBuffer>,
 }
@@ -37,13 +37,7 @@ impl Conversion {
     pub fn direct_vector_element(&self) -> Option<direct_vector::Element> {
         match &self.owned_buffer {
             Some(OwnedBuffer::DirectVector(element)) => Some((**element).clone()),
-            Some(
-                OwnedBuffer::String
-                | OwnedBuffer::Bytes
-                | OwnedBuffer::RawWire
-                | OwnedBuffer::OptionalPrimitive(_),
-            )
-            | None => None,
+            Some(OwnedBuffer::RawWire | OwnedBuffer::OptionalPrimitive(_)) | None => None,
         }
     }
 
@@ -51,10 +45,16 @@ impl Conversion {
         self.void
     }
 
+    pub fn converter(&self) -> &Identifier {
+        self.converter
+            .as_ref()
+            .expect("non-void return conversion has a converter")
+    }
+
     pub fn from_owned_buffer(buffer: OwnedBuffer) -> Result<Self> {
         Ok(Self {
             void: false,
-            converter: buffer.converter()?,
+            converter: Some(buffer.converter()?),
             primitive: buffer.primitive(),
             owned_buffer: Some(buffer),
         })
@@ -67,16 +67,11 @@ struct Renderer<'bridge, 'context> {
 }
 
 impl Renderer<'_, '_> {
-    fn direct_type(&self, slot: ReturnValueSlot, ty: &TypeRef) -> Result<Conversion> {
-        let direct = direct::NativeSlot::from_type_ref(
-            ty,
-            self.bridge,
-            self.context,
-            slot.unsupported_direct_shape(),
-        )?;
+    fn direct_type(&self, ty: &DirectValueType) -> Result<Conversion> {
+        let direct = direct::NativeSlot::from_direct_value(ty, self.bridge, self.context)?;
         Ok(Conversion {
             void: false,
-            converter: direct.boxer().to_owned(),
+            converter: Some(direct.boxer().clone()),
             primitive: direct.primitive(),
             owned_buffer: None,
         })
@@ -94,14 +89,14 @@ impl Renderer<'_, '_> {
                 let carrier = primitive::Runtime::native_handle(carrier)?;
                 Ok(Conversion {
                     void: false,
-                    converter: carrier.boxer()?.to_owned(),
+                    converter: Some(carrier.boxer()?),
                     primitive: Some(carrier),
                     owned_buffer: None,
                 })
             }
             (HandleTarget::Callback(_), _) => Ok(Conversion {
                 void: false,
-                converter: "boltffi_python_box_callback_handle".to_owned(),
+                converter: Some(Identifier::parse("boltffi_python_box_callback_handle")?),
                 primitive: None,
                 owned_buffer: None,
             }),
@@ -127,14 +122,14 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'_, '_> {
     fn void(&mut self) -> Self::Output {
         Ok(Conversion {
             void: true,
-            converter: String::new(),
+            converter: None,
             primitive: None,
             owned_buffer: None,
         })
     }
 
-    fn direct(&mut self, slot: ReturnValueSlot, ty: &TypeRef) -> Self::Output {
-        self.direct_type(slot, ty)
+    fn direct(&mut self, _: ReturnValueSlot, ty: &DirectValueType) -> Self::Output {
+        self.direct_type(ty)
     }
 
     fn encoded(
@@ -169,9 +164,9 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'_, '_> {
         )))
     }
 
-    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, element: &DirectVectorElementType) -> Self::Output {
         Conversion::from_owned_buffer(OwnedBuffer::DirectVector(Box::new(
-            direct_vector::Element::from_type_ref(element, self.bridge, self.context)?,
+            direct_vector::Element::from_element(element, self.bridge, self.context)?,
         )))
     }
 
@@ -184,13 +179,6 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'_, '_> {
 }
 
 trait ReturnValueSlotMessage {
-    fn unsupported_direct_shape(self) -> &'static str
-    where
-        Self: Sized,
-    {
-        self.unsupported_return_shape()
-    }
-
     fn unsupported_encoded_shape(self) -> &'static str
     where
         Self: Sized,
@@ -223,20 +211,16 @@ impl ReturnValueSlotMessage for ReturnValueSlot {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum OwnedBuffer {
-    String,
-    Bytes,
     RawWire,
     DirectVector(Box<direct_vector::Element>),
     OptionalPrimitive(primitive::Runtime),
 }
 
 impl OwnedBuffer {
-    pub fn converter(&self) -> Result<String> {
+    pub fn converter(&self) -> Result<Identifier> {
         match self {
-            Self::String => Ok("boltffi_python_decode_owned_utf8".to_owned()),
-            Self::Bytes => Ok("boltffi_python_decode_owned_bytes".to_owned()),
-            Self::RawWire => Ok("boltffi_python_decode_owned_raw_wire".to_owned()),
-            Self::DirectVector(element) => Ok(element.vector_decoder().to_owned()),
+            Self::RawWire => Identifier::parse("boltffi_python_decode_owned_raw_wire"),
+            Self::DirectVector(element) => Ok(element.vector_decoder().clone()),
             Self::OptionalPrimitive(primitive) => primitive.optional_owned_wire_decoder(),
         }
     }
@@ -244,7 +228,7 @@ impl OwnedBuffer {
     pub fn primitive(&self) -> Option<primitive::Runtime> {
         match self {
             Self::OptionalPrimitive(primitive) => Some(*primitive),
-            Self::String | Self::Bytes | Self::RawWire | Self::DirectVector(_) => None,
+            Self::RawWire | Self::DirectVector(_) => None,
         }
     }
 }

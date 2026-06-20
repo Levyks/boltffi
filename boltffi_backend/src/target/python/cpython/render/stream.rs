@@ -1,15 +1,19 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ByteSize, Native, NativeSymbol, Primitive, ReadPlan, StreamDecl, StreamItemPlan,
-    StreamItemPlanRender, TypeRef, native,
+    ByteSize, DirectValueType, Native, NativeSymbol, Primitive, ReadPlan, StreamDecl,
+    StreamItemPlan, StreamItemPlanRender, TypeRef, native,
 };
 
 use crate::{
-    bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
+    bridge::{
+        c::{Identifier, TypeFragment},
+        python_cext::{ExtensionMethod, MethodFlags, MethodName, PythonCExtBridgeContract},
+    },
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
         cpython::render::{direct, primitive, result},
         name_style::Name,
+        syntax::Identifier as PythonIdentifier,
     },
 };
 
@@ -22,9 +26,9 @@ struct Template {
     unsubscribe: Method,
     free: Method,
     item: Item,
-    stream_handle_type: String,
-    stream_handle_parser: &'static str,
-    stream_handle_boxer: &'static str,
+    stream_handle_type: TypeFragment,
+    stream_handle_parser: Identifier,
+    stream_handle_boxer: Identifier,
     subscribe_arity: usize,
     receiver: Option<Receiver>,
 }
@@ -46,34 +50,34 @@ impl Stream {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let symbols = Symbols::new(declaration);
+        let symbols = Symbols::new(declaration)?;
         Ok(Self {
             subscribe: Method::new(
-                symbols.subscribe(),
+                symbols.subscribe()?,
                 declaration.protocol().subscribe(),
                 MethodFlags::FastCall,
                 bridge,
             )?,
             pop_batch: Method::new(
-                symbols.pop_batch(),
+                symbols.pop_batch()?,
                 declaration.protocol().pop_batch(),
                 MethodFlags::FastCall,
                 bridge,
             )?,
             wait: Method::new(
-                symbols.wait(),
+                symbols.wait()?,
                 declaration.protocol().wait(),
                 MethodFlags::FastCall,
                 bridge,
             )?,
             unsubscribe: Method::new(
-                symbols.unsubscribe(),
+                symbols.unsubscribe()?,
                 declaration.protocol().unsubscribe(),
                 MethodFlags::FastCall,
                 bridge,
             )?,
             free: Method::new(
-                symbols.free(),
+                symbols.free()?,
                 declaration.protocol().free(),
                 MethodFlags::FastCall,
                 bridge,
@@ -88,7 +92,7 @@ impl Stream {
     }
 
     pub fn render(self) -> Result<Emitted> {
-        let stream_handle_type = self.handle.c_type()?.to_owned();
+        let stream_handle_type = self.handle.c_type()?;
         let stream_handle_parser = self.handle.parser()?;
         let stream_handle_boxer = self.handle.boxer()?;
         let source = Template {
@@ -140,8 +144,8 @@ impl Stream {
 #[derive(Clone)]
 struct Receiver {
     primitive: primitive::Runtime,
-    handle_type: String,
-    parser: &'static str,
+    handle_type: TypeFragment,
+    parser: Identifier,
 }
 
 impl Receiver {
@@ -164,15 +168,15 @@ impl Receiver {
 }
 
 struct Method {
-    python_name: String,
-    wrapper: String,
-    storage: String,
+    python_name: PythonIdentifier,
+    wrapper: Identifier,
+    storage: Identifier,
     method: ExtensionMethod,
 }
 
 impl Method {
     fn new(
-        python_name: String,
+        python_name: PythonIdentifier,
         symbol: &NativeSymbol,
         flags: MethodFlags,
         bridge: &PythonCExtBridgeContract,
@@ -183,12 +187,19 @@ impl Method {
                 target: "python",
                 shape: "stream method without C bridge symbol",
             })?;
-        let wrapper = format!("boltffi_python_stream_wrapper_{}", symbol.name().as_str());
-        let method = ExtensionMethod::new(python_name.clone(), wrapper.clone(), flags)?;
+        let wrapper = Identifier::parse(format!(
+            "boltffi_python_stream_wrapper_{}",
+            symbol.name().as_str()
+        ))?;
+        let method = ExtensionMethod::new(
+            MethodName::parse(python_name.as_str())?,
+            wrapper.clone(),
+            flags,
+        )?;
         Ok(Self {
             python_name,
             wrapper,
-            storage: loaded.storage_name().to_owned(),
+            storage: loaded.storage_name().clone(),
             method,
         })
     }
@@ -212,17 +223,19 @@ impl Item {
         matches!(self.kind, ItemKind::Direct { .. })
     }
 
-    fn c_type(&self) -> &str {
+    fn c_type(&self) -> &TypeFragment {
         match &self.kind {
             ItemKind::Direct { c_type, .. } => c_type,
-            ItemKind::Encoded => "",
+            ItemKind::Encoded => {
+                unreachable!("encoded stream items do not have direct C item types")
+            }
         }
     }
 
-    fn boxer(&self) -> &str {
+    fn boxer(&self) -> &Identifier {
         match &self.kind {
             ItemKind::Direct { boxer, .. } => boxer,
-            ItemKind::Encoded => "",
+            ItemKind::Encoded => unreachable!("encoded stream items do not have direct C boxers"),
         }
     }
 
@@ -234,20 +247,15 @@ impl Item {
     }
 
     fn direct(
-        ty: &TypeRef,
+        ty: &DirectValueType,
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let direct = direct::NativeSlot::from_type_ref(
-            ty,
-            bridge,
-            context,
-            "unsupported direct stream item",
-        )?;
+        let direct = direct::NativeSlot::from_direct_value(ty, bridge, context)?;
         Ok(Self {
             kind: ItemKind::Direct {
-                c_type: direct.c_type().to_owned(),
-                boxer: direct.boxer().to_owned(),
+                c_type: direct.c_type().clone(),
+                boxer: direct.boxer().clone(),
             },
             primitive: direct.primitive(),
         })
@@ -262,7 +270,7 @@ struct StreamItem<'bridge, 'context, 'bindings> {
 impl<'plan> StreamItemPlanRender<'plan, Native> for StreamItem<'_, '_, '_> {
     type Output = Result<Item>;
 
-    fn direct(&mut self, ty: &'plan TypeRef, _: ByteSize) -> Self::Output {
+    fn direct(&mut self, ty: &'plan DirectValueType, _: ByteSize) -> Self::Output {
         Item::direct(ty, self.bridge, self.context)
     }
 
@@ -286,7 +294,10 @@ impl<'plan> StreamItemPlanRender<'plan, Native> for StreamItem<'_, '_, '_> {
 }
 
 enum ItemKind {
-    Direct { c_type: String, boxer: String },
+    Direct {
+        c_type: TypeFragment,
+        boxer: Identifier,
+    },
     Encoded,
 }
 
@@ -295,29 +306,29 @@ pub struct Symbols {
 }
 
 impl Symbols {
-    pub fn new(declaration: &StreamDecl<Native>) -> Self {
-        Self {
-            stem: Name::new(declaration.name()).function(),
-        }
+    pub fn new(declaration: &StreamDecl<Native>) -> Result<Self> {
+        Ok(Self {
+            stem: Name::new(declaration.name()).function_text()?,
+        })
     }
 
-    pub fn subscribe(&self) -> String {
-        self.stem.clone()
+    pub fn subscribe(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(self.stem.clone())
     }
 
-    pub fn pop_batch(&self) -> String {
-        format!("{}_pop_batch", self.stem)
+    pub fn pop_batch(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!("{}_pop_batch", self.stem))
     }
 
-    pub fn wait(&self) -> String {
-        format!("{}_wait", self.stem)
+    pub fn wait(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!("{}_wait", self.stem))
     }
 
-    pub fn unsubscribe(&self) -> String {
-        format!("{}_unsubscribe", self.stem)
+    pub fn unsubscribe(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!("{}_unsubscribe", self.stem))
     }
 
-    pub fn free(&self) -> String {
-        format!("{}_free", self.stem)
+    pub fn free(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!("{}_free", self.stem))
     }
 }

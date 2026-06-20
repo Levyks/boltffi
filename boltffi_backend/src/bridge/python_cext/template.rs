@@ -2,7 +2,7 @@ use askama::Template as AskamaTemplate;
 
 use crate::{
     bridge::{
-        c::syntax::FunctionSyntax,
+        c::{Identifier, Literal, Statement, syntax::FunctionSyntax},
         python_cext::{LoadedFunction, PythonCExtBridgeContract},
     },
     core::Result,
@@ -11,17 +11,17 @@ use crate::{
 #[derive(AskamaTemplate)]
 #[template(path = "bridge/python_cext/loader.c", escape = "none")]
 struct LoaderTemplate {
-    c_header: String,
-    loader_function: String,
-    free_function: String,
+    c_header: Literal,
+    loader_function: Identifier,
+    free_function: Identifier,
     functions: Vec<FunctionView>,
 }
 
 struct FunctionView {
-    symbol: String,
-    typedef_name: String,
-    typedef_declaration: String,
-    storage_name: String,
+    symbol: Literal,
+    typedef_name: Identifier,
+    typedef_declaration: Statement,
+    storage_name: Identifier,
 }
 
 pub struct Loader<'contract> {
@@ -35,9 +35,9 @@ impl<'contract> Loader<'contract> {
 
     pub fn render(self) -> Result<String> {
         Ok(LoaderTemplate {
-            c_header: self.contract.c_header().as_str().to_owned(),
-            loader_function: self.contract.loader_method().c_function().to_owned(),
-            free_function: self.contract.symbols().free_function().to_owned(),
+            c_header: Literal::string(self.contract.c_header().as_str()),
+            loader_function: self.contract.loader_method().c_function().clone(),
+            free_function: self.contract.symbols().free_function().clone(),
             functions: self
                 .contract
                 .functions()
@@ -52,11 +52,11 @@ impl<'contract> Loader<'contract> {
 impl FunctionView {
     fn from_function(function: &LoadedFunction) -> Result<Self> {
         Ok(Self {
-            symbol: function.function().name().to_owned(),
-            typedef_name: function.typedef_name().to_owned(),
+            symbol: Literal::string(function.function().name()),
+            typedef_name: function.typedef_name().clone(),
             typedef_declaration: FunctionSyntax::new(function.function())
-                .pointer_typedef(function.typedef_name())?,
-            storage_name: function.storage_name().to_owned(),
+                .pointer_typedef(function.typedef_name().as_str())?,
+            storage_name: function.storage_name().clone(),
         })
     }
 }

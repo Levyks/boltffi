@@ -68,7 +68,7 @@ impl PythonCExtHost {
         self,
         bindings: &Bindings<Native>,
     ) -> Result<Target<Self, BridgeLayer<CBridge, PythonCExtBridge>>> {
-        let source = self.native_module_source_path(bindings);
+        let source = self.native_module_source_path(bindings)?;
         Ok(Target::new(
             self,
             BridgeLayer::new(
@@ -78,14 +78,16 @@ impl PythonCExtHost {
         ))
     }
 
-    fn native_module_source_path(&self, bindings: &Bindings<Native>) -> PathBuf {
-        PathBuf::from(self.package_module(bindings).as_str()).join("_native.c")
+    fn native_module_source_path(&self, bindings: &Bindings<Native>) -> Result<PathBuf> {
+        let module = self.package_module(bindings)?;
+        Ok(PathBuf::from(module.as_str()).join("_native.c"))
     }
 }
 
 impl host::HostBackend for PythonCExtHost {
     type Surface = Native;
     type Bridge = PythonCExtBridgeContract;
+    type Syntax = super::Syntax;
 
     fn name(&self) -> &'static str {
         "python"
@@ -195,10 +197,10 @@ impl host::HostBackend for PythonCExtHost {
             Package::new(
                 bindings,
                 bridge,
-                self.package_module(bindings),
-                self.resolved_distribution(bindings),
+                self.package_module(bindings)?,
+                self.resolved_distribution(bindings)?,
                 self.package_version(bindings),
-                self.native_library_name(bindings),
+                self.native_library_name(bindings)?,
             )
             .render()?,
         ]);
@@ -208,16 +210,18 @@ impl host::HostBackend for PythonCExtHost {
 }
 
 impl PythonCExtHost {
-    fn package_module(&self, bindings: &Bindings<Native>) -> PackageModule {
+    fn package_module(&self, bindings: &Bindings<Native>) -> Result<PackageModule> {
         self.module
             .clone()
+            .map(Ok)
             .unwrap_or_else(|| PackageModule::from_canonical(bindings.package().name()))
     }
 
-    fn resolved_distribution(&self, bindings: &Bindings<Native>) -> String {
+    fn resolved_distribution(&self, bindings: &Bindings<Native>) -> Result<String> {
         self.distribution
             .clone()
-            .unwrap_or_else(|| Name::new(bindings.package().name()).function())
+            .map(Ok)
+            .unwrap_or_else(|| Name::new(bindings.package().name()).function_text())
     }
 
     fn package_version(&self, bindings: &Bindings<Native>) -> Option<String> {
@@ -226,10 +230,11 @@ impl PythonCExtHost {
             .or_else(|| bindings.package().version().map(str::to_owned))
     }
 
-    fn native_library_name(&self, bindings: &Bindings<Native>) -> String {
+    fn native_library_name(&self, bindings: &Bindings<Native>) -> Result<String> {
         self.library
             .clone()
-            .unwrap_or_else(|| Name::new(bindings.package().name()).function())
+            .map(Ok)
+            .unwrap_or_else(|| Name::new(bindings.package().name()).function_text())
     }
 }
 
@@ -311,14 +316,14 @@ mod tests {
 
         assert_eq!(
             PythonCExtHost::new().native_module_source_path(&bindings),
-            Path::new("demo/_native.c").to_path_buf()
+            Ok(Path::new("demo/_native.c").to_path_buf())
         );
         assert_eq!(
             PythonCExtHost::new()
                 .module_name("demo_api")
                 .expect("Python package module")
                 .native_module_source_path(&bindings),
-            Path::new("demo_api/_native.c").to_path_buf()
+            Ok(Path::new("demo_api/_native.c").to_path_buf())
         );
     }
 

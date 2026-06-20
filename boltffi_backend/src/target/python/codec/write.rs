@@ -1,6 +1,6 @@
 use boltffi_binding::{
-    BinderId, BuiltinType, CallbackId, ClassId, CodecWrite, CustomTypeId, ElementCount, EnumId, Op,
-    Primitive, RecordId, ValueRef,
+    BinderId, BuiltinType, CallbackId, ClassId, CodecWrite, CustomTypeId, ElementCount, EnumId,
+    MapKind, Op, Primitive, RecordId, ValueRef,
 };
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
         codec::{operation::Operation, read::EnumCodec, value::ValueExpression},
         cpython::render::primitive,
         render::Package,
+        syntax::{CallExpression, Expression, Identifier, Literal},
     },
 };
 
@@ -21,7 +22,7 @@ impl<'package, 'binding, 'bridge> Writer<'package, 'binding, 'bridge> {
         Self { package }
     }
 
-    pub fn single(expressions: Vec<Result<String>>) -> Result<String> {
+    pub fn single(expressions: Vec<Result<Expression>>) -> Result<Expression> {
         let mut expressions = expressions.into_iter().collect::<Result<Vec<_>>>()?;
         match expressions.len() {
             1 => Ok(expressions.remove(0)),
@@ -32,45 +33,69 @@ impl<'package, 'binding, 'bridge> Writer<'package, 'binding, 'bridge> {
         }
     }
 
-    fn value(&self, value: &ValueRef) -> Result<String> {
+    fn value(&self, value: &ValueRef) -> Result<Expression> {
         ValueExpression::new(value).render()
     }
 
-    fn binder(binder: BinderId) -> String {
+    fn binder(binder: BinderId) -> Result<Identifier> {
         ValueExpression::binder(binder)
     }
 
-    fn write_primitive(&self, value: String, primitive: Primitive) -> Result<String> {
-        let stem = primitive::Runtime::new(primitive).wire_stem()?;
-        Ok(format!("_boltffi_wire_{stem}({value})"))
+    fn call(
+        name: Identifier,
+        arguments: impl IntoIterator<Item = Expression>,
+    ) -> Result<Expression> {
+        Ok(Expression::call(arguments.into_iter().fold(
+            CallExpression::new(Expression::identifier(name)),
+            CallExpression::positional,
+        )))
     }
 
-    fn write_enum(&self, value: String, enumeration: EnumId) -> Result<String> {
+    fn write_primitive(&self, value: Expression, primitive: Primitive) -> Result<Expression> {
+        let stem = primitive::Runtime::new(primitive).wire_stem()?;
+        Self::call(Identifier::parse(format!("_boltffi_wire_{stem}"))?, [value])
+    }
+
+    fn write_enum(&self, value: Expression, enumeration: EnumId) -> Result<Expression> {
         match self.package.enum_codec(enumeration)? {
             EnumCodec::CStyle(primitive) => {
                 let stem = primitive::Runtime::new(primitive).wire_stem()?;
                 let enum_name = self.package.enum_name(enumeration)?;
-                let enum_name_literal = Package::literal(&enum_name);
-                Ok(format!(
-                    "_boltffi_wire_{stem}(_boltffi_enum_value({value}, {enum_name}, {enum_name_literal}))"
-                ))
+                let wire_value = Self::call(
+                    Identifier::parse("_boltffi_enum_value")?,
+                    [
+                        value,
+                        Expression::identifier(enum_name.clone()),
+                        Expression::literal(Literal::string(enum_name.as_str())),
+                    ],
+                )?;
+                Self::call(
+                    Identifier::parse(format!("_boltffi_wire_{stem}"))?,
+                    [wire_value],
+                )
             }
-            EnumCodec::Data { .. } => Ok(format!("{value}._boltffi_wire()")),
+            EnumCodec::Data { .. } => Ok(Expression::call(CallExpression::new(
+                Expression::attribute(value, Identifier::parse("_boltffi_wire")?),
+            ))),
         }
     }
 
-    fn write_builtin(value: String, builtin: BuiltinType) -> String {
+    fn write_builtin(value: Expression, builtin: BuiltinType) -> Result<Expression> {
         match builtin {
-            BuiltinType::Duration => format!("_boltffi_wire_duration({value})"),
-            BuiltinType::SystemTime => format!("_boltffi_wire_system_time({value})"),
-            BuiltinType::Uuid => format!("_boltffi_wire_uuid({value})"),
-            BuiltinType::Url => format!("_boltffi_wire_url({value})"),
+            BuiltinType::Duration => {
+                Self::call(Identifier::parse("_boltffi_wire_duration")?, [value])
+            }
+            BuiltinType::SystemTime => {
+                Self::call(Identifier::parse("_boltffi_wire_system_time")?, [value])
+            }
+            BuiltinType::Uuid => Self::call(Identifier::parse("_boltffi_wire_uuid")?, [value]),
+            BuiltinType::Url => Self::call(Identifier::parse("_boltffi_wire_url")?, [value]),
         }
     }
 }
 
 impl CodecWrite for Writer<'_, '_, '_> {
-    type Stmt = Result<String>;
+    type Stmt = Result<Expression>;
 
     fn primitive(&mut self, primitive: Primitive, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![
@@ -82,14 +107,14 @@ impl CodecWrite for Writer<'_, '_, '_> {
     fn string(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![
             self.value(value)
-                .map(|value| format!("_boltffi_wire_string({value})")),
+                .and_then(|value| Self::call(Identifier::parse("_boltffi_wire_string")?, [value])),
         ]
     }
 
     fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![
             self.value(value)
-                .map(|value| format!("_boltffi_wire_bytes({value})")),
+                .and_then(|value| Self::call(Identifier::parse("_boltffi_wire_bytes")?, [value])),
         ]
     }
 
@@ -99,9 +124,11 @@ impl CodecWrite for Writer<'_, '_, '_> {
 
     fn encoded_record(&mut self, id: RecordId, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            self.package
-                .record_name(id)
-                .map(|_| format!("{value}._boltffi_wire()"))
+            self.package.record_name(id).and_then(|_| {
+                Ok(Expression::call(CallExpression::new(
+                    Expression::attribute(value, Identifier::parse("_boltffi_wire")?),
+                )))
+            })
         })]
     }
 
@@ -114,9 +141,11 @@ impl CodecWrite for Writer<'_, '_, '_> {
 
     fn data_enum(&mut self, id: EnumId, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            self.package
-                .enum_codec(id)
-                .map(|_| format!("{value}._boltffi_wire()"))
+            self.package.enum_codec(id).and_then(|_| {
+                Ok(Expression::call(CallExpression::new(
+                    Expression::attribute(value, Identifier::parse("_boltffi_wire")?),
+                )))
+            })
         })]
     }
 
@@ -155,7 +184,7 @@ impl CodecWrite for Writer<'_, '_, '_> {
     fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![
             self.value(value)
-                .map(|value| Self::write_builtin(value, kind)),
+                .and_then(|value| Self::write_builtin(value, kind)),
         ]
     }
 
@@ -166,11 +195,13 @@ impl CodecWrite for Writer<'_, '_, '_> {
         inner: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            Ok(format!(
-                "_boltffi_wire_optional({value}, lambda {}: {})",
-                Self::binder(binder),
-                Self::single(inner)?
-            ))
+            Self::call(
+                Identifier::parse("_boltffi_wire_optional")?,
+                [
+                    value,
+                    Expression::lambda(Self::binder(binder)?, Self::single(inner)?),
+                ],
+            )
         })]
     }
 
@@ -183,12 +214,14 @@ impl CodecWrite for Writer<'_, '_, '_> {
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
             let count = len.render_with(&mut Operation);
-            Ok(format!(
-                "_boltffi_wire_sequence({value}, {}, lambda {}: {})",
-                count?,
-                Self::binder(binder),
-                Self::single(element)?
-            ))
+            Self::call(
+                Identifier::parse("_boltffi_wire_sequence")?,
+                [
+                    value,
+                    count?,
+                    Expression::lambda(Self::binder(binder)?, Self::single(element)?),
+                ],
+            )
         })]
     }
 
@@ -198,7 +231,15 @@ impl CodecWrite for Writer<'_, '_, '_> {
                 .into_iter()
                 .map(Self::single)
                 .collect::<Result<Vec<_>>>()
-                .map(|fields| format!("b\"\".join(({},))", fields.join(", ")))
+                .and_then(|fields| {
+                    Ok(Expression::call(
+                        CallExpression::new(Expression::attribute(
+                            Expression::literal(Literal::bytes_empty()),
+                            Identifier::parse("join")?,
+                        ))
+                        .positional(Expression::tuple(fields)),
+                    ))
+                })
         })]
     }
 
@@ -210,18 +251,20 @@ impl CodecWrite for Writer<'_, '_, '_> {
         err: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            Ok(format!(
-                "_boltffi_wire_result({value}, lambda {}: {}, lambda {}: {})",
-                Self::binder(binder),
-                Self::single(ok)?,
-                Self::binder(binder),
-                Self::single(err)?
-            ))
+            Self::call(
+                Identifier::parse("_boltffi_wire_result")?,
+                [
+                    value,
+                    Expression::lambda(Self::binder(binder)?, Self::single(ok)?),
+                    Expression::lambda(Self::binder(binder)?, Self::single(err)?),
+                ],
+            )
         })]
     }
 
     fn map(
         &mut self,
+        kind: MapKind,
         value: &ValueRef,
         key_binder: BinderId,
         key: Vec<Self::Stmt>,
@@ -229,13 +272,17 @@ impl CodecWrite for Writer<'_, '_, '_> {
         map_value: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            Ok(format!(
-                "_boltffi_wire_map({value}, lambda {}: {}, lambda {}: {})",
-                Self::binder(key_binder),
-                Self::single(key)?,
-                Self::binder(value_binder),
-                Self::single(map_value)?
-            ))
+            let function = match kind {
+                MapKind::Hash | MapKind::BTree => Identifier::parse("_boltffi_wire_map")?,
+            };
+            Self::call(
+                function,
+                [
+                    value,
+                    Expression::lambda(Self::binder(key_binder)?, Self::single(key)?),
+                    Expression::lambda(Self::binder(value_binder)?, Self::single(map_value)?),
+                ],
+            )
         })]
     }
 }

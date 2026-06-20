@@ -4,17 +4,24 @@ use std::{
 };
 
 use boltffi_binding::{
-    Bindings, CallableDecl, ClosureReturn, Decl, ErrorDecl, ExportedCallable, ForeignBody,
-    HandlePresence, HandleTarget, ImportedCallable, IncomingParam, IntoRust, Native, OutOfRust,
-    OutgoingParam, ParamPlanRender, Primitive, ReadPlan, Receive, ReturnPlan, ReturnPlanRender,
-    ReturnValueSlot, RustBody, TypeRef, ValueRoot, WritePlan, native,
+    Bindings, CallableDecl, ClosureReturn, Decl, DirectValueType, DirectVectorElementType,
+    ErrorDecl, ExportedCallable, ForeignBody, HandlePresence, HandleTarget, ImportedCallable,
+    IncomingParam, IntoRust, Native, OutOfRust, OutgoingParam, ParamPlanRender, Primitive,
+    ReadPlan, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, TypeRef, ValueRoot,
+    WritePlan, native,
 };
 
 use crate::{
+    bridge::c::{Identifier as CIdentifier, Literal as CLiteral},
     core::{Error, Result},
     target::python::{
-        codec::{Expression, value::ValueExpression},
+        codec::Expression,
+        name_style::Name,
         render::Package,
+        syntax::{
+            Expression as PythonExpression, Identifier as PythonIdentifier,
+            Literal as PythonLiteral,
+        },
     },
 };
 
@@ -109,20 +116,24 @@ impl AdapterKey {
         Self::from_hash("write", plan)
     }
 
-    pub fn literal(&self) -> String {
-        Package::literal(&self.stem)
+    pub fn python_literal(&self) -> PythonLiteral {
+        PythonLiteral::string(&self.stem)
     }
 
-    pub fn python_function(&self) -> String {
-        format!("_boltffi_{}", self.stem)
+    pub fn c_literal(&self) -> CLiteral {
+        CLiteral::string(&self.stem)
     }
 
-    pub fn c_decoder(&self) -> String {
-        format!("boltffi_python_decode_{}", self.stem)
+    pub fn python_function(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!("_boltffi_{}", self.stem))
     }
 
-    pub fn c_encoder(&self) -> String {
-        format!("boltffi_python_encode_{}", self.stem)
+    pub fn c_decoder(&self) -> Result<CIdentifier> {
+        CIdentifier::parse(format!("boltffi_python_decode_{}", self.stem))
+    }
+
+    pub fn c_encoder(&self) -> Result<CIdentifier> {
+        CIdentifier::parse(format!("boltffi_python_encode_{}", self.stem))
     }
 
     fn from_hash(prefix: &str, value: impl Hash) -> Self {
@@ -136,72 +147,73 @@ impl AdapterKey {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadFunction {
-    key: String,
-    name: String,
-    expression: String,
+    key: PythonLiteral,
+    name: PythonIdentifier,
+    expression: PythonExpression,
 }
 
 impl ReadFunction {
     pub fn from_adapter(adapter: &ReadAdapter<'_>, package: &Package<'_, '_>) -> Result<Self> {
         Ok(Self {
-            key: adapter.key().literal(),
-            name: adapter.key().python_function(),
-            expression: Expression::read(adapter.plan(), package)?.into_string(),
+            key: adapter.key().python_literal(),
+            name: adapter.key().python_function()?,
+            expression: Expression::read(adapter.plan(), package)?.into_expression(),
         })
     }
 
-    pub fn key(&self) -> &str {
+    pub fn key(&self) -> &PythonLiteral {
         &self.key
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &PythonIdentifier {
         &self.name
     }
 
-    pub fn expression(&self) -> &str {
+    pub fn expression(&self) -> &PythonExpression {
         &self.expression
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WriteFunction {
-    key: String,
-    name: String,
-    argument: String,
-    expression: String,
+    key: PythonLiteral,
+    name: PythonIdentifier,
+    argument: PythonIdentifier,
+    expression: PythonExpression,
 }
 
 impl WriteFunction {
     pub fn from_adapter(adapter: &WriteAdapter<'_>, package: &Package<'_, '_>) -> Result<Self> {
         Ok(Self {
-            key: adapter.key().literal(),
-            name: adapter.key().python_function(),
+            key: adapter.key().python_literal(),
+            name: adapter.key().python_function()?,
             argument: Self::plan_argument(adapter.plan())?,
-            expression: Expression::write(adapter.plan(), package)?.into_string(),
+            expression: Expression::write(adapter.plan(), package)?.into_expression(),
         })
     }
 
-    pub fn key(&self) -> &str {
+    pub fn key(&self) -> &PythonLiteral {
         &self.key
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &PythonIdentifier {
         &self.name
     }
 
-    pub fn argument(&self) -> &str {
+    pub fn argument(&self) -> &PythonIdentifier {
         &self.argument
     }
 
-    pub fn expression(&self) -> &str {
+    pub fn expression(&self) -> &PythonExpression {
         &self.expression
     }
 
-    fn plan_argument(plan: &WritePlan) -> Result<String> {
+    fn plan_argument(plan: &WritePlan) -> Result<PythonIdentifier> {
         match plan.value().root() {
-            ValueRoot::SelfValue => Ok("self".to_owned()),
-            ValueRoot::Named(_) | ValueRoot::Local(_) | ValueRoot::Binder(_) => {
-                ValueExpression::root(plan.value())
+            ValueRoot::SelfValue => PythonIdentifier::parse("self"),
+            ValueRoot::Named(name) | ValueRoot::Local(name) => Name::new(name).function(),
+            ValueRoot::Binder(binder) => {
+                PythonIdentifier::parse(format!("__boltffi_value_{}", binder.raw()))
             }
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -327,7 +339,7 @@ struct IncomingParamAdapters<'collector, 'binding> {
 impl<'binding> ParamPlanRender<'binding, Native, IntoRust> for IncomingParamAdapters<'_, 'binding> {
     type Output = ();
 
-    fn direct(&mut self, _: &'binding TypeRef, _: Receive) {}
+    fn direct(&mut self, _: &'binding DirectValueType, _: Receive) {}
 
     fn encoded(
         &mut self,
@@ -350,7 +362,7 @@ impl<'binding> ParamPlanRender<'binding, Native, IntoRust> for IncomingParamAdap
 
     fn scalar_option(&mut self, _: Primitive) {}
 
-    fn direct_vector(&mut self, _: &'binding TypeRef) {}
+    fn direct_vector(&mut self, _: &'binding DirectVectorElementType) {}
 }
 
 struct OutgoingParamAdapters<'collector, 'binding> {
@@ -362,7 +374,7 @@ impl<'binding> ParamPlanRender<'binding, Native, OutOfRust>
 {
     type Output = ();
 
-    fn direct(&mut self, _: &'binding TypeRef, _: ()) {}
+    fn direct(&mut self, _: &'binding DirectValueType, _: ()) {}
 
     fn encoded(
         &mut self,
@@ -385,7 +397,7 @@ impl<'binding> ParamPlanRender<'binding, Native, OutOfRust>
 
     fn scalar_option(&mut self, _: Primitive) {}
 
-    fn direct_vector(&mut self, _: &'binding TypeRef) {}
+    fn direct_vector(&mut self, _: &'binding DirectVectorElementType) {}
 }
 
 struct OutOfRustReturnAdapters<'collector, 'binding> {
@@ -399,7 +411,7 @@ impl<'binding> ReturnPlanRender<'binding, Native, OutOfRust>
 
     fn void(&mut self) {}
 
-    fn direct(&mut self, _: ReturnValueSlot, _: &'binding TypeRef) {}
+    fn direct(&mut self, _: ReturnValueSlot, _: &'binding DirectValueType) {}
 
     fn encoded(
         &mut self,
@@ -422,7 +434,7 @@ impl<'binding> ReturnPlanRender<'binding, Native, OutOfRust>
 
     fn scalar_option(&mut self, _: Primitive) {}
 
-    fn direct_vector(&mut self, _: &'binding TypeRef) {}
+    fn direct_vector(&mut self, _: &'binding DirectVectorElementType) {}
 
     fn closure(&mut self, closure: &'binding ClosureReturn<Native, OutOfRust>) {
         self.adapters.collect_rust_callable(closure.invoke());
@@ -440,7 +452,7 @@ impl<'binding> ReturnPlanRender<'binding, Native, IntoRust>
 
     fn void(&mut self) {}
 
-    fn direct(&mut self, _: ReturnValueSlot, _: &'binding TypeRef) {}
+    fn direct(&mut self, _: ReturnValueSlot, _: &'binding DirectValueType) {}
 
     fn encoded(
         &mut self,
@@ -463,7 +475,7 @@ impl<'binding> ReturnPlanRender<'binding, Native, IntoRust>
 
     fn scalar_option(&mut self, _: Primitive) {}
 
-    fn direct_vector(&mut self, _: &'binding TypeRef) {}
+    fn direct_vector(&mut self, _: &'binding DirectVectorElementType) {}
 
     fn closure(&mut self, closure: &'binding ClosureReturn<Native, IntoRust>) {
         self.adapters.collect_foreign_callable(closure.invoke());

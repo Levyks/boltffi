@@ -9,7 +9,7 @@ mod extension;
 mod template;
 
 pub use contract::{
-    CHeaderInclude, ExtensionMethod, LoadedFunction, MethodFlags, ModuleSymbols,
+    CHeaderInclude, ExtensionMethod, LoadedFunction, MethodFlags, MethodName, ModuleSymbols,
     PythonCExtBridgeContract, PythonExtensionName,
 };
 pub use extension::PythonCExtBridge;
@@ -119,11 +119,20 @@ mod tests {
 
         let contract = output.contract();
         assert_eq!(contract.module().as_str(), "_native");
-        assert_eq!(contract.symbols().init_function(), "PyInit__native");
-        assert_eq!(contract.symbols().method_table(), "boltffi_python_methods");
-        assert_eq!(contract.loader_method().python_name(), "_initialize_loader");
         assert_eq!(
-            contract.loader_method().c_function(),
+            contract.symbols().init_function().as_str(),
+            "PyInit__native"
+        );
+        assert_eq!(
+            contract.symbols().method_table().as_str(),
+            "boltffi_python_methods"
+        );
+        assert_eq!(
+            contract.loader_method().python_name().as_str(),
+            "_initialize_loader"
+        );
+        assert_eq!(
+            contract.loader_method().c_function().as_str(),
             "boltffi_python_initialize_loader"
         );
         assert_eq!(contract.loader_method().flags(), MethodFlags::OneObject);

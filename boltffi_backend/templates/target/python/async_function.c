@@ -118,7 +118,7 @@ static PyObject *{{ complete_wrapper }}(PyObject *self, PyObject *handle_object)
         goto done;
     }
     if ({{ fallible.error_value }}.len != 0) {
-        error = {{ fallible.error.converter }}({{ fallible.error_value }});
+        error = {{ fallible.error.converter() }}({{ fallible.error_value }});
         if (error != NULL) {
             PyErr_SetObject(PyExc_RuntimeError, error);
         }
@@ -128,7 +128,7 @@ static PyObject *{{ complete_wrapper }}(PyObject *self, PyObject *handle_object)
     Py_INCREF(Py_None);
     result = Py_None;
 {%- else %}
-    result = {{ returns.converter }}({{ fallible.success_value }});
+    result = {{ returns.converter() }}({{ fallible.success_value() }});
 {%- endif %}
 {%- else %}
 {%- if returns.is_void() %}
@@ -139,7 +139,7 @@ static PyObject *{{ complete_wrapper }}(PyObject *self, PyObject *handle_object)
     Py_INCREF(Py_None);
     result = Py_None;
 {%- else %}
-    result = {{ returns.converter }}({{ complete_storage }}(handle, &status{% if !complete_call_args.is_empty() %}, {% endif %}{%- for arg in complete_call_args %}{{ arg }}{% if !loop.last %}, {% endif %}{%- endfor %}));
+    result = {{ returns.converter() }}({{ complete_storage }}(handle, &status{% if !complete_call_args.is_empty() %}, {% endif %}{%- for arg in complete_call_args %}{{ arg }}{% if !loop.last %}, {% endif %}{%- endfor %}));
     if (!boltffi_python_check_future_status(status, handle, {{ panic_storage }})) {
         Py_CLEAR(result);
         goto done;

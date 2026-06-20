@@ -66,7 +66,7 @@ static PyObject *{{ wrapper }}(PyObject *self, PyObject *const *args, Py_ssize_t
 {%- if let Some(fallible) = fallible %}
     {{ fallible.error_value }} = {{ storage }}({%- for arg in call_args %}{{ arg }}{% if !loop.last %}, {% endif %}{%- endfor %});
     if ({{ fallible.error_value }}.len != 0) {
-        error = {{ fallible.error.converter }}({{ fallible.error_value }});
+        error = {{ fallible.error.converter() }}({{ fallible.error_value }});
         if (error != NULL) {
             PyErr_SetObject(PyExc_RuntimeError, error);
         }
@@ -76,7 +76,7 @@ static PyObject *{{ wrapper }}(PyObject *self, PyObject *const *args, Py_ssize_t
     Py_INCREF(Py_None);
     result = Py_None;
 {%- else %}
-    result = {{ returns.converter }}({{ fallible.success_value }});
+    result = {{ returns.converter() }}({{ fallible.success_value() }});
 {%- endif %}
 {%- else %}
 {%- if let Some(mutation) = mutation %}
@@ -92,7 +92,7 @@ static PyObject *{{ wrapper }}(PyObject *self, PyObject *const *args, Py_ssize_t
     Py_INCREF(Py_None);
     result = Py_None;
 {%- else %}
-    result = {{ returns.converter }}({{ storage }}({%- for arg in call_args %}{{ arg }}{% if !loop.last %}, {% endif %}{%- endfor %}));
+    result = {{ returns.converter() }}({{ storage }}({%- for arg in call_args %}{{ arg }}{% if !loop.last %}, {% endif %}{%- endfor %}));
 {%- endif %}
 {%- endif %}
 {%- endif %}

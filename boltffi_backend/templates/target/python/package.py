@@ -24,10 +24,10 @@ from . import _native
 
 def _shared_library_filename() -> str:
     if sys.platform == "win32":
-        return "{{ library_name }}.dll"
+        return {{ windows_library }}
     if sys.platform == "darwin":
-        return "lib{{ library_name }}.dylib"
-    return "lib{{ library_name }}.so"
+        return {{ macos_library }}
+    return {{ unix_library }}
 
 
 _native._initialize_loader(str(Path(__file__).resolve().with_name(_shared_library_filename())))
@@ -638,7 +638,7 @@ class {{ stream.subscription_class }}:
 
 MODULE_NAME = {{ module_name_literal }}
 PACKAGE_NAME = {{ package_name_literal }}
-PACKAGE_VERSION = {{ package_version_literal }}
+PACKAGE_VERSION = {{ package_version }}
 
 __all__ = [
     "MODULE_NAME",

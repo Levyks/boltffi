@@ -1,43 +1,44 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     DirectFieldDecl, DirectRecordDecl, EncodedRecordDecl, ExportedMethodDecl, FieldKey,
-    InitializerDecl, Native, NativeSymbol, RecordDecl, RecordId, TypeRef,
+    InitializerDecl, Native, NativeSymbol, RecordDecl, RecordId,
 };
 
 use crate::{
     bridge::{
-        c::{self, identifier::Identifier, syntax::TypeSyntax},
-        python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
+        c::{self, Identifier, TypeFragment, syntax::TypeSyntax},
+        python_cext::{ExtensionMethod, MethodFlags, MethodName, PythonCExtBridgeContract},
     },
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
         cpython::render::{argument, direct_vector, function, primitive, result},
         name_style::Name,
+        syntax::Identifier as PythonIdentifier,
     },
 };
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/record.c", escape = "none")]
 struct DirectTemplate {
-    class_name: String,
-    c_type: String,
-    type_object: String,
-    register_method: String,
-    register_wrapper: String,
-    parser: String,
-    boxer: String,
+    class_name: PythonIdentifier,
+    c_type: TypeFragment,
+    type_object: Identifier,
+    register_method: PythonIdentifier,
+    register_wrapper: Identifier,
+    parser: Identifier,
+    boxer: Identifier,
     fields: Vec<Field>,
 }
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/encoded_record.c", escape = "none")]
 struct EncodedTemplate {
-    class_name: String,
-    type_object: String,
-    register_method: String,
-    register_wrapper: String,
-    wire_encoder: String,
-    owned_decoder: String,
+    class_name: PythonIdentifier,
+    type_object: Identifier,
+    register_method: PythonIdentifier,
+    register_wrapper: Identifier,
+    wire_encoder: Identifier,
+    owned_decoder: Identifier,
 }
 
 pub struct Record {
@@ -67,7 +68,7 @@ impl Record {
         let symbols = self.symbols;
         let source = match self.shape {
             Shape::Direct { fields, .. } => {
-                let c_type = symbols.c_type()?.to_owned();
+                let c_type = symbols.c_type()?.clone();
                 DirectTemplate {
                     class_name: symbols.class_name,
                     c_type,
@@ -126,8 +127,8 @@ impl Record {
             .collect()
     }
 
-    pub fn cleanup(&self) -> String {
-        format!("Py_CLEAR({})", self.symbols.type_object)
+    pub fn cleanup(&self) -> c::Statement {
+        c::Statement::new(format!("Py_CLEAR({})", self.symbols.type_object))
     }
 
     pub fn needs_owned_buffer(&self) -> bool {
@@ -203,7 +204,7 @@ impl Record {
             .collect::<Result<Vec<_>>>()?;
         let primitives = fields.iter().map(Field::primitive).collect();
         let method = ExtensionMethod::new(
-            symbols.register_method.clone(),
+            MethodName::parse(symbols.register_method.as_str())?,
             symbols.register_wrapper.clone(),
             MethodFlags::FastCall,
         )?;
@@ -223,7 +224,7 @@ impl Record {
     ) -> Result<Self> {
         let symbols = Symbols::from_encoded(record)?;
         let method = ExtensionMethod::new(
-            symbols.register_method.clone(),
+            MethodName::parse(symbols.register_method.as_str())?,
             symbols.register_wrapper.clone(),
             MethodFlags::FastCall,
         )?;
@@ -296,7 +297,7 @@ impl Record {
         context: &RenderContext<Native>,
     ) -> Result<function::Function> {
         function::Function::from_export(
-            symbols.initializer(initializer.name()),
+            symbols.initializer(initializer.name())?,
             initializer.symbol(),
             initializer.callable(),
             Vec::new(),
@@ -313,7 +314,7 @@ impl Record {
         context: &RenderContext<Native>,
     ) -> Result<function::Function> {
         function::Function::from_export(
-            symbols.method(method.name()),
+            symbols.method(method.name())?,
             method.target(),
             method.callable(),
             receiver,
@@ -324,14 +325,14 @@ impl Record {
 }
 
 pub struct Symbols {
-    class_name: String,
+    class_name: PythonIdentifier,
     stem: String,
-    c_type: Option<String>,
-    type_object: String,
-    register_method: String,
-    register_wrapper: String,
-    parser: String,
-    boxer: String,
+    c_type: Option<TypeFragment>,
+    type_object: Identifier,
+    register_method: PythonIdentifier,
+    register_wrapper: Identifier,
+    parser: Identifier,
+    boxer: Identifier,
 }
 
 impl Symbols {
@@ -363,18 +364,18 @@ impl Symbols {
         }
     }
 
-    pub fn c_type(&self) -> Result<&str> {
-        self.c_type.as_deref().ok_or(Error::UnsupportedTarget {
+    pub fn c_type(&self) -> Result<&TypeFragment> {
+        self.c_type.as_ref().ok_or(Error::UnsupportedTarget {
             target: "python",
             shape: "encoded record has no C type",
         })
     }
 
-    pub fn parser(&self) -> &str {
+    pub fn parser(&self) -> &Identifier {
         &self.parser
     }
 
-    pub fn boxer(&self) -> &str {
+    pub fn boxer(&self) -> &Identifier {
         &self.boxer
     }
 
@@ -382,52 +383,56 @@ impl Symbols {
         &self.stem
     }
 
-    pub fn class_name(&self) -> &str {
+    pub fn class_name(&self) -> &PythonIdentifier {
         &self.class_name
     }
 
-    pub fn register_method(&self) -> &str {
+    pub fn register_method(&self) -> &PythonIdentifier {
         &self.register_method
     }
 
-    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> String {
+    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
-    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> String {
+    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
     pub fn from_direct(record: &DirectRecordDecl<Native>, c_record: &c::Record) -> Result<Self> {
-        let stem = Identifier::escape(Name::new(record.name()).function())?.to_string();
+        let stem = Identifier::escape(Name::new(record.name()).function_text()?)?.to_string();
         Ok(Self {
-            class_name: Name::new(record.name()).class(),
+            class_name: PythonIdentifier::parse(Name::new(record.name()).class())?,
             stem: stem.clone(),
-            c_type: Some(TypeSyntax::new(&c::Type::Named(c_record.name().to_owned())).anonymous()?),
-            type_object: format!("boltffi_python_{stem}_type"),
-            register_method: format!("_register_{stem}"),
-            register_wrapper: format!("boltffi_python_wrapper_register_{stem}"),
-            parser: format!("boltffi_python_parse_{stem}"),
-            boxer: format!("boltffi_python_box_{stem}"),
+            c_type: Some(TypeSyntax::new(&c::Type::named(c_record.name())?).anonymous()?),
+            type_object: Identifier::parse(format!("boltffi_python_{stem}_type"))?,
+            register_method: PythonIdentifier::parse(format!("_register_{stem}"))?,
+            register_wrapper: Identifier::parse(format!("boltffi_python_wrapper_register_{stem}"))?,
+            parser: Identifier::parse(format!("boltffi_python_parse_{stem}"))?,
+            boxer: Identifier::parse(format!("boltffi_python_box_{stem}"))?,
         })
     }
 
     pub fn from_encoded(record: &EncodedRecordDecl<Native>) -> Result<Self> {
-        let stem = Identifier::escape(Name::new(record.name()).function())?.to_string();
+        let stem = Identifier::escape(Name::new(record.name()).function_text()?)?.to_string();
         Ok(Self {
-            class_name: Name::new(record.name()).class(),
+            class_name: PythonIdentifier::parse(Name::new(record.name()).class())?,
             stem: stem.clone(),
             c_type: None,
-            type_object: format!("boltffi_python_{stem}_type"),
-            register_method: format!("_register_{stem}"),
-            register_wrapper: format!("boltffi_python_wrapper_register_{stem}"),
-            parser: format!("boltffi_python_wire_{stem}"),
-            boxer: format!("boltffi_python_decode_owned_{stem}"),
+            type_object: Identifier::parse(format!("boltffi_python_{stem}_type"))?,
+            register_method: PythonIdentifier::parse(format!("_register_{stem}"))?,
+            register_wrapper: Identifier::parse(format!("boltffi_python_wrapper_register_{stem}"))?,
+            parser: Identifier::parse(format!("boltffi_python_wire_{stem}"))?,
+            boxer: Identifier::parse(format!("boltffi_python_decode_owned_{stem}"))?,
         })
     }
 
-    fn callable(&self, name: &boltffi_binding::CanonicalName) -> String {
-        format!("_boltffi_{}_{}", self.stem, Name::new(name).function())
+    fn callable(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!(
+            "_boltffi_{}_{}",
+            self.stem,
+            Name::new(name).function()?
+        ))
     }
 }
 
@@ -441,28 +446,22 @@ enum Shape {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Field {
-    python_name: String,
-    c_name: String,
-    value_name: String,
-    parser: &'static str,
-    boxer: &'static str,
+    python_name: PythonIdentifier,
+    c_name: Identifier,
+    value_name: Identifier,
+    parser: Identifier,
+    boxer: Identifier,
     primitive: primitive::Runtime,
 }
 
 impl Field {
     fn new(source: &DirectFieldDecl, c_field: &c::Field) -> Result<Self> {
-        let TypeRef::Primitive(primitive) = source.ty() else {
-            return Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "non-primitive direct record field",
-            });
-        };
-        let primitive = primitive::Runtime::new(*primitive);
+        let primitive = primitive::Runtime::new(source.ty().primitive());
         let python_name = Self::python_name(source.key())?;
         Ok(Self {
-            value_name: Identifier::escape(format!("{python_name}_value"))?.to_string(),
+            value_name: Identifier::escape(format!("{python_name}_value"))?,
             python_name,
-            c_name: c_field.name().to_owned(),
+            c_name: Identifier::parse(c_field.name())?,
             parser: primitive.parser()?,
             boxer: primitive.boxer()?,
             primitive,
@@ -473,16 +472,14 @@ impl Field {
         self.primitive
     }
 
-    fn python_name(key: &FieldKey) -> Result<String> {
-        Ok(match key {
+    fn python_name(key: &FieldKey) -> Result<PythonIdentifier> {
+        match key {
             FieldKey::Named(name) => Name::new(name).function(),
-            FieldKey::Position(position) => format!("field_{position}"),
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unknown record field key",
-                });
-            }
-        })
+            FieldKey::Position(position) => PythonIdentifier::parse(format!("field_{position}")),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown record field key",
+            }),
+        }
     }
 }

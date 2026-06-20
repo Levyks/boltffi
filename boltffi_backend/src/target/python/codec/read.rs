@@ -1,11 +1,15 @@
 use boltffi_binding::{
-    BuiltinType, CallbackId, ClassId, CodecRead, CustomTypeId, ElementCount, EnumId, Op, Primitive,
-    RecordId,
+    BuiltinType, CallbackId, ClassId, CodecRead, CustomTypeId, ElementCount, EnumId, MapKind, Op,
+    Primitive, RecordId,
 };
 
 use crate::{
     core::{Error, Result},
-    target::python::{cpython::render::primitive, render::Package},
+    target::python::{
+        cpython::render::primitive,
+        render::Package,
+        syntax::{CallExpression, Expression, Identifier},
+    },
 };
 
 pub struct Reader<'package, 'binding, 'bridge> {
@@ -16,22 +20,38 @@ impl<'package, 'binding, 'bridge> Reader<'package, 'binding, 'bridge> {
     pub fn new(package: &'package Package<'binding, 'bridge>) -> Self {
         Self { package }
     }
+
+    pub fn sequence_expression(&self, element: Expression) -> Result<Expression> {
+        Ok(Expression::call(
+            CallExpression::new(Expression::attribute(
+                Expression::identifier(Identifier::parse("reader")?),
+                Identifier::parse("sequence")?,
+            ))
+            .positional(Expression::no_arg_lambda(element)),
+        ))
+    }
+
+    fn reader_call(method: Identifier) -> Result<Expression> {
+        Ok(Expression::call(CallExpression::new(
+            Expression::attribute(Expression::identifier(Identifier::parse("reader")?), method),
+        )))
+    }
 }
 
 impl CodecRead for Reader<'_, '_, '_> {
-    type Expr = Result<String>;
+    type Expr = Result<Expression>;
 
     fn primitive(&mut self, primitive: Primitive) -> Self::Expr {
         let stem = primitive::Runtime::new(primitive).wire_stem()?;
-        Ok(format!("reader.{stem}()"))
+        Self::reader_call(Identifier::parse(stem)?)
     }
 
     fn string(&mut self) -> Self::Expr {
-        Ok("reader.string()".to_owned())
+        Self::reader_call(Identifier::parse("string")?)
     }
 
     fn bytes(&mut self) -> Self::Expr {
-        Ok("reader.bytes()".to_owned())
+        Self::reader_call(Identifier::parse("bytes")?)
     }
 
     fn direct_record(&mut self, id: RecordId) -> Self::Expr {
@@ -39,9 +59,12 @@ impl CodecRead for Reader<'_, '_, '_> {
     }
 
     fn encoded_record(&mut self, id: RecordId) -> Self::Expr {
-        Ok(format!(
-            "{}._boltffi_from_reader(reader)",
-            self.package.record_name(id)?
+        Ok(Expression::call(
+            CallExpression::new(Expression::attribute(
+                Expression::identifier(self.package.record_name(id)?),
+                Identifier::parse("_boltffi_from_reader")?,
+            ))
+            .positional(Expression::identifier(Identifier::parse("reader")?)),
         ))
     }
 
@@ -53,7 +76,10 @@ impl CodecRead for Reader<'_, '_, '_> {
             });
         };
         let stem = primitive::Runtime::new(primitive).wire_stem()?;
-        Ok(format!("{}(reader.{stem}())", self.package.enum_name(id)?))
+        Ok(Expression::call(
+            CallExpression::new(Expression::identifier(self.package.enum_name(id)?))
+                .positional(Self::reader_call(Identifier::parse(stem)?)?),
+        ))
     }
 
     fn data_enum(&mut self, id: EnumId) -> Self::Expr {
@@ -63,7 +89,13 @@ impl CodecRead for Reader<'_, '_, '_> {
                 shape: "c-style enum reached data enum wire reader",
             });
         };
-        Ok(format!("{class_name}._boltffi_from_reader(reader)"))
+        Ok(Expression::call(
+            CallExpression::new(Expression::attribute(
+                Expression::identifier(class_name),
+                Identifier::parse("_boltffi_from_reader")?,
+            ))
+            .positional(Expression::identifier(Identifier::parse("reader")?)),
+        ))
     }
 
     fn class_handle(&mut self, id: ClassId) -> Self::Expr {
@@ -89,39 +121,62 @@ impl CodecRead for Reader<'_, '_, '_> {
 
     fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
         Ok(match kind {
-            BuiltinType::Duration => "reader.duration()".to_owned(),
-            BuiltinType::SystemTime => "reader.system_time()".to_owned(),
-            BuiltinType::Uuid => "reader.uuid()".to_owned(),
-            BuiltinType::Url => "reader.url()".to_owned(),
+            BuiltinType::Duration => Self::reader_call(Identifier::parse("duration")?)?,
+            BuiltinType::SystemTime => Self::reader_call(Identifier::parse("system_time")?)?,
+            BuiltinType::Uuid => Self::reader_call(Identifier::parse("uuid")?)?,
+            BuiltinType::Url => Self::reader_call(Identifier::parse("url")?)?,
         })
     }
 
     fn optional(&mut self, inner: Self::Expr) -> Self::Expr {
-        Ok(format!("reader.optional(lambda: {})", inner?))
+        Ok(Expression::call(
+            CallExpression::new(Expression::attribute(
+                Expression::identifier(Identifier::parse("reader")?),
+                Identifier::parse("optional")?,
+            ))
+            .positional(Expression::no_arg_lambda(inner?)),
+        ))
     }
 
     fn sequence(&mut self, len: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
         len.node();
-        Ok(format!("reader.sequence(lambda: {})", element?))
+        self.sequence_expression(element?)
     }
 
     fn tuple(&mut self, elements: Vec<Self::Expr>) -> Self::Expr {
-        Ok(format!(
-            "({},)",
-            elements.into_iter().collect::<Result<Vec<_>>>()?.join(", ")
-        ))
+        elements
+            .into_iter()
+            .collect::<Result<Vec<_>>>()
+            .map(Expression::tuple)
     }
 
     fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
-        Ok(format!("reader.result(lambda: {}, lambda: {})", ok?, err?))
+        Ok(Expression::call(
+            CallExpression::new(Expression::attribute(
+                Expression::identifier(Identifier::parse("reader")?),
+                Identifier::parse("result")?,
+            ))
+            .positional(Expression::no_arg_lambda(ok?))
+            .positional(Expression::no_arg_lambda(err?)),
+        ))
     }
 
-    fn map(&mut self, key: Self::Expr, value: Self::Expr) -> Self::Expr {
-        Ok(format!("reader.map(lambda: {}, lambda: {})", key?, value?))
+    fn map(&mut self, kind: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr {
+        let method = match kind {
+            MapKind::Hash | MapKind::BTree => Identifier::parse("map")?,
+        };
+        Ok(Expression::call(
+            CallExpression::new(Expression::attribute(
+                Expression::identifier(Identifier::parse("reader")?),
+                method,
+            ))
+            .positional(Expression::no_arg_lambda(key?))
+            .positional(Expression::no_arg_lambda(value?)),
+        ))
     }
 }
 
 pub enum EnumCodec {
     CStyle(Primitive),
-    Data { class_name: String },
+    Data { class_name: Identifier },
 }

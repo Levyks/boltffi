@@ -2,22 +2,26 @@ use askama::Template as AskamaTemplate;
 use boltffi_binding::{ClassDecl, Native};
 
 use crate::{
-    bridge::python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
+    bridge::{
+        c::{Identifier, TypeFragment},
+        python_cext::{ExtensionMethod, MethodFlags, MethodName, PythonCExtBridgeContract},
+    },
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
         cpython::render::{argument, direct_vector, function, primitive, result},
         name_style::Name,
+        syntax::Identifier as PythonIdentifier,
     },
 };
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/class_release.c", escape = "none")]
 struct ReleaseTemplate {
-    python_name: String,
-    wrapper: String,
-    storage: String,
-    handle_type: String,
-    parser: String,
+    python_name: PythonIdentifier,
+    wrapper: Identifier,
+    storage: Identifier,
+    handle_type: TypeFragment,
+    parser: Identifier,
 }
 
 pub struct Class {
@@ -31,10 +35,10 @@ impl Class {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let symbols = Symbols::new(declaration);
+        let symbols = Symbols::new(declaration)?;
         let initializers = declaration.initializers().iter().map(|initializer| {
             function::Function::from_export(
-                symbols.initializer(initializer.name()),
+                symbols.initializer(initializer.name())?,
                 initializer.symbol(),
                 initializer.callable(),
                 Vec::new(),
@@ -51,7 +55,7 @@ impl Class {
                 .into_iter()
                 .collect();
             function::Function::from_export(
-                symbols.method(method.name()),
+                symbols.method(method.name())?,
                 method.target(),
                 method.callable(),
                 receiver,
@@ -140,55 +144,59 @@ impl Class {
 }
 
 pub struct Symbols {
-    class_name: String,
+    class_name: PythonIdentifier,
     stem: String,
 }
 
 impl Symbols {
-    pub fn new(declaration: &ClassDecl<Native>) -> Self {
-        Self {
-            class_name: Name::new(declaration.name()).class(),
-            stem: Name::new(declaration.name()).function(),
-        }
+    pub fn new(declaration: &ClassDecl<Native>) -> Result<Self> {
+        Ok(Self {
+            class_name: PythonIdentifier::parse(Name::new(declaration.name()).class())?,
+            stem: Name::new(declaration.name()).function_text()?,
+        })
     }
 
-    pub fn class_name(&self) -> &str {
+    pub fn class_name(&self) -> &PythonIdentifier {
         &self.class_name
     }
 
-    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> String {
+    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
-    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> String {
+    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
-    pub fn release(&self) -> String {
-        format!("_boltffi_{}_release", self.stem)
+    pub fn release(&self) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!("_boltffi_{}_release", self.stem))
     }
 
-    fn callable(&self, name: &boltffi_binding::CanonicalName) -> String {
-        format!("_boltffi_{}_{}", self.stem, Name::new(name).function())
+    fn callable(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!(
+            "_boltffi_{}_{}",
+            self.stem,
+            Name::new(name).function()?
+        ))
     }
 }
 
 struct Release {
-    python_name: String,
-    wrapper: String,
-    storage: String,
+    python_name: PythonIdentifier,
+    wrapper: Identifier,
+    storage: Identifier,
     handle: primitive::Runtime,
     method: ExtensionMethod,
 }
 
 impl Release {
     fn new(declaration: &ClassDecl<Native>, bridge: &PythonCExtBridgeContract) -> Result<Self> {
-        let symbols = Symbols::new(declaration);
-        let python_name = symbols.release();
-        let wrapper = format!(
+        let symbols = Symbols::new(declaration)?;
+        let python_name = symbols.release()?;
+        let wrapper = Identifier::parse(format!(
             "boltffi_python_callable_wrapper_{}",
             declaration.release().name().as_str()
-        );
+        ))?;
         let loaded =
             bridge
                 .loaded_function(declaration.release())
@@ -196,12 +204,15 @@ impl Release {
                     target: "python",
                     shape: "class release without C bridge symbol",
                 })?;
-        let method =
-            ExtensionMethod::new(python_name.clone(), wrapper.clone(), MethodFlags::FastCall)?;
+        let method = ExtensionMethod::new(
+            MethodName::parse(python_name.as_str())?,
+            wrapper.clone(),
+            MethodFlags::FastCall,
+        )?;
         Ok(Self {
             python_name,
             wrapper,
-            storage: loaded.storage_name().to_owned(),
+            storage: loaded.storage_name().clone(),
             handle: primitive::Runtime::native_handle(declaration.handle())?,
             method,
         })
@@ -212,8 +223,8 @@ impl Release {
             python_name: self.python_name,
             wrapper: self.wrapper,
             storage: self.storage,
-            handle_type: self.handle.c_type()?.to_owned(),
-            parser: self.handle.parser()?.to_owned(),
+            handle_type: self.handle.c_type()?,
+            parser: self.handle.parser()?,
         }
         .render()?)
     }

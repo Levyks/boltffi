@@ -1,20 +1,25 @@
 use boltffi_binding::{
-    CanonicalName, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native, ParamDecl,
-    ParamPlan, ParamPlanRender, Primitive, Receive, TypeRef, WritePlan, native,
+    CanonicalName, DirectValueType, DirectVectorElementType, HandlePresence, HandleTarget,
+    IncomingParam, IntoRust, Native, ParamDecl, ParamPlan, ParamPlanRender, Primitive, Receive,
+    TypeRef, WritePlan, native,
 };
 
 use crate::{
     core::Result,
-    target::python::{codec::Expression as CodecExpression, name_style::Name},
+    target::python::{
+        codec::Expression as CodecExpression,
+        name_style::Name,
+        syntax::{Expression, Identifier, Literal, TypeAnnotation},
+    },
 };
 
 use super::super::{NameScope, Package, type_hint::TypeHint};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParameterStub {
-    pub name: String,
-    pub annotation: String,
-    pub argument: String,
+    pub name: Identifier,
+    pub annotation: TypeAnnotation,
+    pub argument: Expression,
     uses_sequence_annotation: bool,
     uses_callable_annotation: bool,
     uses_wire_helpers: bool,
@@ -25,12 +30,12 @@ impl ParameterStub {
         parameter: &ParamDecl<Native, IntoRust>,
         package: &Package<'_, '_>,
     ) -> Result<Self> {
-        let name = Name::new(parameter.name()).function();
+        let name = Name::new(parameter.name()).function()?;
         let IncomingParam::Value(plan) = parameter.payload() else {
             return Ok(Self {
                 name: name.clone(),
-                annotation: "Callable[..., object]".to_owned(),
-                argument: name,
+                annotation: TypeAnnotation::callable_any_object(),
+                argument: Expression::identifier(name),
                 uses_sequence_annotation: false,
                 uses_callable_annotation: true,
                 uses_wire_helpers: false,
@@ -43,7 +48,7 @@ impl ParameterStub {
             name,
             uses_sequence_annotation: annotation.uses_sequence(),
             uses_callable_annotation: false,
-            annotation: annotation.into_string(),
+            annotation: annotation.into_annotation(),
             argument,
             uses_wire_helpers,
         })
@@ -64,7 +69,7 @@ impl ParameterStub {
     }
 
     pub fn parameter_name(&self) -> (String, String) {
-        (self.name.clone(), format!("parameter `{}`", self.name))
+        (self.name.to_string(), format!("parameter `{}`", self.name))
     }
 
     pub fn scope(label: impl Into<String>, parameters: &[Self]) -> Result<NameScope> {
@@ -75,9 +80,9 @@ impl ParameterStub {
         plan: &ParamPlan<Native, IntoRust>,
         name: &CanonicalName,
         package: &Package<'_, '_>,
-    ) -> Result<String> {
+    ) -> Result<Expression> {
         plan.render_with(&mut StubArgument {
-            name: Name::new(name).function(),
+            name: Name::new(name).function()?,
             package,
         })
     }
@@ -88,15 +93,15 @@ impl ParameterStub {
 }
 
 struct StubArgument<'package, 'binding, 'bridge> {
-    name: String,
+    name: Identifier,
     package: &'package Package<'binding, 'bridge>,
 }
 
 impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<'_, '_, '_> {
-    type Output = Result<String>;
+    type Output = Result<Expression>;
 
-    fn direct(&mut self, _: &TypeRef, _: Receive) -> Self::Output {
-        Ok(self.name.clone())
+    fn direct(&mut self, _: &DirectValueType, _: Receive) -> Self::Output {
+        Ok(Expression::identifier(self.name.clone()))
     }
 
     fn encoded(
@@ -106,7 +111,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<'_, '_, '_
         _: native::BufferShape,
         _: Receive,
     ) -> Self::Output {
-        CodecExpression::write_argument(codec, self.package).map(CodecExpression::into_string)
+        CodecExpression::write_argument(codec, self.package).map(CodecExpression::into_expression)
     }
 
     fn handle(
@@ -117,23 +122,28 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<'_, '_, '_
         _: Receive,
     ) -> Self::Output {
         match (target, presence) {
-            (HandleTarget::Class(_), HandlePresence::Required) => {
-                Ok(format!("{}._handle", self.name))
-            }
-            (HandleTarget::Class(_), HandlePresence::Nullable) => Ok(format!(
-                "(0 if {} is None else {}._handle)",
-                self.name, self.name
+            (HandleTarget::Class(_), HandlePresence::Required) => Ok(Expression::attribute(
+                Expression::identifier(self.name.clone()),
+                Identifier::parse("_handle")?,
             )),
-            _ => Ok(self.name.clone()),
+            (HandleTarget::Class(_), HandlePresence::Nullable) => Ok(Expression::conditional(
+                Expression::literal(Literal::integer(0)),
+                Expression::is_none(Expression::identifier(self.name.clone())),
+                Expression::attribute(
+                    Expression::identifier(self.name.clone()),
+                    Identifier::parse("_handle")?,
+                ),
+            )),
+            _ => Ok(Expression::identifier(self.name.clone())),
         }
     }
 
     fn scalar_option(&mut self, _: Primitive) -> Self::Output {
-        Ok(self.name.clone())
+        Ok(Expression::identifier(self.name.clone()))
     }
 
-    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
-        Ok(self.name.clone())
+    fn direct_vector(&mut self, _: &DirectVectorElementType) -> Self::Output {
+        Ok(Expression::identifier(self.name.clone()))
     }
 }
 
@@ -144,7 +154,7 @@ struct WireHelperUse<'package, 'binding, 'bridge> {
 impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for WireHelperUse<'_, '_, '_> {
     type Output = Result<bool>;
 
-    fn direct(&mut self, _: &TypeRef, _: Receive) -> Self::Output {
+    fn direct(&mut self, _: &DirectValueType, _: Receive) -> Self::Output {
         Ok(false)
     }
 
@@ -177,7 +187,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for WireHelperUse<'_, '_, '
         Ok(false)
     }
 
-    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, _: &DirectVectorElementType) -> Self::Output {
         Ok(false)
     }
 }

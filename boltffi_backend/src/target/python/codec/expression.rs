@@ -5,12 +5,13 @@ use crate::{
     target::python::{
         codec::{read::Reader, write::Writer},
         render::Package,
+        syntax::Expression as PythonExpression,
     },
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Expression {
-    expression: String,
+    expression: PythonExpression,
 }
 
 impl Expression {
@@ -25,7 +26,7 @@ impl Expression {
         let mut reader = Reader::new(package);
         let item = item.render_with(&mut reader)?;
         Ok(Self {
-            expression: format!("reader.sequence(lambda: {item})"),
+            expression: reader.sequence_expression(item)?,
         })
     }
 
@@ -44,7 +45,7 @@ impl Expression {
         Self::read(plan, package)
     }
 
-    pub fn into_string(self) -> String {
+    pub fn into_expression(self) -> PythonExpression {
         self.expression
     }
 }

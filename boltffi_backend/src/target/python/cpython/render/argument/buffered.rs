@@ -1,4 +1,5 @@
 use crate::{
+    bridge::c::{Expression, Identifier, TypeFragment},
     core::{Error, Result},
     target::python::cpython::render::{direct_vector, primitive},
 };
@@ -12,39 +13,50 @@ pub enum BufferedArgument {
 }
 
 impl BufferedArgument {
-    pub fn parser(&self) -> Result<String> {
+    pub fn parser(&self) -> Result<Identifier> {
         match self {
             Self::OptionalPrimitive(primitive) => primitive.optional_wire_encoder(),
             Self::RegisteredObject(registered) => Ok(registered.parser.clone()),
-            Self::RawWire => Ok("boltffi_python_wire_raw".to_owned()),
-            Self::DirectVector(element) => Ok(element.vector_parser().to_owned()),
+            Self::RawWire => Identifier::parse("boltffi_python_wire_raw"),
+            Self::DirectVector(element) => Ok(element.vector_parser().clone()),
         }
     }
 
     pub fn call_args(
         &self,
-        pointer: &str,
-        length: &str,
+        pointer: &Identifier,
+        length: &Identifier,
         mutation: Option<&MutationOutput>,
-    ) -> Vec<String> {
+    ) -> Result<Vec<Expression>> {
         match self {
-            Self::DirectVector(element) => vec![
-                format!("(const {} *){pointer}", element.c_type()),
-                length.to_owned(),
-            ],
+            Self::DirectVector(element) => Ok(vec![
+                Expression::cast(
+                    TypeFragment::new(format!("const {} *", element.c_type())),
+                    Expression::identifier(pointer.clone()),
+                ),
+                Expression::identifier(length.clone()),
+            ]),
             Self::OptionalPrimitive(_) | Self::RegisteredObject(_) | Self::RawWire => {
-                [pointer.to_owned(), length.to_owned()]
+                Ok([pointer, length]
                     .into_iter()
-                    .chain(mutation.map(|mutation| format!("&{}", mutation.buffer())))
-                    .collect()
+                    .cloned()
+                    .map(Expression::identifier)
+                    .chain(
+                        mutation
+                            .map(MutationOutput::buffer)
+                            .cloned()
+                            .map(Expression::identifier)
+                            .map(Expression::address_of),
+                    )
+                    .collect())
             }
         }
     }
 
-    pub fn mutation_output(&self, name: &str) -> Result<Option<MutationOutput>> {
+    pub fn mutation_output(&self, name: &Identifier) -> Result<Option<MutationOutput>> {
         match self {
             Self::RegisteredObject(registered) => Ok(Some(MutationOutput::new(
-                format!("{name}_out"),
+                Identifier::parse(format!("{name}_out"))?,
                 registered.owned_decoder.clone(),
             ))),
             Self::OptionalPrimitive(_) | Self::RawWire | Self::DirectVector(_) => {
@@ -77,38 +89,35 @@ impl BufferedArgument {
 
 #[derive(Clone)]
 pub struct RegisteredObject {
-    parser: String,
-    owned_decoder: String,
+    parser: Identifier,
+    owned_decoder: Identifier,
 }
 
 impl RegisteredObject {
-    pub fn new(parser: impl Into<String>, owned_decoder: impl Into<String>) -> Self {
+    pub fn new(parser: Identifier, owned_decoder: Identifier) -> Self {
         Self {
-            parser: parser.into(),
-            owned_decoder: owned_decoder.into(),
+            parser,
+            owned_decoder,
         }
     }
 }
 
 #[derive(Clone)]
 pub struct MutationOutput {
-    buffer: String,
-    decoder: String,
+    buffer: Identifier,
+    decoder: Identifier,
 }
 
 impl MutationOutput {
-    fn new(buffer: impl Into<String>, decoder: impl Into<String>) -> Self {
-        Self {
-            buffer: buffer.into(),
-            decoder: decoder.into(),
-        }
+    fn new(buffer: Identifier, decoder: Identifier) -> Self {
+        Self { buffer, decoder }
     }
 
-    pub fn buffer(&self) -> &str {
+    pub fn buffer(&self) -> &Identifier {
         &self.buffer
     }
 
-    pub fn decoder(&self) -> &str {
+    pub fn decoder(&self) -> &Identifier {
         &self.decoder
     }
 }

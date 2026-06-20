@@ -1,11 +1,12 @@
 use boltffi_binding::{
-    CallbackId, EnumId, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native, ParamDecl,
-    ParamPlanRender, Primitive, Receive, RecordId, TypeRef, WritePlan, native,
+    CallbackId, DirectValueType, DirectVectorElementType, EnumId, HandlePresence, HandleTarget,
+    IncomingParam, IntoRust, Native, ParamDecl, ParamPlanRender, Primitive, Receive, RecordId,
+    TypeRef, WritePlan, native,
 };
 
 use crate::{
     bridge::{
-        c::{self, Type, identifier::Identifier, syntax::TypeSyntax},
+        c::{self, Identifier, Type, syntax::TypeSyntax},
         python_cext::PythonCExtBridgeContract,
     },
     core::{Error, RenderContext, Result},
@@ -24,7 +25,7 @@ use self::buffered::{BufferedArgument, RegisteredObject};
 
 pub struct Conversion {
     index: usize,
-    name: String,
+    name: Identifier,
     kind: Kind,
     primitive: Option<primitive::Runtime>,
 }
@@ -38,7 +39,7 @@ impl Conversion {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
+        let name = Identifier::escape(Name::new(parameter.name()).function_text()?)?;
         match parameter.payload() {
             IncomingParam::Value(plan) => plan.render_with(&mut ParameterConversion {
                 index,
@@ -57,7 +58,7 @@ impl Conversion {
     }
 
     pub fn class_receiver(carrier: native::HandleCarrier) -> Result<Self> {
-        Self::handle_with_name(0, "receiver", carrier)
+        Self::handle_with_name(0, Identifier::parse("receiver")?, carrier)
     }
 
     pub fn direct_record_receiver(
@@ -66,7 +67,12 @@ impl Conversion {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let direct = direct::NativeSlot::from_record_id(record, bridge, context)?;
-        Self::direct_with_name(0, "receiver", direct.c_type().to_owned(), direct.parser())
+        Self::direct_with_name(
+            0,
+            Identifier::parse("receiver")?,
+            direct.c_type().to_owned(),
+            direct.parser().clone(),
+        )
     }
 
     pub fn encoded_record_receiver(
@@ -78,11 +84,11 @@ impl Conversion {
         let symbols = record::Symbols::from_record_id(record, bridge, context)?;
         Self::encoded_with_name(
             0,
-            "receiver",
+            Identifier::parse("receiver")?,
             receive,
             BufferedArgument::RegisteredObject(RegisteredObject::new(
-                symbols.parser(),
-                symbols.boxer(),
+                symbols.parser().clone(),
+                symbols.boxer().clone(),
             )),
         )
     }
@@ -93,7 +99,12 @@ impl Conversion {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let direct = direct::NativeSlot::from_enum_id(enumeration, bridge, context)?;
-        Self::direct_with_name(0, "receiver", direct.c_type().to_owned(), direct.parser())
+        Self::direct_with_name(
+            0,
+            Identifier::parse("receiver")?,
+            direct.c_type().to_owned(),
+            direct.parser().clone(),
+        )
     }
 
     pub fn data_enum_receiver(
@@ -105,20 +116,25 @@ impl Conversion {
         let symbols = enumeration::Symbols::from_enum_id(enumeration, bridge, context)?;
         Self::encoded_with_name(
             0,
-            "receiver",
+            Identifier::parse("receiver")?,
             receive,
             BufferedArgument::RegisteredObject(RegisteredObject::new(
-                symbols.parser(),
-                symbols.owned_decoder(),
+                symbols.parser().clone(),
+                symbols.owned_decoder().clone(),
             )),
         )
     }
 
-    pub fn call_args(&self) -> Vec<String> {
+    pub fn call_args(&self) -> Result<Vec<c::Expression>> {
         match &self.kind {
-            Kind::Direct(_) => vec![self.name.clone()],
+            Kind::Direct(_) => Ok(vec![c::Expression::identifier(self.name.clone())]),
             Kind::Buffered(buffered) => buffered.call_args(),
-            Kind::Closure(closure) => closure.call_args().into_iter().collect(),
+            Kind::Closure(closure) => closure
+                .call_args()
+                .into_iter()
+                .map(c::Expression::identifier)
+                .map(Ok)
+                .collect(),
         }
     }
 
@@ -134,7 +150,7 @@ impl Conversion {
         self.index
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &Identifier {
         &self.name
     }
 
@@ -211,42 +227,44 @@ impl Conversion {
         }
     }
 
-    pub fn c_type(&self) -> &str {
+    pub fn c_type(&self) -> &c::TypeFragment {
         match &self.kind {
-            Kind::Direct(direct) => direct.c_type.as_str(),
-            Kind::Buffered(_) | Kind::Closure(_) => "",
+            Kind::Direct(direct) => &direct.c_type,
+            Kind::Buffered(_) | Kind::Closure(_) => {
+                unreachable!("non-direct parameter has no C type")
+            }
         }
     }
 
-    pub fn parser(&self) -> &str {
+    pub fn parser(&self) -> &Identifier {
         match &self.kind {
-            Kind::Direct(direct) => direct.parser.as_str(),
-            Kind::Buffered(buffered) => buffered.parser.as_str(),
+            Kind::Direct(direct) => &direct.parser,
+            Kind::Buffered(buffered) => &buffered.parser,
             Kind::Closure(closure) => closure.parser(),
         }
     }
 
-    pub fn wire(&self) -> &str {
+    pub fn wire(&self) -> &Identifier {
         match &self.kind {
-            Kind::Direct(_) => "",
-            Kind::Buffered(buffered) => buffered.wire.as_str(),
-            Kind::Closure(_) => "",
+            Kind::Direct(_) => unreachable!("direct parameter has no wire object"),
+            Kind::Buffered(buffered) => &buffered.wire,
+            Kind::Closure(_) => unreachable!("closure parameter has no wire object"),
         }
     }
 
-    pub fn pointer(&self) -> &str {
+    pub fn pointer(&self) -> &Identifier {
         match &self.kind {
-            Kind::Direct(_) => "",
-            Kind::Buffered(buffered) => buffered.pointer.as_str(),
-            Kind::Closure(_) => "",
+            Kind::Direct(_) => unreachable!("direct parameter has no wire pointer"),
+            Kind::Buffered(buffered) => &buffered.pointer,
+            Kind::Closure(_) => unreachable!("closure parameter has no wire pointer"),
         }
     }
 
-    pub fn length(&self) -> &str {
+    pub fn length(&self) -> &Identifier {
         match &self.kind {
-            Kind::Direct(_) => "",
-            Kind::Buffered(buffered) => buffered.length.as_str(),
-            Kind::Closure(_) => "",
+            Kind::Direct(_) => unreachable!("direct parameter has no wire length"),
+            Kind::Buffered(buffered) => &buffered.length,
+            Kind::Closure(_) => unreachable!("closure parameter has no wire length"),
         }
     }
 
@@ -254,14 +272,16 @@ impl Conversion {
         matches!(&self.kind, Kind::Buffered(buffered) if buffered.mutation.is_some())
     }
 
-    pub fn mutation_buffer(&self) -> &str {
+    pub fn mutation_buffer(&self) -> &Identifier {
         match &self.kind {
             Kind::Buffered(buffered) => buffered
                 .mutation
                 .as_ref()
                 .map(MutationOutput::buffer)
-                .unwrap_or(""),
-            Kind::Direct(_) | Kind::Closure(_) => "",
+                .unwrap_or_else(|| unreachable!("buffered parameter has no mutation output")),
+            Kind::Direct(_) | Kind::Closure(_) => {
+                unreachable!("non-buffered parameter has no mutation output")
+            }
         }
     }
 
@@ -279,84 +299,101 @@ impl Conversion {
         }
     }
 
-    pub fn closure_call_declaration(&self) -> &str {
+    pub fn closure_call_declaration(&self) -> &c::Statement {
         match &self.kind {
             Kind::Closure(closure) => closure.call_declaration(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure call declaration")
+            }
         }
     }
 
-    pub fn closure_call(&self) -> &str {
+    pub fn closure_call(&self) -> &Identifier {
         match &self.kind {
             Kind::Closure(closure) => closure.call(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure call")
+            }
         }
     }
 
-    pub fn closure_context_declaration(&self) -> &str {
+    pub fn closure_context_declaration(&self) -> &c::Statement {
         match &self.kind {
             Kind::Closure(closure) => closure.context_declaration(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure context declaration")
+            }
         }
     }
 
-    pub fn closure_context(&self) -> &str {
+    pub fn closure_context(&self) -> &Identifier {
         match &self.kind {
             Kind::Closure(closure) => closure.context(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure context")
+            }
         }
     }
 
-    pub fn closure_release_declaration(&self) -> &str {
+    pub fn closure_release_declaration(&self) -> &c::Statement {
         match &self.kind {
             Kind::Closure(closure) => closure.release_declaration(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure release declaration")
+            }
         }
     }
 
-    pub fn closure_release(&self) -> &str {
+    pub fn closure_release(&self) -> &Identifier {
         match &self.kind {
             Kind::Closure(closure) => closure.release(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure release")
+            }
         }
     }
 
-    pub fn closure_release_needed(&self) -> &str {
+    pub fn closure_release_needed(&self) -> &Identifier {
         match &self.kind {
             Kind::Closure(closure) => closure.release_needed(),
-            Kind::Direct(_) | Kind::Buffered(_) => "",
+            Kind::Direct(_) | Kind::Buffered(_) => {
+                unreachable!("non-closure parameter has no closure release flag")
+            }
         }
     }
 
-    fn from_direct_slot(index: usize, name: String, direct: direct::NativeSlot) -> Result<Self> {
+    fn from_direct_slot(
+        index: usize,
+        name: Identifier,
+        direct: direct::NativeSlot,
+    ) -> Result<Self> {
         Ok(Self {
             index,
             name,
             kind: Kind::Direct(Direct {
-                c_type: direct.c_type().to_owned(),
-                parser: direct.parser().to_owned(),
+                c_type: direct.c_type().clone(),
+                parser: direct.parser().clone(),
             }),
             primitive: direct.primitive(),
         })
     }
 
-    fn from_handle(index: usize, name: String, carrier: native::HandleCarrier) -> Result<Self> {
+    fn from_handle(index: usize, name: Identifier, carrier: native::HandleCarrier) -> Result<Self> {
         Self::handle_with_name(index, name, carrier)
     }
 
     fn handle_with_name(
         index: usize,
-        name: impl Into<String>,
+        name: Identifier,
         carrier: native::HandleCarrier,
     ) -> Result<Self> {
-        let name = name.into();
         let carrier = primitive::Runtime::native_handle(carrier)?;
         Ok(Self {
             index,
             name,
             kind: Kind::Direct(Direct {
-                c_type: carrier.c_type()?.to_owned(),
-                parser: carrier.parser()?.to_owned(),
+                c_type: carrier.c_type()?,
+                parser: carrier.parser()?,
             }),
             primitive: Some(carrier),
         })
@@ -364,7 +401,7 @@ impl Conversion {
 
     fn from_callback(
         index: usize,
-        name: String,
+        name: Identifier,
         callback: CallbackId,
         presence: HandlePresence,
         bridge: &PythonCExtBridgeContract,
@@ -376,7 +413,7 @@ impl Conversion {
             name,
             kind: Kind::Direct(Direct {
                 c_type: TypeSyntax::new(&Type::CallbackHandle).anonymous()?,
-                parser: symbols.parser(presence).to_owned(),
+                parser: symbols.parser(presence).clone(),
             }),
             primitive: None,
         })
@@ -385,7 +422,7 @@ impl Conversion {
     fn from_closure(
         owner: &str,
         index: usize,
-        name: String,
+        name: Identifier,
         closure: &boltffi_binding::ClosureParameter<Native, IntoRust>,
         c_parameters: &[c::Parameter],
         bridge: &PythonCExtBridgeContract,
@@ -410,7 +447,7 @@ impl Conversion {
 
     fn encoded(
         index: usize,
-        name: String,
+        name: Identifier,
         receive: Receive,
         encoded: BufferedArgument,
     ) -> Result<Self> {
@@ -419,31 +456,27 @@ impl Conversion {
 
     fn direct_with_name(
         index: usize,
-        name: impl Into<String>,
-        c_type: String,
-        parser: impl Into<String>,
+        name: Identifier,
+        c_type: c::TypeFragment,
+        parser: Identifier,
     ) -> Result<Self> {
         Ok(Self {
             index,
-            name: name.into(),
-            kind: Kind::Direct(Direct {
-                c_type,
-                parser: parser.into(),
-            }),
+            name,
+            kind: Kind::Direct(Direct { c_type, parser }),
             primitive: None,
         })
     }
 
     fn encoded_with_name(
         index: usize,
-        name: impl Into<String>,
+        name: Identifier,
         receive: Receive,
         encoded: BufferedArgument,
     ) -> Result<Self> {
-        let name = name.into();
-        let wire = format!("{name}_wire");
-        let pointer = format!("{name}_ptr");
-        let length = format!("{name}_len");
+        let wire = Identifier::parse(format!("{name}_wire"))?;
+        let pointer = Identifier::parse(format!("{name}_ptr"))?;
+        let length = Identifier::parse(format!("{name}_len"))?;
         let mutation = match receive {
             Receive::ByMutRef => encoded.mutation_output(&name)?,
             Receive::ByValue | Receive::ByRef => None,
@@ -474,23 +507,18 @@ impl Conversion {
 
 struct ParameterConversion<'bridge, 'context, 'bindings> {
     index: usize,
-    name: String,
+    name: Identifier,
     bridge: &'bridge PythonCExtBridgeContract,
     context: &'context RenderContext<'bindings, Native>,
 }
 
 impl ParameterConversion<'_, '_, '_> {
-    fn direct_type(&self, ty: &TypeRef, receive: Receive) -> Result<Conversion> {
+    fn direct_type(&self, ty: &DirectValueType, receive: Receive) -> Result<Conversion> {
         match receive {
             Receive::ByValue | Receive::ByRef => Conversion::from_direct_slot(
                 self.index,
                 self.name.clone(),
-                direct::NativeSlot::from_type_ref(
-                    ty,
-                    self.bridge,
-                    self.context,
-                    "unsupported direct parameter",
-                )?,
+                direct::NativeSlot::from_direct_value(ty, self.bridge, self.context)?,
             ),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -537,7 +565,7 @@ impl ParameterConversion<'_, '_, '_> {
 impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterConversion<'_, '_, '_> {
     type Output = Result<Conversion>;
 
-    fn direct(&mut self, ty: &TypeRef, receive: Receive) -> Self::Output {
+    fn direct(&mut self, ty: &DirectValueType, receive: Receive) -> Self::Output {
         self.direct_type(ty, receive)
     }
 
@@ -581,12 +609,12 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterConversion<'_,
         )
     }
 
-    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, element: &DirectVectorElementType) -> Self::Output {
         Conversion::encoded(
             self.index,
             self.name.clone(),
             Receive::ByValue,
-            BufferedArgument::DirectVector(direct_vector::Element::from_type_ref(
+            BufferedArgument::DirectVector(direct_vector::Element::from_element(
                 element,
                 self.bridge,
                 self.context,
@@ -602,8 +630,8 @@ enum Kind {
 }
 
 struct Direct {
-    c_type: String,
-    parser: String,
+    c_type: c::TypeFragment,
+    parser: Identifier,
 }
 
 enum EitherIter<Left, Right> {
@@ -638,15 +666,15 @@ where
 
 struct BufferedParam {
     argument: BufferedArgument,
-    parser: String,
-    wire: String,
-    pointer: String,
-    length: String,
+    parser: Identifier,
+    wire: Identifier,
+    pointer: Identifier,
+    length: Identifier,
     mutation: Option<MutationOutput>,
 }
 
 impl BufferedParam {
-    fn call_args(&self) -> Vec<String> {
+    fn call_args(&self) -> Result<Vec<c::Expression>> {
         self.argument
             .call_args(&self.pointer, &self.length, self.mutation.as_ref())
     }

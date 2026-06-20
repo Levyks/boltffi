@@ -2,15 +2,18 @@ use boltffi_binding::{ClassDecl, Native};
 
 use crate::{
     core::{Error, Result},
-    target::python::cpython::render::{class as class_render, function},
+    target::python::{
+        cpython::render::{class as class_render, function},
+        syntax::Identifier,
+    },
 };
 
 use super::{AssociatedCallable, ClassStream, NameScope, Package};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Class {
-    pub class_name: String,
-    pub release_method: String,
+    pub class_name: Identifier,
+    pub release_method: Identifier,
     pub init: Vec<AssociatedCallable>,
     pub constructors: Vec<AssociatedCallable>,
     pub static_methods: Vec<AssociatedCallable>,
@@ -23,8 +26,8 @@ impl Class {
         declaration: &ClassDecl<Native>,
         package: &Package<'_, '_>,
     ) -> Result<Self> {
-        let symbols = class_render::Symbols::new(declaration);
-        let class_name = symbols.class_name().to_owned();
+        let symbols = class_render::Symbols::new(declaration)?;
+        let class_name = symbols.class_name().clone();
         let constructors = declaration
             .initializers()
             .iter()
@@ -35,7 +38,7 @@ impl Class {
             .collect::<Result<Vec<_>>>()?;
         let init = constructors
             .iter()
-            .filter(|constructor| constructor.python_name == "new")
+            .filter(|constructor| constructor.python_name.as_str() == "new")
             .cloned()
             .collect::<Vec<_>>();
         if init.iter().any(AssociatedCallable::is_async) {
@@ -46,7 +49,7 @@ impl Class {
         }
         let constructors = constructors
             .into_iter()
-            .filter(|constructor| constructor.python_name != "new")
+            .filter(|constructor| constructor.python_name.as_str() != "new")
             .collect::<Vec<_>>();
         let methods = declaration
             .methods()
@@ -63,7 +66,7 @@ impl Class {
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             class_name,
-            release_method: symbols.release(),
+            release_method: symbols.release()?,
             init,
             constructors,
             static_methods,
@@ -104,7 +107,7 @@ impl Class {
 
     pub fn top_level_name(&self) -> (String, String) {
         (
-            self.class_name.clone(),
+            self.class_name.to_string(),
             format!("class `{}`", self.class_name),
         )
     }

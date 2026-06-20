@@ -1,26 +1,30 @@
 use std::marker::PhantomData;
 
 use boltffi_binding::{
-    ClosureReturn, ErrorDecl, ExportedCallable, HandlePresence, HandleTarget, Native, OutOfRust,
-    Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
+    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl, ExportedCallable,
+    HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan, ReturnPlan,
+    ReturnPlanRender, ReturnValueSlot, TypeRef, native,
 };
 
 use crate::{
     core::{Error, Result},
-    target::python::codec::Expression as CodecExpression,
+    target::python::{
+        codec::Expression as CodecExpression,
+        syntax::{CallExpression, Expression, Identifier, Statement, TypeAnnotation},
+    },
 };
 
 use super::super::{Package, type_hint::TypeHint};
 
 pub struct ReturnStub {
-    annotation: String,
+    annotation: TypeAnnotation,
     value: ReturnedValue,
 }
 
 impl ReturnStub {
-    pub fn native(annotation: impl Into<String>) -> Self {
+    pub fn native(annotation: TypeAnnotation) -> Self {
         Self {
-            annotation: annotation.into(),
+            annotation,
             value: ReturnedValue::Native,
         }
     }
@@ -51,22 +55,18 @@ impl ReturnStub {
         package: &Package<'_, '_>,
     ) -> Result<Self> {
         Ok(Self {
-            annotation: TypeHint::from_return(plan, package)?.into_string(),
+            annotation: TypeHint::from_return(plan, package)?.into_annotation(),
             value: ReturnedValue::from_plan(plan, package)?,
         })
     }
 }
 
 impl ReturnStub {
-    pub fn annotation(&self) -> &str {
-        &self.annotation
-    }
-
-    pub fn expression(&self, native_call: String) -> String {
+    pub fn expression(&self, native_call: Expression) -> Result<Expression> {
         self.value.expression(native_call)
     }
 
-    pub fn into_annotation(self) -> String {
+    pub fn into_annotation(self) -> TypeAnnotation {
         self.annotation
     }
 
@@ -83,7 +83,7 @@ impl ReturnStub {
         package: &Package<'_, '_>,
     ) -> Result<Self> {
         Ok(Self {
-            annotation: TypeHint::from_return(plan, package)?.into_string(),
+            annotation: TypeHint::from_return(plan, package)?.into_annotation(),
             value: ReturnedValue::from_success_plan(plan, package)?,
         })
     }
@@ -92,13 +92,13 @@ impl ReturnStub {
 pub enum ReturnedValue {
     Void,
     Native,
-    ClassHandle(String),
-    Wire(String),
+    ClassHandle(Identifier),
+    Wire(Expression),
 }
 
 impl ReturnedValue {
-    pub fn class_handle(class_name: impl Into<String>) -> Self {
-        Self::ClassHandle(class_name.into())
+    pub fn class_handle(class_name: Identifier) -> Self {
+        Self::ClassHandle(class_name)
     }
 
     pub fn from_plan(
@@ -117,25 +117,35 @@ impl ReturnedValue {
         ))
     }
 
-    pub fn statement(&self, native_call: String) -> String {
+    pub fn statement(&self, native_call: Expression) -> Result<Statement> {
         match self {
-            Self::Void => native_call,
+            Self::Void => Ok(Statement::expression(native_call)),
             Self::Native | Self::ClassHandle(_) | Self::Wire(_) => {
-                format!("return {}", self.expression(native_call))
+                self.expression(native_call).map(Statement::return_value)
             }
         }
     }
 
-    pub fn expression(&self, native_call: String) -> String {
+    pub fn expression(&self, native_call: Expression) -> Result<Expression> {
         match self {
-            Self::Void => native_call,
-            Self::Native => native_call,
-            Self::ClassHandle(class_name) => {
-                format!("{class_name}._from_handle({native_call})")
-            }
-            Self::Wire(decode) => {
-                format!("_boltffi_read_wire({native_call}, lambda reader: {decode})")
-            }
+            Self::Void | Self::Native => Ok(native_call),
+            Self::ClassHandle(class_name) => Ok(Expression::call(
+                CallExpression::new(Expression::attribute(
+                    Expression::identifier(class_name.clone()),
+                    Identifier::parse("_from_handle")?,
+                ))
+                .positional(native_call),
+            )),
+            Self::Wire(decode) => Ok(Expression::call(
+                CallExpression::new(Expression::identifier(Identifier::parse(
+                    "_boltffi_read_wire",
+                )?))
+                .positional(native_call)
+                .positional(Expression::lambda(
+                    Identifier::parse("reader")?,
+                    decode.clone(),
+                )),
+            )),
         }
     }
 
@@ -143,24 +153,22 @@ impl ReturnedValue {
         matches!(self, Self::Wire(_))
     }
 
-    pub fn awaited_statement(&self, wait_call: String) -> Vec<String> {
-        let value = "__boltffi_value";
+    pub fn awaited_statement(&self, wait_call: Expression) -> Result<Vec<Statement>> {
+        let value = Identifier::parse("__boltffi_value")?;
+        let awaited = Expression::await_value(wait_call);
         match self {
-            Self::Void => vec![format!("await {wait_call}")],
-            Self::Native => vec![format!("return await {wait_call}")],
-            Self::ClassHandle(class_name) => vec![
-                format!("{value} = await {wait_call}"),
-                format!("return {class_name}._from_handle({value})"),
-            ],
-            Self::Wire(decode) => vec![
-                format!("{value} = await {wait_call}"),
-                format!("return _boltffi_read_wire({value}, lambda reader: {decode})"),
-            ],
+            Self::Void => Ok(vec![Statement::expression(awaited)]),
+            Self::Native => Ok(vec![Statement::return_value(awaited)]),
+            Self::ClassHandle(_) | Self::Wire(_) => Ok(vec![
+                Statement::assign(value.clone(), awaited),
+                Statement::return_value(self.expression(Expression::identifier(value))?),
+            ]),
         }
     }
 
     fn from_encoded_plan(codec: &ReadPlan, package: &Package<'_, '_>) -> Result<Self> {
-        CodecExpression::read_return(codec, package).map(|decode| Self::Wire(decode.into_string()))
+        CodecExpression::read_return(codec, package)
+            .map(|decode| Self::Wire(decode.into_expression()))
     }
 }
 
@@ -206,14 +214,11 @@ impl ReturnDelivery for FallibleSuccessReturn {
     }
 
     fn native() -> Result<ReturnedValue> {
-        Err(Error::UnsupportedTarget {
-            target: "python",
-            shape: Self::unsupported_shape(),
-        })
+        Ok(ReturnedValue::Native)
     }
 
     fn unsupported_shape() -> &'static str {
-        "fallible success stub"
+        "fallible success return"
     }
 }
 
@@ -241,7 +246,7 @@ where
         Ok(ReturnedValue::Void)
     }
 
-    fn direct(&mut self, slot: ReturnValueSlot, _: &TypeRef) -> Self::Output {
+    fn direct(&mut self, slot: ReturnValueSlot, _: &DirectValueType) -> Self::Output {
         D::slot(slot).and_then(|()| D::native())
     }
 
@@ -272,7 +277,7 @@ where
         D::slot(slot)?;
         match (target, presence) {
             (HandleTarget::Class(class_id), HandlePresence::Required) => Ok(
-                ReturnedValue::ClassHandle(self.package.class_name(class_id)?),
+                ReturnedValue::class_handle(self.package.class_name(class_id)?),
             ),
             _ => D::native(),
         }
@@ -282,7 +287,7 @@ where
         D::native()
     }
 
-    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, _: &DirectVectorElementType) -> Self::Output {
         D::native()
     }
 

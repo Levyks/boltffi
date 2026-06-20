@@ -6,36 +6,37 @@ use boltffi_binding::{
 
 use crate::{
     bridge::{
-        c::{self, identifier::Identifier, syntax::TypeSyntax},
-        python_cext::{ExtensionMethod, MethodFlags, PythonCExtBridgeContract},
+        c::{self, Identifier, TypeFragment, syntax::TypeSyntax},
+        python_cext::{ExtensionMethod, MethodFlags, MethodName, PythonCExtBridgeContract},
     },
     core::{Emitted, Error, RenderContext, Result},
     target::python::{
         cpython::render::{argument, direct_vector, function, primitive, result},
         name_style::Name,
+        syntax::Identifier as PythonIdentifier,
     },
 };
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/enumeration.c", escape = "none")]
 struct CStyleTemplate {
-    class_name: String,
-    c_type: String,
-    registration: String,
-    members_by_wire_tag: String,
-    member_names: String,
-    member_native_values: String,
-    register_method: String,
-    register_wrapper: String,
-    load_member: String,
-    parser: String,
-    wire_encoder: String,
-    boxer: String,
-    owned_decoder: String,
-    box_from_wire_tag: String,
-    native_to_wire_tag: String,
-    repr_parser: String,
-    repr_boxer: String,
+    class_name: PythonIdentifier,
+    c_type: TypeFragment,
+    registration: Identifier,
+    members_by_wire_tag: Identifier,
+    member_names: Identifier,
+    member_native_values: Identifier,
+    register_method: PythonIdentifier,
+    register_wrapper: Identifier,
+    load_member: Identifier,
+    parser: Identifier,
+    wire_encoder: Identifier,
+    boxer: Identifier,
+    owned_decoder: Identifier,
+    box_from_wire_tag: Identifier,
+    native_to_wire_tag: Identifier,
+    repr_parser: Identifier,
+    repr_boxer: Identifier,
     repr_wire_size: usize,
     variants: Vec<Variant>,
 }
@@ -43,12 +44,12 @@ struct CStyleTemplate {
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/data_enum.c", escape = "none")]
 struct DataTemplate {
-    class_name: String,
-    type_object: String,
-    register_method: String,
-    register_wrapper: String,
-    wire_encoder: String,
-    owned_decoder: String,
+    class_name: PythonIdentifier,
+    type_object: Identifier,
+    register_method: PythonIdentifier,
+    register_wrapper: Identifier,
+    wire_encoder: Identifier,
+    owned_decoder: Identifier,
 }
 
 pub struct Enumeration {
@@ -81,7 +82,6 @@ impl Enumeration {
                 variants,
                 primitive,
             } => {
-                let c_type = symbols.c_type()?.to_owned();
                 let registration = symbols.registration()?;
                 let members_by_wire_tag = symbols.members_by_wire_tag()?;
                 let member_names = symbols.member_names()?;
@@ -89,6 +89,7 @@ impl Enumeration {
                 let load_member = symbols.load_member()?;
                 let box_from_wire_tag = symbols.box_from_wire_tag()?;
                 let native_to_wire_tag = symbols.native_to_wire_tag()?;
+                let c_type = symbols.c_type()?.clone();
                 CStyleTemplate {
                     class_name: symbols.class_name,
                     c_type,
@@ -105,8 +106,8 @@ impl Enumeration {
                     owned_decoder: symbols.owned_decoder,
                     box_from_wire_tag,
                     native_to_wire_tag,
-                    repr_parser: primitive.parser()?.to_owned(),
-                    repr_boxer: primitive.boxer()?.to_owned(),
+                    repr_parser: primitive.parser()?,
+                    repr_boxer: primitive.boxer()?,
                     repr_wire_size: primitive.wire_size()?,
                     variants,
                 }
@@ -154,16 +155,24 @@ impl Enumeration {
         }
     }
 
-    pub fn cleanup(&self) -> String {
+    pub fn cleanup(&self) -> c::Statement {
         match &self.shape {
-            Shape::CStyle { .. } => format!(
+            Shape::CStyle { .. } => c::Statement::new(format!(
                 "boltffi_python_clear_c_style_enum_registration(&{})",
-                self.symbols.registration.as_deref().unwrap_or("")
-            ),
-            Shape::Data => format!(
+                self.symbols
+                    .registration
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            )),
+            Shape::Data => c::Statement::new(format!(
                 "Py_CLEAR({})",
-                self.symbols.type_object.as_deref().unwrap_or("")
-            ),
+                self.symbols
+                    .type_object
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            )),
         }
     }
 
@@ -246,7 +255,7 @@ impl Enumeration {
             .map(|(index, (variant, c_variant))| Variant::new(index, variant, c_variant))
             .collect::<Result<Vec<_>>>()?;
         let method = ExtensionMethod::new(
-            symbols.register_method.clone(),
+            MethodName::parse(symbols.register_method.as_str())?,
             symbols.register_wrapper.clone(),
             MethodFlags::FastCall,
         )?;
@@ -269,7 +278,7 @@ impl Enumeration {
     ) -> Result<Self> {
         let symbols = Symbols::from_data(enumeration)?;
         let method = ExtensionMethod::new(
-            symbols.register_method.clone(),
+            MethodName::parse(symbols.register_method.as_str())?,
             symbols.register_wrapper.clone(),
             MethodFlags::FastCall,
         )?;
@@ -356,7 +365,7 @@ impl Enumeration {
         context: &RenderContext<Native>,
     ) -> Result<function::Function> {
         function::Function::from_export(
-            symbols.initializer(initializer.name()),
+            symbols.initializer(initializer.name())?,
             initializer.symbol(),
             initializer.callable(),
             Vec::new(),
@@ -373,7 +382,7 @@ impl Enumeration {
         context: &RenderContext<Native>,
     ) -> Result<function::Function> {
         function::Function::from_export(
-            symbols.method(method.name()),
+            symbols.method(method.name())?,
             method.target(),
             method.callable(),
             receiver,
@@ -384,23 +393,23 @@ impl Enumeration {
 }
 
 pub struct Symbols {
-    class_name: String,
+    class_name: PythonIdentifier,
     stem: String,
-    c_type: Option<String>,
-    type_object: Option<String>,
-    registration: Option<String>,
-    members_by_wire_tag: Option<String>,
-    member_names: Option<String>,
-    member_native_values: Option<String>,
-    register_method: String,
-    register_wrapper: String,
-    load_member: Option<String>,
-    parser: String,
-    wire_encoder: String,
-    boxer: String,
-    owned_decoder: String,
-    box_from_wire_tag: Option<String>,
-    native_to_wire_tag: Option<String>,
+    c_type: Option<TypeFragment>,
+    type_object: Option<Identifier>,
+    registration: Option<Identifier>,
+    members_by_wire_tag: Option<Identifier>,
+    member_names: Option<Identifier>,
+    member_native_values: Option<Identifier>,
+    register_method: PythonIdentifier,
+    register_wrapper: Identifier,
+    load_member: Option<Identifier>,
+    parser: Identifier,
+    wire_encoder: Identifier,
+    boxer: Identifier,
+    owned_decoder: Identifier,
+    box_from_wire_tag: Option<Identifier>,
+    native_to_wire_tag: Option<Identifier>,
 }
 
 impl Symbols {
@@ -434,22 +443,22 @@ impl Symbols {
         }
     }
 
-    pub fn c_type(&self) -> Result<&str> {
-        self.c_type.as_deref().ok_or(Error::UnsupportedTarget {
+    pub fn c_type(&self) -> Result<&TypeFragment> {
+        self.c_type.as_ref().ok_or(Error::UnsupportedTarget {
             target: "python",
             shape: "data enum has no C type",
         })
     }
 
-    pub fn parser(&self) -> &str {
+    pub fn parser(&self) -> &Identifier {
         &self.parser
     }
 
-    pub fn boxer(&self) -> &str {
+    pub fn boxer(&self) -> &Identifier {
         &self.boxer
     }
 
-    pub fn owned_decoder(&self) -> &str {
+    pub fn owned_decoder(&self) -> &Identifier {
         &self.owned_decoder
     }
 
@@ -457,76 +466,90 @@ impl Symbols {
         &self.stem
     }
 
-    pub fn class_name(&self) -> &str {
+    pub fn class_name(&self) -> &PythonIdentifier {
         &self.class_name
     }
 
-    pub fn register_method(&self) -> &str {
+    pub fn register_method(&self) -> &PythonIdentifier {
         &self.register_method
     }
 
-    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> String {
+    pub fn initializer(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
-    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> String {
+    pub fn method(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
         self.callable(name)
     }
 
     pub fn from_c_style(enumeration: &CStyleEnumDecl<Native>, c_enum: &c::Enum) -> Result<Self> {
-        let stem = Identifier::escape(Name::new(enumeration.name()).function())?.to_string();
+        let stem = Identifier::escape(Name::new(enumeration.name()).function_text()?)?.to_string();
         Ok(Self {
-            class_name: Name::new(enumeration.name()).class(),
+            class_name: PythonIdentifier::parse(Name::new(enumeration.name()).class())?,
             stem: stem.clone(),
-            c_type: Some(TypeSyntax::new(&c::Type::Named(c_enum.name().to_owned())).anonymous()?),
+            c_type: Some(TypeSyntax::new(&c::Type::named(c_enum.name())?).anonymous()?),
             type_object: None,
-            registration: Some(format!("boltffi_python_{stem}_registration")),
-            members_by_wire_tag: Some(format!("boltffi_python_{stem}_members_by_wire_tag")),
-            member_names: Some(format!("boltffi_python_{stem}_member_names")),
-            member_native_values: Some(format!("boltffi_python_{stem}_member_native_values")),
-            register_method: format!("_register_{stem}"),
-            register_wrapper: format!("boltffi_python_wrapper_register_{stem}"),
-            load_member: Some(format!("boltffi_python_load_{stem}_member")),
-            parser: format!("boltffi_python_parse_{stem}"),
-            wire_encoder: format!("boltffi_python_wire_{stem}"),
-            boxer: format!("boltffi_python_box_{stem}"),
-            owned_decoder: format!("boltffi_python_decode_owned_{stem}"),
-            box_from_wire_tag: Some(format!("boltffi_python_box_{stem}_from_wire_tag")),
-            native_to_wire_tag: Some(format!("boltffi_python_{stem}_native_to_wire_tag")),
+            registration: Some(Identifier::parse(format!(
+                "boltffi_python_{stem}_registration"
+            ))?),
+            members_by_wire_tag: Some(Identifier::parse(format!(
+                "boltffi_python_{stem}_members_by_wire_tag"
+            ))?),
+            member_names: Some(Identifier::parse(format!(
+                "boltffi_python_{stem}_member_names"
+            ))?),
+            member_native_values: Some(Identifier::parse(format!(
+                "boltffi_python_{stem}_member_native_values"
+            ))?),
+            register_method: PythonIdentifier::parse(format!("_register_{stem}"))?,
+            register_wrapper: Identifier::parse(format!("boltffi_python_wrapper_register_{stem}"))?,
+            load_member: Some(Identifier::parse(format!(
+                "boltffi_python_load_{stem}_member"
+            ))?),
+            parser: Identifier::parse(format!("boltffi_python_parse_{stem}"))?,
+            wire_encoder: Identifier::parse(format!("boltffi_python_wire_{stem}"))?,
+            boxer: Identifier::parse(format!("boltffi_python_box_{stem}"))?,
+            owned_decoder: Identifier::parse(format!("boltffi_python_decode_owned_{stem}"))?,
+            box_from_wire_tag: Some(Identifier::parse(format!(
+                "boltffi_python_box_{stem}_from_wire_tag"
+            ))?),
+            native_to_wire_tag: Some(Identifier::parse(format!(
+                "boltffi_python_{stem}_native_to_wire_tag"
+            ))?),
         })
     }
 
     pub fn from_data(enumeration: &DataEnumDecl<Native>) -> Result<Self> {
-        let stem = Identifier::escape(Name::new(enumeration.name()).function())?.to_string();
+        let stem = Identifier::escape(Name::new(enumeration.name()).function_text()?)?.to_string();
         Ok(Self {
-            class_name: Name::new(enumeration.name()).class(),
+            class_name: PythonIdentifier::parse(Name::new(enumeration.name()).class())?,
             stem: stem.clone(),
             c_type: None,
-            type_object: Some(format!("boltffi_python_{stem}_type")),
+            type_object: Some(Identifier::parse(format!("boltffi_python_{stem}_type"))?),
             registration: None,
             members_by_wire_tag: None,
             member_names: None,
             member_native_values: None,
-            register_method: format!("_register_{stem}"),
-            register_wrapper: format!("boltffi_python_wrapper_register_{stem}"),
+            register_method: PythonIdentifier::parse(format!("_register_{stem}"))?,
+            register_wrapper: Identifier::parse(format!("boltffi_python_wrapper_register_{stem}"))?,
             load_member: None,
-            parser: format!("boltffi_python_wire_{stem}"),
-            wire_encoder: format!("boltffi_python_wire_{stem}"),
-            boxer: format!("boltffi_python_decode_owned_{stem}"),
-            owned_decoder: format!("boltffi_python_decode_owned_{stem}"),
+            parser: Identifier::parse(format!("boltffi_python_wire_{stem}"))?,
+            wire_encoder: Identifier::parse(format!("boltffi_python_wire_{stem}"))?,
+            boxer: Identifier::parse(format!("boltffi_python_decode_owned_{stem}"))?,
+            owned_decoder: Identifier::parse(format!("boltffi_python_decode_owned_{stem}"))?,
             box_from_wire_tag: None,
             native_to_wire_tag: None,
         })
     }
 
-    fn registration(&self) -> Result<String> {
+    fn registration(&self) -> Result<Identifier> {
         self.registration.clone().ok_or(Error::UnsupportedTarget {
             target: "python",
             shape: "data enum has no C-style registration",
         })
     }
 
-    fn members_by_wire_tag(&self) -> Result<String> {
+    fn members_by_wire_tag(&self) -> Result<Identifier> {
         self.members_by_wire_tag
             .clone()
             .ok_or(Error::UnsupportedTarget {
@@ -535,14 +558,14 @@ impl Symbols {
             })
     }
 
-    fn member_names(&self) -> Result<String> {
+    fn member_names(&self) -> Result<Identifier> {
         self.member_names.clone().ok_or(Error::UnsupportedTarget {
             target: "python",
             shape: "data enum has no C-style member names",
         })
     }
 
-    fn member_native_values(&self) -> Result<String> {
+    fn member_native_values(&self) -> Result<Identifier> {
         self.member_native_values
             .clone()
             .ok_or(Error::UnsupportedTarget {
@@ -551,14 +574,14 @@ impl Symbols {
             })
     }
 
-    fn load_member(&self) -> Result<String> {
+    fn load_member(&self) -> Result<Identifier> {
         self.load_member.clone().ok_or(Error::UnsupportedTarget {
             target: "python",
             shape: "data enum has no C-style member loader",
         })
     }
 
-    fn box_from_wire_tag(&self) -> Result<String> {
+    fn box_from_wire_tag(&self) -> Result<Identifier> {
         self.box_from_wire_tag
             .clone()
             .ok_or(Error::UnsupportedTarget {
@@ -567,7 +590,7 @@ impl Symbols {
             })
     }
 
-    fn native_to_wire_tag(&self) -> Result<String> {
+    fn native_to_wire_tag(&self) -> Result<Identifier> {
         self.native_to_wire_tag
             .clone()
             .ok_or(Error::UnsupportedTarget {
@@ -576,15 +599,19 @@ impl Symbols {
             })
     }
 
-    fn type_object(&self) -> Result<String> {
+    fn type_object(&self) -> Result<Identifier> {
         self.type_object.clone().ok_or(Error::UnsupportedTarget {
             target: "python",
             shape: "c-style enum has no Python type object",
         })
     }
 
-    fn callable(&self, name: &boltffi_binding::CanonicalName) -> String {
-        format!("_boltffi_{}_{}", self.stem, Name::new(name).function())
+    fn callable(&self, name: &boltffi_binding::CanonicalName) -> Result<PythonIdentifier> {
+        PythonIdentifier::parse(format!(
+            "_boltffi_{}_{}",
+            self.stem,
+            Name::new(name).function()?
+        ))
     }
 }
 
@@ -598,8 +625,8 @@ enum Shape {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PythonClass {
-    class_name: String,
-    register_method: String,
+    class_name: PythonIdentifier,
+    register_method: PythonIdentifier,
     variants: Vec<PythonVariant>,
 }
 
@@ -617,21 +644,21 @@ impl PythonClass {
                 })?;
         let symbols = Symbols::from_c_style(enumeration, c_enum)?;
         Ok(Self {
-            class_name: symbols.class_name().to_owned(),
-            register_method: symbols.register_method().to_owned(),
+            class_name: symbols.class_name().clone(),
+            register_method: symbols.register_method().clone(),
             variants: enumeration
                 .variants()
                 .iter()
                 .map(PythonVariant::from_variant)
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
         })
     }
 
-    pub fn class_name(&self) -> &str {
+    pub fn class_name(&self) -> &PythonIdentifier {
         &self.class_name
     }
 
-    pub fn register_method(&self) -> &str {
+    pub fn register_method(&self) -> &PythonIdentifier {
         &self.register_method
     }
 
@@ -642,12 +669,12 @@ impl PythonClass {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PythonVariant {
-    name: String,
+    name: PythonIdentifier,
     value: i128,
 }
 
 impl PythonVariant {
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &PythonIdentifier {
         &self.name
     }
 
@@ -655,18 +682,18 @@ impl PythonVariant {
         self.value
     }
 
-    fn from_variant(variant: &boltffi_binding::CStyleVariantDecl) -> Self {
-        Self {
-            name: Name::new(variant.name()).enum_member(),
+    fn from_variant(variant: &boltffi_binding::CStyleVariantDecl) -> Result<Self> {
+        Ok(Self {
+            name: PythonIdentifier::parse(Name::new(variant.name()).enum_member())?,
             value: variant.discriminant().get(),
-        }
+        })
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Variant {
-    member_name: String,
-    native_value: String,
+    member_name: PythonIdentifier,
+    native_value: Identifier,
     wire_tag: usize,
     member_index: usize,
 }
@@ -678,8 +705,8 @@ impl Variant {
         c_variant: &c::EnumVariant,
     ) -> Result<Self> {
         Ok(Self {
-            member_name: Name::new(variant.name()).enum_member(),
-            native_value: Identifier::parse(c_variant.name())?.to_string(),
+            member_name: PythonIdentifier::parse(Name::new(variant.name()).enum_member())?,
+            native_value: Identifier::parse(c_variant.name())?,
             wire_tag: index,
             member_index: index,
         })

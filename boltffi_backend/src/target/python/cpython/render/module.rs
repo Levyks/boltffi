@@ -4,7 +4,10 @@ use askama::Template as AskamaTemplate;
 use boltffi_binding::{DeclarationRef, Native};
 
 use crate::{
-    bridge::python_cext::PythonCExtBridgeContract,
+    bridge::{
+        c::{Identifier, Literal, Statement},
+        python_cext::PythonCExtBridgeContract,
+    },
     core::{Emitted, FileLayout, GeneratedOutput, RenderContext, RenderedDeclaration, Result},
     target::python::{
         codec::{CodecAdapters, ReadAdapter, WriteAdapter},
@@ -19,15 +22,15 @@ use crate::{
 #[template(path = "target/python/native_module.c", escape = "none")]
 struct NativeModuleTemplate {
     module_name: String,
-    method_table: String,
-    module_definition: String,
-    free_function: String,
-    init_function: String,
+    method_table: Identifier,
+    module_definition: Identifier,
+    free_function: Identifier,
+    init_function: Identifier,
     support: ModuleSupport,
     records: Vec<String>,
     enums: Vec<String>,
     classes: Vec<String>,
-    callback_declarations: Vec<String>,
+    callback_declarations: Vec<Statement>,
     callbacks: Vec<String>,
     streams: Vec<String>,
     constants: Vec<String>,
@@ -36,7 +39,7 @@ struct NativeModuleTemplate {
     host_bindings: Vec<String>,
     functions: Vec<String>,
     methods: Vec<method::Entry>,
-    cleanup: Vec<String>,
+    cleanup: Vec<Statement>,
 }
 
 pub struct NativeModule<'bridge, 'context, 'decl> {
@@ -67,20 +70,20 @@ impl<'bridge, 'context, 'decl> NativeModule<'bridge, 'context, 'decl> {
             .decoders()
             .iter()
             .map(CodecDecoder::from_adapter)
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let codec_encoders = codec_adapters
             .encoders()
             .iter()
             .map(CodecEncoder::from_adapter)
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let methods = declarations.methods(bridge);
         let support = ModuleSupport::new(bridge, declarations.support())?;
         let source = NativeModuleTemplate {
             module_name: bridge.module().as_str().to_owned(),
-            method_table: bridge.symbols().method_table().to_owned(),
-            module_definition: bridge.symbols().module_definition().to_owned(),
-            free_function: bridge.symbols().free_function().to_owned(),
-            init_function: bridge.symbols().init_function().to_owned(),
+            method_table: bridge.symbols().method_table().clone(),
+            module_definition: bridge.symbols().module_definition().clone(),
+            free_function: bridge.symbols().free_function().clone(),
+            init_function: bridge.symbols().init_function().clone(),
             support,
             records: declarations.record_sources(),
             enums: declarations.enum_sources(),
@@ -137,7 +140,7 @@ impl ModuleDeclarations {
         self.classes.iter().map(Rendered::source).collect()
     }
 
-    fn callback_declarations(&self) -> Vec<String> {
+    fn callback_declarations(&self) -> Vec<Statement> {
         self.callbacks
             .iter()
             .flat_map(|callback| callback.declaration.parser_declarations())
@@ -205,7 +208,7 @@ impl ModuleDeclarations {
             .collect()
     }
 
-    fn cleanup(&self) -> Vec<String> {
+    fn cleanup(&self) -> Vec<Statement> {
         self.records
             .iter()
             .map(|record| record.declaration.cleanup())
@@ -294,46 +297,46 @@ impl<T> Rendered<T> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CodecDecoder {
-    key: String,
-    function: String,
+    key: Literal,
+    function: Identifier,
 }
 
 impl CodecDecoder {
-    fn from_adapter(adapter: &ReadAdapter<'_>) -> Self {
-        Self {
-            key: adapter.key().literal(),
-            function: adapter.key().c_decoder(),
-        }
+    fn from_adapter(adapter: &ReadAdapter<'_>) -> Result<Self> {
+        Ok(Self {
+            key: adapter.key().c_literal(),
+            function: adapter.key().c_decoder()?,
+        })
     }
 
-    fn key(&self) -> &str {
+    fn key(&self) -> &Literal {
         &self.key
     }
 
-    fn function(&self) -> &str {
+    fn function(&self) -> &Identifier {
         &self.function
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CodecEncoder {
-    key: String,
-    function: String,
+    key: Literal,
+    function: Identifier,
 }
 
 impl CodecEncoder {
-    fn from_adapter(adapter: &WriteAdapter<'_>) -> Self {
-        Self {
-            key: adapter.key().literal(),
-            function: adapter.key().c_encoder(),
-        }
+    fn from_adapter(adapter: &WriteAdapter<'_>) -> Result<Self> {
+        Ok(Self {
+            key: adapter.key().c_literal(),
+            function: adapter.key().c_encoder()?,
+        })
     }
 
-    fn key(&self) -> &str {
+    fn key(&self) -> &Literal {
         &self.key
     }
 
-    fn function(&self) -> &str {
+    fn function(&self) -> &Identifier {
         &self.function
     }
 }
@@ -412,10 +415,7 @@ impl SupportArtifacts<'_> {
             .iter()
             .filter_map(|buffer| match buffer {
                 result::OwnedBuffer::DirectVector(element) => Some((**element).clone()),
-                result::OwnedBuffer::String
-                | result::OwnedBuffer::Bytes
-                | result::OwnedBuffer::RawWire
-                | result::OwnedBuffer::OptionalPrimitive(_) => None,
+                result::OwnedBuffer::RawWire | result::OwnedBuffer::OptionalPrimitive(_) => None,
             })
             .chain(
                 self.functions
@@ -529,10 +529,7 @@ impl SupportArtifacts<'_> {
             .iter()
             .filter_map(|buffer| match buffer {
                 result::OwnedBuffer::OptionalPrimitive(primitive) => Some(*primitive),
-                result::OwnedBuffer::String
-                | result::OwnedBuffer::Bytes
-                | result::OwnedBuffer::RawWire
-                | result::OwnedBuffer::DirectVector(_) => None,
+                result::OwnedBuffer::RawWire | result::OwnedBuffer::DirectVector(_) => None,
             })
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -618,12 +615,10 @@ struct ModuleSupport {
     wire_primitives: Vec<primitive::Support>,
     owned_primitives: Vec<primitive::Support>,
     direct_vector_elements: Vec<direct_vector::Element>,
-    free_buffer: String,
+    free_buffer: Identifier,
     string_arguments: bool,
     bytes_arguments: bool,
     raw_wire_arguments: bool,
-    string_returns: bool,
-    bytes_returns: bool,
     raw_wire_returns: bool,
     encoded_records: bool,
     data_enums: bool,
@@ -655,8 +650,6 @@ impl ModuleSupport {
             string_arguments,
             bytes_arguments,
             raw_wire_arguments,
-            string_returns: owned_buffers.contains(&result::OwnedBuffer::String),
-            bytes_returns: owned_buffers.contains(&result::OwnedBuffer::Bytes),
             raw_wire_returns: owned_buffers.contains(&result::OwnedBuffer::RawWire),
             encoded_records,
             data_enums,
@@ -683,7 +676,7 @@ impl ModuleSupport {
         &self.direct_vector_elements
     }
 
-    fn free_buffer(&self) -> &str {
+    fn free_buffer(&self) -> &Identifier {
         &self.free_buffer
     }
 
@@ -695,9 +688,7 @@ impl ModuleSupport {
     }
 
     fn uses_owned_buffers(&self) -> bool {
-        self.string_returns
-            || self.bytes_returns
-            || self.raw_wire_returns
+        self.raw_wire_returns
             || !self.owned_primitives.is_empty()
             || !self.direct_vector_elements.is_empty()
             || self.encoded_records
@@ -719,11 +710,11 @@ impl ModuleSupport {
     }
 
     fn uses_owned_utf8(&self) -> bool {
-        self.string_returns || self.async_functions
+        self.async_functions
     }
 
     fn uses_owned_bytes(&self) -> bool {
-        self.bytes_returns
+        false
     }
 
     fn uses_owned_raw_wire(&self) -> bool {
@@ -746,7 +737,7 @@ impl ModuleSupport {
         self.async_functions
     }
 
-    fn free_buffer_storage(bridge: &PythonCExtBridgeContract) -> Result<String> {
-        Ok(bridge.buffer_free()?.storage_name().to_owned())
+    fn free_buffer_storage(bridge: &PythonCExtBridgeContract) -> Result<Identifier> {
+        Ok(bridge.buffer_free()?.storage_name().clone())
     }
 }

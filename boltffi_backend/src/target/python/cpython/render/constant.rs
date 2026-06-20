@@ -23,7 +23,7 @@ impl Constant {
             ConstantValueDecl::Inline { .. } => None,
             ConstantValueDecl::Accessor { symbol, callable } => {
                 Some(function::Function::from_export(
-                    Name::new(declaration.name()).function(),
+                    Name::new(declaration.name()).function()?,
                     symbol,
                     callable,
                     Vec::new(),

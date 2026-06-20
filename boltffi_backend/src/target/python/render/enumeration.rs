@@ -8,6 +8,7 @@ use crate::{
     target::python::{
         cpython::render::{enumeration as enumeration_render, function},
         name_style::Name,
+        syntax::{CallExpression, Expression, Identifier, TypeAnnotation},
     },
 };
 
@@ -21,26 +22,31 @@ pub enum VariantStyle {
 }
 
 impl VariantStyle {
-    pub fn expression(self, enum_name: &CanonicalName, variant_name: &CanonicalName) -> String {
+    pub fn expression(
+        self,
+        enum_name: &CanonicalName,
+        variant_name: &CanonicalName,
+    ) -> Result<Expression> {
         match self {
-            Self::CStyle => format!(
-                "{}.{}",
-                Name::new(enum_name).class(),
-                Name::new(variant_name).enum_member()
-            ),
-            Self::Data => format!(
-                "{}{}()",
-                Name::new(enum_name).class(),
-                Name::new(variant_name).class()
-            ),
+            Self::CStyle => Ok(Expression::attribute(
+                Expression::identifier(Identifier::parse(Name::new(enum_name).class())?),
+                Identifier::parse(Name::new(variant_name).enum_member())?,
+            )),
+            Self::Data => Ok(Expression::call(CallExpression::new(
+                Expression::identifier(Identifier::parse(format!(
+                    "{}{}",
+                    Name::new(enum_name).class(),
+                    Name::new(variant_name).class()
+                ))?),
+            ))),
         }
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumClass {
-    pub class_name: String,
-    pub register_method: String,
+    pub class_name: Identifier,
+    pub register_method: Identifier,
     pub variants: Vec<EnumVariant>,
     pub wire: Option<DataEnumWire>,
     pub constructors: Vec<AssociatedCallable>,
@@ -62,13 +68,13 @@ impl EnumClass {
         )?;
         let symbols = enumeration_render::Symbols::from_c_style(enumeration, c_enum)?;
         Ok(Self {
-            class_name: class.class_name().to_owned(),
-            register_method: class.register_method().to_owned(),
+            class_name: class.class_name().clone(),
+            register_method: class.register_method().clone(),
             variants: class
                 .variants()
                 .iter()
                 .map(EnumVariant::from_variant)
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             wire: None,
             constructors: Self::constructors(enumeration.initializers(), &symbols, package)?,
             static_methods: Self::static_methods(enumeration.methods(), &symbols, package)?,
@@ -81,10 +87,10 @@ impl EnumClass {
         package: &Package<'_, '_>,
     ) -> Result<Self> {
         let symbols = enumeration_render::Symbols::from_data(enumeration)?;
-        let class_name = symbols.class_name().to_owned();
+        let class_name = symbols.class_name().clone();
         Ok(Self {
             class_name: class_name.clone(),
-            register_method: symbols.register_method().to_owned(),
+            register_method: symbols.register_method().clone(),
             variants: Vec::new(),
             wire: Some(DataEnumWire {
                 variants: enumeration
@@ -146,7 +152,7 @@ impl EnumClass {
 
     pub fn top_level_name(&self) -> (String, String) {
         (
-            self.class_name.clone(),
+            self.class_name.to_string(),
             format!("enum `{}`", self.class_name),
         )
     }
@@ -180,7 +186,7 @@ impl EnumClass {
             .map(|initializer| {
                 AssociatedCallable::from_value_initializer(
                     initializer,
-                    symbols.initializer(initializer.name()),
+                    symbols.initializer(initializer.name())?,
                     package,
                 )
             })
@@ -201,7 +207,7 @@ impl EnumClass {
             .map(|method| {
                 AssociatedCallable::from_value_method(
                     method,
-                    symbols.method(method.name()),
+                    symbols.method(method.name())?,
                     None,
                     None,
                     package,
@@ -224,13 +230,13 @@ impl EnumClass {
             .map(|method| {
                 AssociatedCallable::from_value_method(
                     method,
-                    symbols.method(method.name()),
-                    Some("self"),
+                    symbols.method(method.name())?,
+                    Some(Expression::identifier(Identifier::parse("self")?)),
                     method
                         .callable()
                         .receiver()
                         .filter(|receiver| matches!(receiver, Receive::ByMutRef))
-                        .map(|_| symbols.class_name()),
+                        .map(|_| TypeAnnotation::identifier(symbols.class_name().clone())),
                     package,
                 )
             })
@@ -240,20 +246,23 @@ impl EnumClass {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumVariant {
-    pub name: String,
+    pub name: Identifier,
     pub value: i128,
 }
 
 impl EnumVariant {
-    fn from_variant(variant: &enumeration_render::PythonVariant) -> Self {
-        Self {
-            name: variant.name().to_owned(),
+    fn from_variant(variant: &enumeration_render::PythonVariant) -> Result<Self> {
+        Ok(Self {
+            name: variant.name().clone(),
             value: variant.value(),
-        }
+        })
     }
 
     fn member_name(&self) -> (String, String) {
-        (self.name.clone(), format!("enum member `{}`", self.name))
+        (
+            self.name.to_string(),
+            format!("enum member `{}`", self.name),
+        )
     }
 }
 
@@ -264,7 +273,7 @@ pub struct DataEnumWire {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DataEnumVariant {
-    pub class_name: String,
+    pub class_name: Identifier,
     pub tag: u32,
     pub fields: Vec<RecordField>,
     pub wire_fields: Vec<EncodedRecordField>,
@@ -277,12 +286,16 @@ impl DataEnumVariant {
 
     fn from_variant(
         variant: &DataVariantDecl,
-        enum_class_name: &str,
+        enum_class_name: &Identifier,
         package: &Package<'_, '_>,
     ) -> Result<Self> {
         let fields = Self::payload_fields(variant.payload())?;
         Ok(Self {
-            class_name: format!("{}{}", enum_class_name, Name::new(variant.name()).class()),
+            class_name: Identifier::parse(format!(
+                "{}{}",
+                enum_class_name,
+                Name::new(variant.name()).class()
+            ))?,
             tag: variant.tag().get(),
             fields: fields
                 .iter()
@@ -303,7 +316,7 @@ impl DataEnumVariant {
 
     fn top_level_name(&self) -> (String, String) {
         (
-            self.class_name.clone(),
+            self.class_name.to_string(),
             format!("data enum variant `{}`", self.class_name),
         )
     }

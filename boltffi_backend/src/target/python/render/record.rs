@@ -1,6 +1,6 @@
 use boltffi_binding::{
     DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, ExportedMethodDecl,
-    FieldKey, InitializerDecl, Native, NativeSymbol, Receive, TypeRef,
+    FieldKey, InitializerDecl, Native, NativeSymbol, Receive,
 };
 
 use crate::{
@@ -10,6 +10,7 @@ use crate::{
         cpython::render::{function, record as record_render},
         name_style::Name,
         render::Package,
+        syntax::{Expression, Identifier, TypeAnnotation},
     },
 };
 
@@ -17,8 +18,8 @@ use super::{AssociatedCallable, NameScope, type_hint::TypeHint};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordClass {
-    pub class_name: String,
-    pub register_method: String,
+    pub class_name: Identifier,
+    pub register_method: Identifier,
     pub fields: Vec<RecordField>,
     pub wire: Option<EncodedRecordWire>,
     pub constructors: Vec<AssociatedCallable>,
@@ -41,8 +42,8 @@ impl RecordClass {
                 })?;
         let symbols = record_render::Symbols::from_direct(record, c_record)?;
         Ok(Self {
-            class_name: symbols.class_name().to_owned(),
-            register_method: symbols.register_method().to_owned(),
+            class_name: symbols.class_name().clone(),
+            register_method: symbols.register_method().clone(),
             fields: record
                 .fields()
                 .iter()
@@ -71,8 +72,8 @@ impl RecordClass {
             .map(|field| EncodedRecordField::from_field(field, package))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
-            class_name: symbols.class_name().to_owned(),
-            register_method: symbols.register_method().to_owned(),
+            class_name: symbols.class_name().clone(),
+            register_method: symbols.register_method().clone(),
             fields,
             wire: Some(EncodedRecordWire {
                 fields: wire_fields,
@@ -118,7 +119,7 @@ impl RecordClass {
 
     pub fn top_level_name(&self) -> (String, String) {
         (
-            self.class_name.clone(),
+            self.class_name.to_string(),
             format!("record `{}`", self.class_name),
         )
     }
@@ -141,7 +142,7 @@ impl RecordClass {
             .map(|initializer| {
                 AssociatedCallable::from_value_initializer(
                     initializer,
-                    symbols.initializer(initializer.name()),
+                    symbols.initializer(initializer.name())?,
                     package,
                 )
             })
@@ -162,7 +163,7 @@ impl RecordClass {
             .map(|method| {
                 AssociatedCallable::from_value_method(
                     method,
-                    symbols.method(method.name()),
+                    symbols.method(method.name())?,
                     None,
                     None,
                     package,
@@ -185,13 +186,13 @@ impl RecordClass {
             .map(|method| {
                 AssociatedCallable::from_value_method(
                     method,
-                    symbols.method(method.name()),
-                    Some("self"),
+                    symbols.method(method.name())?,
+                    Some(Expression::identifier(Identifier::parse("self")?)),
                     method
                         .callable()
                         .receiver()
                         .filter(|receiver| matches!(receiver, Receive::ByMutRef))
-                        .map(|_| symbols.class_name()),
+                        .map(|_| TypeAnnotation::identifier(symbols.class_name().clone())),
                     package,
                 )
             })
@@ -201,45 +202,37 @@ impl RecordClass {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordField {
-    pub name: String,
-    pub annotation: String,
+    pub name: Identifier,
+    pub annotation: TypeAnnotation,
 }
 
 impl RecordField {
     pub fn from_encoded(field: &EncodedFieldDecl, package: &Package<'_, '_>) -> Result<Self> {
         Ok(Self {
             name: Self::name(field.key())?,
-            annotation: TypeHint::from_type_ref(field.ty(), package)?.into_string(),
+            annotation: TypeHint::from_type_ref(field.ty(), package)?.into_annotation(),
         })
     }
 
     pub fn field_name(&self) -> (String, String) {
-        (self.name.clone(), format!("field `{}`", self.name))
+        (self.name.to_string(), format!("field `{}`", self.name))
     }
 
-    pub fn name(key: &FieldKey) -> Result<String> {
-        Ok(match key {
+    pub fn name(key: &FieldKey) -> Result<Identifier> {
+        match key {
             FieldKey::Named(name) => Name::new(name).function(),
-            FieldKey::Position(position) => format!("field_{position}"),
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "unknown record field annotation",
-                });
-            }
-        })
+            FieldKey::Position(position) => Identifier::parse(format!("field_{position}")),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "unknown record field annotation",
+            }),
+        }
     }
 
     fn from_direct(field: &DirectFieldDecl) -> Result<Self> {
-        let TypeRef::Primitive(primitive) = field.ty() else {
-            return Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "non-primitive record field annotation",
-            });
-        };
         Ok(Self {
             name: Self::name(field.key())?,
-            annotation: TypeHint::from_primitive(*primitive)?.into_string(),
+            annotation: TypeHint::from_primitive(field.ty().primitive())?.into_annotation(),
         })
     }
 }
@@ -251,17 +244,17 @@ pub struct EncodedRecordWire {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedRecordField {
-    pub name: String,
-    pub encode: String,
-    pub decode: String,
+    pub name: Identifier,
+    pub encode: Expression,
+    pub decode: Expression,
 }
 
 impl EncodedRecordField {
     pub fn from_field(field: &EncodedFieldDecl, package: &Package<'_, '_>) -> Result<Self> {
         let name = RecordField::name(field.key())?;
         Ok(Self {
-            encode: CodecExpression::write(field.write(), package)?.into_string(),
-            decode: CodecExpression::read(field.read(), package)?.into_string(),
+            encode: CodecExpression::write(field.write(), package)?.into_expression(),
+            decode: CodecExpression::read(field.read(), package)?.into_expression(),
             name,
         })
     }

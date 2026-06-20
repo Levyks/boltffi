@@ -1,62 +1,37 @@
 use boltffi_binding::{
-    BuiltinType, ClosureReturn, HandlePresence, HandleTarget, IntoRust, Native, OutOfRust,
-    ParamPlan, ParamPlanRender, Primitive, ReadPlan, Receive, ReturnPlan, ReturnPlanRender,
-    ReturnValueSlot, TypeRef, WritePlan, native,
+    BuiltinType, CallbackId, ClassId, ClosureReturn, CustomTypeId, DirectValueType,
+    DirectVectorElementType, EnumId, HandlePresence, HandleTarget, IntoRust, Native, OutOfRust,
+    ParamPlan, ParamPlanRender, Primitive, ReadPlan, Receive, RecordId, ReturnPlan,
+    ReturnPlanRender, ReturnValueSlot, TypeRef, TypeRefRender, WritePlan, native,
 };
 
 use crate::{
     core::{Error, Result},
-    target::python::render::Package,
+    target::python::{render::Package, syntax::TypeAnnotation},
 };
 
 pub struct TypeHint {
-    annotation: String,
+    annotation: TypeAnnotation,
     uses_sequence: bool,
 }
 
 impl TypeHint {
     pub fn from_type_ref(ty: &TypeRef, package: &Package<'_, '_>) -> Result<Self> {
+        ty.render_with(&mut TypeRefHint::value(package))
+    }
+
+    pub fn from_direct_value(ty: &DirectValueType, package: &Package<'_, '_>) -> Result<Self> {
         match ty {
-            TypeRef::Primitive(primitive) => Self::from_primitive(*primitive),
-            TypeRef::String => Ok(Self::new("str")),
-            TypeRef::Bytes => Ok(Self::new("bytes")),
-            TypeRef::Builtin(builtin) => Ok(Self::from_builtin(*builtin)),
-            TypeRef::Custom(custom_type) => {
-                Self::from_type_ref(package.custom_representation(*custom_type)?, package)
-            }
-            TypeRef::Optional(inner) => Ok(Self::new(format!(
-                "{} | None",
-                Self::from_type_ref(inner, package)?.into_string()
+            DirectValueType::Primitive(primitive) => Self::from_primitive(*primitive),
+            DirectValueType::Record(record) => Ok(Self::new(TypeAnnotation::identifier(
+                package.record_name(*record)?,
             ))),
-            TypeRef::Result { ok, err } => Ok(Self::new(format!(
-                "tuple[bool, {} | {}]",
-                Self::from_type_ref(ok, package)?.into_string(),
-                Self::from_type_ref(err, package)?.into_string()
+            DirectValueType::Enum(enumeration) => Ok(Self::new(TypeAnnotation::identifier(
+                package.enum_name(*enumeration)?,
             ))),
-            TypeRef::Sequence(element) => Ok(Self::new(format!(
-                "list[{}]",
-                Self::from_type_ref(element, package)?.into_string()
-            ))),
-            TypeRef::Tuple(elements) => Ok(Self::new(format!(
-                "tuple[{}]",
-                elements
-                    .iter()
-                    .map(|element| Self::from_type_ref(element, package).map(Self::into_string))
-                    .collect::<Result<Vec<_>>>()?
-                    .join(", ")
-            ))),
-            TypeRef::Map { key, value } => Ok(Self::new(format!(
-                "dict[{}, {}]",
-                Self::from_type_ref(key, package)?.into_string(),
-                Self::from_type_ref(value, package)?.into_string()
-            ))),
-            TypeRef::Record(record) => Ok(Self::new(package.record_name(*record)?)),
-            TypeRef::Enum(enumeration) => Ok(Self::new(package.enum_name(*enumeration)?)),
-            TypeRef::Class(class) => Ok(Self::new(package.class_name(class)?)),
-            TypeRef::Callback(_) => Ok(Self::new("object")),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
-                shape: "unsupported type annotation",
+                shape: "direct value type hint",
             }),
         }
     }
@@ -77,8 +52,8 @@ impl TypeHint {
 
     pub fn from_primitive(primitive: Primitive) -> Result<Self> {
         Ok(match primitive {
-            Primitive::Bool => Self::new("bool"),
-            Primitive::F32 | Primitive::F64 => Self::new("float"),
+            Primitive::Bool => Self::new(TypeAnnotation::bool()),
+            Primitive::F32 | Primitive::F64 => Self::new(TypeAnnotation::float()),
             Primitive::I8
             | Primitive::U8
             | Primitive::I16
@@ -88,7 +63,7 @@ impl TypeHint {
             | Primitive::I64
             | Primitive::U64
             | Primitive::ISize
-            | Primitive::USize => Self::new("int"),
+            | Primitive::USize => Self::new(TypeAnnotation::int()),
             _ => {
                 return Err(Error::UnsupportedTarget {
                     target: "python",
@@ -98,7 +73,7 @@ impl TypeHint {
         })
     }
 
-    pub fn into_string(self) -> String {
+    pub fn into_annotation(self) -> TypeAnnotation {
         self.annotation
     }
 
@@ -107,93 +82,182 @@ impl TypeHint {
     }
 
     fn from_parameter_type_ref(ty: &TypeRef, package: &Package<'_, '_>) -> Result<Self> {
-        match ty {
-            TypeRef::Custom(custom_type) => {
-                Self::from_parameter_type_ref(package.custom_representation(*custom_type)?, package)
+        ty.render_with(&mut TypeRefHint::parameter(package))
+    }
+
+    fn from_direct_vector_parameter(
+        element: &DirectVectorElementType,
+        package: &Package<'_, '_>,
+    ) -> Result<Self> {
+        let element = Self::from_direct_vector_element(element, package)?;
+        Ok(Self::sequence(TypeAnnotation::sequence(element.annotation)))
+    }
+
+    fn from_direct_vector_return(
+        element: &DirectVectorElementType,
+        package: &Package<'_, '_>,
+    ) -> Result<Self> {
+        let element = Self::from_direct_vector_element(element, package)?;
+        Ok(Self::new(TypeAnnotation::list(element.annotation)))
+    }
+
+    fn from_direct_vector_element(
+        element: &DirectVectorElementType,
+        package: &Package<'_, '_>,
+    ) -> Result<Self> {
+        match element {
+            DirectVectorElementType::Primitive(primitive) => {
+                Self::from_primitive(primitive.primitive())
             }
-            TypeRef::Optional(inner) => {
-                let inner = Self::from_parameter_type_ref(inner, package)?;
-                Ok(Self::compose(
-                    format!("{} | None", inner.annotation),
-                    [inner],
-                ))
-            }
-            TypeRef::Result { ok, err } => {
-                let ok = Self::from_parameter_type_ref(ok, package)?;
-                let err = Self::from_parameter_type_ref(err, package)?;
-                Ok(Self::compose(
-                    format!("tuple[bool, {} | {}]", ok.annotation, err.annotation),
-                    [ok, err],
-                ))
-            }
-            TypeRef::Sequence(element) => {
-                let element = Self::from_parameter_type_ref(element, package)?;
-                Ok(Self::sequence(format!(
-                    "Sequence[{}]",
-                    element.into_string()
-                )))
-            }
-            TypeRef::Tuple(elements) => {
-                let elements = elements
-                    .iter()
-                    .map(|element| Self::from_parameter_type_ref(element, package))
-                    .collect::<Result<Vec<_>>>()?;
-                let annotation = format!(
-                    "tuple[{}]",
-                    elements
-                        .iter()
-                        .map(|element| element.annotation.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                Ok(Self::compose(annotation, elements))
-            }
-            TypeRef::Map { key, value } => {
-                let key = Self::from_parameter_type_ref(key, package)?;
-                let value = Self::from_parameter_type_ref(value, package)?;
-                Ok(Self::compose(
-                    format!("dict[{}, {}]", key.annotation, value.annotation),
-                    [key, value],
-                ))
-            }
-            _ => Self::from_type_ref(ty, package),
+            DirectVectorElementType::Record(record) => Ok(Self::new(TypeAnnotation::identifier(
+                package.record_name(*record)?,
+            ))),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "direct vector element type hint",
+            }),
         }
     }
 
-    fn from_direct_vector_parameter(element: &TypeRef, package: &Package<'_, '_>) -> Result<Self> {
-        if matches!(element, TypeRef::Primitive(Primitive::U8)) {
-            return Ok(Self::sequence("bytes | Sequence[int]"));
-        }
-        let element = Self::from_type_ref(element, package)?;
-        Ok(Self::sequence(format!("Sequence[{}]", element.annotation)))
-    }
-
-    fn new(annotation: impl Into<String>) -> Self {
+    fn new(annotation: TypeAnnotation) -> Self {
         Self {
-            annotation: annotation.into(),
+            annotation,
             uses_sequence: false,
         }
     }
 
-    fn sequence(annotation: impl Into<String>) -> Self {
+    fn sequence(annotation: TypeAnnotation) -> Self {
         Self {
-            annotation: annotation.into(),
+            annotation,
             uses_sequence: true,
         }
     }
 
-    fn compose(annotation: impl Into<String>, parts: impl IntoIterator<Item = Self>) -> Self {
+    fn compose(annotation: TypeAnnotation, parts: impl IntoIterator<Item = Self>) -> Self {
         Self {
-            annotation: annotation.into(),
+            annotation,
             uses_sequence: parts.into_iter().any(|part| part.uses_sequence),
         }
     }
 
     fn from_builtin(builtin: BuiltinType) -> Self {
         match builtin {
-            BuiltinType::Duration | BuiltinType::SystemTime => Self::new("float"),
-            BuiltinType::Uuid | BuiltinType::Url => Self::new("str"),
+            BuiltinType::Duration | BuiltinType::SystemTime => Self::new(TypeAnnotation::float()),
+            BuiltinType::Uuid | BuiltinType::Url => Self::new(TypeAnnotation::string()),
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SequenceHint {
+    List,
+    Sequence,
+}
+
+struct TypeRefHint<'package, 'binding, 'bridge> {
+    package: &'package Package<'binding, 'bridge>,
+    sequence: SequenceHint,
+}
+
+impl<'package, 'binding, 'bridge> TypeRefHint<'package, 'binding, 'bridge> {
+    fn value(package: &'package Package<'binding, 'bridge>) -> Self {
+        Self {
+            package,
+            sequence: SequenceHint::List,
+        }
+    }
+
+    fn parameter(package: &'package Package<'binding, 'bridge>) -> Self {
+        Self {
+            package,
+            sequence: SequenceHint::Sequence,
+        }
+    }
+}
+
+impl TypeRefRender for TypeRefHint<'_, '_, '_> {
+    type Output = Result<TypeHint>;
+
+    fn primitive(&mut self, primitive: Primitive) -> Self::Output {
+        TypeHint::from_primitive(primitive)
+    }
+
+    fn string(&mut self) -> Self::Output {
+        Ok(TypeHint::new(TypeAnnotation::string()))
+    }
+
+    fn bytes(&mut self) -> Self::Output {
+        Ok(TypeHint::new(TypeAnnotation::bytes()))
+    }
+
+    fn record(&mut self, id: RecordId) -> Self::Output {
+        Ok(TypeHint::new(TypeAnnotation::identifier(
+            self.package.record_name(id)?,
+        )))
+    }
+
+    fn enumeration(&mut self, id: EnumId) -> Self::Output {
+        Ok(TypeHint::new(TypeAnnotation::identifier(
+            self.package.enum_name(id)?,
+        )))
+    }
+
+    fn class(&mut self, id: ClassId) -> Self::Output {
+        Ok(TypeHint::new(TypeAnnotation::identifier(
+            self.package.class_name(&id)?,
+        )))
+    }
+
+    fn callback(&mut self, _: CallbackId) -> Self::Output {
+        Ok(TypeHint::new(TypeAnnotation::object()))
+    }
+
+    fn custom(&mut self, id: CustomTypeId) -> Self::Output {
+        self.package.custom_representation(id)?.render_with(self)
+    }
+
+    fn builtin(&mut self, kind: BuiltinType) -> Self::Output {
+        Ok(TypeHint::from_builtin(kind))
+    }
+
+    fn optional(&mut self, inner: Self::Output) -> Self::Output {
+        let inner = inner?;
+        let annotation = TypeAnnotation::optional(inner.annotation.clone());
+        Ok(TypeHint::compose(annotation, [inner]))
+    }
+
+    fn sequence(&mut self, element: Self::Output) -> Self::Output {
+        let element = element?;
+        match self.sequence {
+            SequenceHint::List => {
+                let annotation = TypeAnnotation::list(element.annotation.clone());
+                Ok(TypeHint::compose(annotation, [element]))
+            }
+            SequenceHint::Sequence => Ok(TypeHint::sequence(TypeAnnotation::sequence(
+                element.annotation.clone(),
+            ))),
+        }
+    }
+
+    fn tuple(&mut self, elements: Vec<Self::Output>) -> Self::Output {
+        let elements = elements.into_iter().collect::<Result<Vec<_>>>()?;
+        let annotation =
+            TypeAnnotation::tuple(elements.iter().map(|element| element.annotation.clone()));
+        Ok(TypeHint::compose(annotation, elements))
+    }
+
+    fn result(&mut self, ok: Self::Output, err: Self::Output) -> Self::Output {
+        let ok = ok?;
+        let err = err?;
+        let annotation = TypeAnnotation::result_pair(ok.annotation.clone(), err.annotation.clone());
+        Ok(TypeHint::compose(annotation, [ok, err]))
+    }
+
+    fn map(&mut self, key: Self::Output, value: Self::Output) -> Self::Output {
+        let key = key?;
+        let value = value?;
+        let annotation = TypeAnnotation::dict(key.annotation.clone(), value.annotation.clone());
+        Ok(TypeHint::compose(annotation, [key, value]))
     }
 }
 
@@ -202,18 +266,6 @@ struct ParameterHint<'package, 'binding, 'bridge> {
 }
 
 impl ParameterHint<'_, '_, '_> {
-    fn direct_type_ref(&self, ty: &TypeRef) -> Result<TypeHint> {
-        match ty {
-            TypeRef::Primitive(primitive) => TypeHint::from_primitive(*primitive),
-            TypeRef::Record(record) => Ok(TypeHint::new(self.package.record_name(*record)?)),
-            TypeRef::Enum(enumeration) => Ok(TypeHint::new(self.package.enum_name(*enumeration)?)),
-            _ => Err(Error::UnsupportedTarget {
-                target: "python",
-                shape: "unsupported parameter stub",
-            }),
-        }
-    }
-
     fn encoded_type_ref(&self, ty: &TypeRef, shape: native::BufferShape) -> Result<TypeHint> {
         if shape != native::BufferShape::Slice {
             return Err(Error::UnsupportedTarget {
@@ -221,25 +273,15 @@ impl ParameterHint<'_, '_, '_> {
                 shape: "unsupported parameter stub",
             });
         }
-        match ty {
-            TypeRef::String => Ok(TypeHint::new("str")),
-            TypeRef::Bytes => Ok(TypeHint::new("bytes")),
-            TypeRef::Custom(custom_type) => TypeHint::from_parameter_type_ref(
-                self.package.custom_representation(*custom_type)?,
-                self.package,
-            ),
-            TypeRef::Record(record) => Ok(TypeHint::new(self.package.record_name(*record)?)),
-            TypeRef::Enum(enumeration) => Ok(TypeHint::new(self.package.enum_name(*enumeration)?)),
-            _ => TypeHint::from_parameter_type_ref(ty, self.package),
-        }
+        TypeHint::from_parameter_type_ref(ty, self.package)
     }
 }
 
 impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterHint<'_, '_, '_> {
     type Output = Result<TypeHint>;
 
-    fn direct(&mut self, ty: &TypeRef, _: Receive) -> Self::Output {
-        self.direct_type_ref(ty)
+    fn direct(&mut self, ty: &DirectValueType, _: Receive) -> Self::Output {
+        TypeHint::from_direct_value(ty, self.package)
     }
 
     fn encoded(
@@ -260,13 +302,15 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterHint<'_, '_, '
         _: Receive,
     ) -> Self::Output {
         match (target, presence) {
-            (HandleTarget::Class(class_id), HandlePresence::Required) => {
-                Ok(TypeHint::new(self.package.class_name(class_id)?))
-            }
-            (HandleTarget::Class(class_id), HandlePresence::Nullable) => Ok(TypeHint::new(
-                format!("{} | None", self.package.class_name(class_id)?),
+            (HandleTarget::Class(class_id), HandlePresence::Required) => Ok(TypeHint::new(
+                TypeAnnotation::identifier(self.package.class_name(class_id)?),
             )),
-            (HandleTarget::Callback(_), _) => Ok(TypeHint::new("object")),
+            (HandleTarget::Class(class_id), HandlePresence::Nullable) => {
+                Ok(TypeHint::new(TypeAnnotation::optional(
+                    TypeAnnotation::identifier(self.package.class_name(class_id)?),
+                )))
+            }
+            (HandleTarget::Callback(_), _) => Ok(TypeHint::new(TypeAnnotation::object())),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unsupported parameter stub",
@@ -275,13 +319,12 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterHint<'_, '_, '
     }
 
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
-        Ok(TypeHint::new(format!(
-            "{} | None",
-            TypeHint::from_primitive(primitive)?.into_string()
+        Ok(TypeHint::new(TypeAnnotation::optional(
+            TypeHint::from_primitive(primitive)?.into_annotation(),
         )))
     }
 
-    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, element: &DirectVectorElementType) -> Self::Output {
         TypeHint::from_direct_vector_parameter(element, self.package)
     }
 }
@@ -300,11 +343,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnHint<'_, '_, '_
     type Output = Result<TypeHint>;
 
     fn void(&mut self) -> Self::Output {
-        Ok(TypeHint::new("None"))
+        Ok(TypeHint::new(TypeAnnotation::none()))
     }
 
-    fn direct(&mut self, _: ReturnValueSlot, ty: &TypeRef) -> Self::Output {
-        self.type_ref(ty)
+    fn direct(&mut self, _: ReturnValueSlot, ty: &DirectValueType) -> Self::Output {
+        TypeHint::from_direct_value(ty, self.package)
     }
 
     fn encoded(
@@ -331,10 +374,10 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnHint<'_, '_, '_
         presence: HandlePresence,
     ) -> Self::Output {
         match (target, presence) {
-            (HandleTarget::Class(class_id), HandlePresence::Required) => {
-                Ok(TypeHint::new(self.package.class_name(class_id)?))
-            }
-            (HandleTarget::Callback(_), _) => Ok(TypeHint::new("object")),
+            (HandleTarget::Class(class_id), HandlePresence::Required) => Ok(TypeHint::new(
+                TypeAnnotation::identifier(self.package.class_name(class_id)?),
+            )),
+            (HandleTarget::Callback(_), _) => Ok(TypeHint::new(TypeAnnotation::object())),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unsupported return stub",
@@ -343,17 +386,13 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnHint<'_, '_, '_
     }
 
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
-        Ok(TypeHint::new(format!(
-            "{} | None",
-            TypeHint::from_primitive(primitive)?.into_string()
+        Ok(TypeHint::new(TypeAnnotation::optional(
+            TypeHint::from_primitive(primitive)?.into_annotation(),
         )))
     }
 
-    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
-        Ok(TypeHint::new(format!(
-            "list[{}]",
-            self.type_ref(element)?.into_string()
-        )))
+    fn direct_vector(&mut self, element: &DirectVectorElementType) -> Self::Output {
+        TypeHint::from_direct_vector_return(element, self.package)
     }
 
     fn closure(&mut self, _: &ClosureReturn<Native, OutOfRust>) -> Self::Output {

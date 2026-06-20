@@ -1,13 +1,14 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClosureParameter, ClosureReturn, ErrorDecl, HandlePresence, HandleTarget, IntoRust, Native,
-    OutOfRust, OutgoingParam, ParamDecl, ParamPlanRender, Primitive, ReadPlan, ReturnPlan,
-    ReturnPlanRender, ReturnValueSlot, TypeRef, WritePlan, native,
+    ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType, ErrorDecl,
+    HandlePresence, HandleTarget, IntoRust, Native, OutOfRust, OutgoingParam, ParamDecl,
+    ParamPlanRender, Primitive, ReadPlan, ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef,
+    WritePlan, native,
 };
 
 use crate::{
     bridge::{
-        c::{self, identifier::Identifier, syntax::TypeSyntax},
+        c::{self, Expression, Identifier, Literal, TypeFragment, syntax::TypeSyntax},
         python_cext::PythonCExtBridgeContract,
     },
     core::{Error, RenderContext, Result},
@@ -21,13 +22,13 @@ use crate::{
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/closure.c", escape = "none")]
 struct Template {
-    invoke: String,
-    release: String,
-    parser: String,
-    call_output_declaration: String,
-    context_output_declaration: String,
-    release_output_declaration: String,
-    copy_buffer_storage: String,
+    invoke: Identifier,
+    release: Identifier,
+    parser: Identifier,
+    call_output_declaration: c::Statement,
+    context_output_declaration: c::Statement,
+    release_output_declaration: c::Statement,
+    copy_buffer_storage: Identifier,
     params: Vec<Argument>,
     returns: ReturnValue,
     fallible_return: Option<FallibleReturn>,
@@ -35,14 +36,14 @@ struct Template {
 }
 
 pub struct Parameter {
-    call_declaration: String,
-    call: String,
-    context_declaration: String,
-    context: String,
-    release_declaration: String,
-    release: String,
-    parser: String,
-    release_needed: String,
+    call_declaration: c::Statement,
+    call: Identifier,
+    context_declaration: c::Statement,
+    context: Identifier,
+    release_declaration: c::Statement,
+    release: Identifier,
+    parser: Identifier,
+    release_needed: Identifier,
     source: String,
     primitives: Vec<primitive::Runtime>,
     wire_primitives: Vec<primitive::Runtime>,
@@ -56,21 +57,21 @@ impl Parameter {
     pub fn new(
         owner: &str,
         index: usize,
-        name: String,
+        name: Identifier,
         parameter: &ClosureParameter<Native, IntoRust>,
         c_parameters: &[c::Parameter],
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let signature = Signature::new(parameter, c_parameters, bridge, context)?;
-        let prefix = Identifier::escape(format!("{owner}_{index}_{name}"))?.to_string();
-        let invoke = format!("boltffi_python_closure_{prefix}_invoke");
-        let release = format!("boltffi_python_closure_{prefix}_release");
-        let parser = format!("boltffi_python_parse_closure_{prefix}");
-        let call = c_parameters[0].name().to_owned();
-        let context_name = c_parameters[1].name().to_owned();
-        let release_name = c_parameters[2].name().to_owned();
-        let release_needed = format!("{name}_release_needed");
+        let prefix = Identifier::escape(format!("{owner}_{index}_{name}"))?;
+        let invoke = Identifier::parse(format!("boltffi_python_closure_{prefix}_invoke"))?;
+        let release = Identifier::parse(format!("boltffi_python_closure_{prefix}_release"))?;
+        let parser = Identifier::parse(format!("boltffi_python_parse_closure_{prefix}"))?;
+        let call = Identifier::parse(c_parameters[0].name())?;
+        let context_name = Identifier::parse(c_parameters[1].name())?;
+        let release_name = Identifier::parse(c_parameters[2].name())?;
+        let release_needed = Identifier::escape(format!("{name}_release_needed"))?;
         let copy_buffer_storage = Self::copy_buffer_storage(bridge)?;
         let source = Template {
             invoke,
@@ -90,13 +91,13 @@ impl Parameter {
         }
         .render()?;
         Ok(Self {
-            call_declaration: TypeSyntax::new(c_parameters[0].ty()).declaration(&call)?,
+            call_declaration: TypeSyntax::new(c_parameters[0].ty()).declaration(call.as_str())?,
             call,
             context_declaration: TypeSyntax::new(c_parameters[1].ty())
-                .declaration(&context_name)?,
+                .declaration(context_name.as_str())?,
             context: context_name,
             release_declaration: TypeSyntax::new(c_parameters[2].ty())
-                .declaration(&release_name)?,
+                .declaration(release_name.as_str())?,
             release: release_name,
             parser,
             release_needed,
@@ -114,7 +115,7 @@ impl Parameter {
         3
     }
 
-    pub fn call_args(&self) -> [String; 3] {
+    pub fn call_args(&self) -> [Identifier; 3] {
         [
             self.call.clone(),
             self.context.clone(),
@@ -122,15 +123,15 @@ impl Parameter {
         ]
     }
 
-    pub fn call_declaration(&self) -> &str {
+    pub fn call_declaration(&self) -> &c::Statement {
         &self.call_declaration
     }
 
-    pub fn context_declaration(&self) -> &str {
+    pub fn context_declaration(&self) -> &c::Statement {
         &self.context_declaration
     }
 
-    pub fn release_declaration(&self) -> &str {
+    pub fn release_declaration(&self) -> &c::Statement {
         &self.release_declaration
     }
 
@@ -138,23 +139,23 @@ impl Parameter {
         &self.source
     }
 
-    pub fn parser(&self) -> &str {
+    pub fn parser(&self) -> &Identifier {
         &self.parser
     }
 
-    pub fn call(&self) -> &str {
+    pub fn call(&self) -> &Identifier {
         &self.call
     }
 
-    pub fn context(&self) -> &str {
+    pub fn context(&self) -> &Identifier {
         &self.context
     }
 
-    pub fn release(&self) -> &str {
+    pub fn release(&self) -> &Identifier {
         &self.release
     }
 
-    pub fn release_needed(&self) -> &str {
+    pub fn release_needed(&self) -> &Identifier {
         &self.release_needed
     }
 
@@ -182,8 +183,8 @@ impl Parameter {
         self.raw_wire_argument
     }
 
-    fn copy_buffer_storage(bridge: &PythonCExtBridgeContract) -> Result<String> {
-        Ok(bridge.buffer_from_bytes()?.storage_name().to_owned())
+    fn copy_buffer_storage(bridge: &PythonCExtBridgeContract) -> Result<Identifier> {
+        Ok(bridge.buffer_from_bytes()?.storage_name().clone())
     }
 }
 
@@ -197,7 +198,7 @@ impl<'ty> OutputParameter<'ty> {
         Self { ty, name }
     }
 
-    fn declaration(&self) -> Result<String> {
+    fn declaration(&self) -> Result<c::Statement> {
         match self.ty {
             c::Type::FunctionPointer { returns, params } => {
                 TypeSyntax::function_pointer_declaration(
@@ -206,11 +207,11 @@ impl<'ty> OutputParameter<'ty> {
                     params.iter(),
                 )
             }
-            _ => Ok(format!(
+            _ => Ok(c::Statement::new(format!(
                 "{} *{}",
                 TypeSyntax::new(self.ty).anonymous()?,
                 self.name
-            )),
+            ))),
         }
     }
 }
@@ -415,7 +416,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnOutCount 
         Ok(0)
     }
 
-    fn direct(&mut self, slot: ReturnValueSlot, _: &'plan TypeRef) -> Self::Output {
+    fn direct(&mut self, slot: ReturnValueSlot, _: &'plan DirectValueType) -> Self::Output {
         Self::slot_count(slot)
     }
 
@@ -443,7 +444,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnOutCount 
         Ok(0)
     }
 
-    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
         Ok(0)
     }
 
@@ -470,9 +471,9 @@ impl ClosureReturnOutCount {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Argument {
-    declarations: Vec<String>,
-    object: String,
-    expression: String,
+    declarations: Vec<c::Statement>,
+    object: Identifier,
+    expression: c::Expression,
     primitive: Option<primitive::Runtime>,
     wire_primitive: Option<primitive::Runtime>,
     direct_vector: Option<direct_vector::Element>,
@@ -498,8 +499,8 @@ impl Argument {
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let name = Identifier::escape(Name::new(parameter.name()).function())?.to_string();
-        let object = format!("{name}_object");
+        let name = Identifier::escape(Name::new(parameter.name()).function_text()?)?;
+        let object = Identifier::parse(format!("{name}_object"))?;
         match parameter.payload() {
             OutgoingParam::Value(plan) => plan.render_with(&mut ClosureArgumentValue {
                 name,
@@ -540,9 +541,9 @@ impl Argument {
     }
 
     fn direct(
-        name: String,
-        object: String,
-        ty: &TypeRef,
+        name: Identifier,
+        object: Identifier,
+        ty: &DirectValueType,
         c_types: &[c::Type],
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
@@ -553,16 +554,11 @@ impl Argument {
                 shape: "closure direct argument ABI",
             });
         };
-        let direct = direct::NativeSlot::from_type_ref(
-            ty,
-            bridge,
-            context,
-            "unsupported direct closure argument",
-        )?;
+        let direct = direct::NativeSlot::from_direct_value(ty, bridge, context)?;
         Ok(Self {
-            declarations: vec![TypeSyntax::new(c_type).declaration(&name)?],
+            declarations: vec![TypeSyntax::new(c_type).declaration(name.as_str())?],
             object,
-            expression: direct.box_expression(&name),
+            expression: direct.box_expression(name),
             primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
@@ -573,8 +569,8 @@ impl Argument {
     }
 
     fn encoded(
-        name: String,
-        object: String,
+        name: Identifier,
+        object: Identifier,
         codec: &ReadPlan,
         c_types: &[c::Type],
     ) -> Result<Self> {
@@ -584,9 +580,9 @@ impl Argument {
                 shape: "closure encoded argument ABI",
             });
         };
-        let pointer_name = format!("{name}_ptr");
-        let length_name = format!("{name}_len");
-        let payload = BorrowedPayload::read(codec, &pointer_name, &length_name);
+        let pointer_name = Identifier::parse(format!("{name}_ptr"))?;
+        let length_name = Identifier::parse(format!("{name}_len"))?;
+        let payload = BorrowedPayload::read(codec, pointer_name.clone(), length_name.clone())?;
         let wire_primitive = payload.primitive();
         let string = payload.has_string();
         let bytes = payload.has_bytes();
@@ -594,8 +590,8 @@ impl Argument {
         let expression = payload.expression();
         Ok(Self {
             declarations: vec![
-                TypeSyntax::new(pointer).declaration(&pointer_name)?,
-                TypeSyntax::new(length).declaration(&length_name)?,
+                TypeSyntax::new(pointer).declaration(pointer_name.as_str())?,
+                TypeSyntax::new(length).declaration(length_name.as_str())?,
             ],
             object,
             expression,
@@ -609,9 +605,9 @@ impl Argument {
     }
 
     fn direct_vector(
-        name: String,
-        object: String,
-        element: &TypeRef,
+        name: Identifier,
+        object: Identifier,
+        element: &DirectVectorElementType,
         c_types: &[c::Type],
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
@@ -622,16 +618,22 @@ impl Argument {
                 shape: "closure vector argument ABI",
             });
         };
-        let pointer_name = format!("{name}_ptr");
-        let length_name = format!("{name}_len");
-        let element = direct_vector::Element::from_type_ref(element, bridge, context)?;
+        let pointer_name = Identifier::parse(format!("{name}_ptr"))?;
+        let length_name = Identifier::parse(format!("{name}_len"))?;
+        let element = direct_vector::Element::from_element(element, bridge, context)?;
         Ok(Self {
             declarations: vec![
-                TypeSyntax::new(pointer).declaration(&pointer_name)?,
-                TypeSyntax::new(length).declaration(&length_name)?,
+                TypeSyntax::new(pointer).declaration(pointer_name.as_str())?,
+                TypeSyntax::new(length).declaration(length_name.as_str())?,
             ],
             object,
-            expression: format!("{}({pointer_name}, {length_name})", element.vector_boxer()),
+            expression: c::Expression::call(
+                element.vector_boxer().clone(),
+                c::ArgumentList::from_iter([
+                    c::Expression::identifier(pointer_name),
+                    c::Expression::identifier(length_name),
+                ]),
+            ),
             primitive: None,
             wire_primitive: None,
             direct_vector: Some(element),
@@ -647,7 +649,7 @@ struct ClosureArgumentArity;
 impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentArity {
     type Output = Result<usize>;
 
-    fn direct(&mut self, _: &TypeRef, _: ()) -> Self::Output {
+    fn direct(&mut self, _: &DirectValueType, _: ()) -> Self::Output {
         Ok(1)
     }
 
@@ -687,14 +689,14 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentArity {
         })
     }
 
-    fn direct_vector(&mut self, _: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, _: &DirectVectorElementType) -> Self::Output {
         Ok(2)
     }
 }
 
 struct ClosureArgumentValue<'ctype, 'bridge, 'context, 'bindings> {
-    name: String,
-    object: String,
+    name: Identifier,
+    object: Identifier,
     c_types: &'ctype [c::Type],
     bridge: &'bridge PythonCExtBridgeContract,
     context: &'context RenderContext<'bindings, Native>,
@@ -703,7 +705,7 @@ struct ClosureArgumentValue<'ctype, 'bridge, 'context, 'bindings> {
 impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'_, '_, '_, '_> {
     type Output = Result<Argument>;
 
-    fn direct(&mut self, ty: &TypeRef, _: ()) -> Self::Output {
+    fn direct(&mut self, ty: &DirectValueType, _: ()) -> Self::Output {
         Argument::direct(
             self.name.clone(),
             self.object.clone(),
@@ -752,7 +754,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'
         })
     }
 
-    fn direct_vector(&mut self, element: &TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, element: &DirectVectorElementType) -> Self::Output {
         Argument::direct_vector(
             self.name.clone(),
             self.object.clone(),
@@ -766,7 +768,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ClosureArgumentValue<'
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FallibleReturn {
-    declarations: Vec<String>,
+    declarations: Vec<c::Statement>,
     success: FallibleSuccess,
     error: FallibleError,
 }
@@ -836,11 +838,11 @@ impl FallibleReturn {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FallibleSuccess {
-    out: String,
-    value: String,
-    c_type: String,
-    default_value: String,
-    parser: String,
+    out: Option<Identifier>,
+    value: Option<Identifier>,
+    c_type: Option<c::TypeFragment>,
+    default_value: Option<c::Expression>,
+    parser: Option<Identifier>,
     wire: bool,
     direct: bool,
     void: bool,
@@ -880,11 +882,11 @@ impl FallibleSuccess {
 
     fn void() -> Self {
         Self {
-            out: String::new(),
-            value: String::new(),
-            c_type: String::new(),
-            default_value: String::new(),
-            parser: String::new(),
+            out: None,
+            value: None,
+            c_type: None,
+            default_value: None,
+            parser: None,
             wire: false,
             direct: false,
             void: true,
@@ -898,23 +900,18 @@ impl FallibleSuccess {
     }
 
     fn direct(
-        ty: &TypeRef,
+        ty: &DirectValueType,
         out_type: &c::Type,
         bridge: &PythonCExtBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let direct = direct::NativeSlot::from_type_ref(
-            ty,
-            bridge,
-            context,
-            "unsupported direct closure success",
-        )?;
+        let direct = direct::NativeSlot::from_direct_value(ty, bridge, context)?;
         Ok(Self {
-            out: "return_out".to_owned(),
-            value: "return_success".to_owned(),
-            c_type: TypeSyntax::new(out_type).anonymous()?,
-            default_value: direct.default_value().to_owned(),
-            parser: direct.parser().to_owned(),
+            out: Some(Identifier::parse("return_out")?),
+            value: Some(Identifier::parse("return_success")?),
+            c_type: Some(TypeSyntax::new(out_type).anonymous()?),
+            default_value: Some(direct.default_value().clone()),
+            parser: Some(direct.parser().clone()),
             wire: false,
             direct: true,
             void: false,
@@ -934,13 +931,13 @@ impl FallibleSuccess {
                 shape: "fallible closure encoded out-parameter",
             });
         }
-        let encoded = OwnedPayload::write(codec);
+        let encoded = OwnedPayload::write(codec)?;
         Ok(Self {
-            out: "return_out".to_owned(),
-            value: "return_success".to_owned(),
-            c_type: String::new(),
-            default_value: String::new(),
-            parser: encoded.parser().to_owned(),
+            out: Some(Identifier::parse("return_out")?),
+            value: Some(Identifier::parse("return_success")?),
+            c_type: None,
+            default_value: None,
+            parser: Some(encoded.parser().clone()),
             wire: true,
             direct: false,
             void: false,
@@ -961,6 +958,36 @@ impl FallibleSuccess {
                 shape: "fallible closure success out-parameter",
             }),
         }
+    }
+
+    fn out(&self) -> &Identifier {
+        self.out
+            .as_ref()
+            .expect("fallible closure success has an out parameter")
+    }
+
+    fn value(&self) -> &Identifier {
+        self.value
+            .as_ref()
+            .expect("fallible closure success has a value binding")
+    }
+
+    fn c_type(&self) -> &c::TypeFragment {
+        self.c_type
+            .as_ref()
+            .expect("direct fallible closure success has a C type")
+    }
+
+    fn default_value(&self) -> &c::Expression {
+        self.default_value
+            .as_ref()
+            .expect("direct fallible closure success has a default value")
+    }
+
+    fn parser(&self) -> &Identifier {
+        self.parser
+            .as_ref()
+            .expect("fallible closure success has a parser")
     }
 }
 
@@ -983,7 +1010,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
         Ok(FallibleSuccess::void())
     }
 
-    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         match slot {
             ReturnValueSlot::OutPointer => FallibleSuccess::direct(
                 ty,
@@ -1034,7 +1061,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for FallibleSuccessValue<'
         Self::unsupported()
     }
 
-    fn direct_vector(&mut self, _: &'plan TypeRef) -> Self::Output {
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
         Self::unsupported()
     }
 
@@ -1054,8 +1081,8 @@ impl FallibleSuccessValue<'_, '_, '_, '_> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FallibleError {
-    value: String,
-    parser: String,
+    value: Identifier,
+    parser: Identifier,
     wire_primitive: Option<primitive::Runtime>,
     direct_vector: Option<direct_vector::Element>,
     string: bool,
@@ -1065,10 +1092,10 @@ struct FallibleError {
 
 impl FallibleError {
     fn new(codec: &WritePlan) -> Result<Self> {
-        let encoded = OwnedPayload::write(codec);
+        let encoded = OwnedPayload::write(codec)?;
         Ok(Self {
-            value: "return_value".to_owned(),
-            parser: encoded.parser().to_owned(),
+            value: Identifier::parse("return_value")?,
+            parser: encoded.parser().clone(),
             wire_primitive: encoded.primitive(),
             direct_vector: encoded.direct_vector(),
             string: encoded.has_string(),
@@ -1088,10 +1115,10 @@ impl FallibleError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReturnValue {
-    c_type: String,
-    parser: String,
-    default_value: String,
-    value: String,
+    c_type: TypeFragment,
+    parser: Option<Identifier>,
+    default_value: Expression,
+    value: Option<Identifier>,
     primitive: Option<primitive::Runtime>,
     wire_primitive: Option<primitive::Runtime>,
     direct_vector: Option<direct_vector::Element>,
@@ -1106,9 +1133,9 @@ impl ReturnValue {
     fn fallible_error(c_type: &c::Type) -> Result<Self> {
         Ok(Self {
             c_type: TypeSyntax::new(c_type).anonymous()?,
-            parser: String::new(),
-            default_value: "{0}".to_owned(),
-            value: "return_value".to_owned(),
+            parser: None,
+            default_value: Expression::literal(Literal::compound_zero()),
+            value: Some(Identifier::parse("return_value")?),
             primitive: None,
             wire_primitive: None,
             direct_vector: None,
@@ -1161,11 +1188,19 @@ impl ReturnValue {
         !self.void
     }
 
+    fn parser(&self) -> &Identifier {
+        self.parser.as_ref().expect("return parser")
+    }
+
+    fn value(&self) -> &Identifier {
+        self.value.as_ref().expect("return value")
+    }
+
     fn encoded(c_type: &c::Type, codec: &WritePlan) -> Result<Self> {
-        let encoded = OwnedPayload::write(codec);
+        let encoded = OwnedPayload::write(codec)?;
         Self::wire(
             c_type,
-            encoded.parser().to_owned(),
+            encoded.parser().clone(),
             encoded.direct_vector(),
             encoded.primitive(),
             encoded.has_string(),
@@ -1176,7 +1211,7 @@ impl ReturnValue {
 
     fn wire(
         c_type: &c::Type,
-        parser: String,
+        parser: Identifier,
         direct_vector: Option<direct_vector::Element>,
         wire_primitive: Option<primitive::Runtime>,
         string: bool,
@@ -1185,9 +1220,9 @@ impl ReturnValue {
     ) -> Result<Self> {
         Ok(Self {
             c_type: TypeSyntax::new(c_type).anonymous()?,
-            parser,
-            default_value: "{0}".to_owned(),
-            value: "return_value".to_owned(),
+            parser: Some(parser),
+            default_value: Expression::literal(Literal::compound_zero()),
+            value: Some(Identifier::parse("return_value")?),
             primitive: None,
             wire_primitive,
             direct_vector,
@@ -1212,9 +1247,9 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
     fn void(&mut self) -> Self::Output {
         Ok(ReturnValue {
             c_type: TypeSyntax::new(self.c_type).anonymous()?,
-            parser: String::new(),
-            default_value: String::new(),
-            value: String::new(),
+            parser: None,
+            default_value: Expression::literal(Literal::compound_zero()),
+            value: None,
             primitive: None,
             wire_primitive: None,
             direct_vector: None,
@@ -1226,21 +1261,16 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
         })
     }
 
-    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan TypeRef) -> Self::Output {
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         if slot != ReturnValueSlot::ReturnSlot {
             return Self::unsupported();
         }
-        let direct = direct::NativeSlot::from_type_ref(
-            ty,
-            self.bridge,
-            self.context,
-            "unsupported closure return",
-        )?;
+        let direct = direct::NativeSlot::from_direct_value(ty, self.bridge, self.context)?;
         Ok(ReturnValue {
             c_type: TypeSyntax::new(self.c_type).anonymous()?,
-            parser: direct.parser().to_owned(),
-            default_value: direct.default_value().to_owned(),
-            value: "return_value".to_owned(),
+            parser: Some(direct.parser().clone()),
+            default_value: direct.default_value().clone(),
+            value: Some(Identifier::parse("return_value")?),
             primitive: direct.primitive(),
             wire_primitive: None,
             direct_vector: None,
@@ -1296,11 +1326,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ClosureReturnValue<'_,
         )
     }
 
-    fn direct_vector(&mut self, element: &'plan TypeRef) -> Self::Output {
-        let element = direct_vector::Element::from_type_ref(element, self.bridge, self.context)?;
+    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
+        let element = direct_vector::Element::from_element(element, self.bridge, self.context)?;
         ReturnValue::wire(
             self.c_type,
-            element.vector_encoder().to_owned(),
+            element.vector_encoder().clone(),
             Some(element),
             None,
             false,

@@ -14,6 +14,7 @@ use crate::{
         codec::{CodecAdapters, EnumCodec, ReadFunction, WriteFunction},
         cpython::render::function,
         name_style::{Name, PackageModule},
+        syntax::{Expression, Identifier, Literal},
     },
 };
 
@@ -36,13 +37,17 @@ use self::{
     stream::ClassStream,
 };
 
+pub use self::callable::NativeFutureMethods;
+
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/package.py", escape = "none")]
 struct InitTemplate {
-    module_name_literal: String,
-    package_name_literal: String,
-    package_version_literal: String,
-    library_name: String,
+    module_name_literal: Literal,
+    package_name_literal: Literal,
+    package_version: Expression,
+    windows_library: Literal,
+    macos_library: Literal,
+    unix_library: Literal,
     uses_sequence_annotations: bool,
     uses_callable_annotations: bool,
     uses_wire_helpers: bool,
@@ -77,11 +82,11 @@ struct PyprojectTemplate;
 #[derive(AskamaTemplate)]
 #[template(path = "target/python/setup.py", escape = "none")]
 struct SetupTemplate {
-    module_name_literal: String,
-    package_name_literal: String,
-    package_version_literal: String,
-    extension_name_literal: String,
-    extension_source_literal: String,
+    module_name_literal: Literal,
+    package_name_literal: Literal,
+    package_version_literal: Literal,
+    extension_name_literal: Literal,
+    extension_source_literal: Literal,
 }
 
 pub struct Package<'binding, 'bridge> {
@@ -189,11 +194,14 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                         InitTemplate {
                             module_name_literal: Self::literal(&module),
                             package_name_literal: Self::literal(&package),
-                            package_version_literal: version
+                            package_version: version
                                 .as_deref()
                                 .map(Self::literal)
-                                .unwrap_or_else(|| "None".to_owned()),
-                            library_name: self.library.clone(),
+                                .map(Expression::literal)
+                                .unwrap_or_else(|| Expression::literal(Literal::none())),
+                            windows_library: Self::literal(format!("{}.dll", self.library)),
+                            macos_library: Self::literal(format!("lib{}.dylib", self.library)),
+                            unix_library: Self::literal(format!("lib{}.so", self.library)),
                             uses_sequence_annotations,
                             uses_callable_annotations,
                             uses_wire_helpers,
@@ -269,7 +277,7 @@ impl<'binding> PackageDeclarations<'binding> {
 }
 
 impl<'binding, 'bridge> Package<'binding, 'bridge> {
-    pub fn record_name(&self, record_id: RecordId) -> Result<String> {
+    pub fn record_name(&self, record_id: RecordId) -> Result<Identifier> {
         self.declarations
             .records
             .iter()
@@ -279,14 +287,15 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                 RecordDecl::Direct(_) | RecordDecl::Encoded(_) => None,
                 _ => None,
             })
-            .map(|name| Name::new(name).class())
+            .map(|name| Identifier::parse(Name::new(name).class()))
+            .transpose()?
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "record type hint without declaration",
             })
     }
 
-    pub fn enum_name(&self, enum_id: EnumId) -> Result<String> {
+    pub fn enum_name(&self, enum_id: EnumId) -> Result<Identifier> {
         self.declarations
             .enums
             .iter()
@@ -300,7 +309,8 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                 EnumDecl::CStyle(_) | EnumDecl::Data(_) => None,
                 _ => None,
             })
-            .map(|name| Name::new(name).class())
+            .map(|name| Identifier::parse(Name::new(name).class()))
+            .transpose()?
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "enum type hint without declaration",
@@ -313,28 +323,29 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             .iter()
             .find_map(|enumeration| match enumeration {
                 EnumDecl::CStyle(enumeration) if enumeration.id() == enum_id => {
-                    Some(EnumCodec::CStyle(enumeration.repr().primitive()))
+                    Some(Ok(EnumCodec::CStyle(enumeration.repr().primitive())))
                 }
-                EnumDecl::Data(enumeration) if enumeration.id() == enum_id => {
-                    Some(EnumCodec::Data {
-                        class_name: Name::new(enumeration.name()).class(),
-                    })
-                }
+                EnumDecl::Data(enumeration) if enumeration.id() == enum_id => Some(
+                    Identifier::parse(Name::new(enumeration.name()).class())
+                        .map(|class_name| EnumCodec::Data { class_name }),
+                ),
                 EnumDecl::CStyle(_) | EnumDecl::Data(_) => None,
                 _ => None,
             })
+            .transpose()?
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "enum wire type without declaration",
             })
     }
 
-    pub fn class_name(&self, class_id: &ClassId) -> Result<String> {
+    pub fn class_name(&self, class_id: &ClassId) -> Result<Identifier> {
         self.declarations
             .classes
             .iter()
             .find(|class| class.id() == *class_id)
-            .map(|class| Name::new(class.name()).class())
+            .map(|class| Identifier::parse(Name::new(class.name()).class()))
+            .transpose()?
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "class type hint without declaration",
@@ -358,8 +369,8 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
             })
     }
 
-    pub fn literal(value: impl AsRef<str>) -> String {
-        format!("{:?}", value.as_ref())
+    pub fn literal(value: impl AsRef<str>) -> Literal {
+        Literal::string(value.as_ref())
     }
 }
 
@@ -440,7 +451,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
         &self,
         enum_name: &CanonicalName,
         variant_name: &CanonicalName,
-    ) -> Result<String> {
+    ) -> Result<Expression> {
         self.declarations
             .enums
             .iter()
@@ -455,6 +466,7 @@ impl<'binding, 'bridge> Package<'binding, 'bridge> {
                 _ => None,
             })
             .map(|style| style.expression(enum_name, variant_name))
+            .transpose()?
             .ok_or(Error::UnsupportedTarget {
                 target: "python",
                 shape: "enum constant without declaration",

@@ -1,7 +1,7 @@
 use boltffi_binding::{Primitive, native};
 
 use crate::{
-    bridge::c::{Type, syntax::TypeSyntax},
+    bridge::c::{Identifier, Type, TypeFragment, syntax::TypeSyntax},
     core::{Error, Result},
 };
 
@@ -12,12 +12,12 @@ pub struct Runtime {
 
 pub struct Support {
     runtime: Runtime,
-    pub parser: &'static str,
-    pub boxer: &'static str,
-    pub wire_encoder: String,
-    pub optional_wire_encoder: String,
-    pub optional_owned_wire_decoder: String,
-    pub owned_wire_decoder: String,
+    pub parser: Identifier,
+    pub boxer: Identifier,
+    pub wire_encoder: Identifier,
+    pub optional_wire_encoder: Identifier,
+    pub optional_owned_wire_decoder: Identifier,
+    pub owned_wire_decoder: Identifier,
     pub wire_size: usize,
 }
 
@@ -113,12 +113,12 @@ impl Runtime {
         Ok(Self::new(primitive))
     }
 
-    pub fn c_type(self) -> Result<String> {
+    pub fn c_type(self) -> Result<TypeFragment> {
         TypeSyntax::new(&Type::primitive(self.primitive)?).anonymous()
     }
 
-    pub fn parser(self) -> Result<&'static str> {
-        Ok(match self.primitive {
+    pub fn parser(self) -> Result<Identifier> {
+        Identifier::parse(match self.primitive {
             Primitive::Bool => "boltffi_python_parse_bool",
             Primitive::I8 => "boltffi_python_parse_i8",
             Primitive::U8 => "boltffi_python_parse_u8",
@@ -141,8 +141,8 @@ impl Runtime {
         })
     }
 
-    pub fn boxer(self) -> Result<&'static str> {
-        Ok(match self.primitive {
+    pub fn boxer(self) -> Result<Identifier> {
+        Identifier::parse(match self.primitive {
             Primitive::Bool => "boltffi_python_box_bool",
             Primitive::I8 => "boltffi_python_box_i8",
             Primitive::U8 => "boltffi_python_box_u8",
@@ -165,26 +165,26 @@ impl Runtime {
         })
     }
 
-    pub fn wire_encoder(self) -> Result<String> {
-        Ok(format!("boltffi_python_wire_{}", self.wire_stem()?))
+    pub fn wire_encoder(self) -> Result<Identifier> {
+        Identifier::parse(format!("boltffi_python_wire_{}", self.wire_stem()?))
     }
 
-    pub fn optional_wire_encoder(self) -> Result<String> {
-        Ok(format!(
+    pub fn optional_wire_encoder(self) -> Result<Identifier> {
+        Identifier::parse(format!(
             "boltffi_python_wire_optional_{}",
             self.wire_stem()?
         ))
     }
 
-    pub fn optional_owned_wire_decoder(self) -> Result<String> {
-        Ok(format!(
+    pub fn optional_owned_wire_decoder(self) -> Result<Identifier> {
+        Identifier::parse(format!(
             "boltffi_python_decode_owned_optional_{}",
             self.wire_stem()?
         ))
     }
 
-    pub fn owned_wire_decoder(self) -> Result<String> {
-        Ok(format!("boltffi_python_decode_owned_{}", self.wire_stem()?))
+    pub fn owned_wire_decoder(self) -> Result<Identifier> {
+        Identifier::parse(format!("boltffi_python_decode_owned_{}", self.wire_stem()?))
     }
 
     pub fn wire_size(self) -> Result<usize> {
@@ -206,15 +206,15 @@ impl Runtime {
         })
     }
 
-    pub fn direct_vec_decoder(self) -> Result<String> {
-        Ok(format!(
+    pub fn direct_vec_decoder(self) -> Result<Identifier> {
+        Identifier::parse(format!(
             "boltffi_python_decode_owned_vec_{}",
             self.wire_stem()?
         ))
     }
 
-    pub fn direct_vec_parser(self) -> Result<String> {
-        Ok(format!("boltffi_python_parse_vec_{}", self.wire_stem()?))
+    pub fn direct_vec_parser(self) -> Result<Identifier> {
+        Identifier::parse(format!("boltffi_python_parse_vec_{}", self.wire_stem()?))
     }
 
     pub fn is_bool(&self) -> bool {

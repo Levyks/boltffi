@@ -4,7 +4,7 @@
 #include <limits.h>
 #include <string.h>
 
-#include "{{ c_header }}"
+#include {{ c_header }}
 
 #ifdef _WIN32
 #include <windows.h>
@@ -90,13 +90,13 @@ static int boltffi_python_load_library(PyObject *library_path) {
 static int boltffi_python_bind_symbols(void) {
 {%- for function in functions %}
 #ifdef _WIN32
-    {{ function.storage_name }} = ({{ function.typedef_name }})GetProcAddress(boltffi_python_library_handle, "{{ function.symbol }}");
+    {{ function.storage_name }} = ({{ function.typedef_name }})GetProcAddress(boltffi_python_library_handle, {{ function.symbol }});
 #else
-    {{ function.storage_name }} = ({{ function.typedef_name }})dlsym(boltffi_python_library_handle, "{{ function.symbol }}");
+    {{ function.storage_name }} = ({{ function.typedef_name }})dlsym(boltffi_python_library_handle, {{ function.symbol }});
 #endif
     if ({{ function.storage_name }} == NULL) {
         boltffi_python_unload_library();
-        PyErr_SetString(PyExc_ImportError, "failed to resolve native symbol {{ function.symbol }}");
+        PyErr_SetString(PyExc_ImportError, "failed to resolve native symbol " {{ function.symbol }});
         return 0;
     }
 {%- endfor %}

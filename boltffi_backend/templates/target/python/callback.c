@@ -29,7 +29,7 @@ static {{ method.returns.c_type }} {{ method.function }}(uint64_t handle{% if le
     int fallible_ok = 0;
     PyObject *fallible_payload = NULL;
 {%- if fallible.success.direct %}
-    {{ fallible.success.c_type }} {{ fallible.success.value }} = {{ fallible.success.default_value }};
+    {{ fallible.success.c_type() }} {{ fallible.success.value() }} = {{ fallible.success.default_value() }};
 {%- endif %}
 {%- endif %}
 {%- if let Some(completion) = method.completion %}
@@ -38,18 +38,18 @@ static {{ method.returns.c_type }} {{ method.function }}(uint64_t handle{% if le
     PyObject *completion_result_payload = NULL;
 {%- endif %}
 {%- if completion.payload.direct_bytes %}
-    {{ completion.payload.direct_type }} {{ completion.payload.direct_value }} = ({{ completion.payload.direct_type }}){0};
+    {{ completion.payload.direct_type() }} {{ completion.payload.direct_value() }} = ({{ completion.payload.direct_type() }}){0};
 {%- endif %}
 {%- if completion.payload.error_direct_bytes %}
-    {{ completion.payload.error_direct_type }} {{ completion.payload.error_direct_value }} = ({{ completion.payload.error_direct_type }}){0};
+    {{ completion.payload.error_direct_type() }} {{ completion.payload.error_direct_value() }} = ({{ completion.payload.error_direct_type() }}){0};
 {%- endif %}
 {%- if completion.payload.has_value() %}
-    {{ completion.payload.c_type }} {{ completion.payload.value }} = {{ completion.payload.default_value }};
+    {{ completion.payload.c_type() }} {{ completion.payload.value() }} = {{ completion.payload.default_value() }};
 {%- endif %}
     FfiStatus completion_status = FFI_STATUS_OK;
 {%- endif %}
 {%- if method.returns.has_value() %}
-    {{ method.returns.c_type }} {{ method.returns.value }} = {{ method.returns.default_value }};
+    {{ method.returns.c_type }} {{ method.returns.value() }} = {{ method.returns.default_value }};
 {%- endif %}
     PyGILState_STATE gil = PyGILState_Ensure();
     PyObject *receiver = (PyObject *)(uintptr_t)handle;
@@ -86,47 +86,47 @@ static {{ method.returns.c_type }} {{ method.function }}(uint64_t handle{% if le
     completion_result_payload = PyTuple_GET_ITEM(result, 1);
     if (completion_ok) {
 {%- if completion.payload.wire %}
-        if (!{{ completion.payload.parser }}(completion_result_payload, &return_wire, &return_ptr, &return_len)) {
+        if (!{{ completion.payload.parser() }}(completion_result_payload, &return_wire, &return_ptr, &return_len)) {
             goto done;
         }
-        {{ completion.payload.value }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+        {{ completion.payload.value() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- elif completion.payload.direct_bytes %}
-        if (!{{ completion.payload.parser }}(completion_result_payload, &{{ completion.payload.direct_value }})) {
+        if (!{{ completion.payload.parser() }}(completion_result_payload, &{{ completion.payload.direct_value() }})) {
             goto done;
         }
-        {{ completion.payload.value }} = {{ copy_buffer_storage }}((const uint8_t *)&{{ completion.payload.direct_value }}, (uintptr_t)sizeof({{ completion.payload.direct_value }}));
+        {{ completion.payload.value() }} = {{ copy_buffer_storage }}((const uint8_t *)&{{ completion.payload.direct_value() }}, (uintptr_t)sizeof({{ completion.payload.direct_value() }}));
 {%- else %}
-        {{ completion.payload.value }} = {{ completion.payload.default_value }};
+        {{ completion.payload.value() }} = {{ completion.payload.default_value() }};
 {%- endif %}
     } else {
         completion_status = FFI_STATUS_INTERNAL_ERROR;
 {%- if completion.payload.error_wire %}
-        if (!{{ completion.payload.error_parser }}(completion_result_payload, &return_wire, &return_ptr, &return_len)) {
+        if (!{{ completion.payload.error_parser() }}(completion_result_payload, &return_wire, &return_ptr, &return_len)) {
             goto done;
         }
-        {{ completion.payload.value }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+        {{ completion.payload.value() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- elif completion.payload.error_direct_bytes %}
-        if (!{{ completion.payload.error_parser }}(completion_result_payload, &{{ completion.payload.error_direct_value }})) {
+        if (!{{ completion.payload.error_parser() }}(completion_result_payload, &{{ completion.payload.error_direct_value() }})) {
             goto done;
         }
-        {{ completion.payload.value }} = {{ copy_buffer_storage }}((const uint8_t *)&{{ completion.payload.error_direct_value }}, (uintptr_t)sizeof({{ completion.payload.error_direct_value }}));
+        {{ completion.payload.value() }} = {{ copy_buffer_storage }}((const uint8_t *)&{{ completion.payload.error_direct_value() }}, (uintptr_t)sizeof({{ completion.payload.error_direct_value() }}));
 {%- else %}
-        {{ completion.payload.value }} = {{ completion.payload.default_value }};
+        {{ completion.payload.value() }} = {{ completion.payload.default_value() }};
 {%- endif %}
     }
 {%- elif completion.payload.has_value() %}
 {%- if completion.payload.wire %}
-    if (!{{ completion.payload.parser }}(result, &return_wire, &return_ptr, &return_len)) {
+    if (!{{ completion.payload.parser() }}(result, &return_wire, &return_ptr, &return_len)) {
         goto done;
     }
-    {{ completion.payload.value }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+    {{ completion.payload.value() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- elif completion.payload.direct_bytes %}
-    if (!{{ completion.payload.parser }}(result, &{{ completion.payload.direct_value }})) {
+    if (!{{ completion.payload.parser() }}(result, &{{ completion.payload.direct_value() }})) {
         goto done;
     }
-    {{ completion.payload.value }} = {{ copy_buffer_storage }}((const uint8_t *)&{{ completion.payload.direct_value }}, (uintptr_t)sizeof({{ completion.payload.direct_value }}));
+    {{ completion.payload.value() }} = {{ copy_buffer_storage }}((const uint8_t *)&{{ completion.payload.direct_value() }}, (uintptr_t)sizeof({{ completion.payload.direct_value() }}));
 {%- else %}
-    if (!{{ completion.payload.parser }}(result, &{{ completion.payload.value }})) {
+    if (!{{ completion.payload.parser() }}(result, &{{ completion.payload.value() }})) {
         goto done;
     }
 {%- endif %}
@@ -144,15 +144,15 @@ static {{ method.returns.c_type }} {{ method.function }}(uint64_t handle{% if le
     fallible_payload = PyTuple_GET_ITEM(result, 1);
     if (fallible_ok) {
 {%- if fallible.success.wire %}
-        if (!{{ fallible.success.parser }}(fallible_payload, &return_wire, &return_ptr, &return_len)) {
+        if (!{{ fallible.success.parser() }}(fallible_payload, &return_wire, &return_ptr, &return_len)) {
             goto done;
         }
-        *{{ fallible.success.out }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+        *{{ fallible.success.out() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- elif fallible.success.direct %}
-        if (!{{ fallible.success.parser }}(fallible_payload, &{{ fallible.success.value }})) {
+        if (!{{ fallible.success.parser() }}(fallible_payload, &{{ fallible.success.value() }})) {
             goto done;
         }
-        *{{ fallible.success.out }} = {{ fallible.success.value }};
+        *{{ fallible.success.out() }} = {{ fallible.success.value() }};
 {%- endif %}
     } else {
         if (!{{ fallible.error.parser }}(fallible_payload, &return_wire, &return_ptr, &return_len)) {
@@ -163,12 +163,12 @@ static {{ method.returns.c_type }} {{ method.function }}(uint64_t handle{% if le
 {%- else %}
 {%- if method.returns.has_value() %}
 {%- if method.returns.wire %}
-    if (!{{ method.returns.parser }}(result, &return_wire, &return_ptr, &return_len)) {
+    if (!{{ method.returns.parser() }}(result, &return_wire, &return_ptr, &return_len)) {
         goto done;
     }
-    {{ method.returns.value }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+    {{ method.returns.value() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- else %}
-    if (!{{ method.returns.parser }}(result, &{{ method.returns.value }})) {
+    if (!{{ method.returns.parser() }}(result, &{{ method.returns.value() }})) {
         goto done;
     }
 {%- endif %}
@@ -194,14 +194,14 @@ done:
     PyGILState_Release(gil);
 {%- if let Some(completion) = method.completion %}
 {%- if completion.payload.has_value() %}
-    {{ completion.callback }}({{ completion.data }}, completion_status, {{ completion.payload.value }});
+    {{ completion.callback }}({{ completion.data }}, completion_status, {{ completion.payload.value() }});
 {%- else %}
     {{ completion.callback }}({{ completion.data }}, completion_status);
 {%- endif %}
     return;
 {%- endif %}
 {%- if method.returns.has_value() %}
-    return {{ method.returns.value }};
+    return {{ method.returns.value() }};
 {%- endif %}
 }
 

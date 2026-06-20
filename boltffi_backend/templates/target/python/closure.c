@@ -13,11 +13,11 @@ static {{ returns.c_type }} {{ invoke }}(void *context{% for param in params %}{
     int fallible_ok = 0;
     PyObject *fallible_payload = NULL;
 {%- if fallible.success.direct %}
-    {{ fallible.success.c_type }} {{ fallible.success.value }} = {{ fallible.success.default_value }};
+    {{ fallible.success.c_type() }} {{ fallible.success.value() }} = {{ fallible.success.default_value() }};
 {%- endif %}
 {%- endif %}
 {%- if returns.has_value() %}
-    {{ returns.c_type }} {{ returns.value }} = {{ returns.default_value }};
+    {{ returns.c_type }} {{ returns.value() }} = {{ returns.default_value }};
 {%- endif %}
     PyGILState_STATE gil = PyGILState_Ensure();
     PyObject *callable = (PyObject *)context;
@@ -49,15 +49,15 @@ static {{ returns.c_type }} {{ invoke }}(void *context{% for param in params %}{
     fallible_payload = PyTuple_GET_ITEM(result, 1);
     if (fallible_ok) {
 {%- if fallible.success.wire %}
-        if (!{{ fallible.success.parser }}(fallible_payload, &return_wire, &return_ptr, &return_len)) {
+        if (!{{ fallible.success.parser() }}(fallible_payload, &return_wire, &return_ptr, &return_len)) {
             goto done;
         }
-        *{{ fallible.success.out }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+        *{{ fallible.success.out() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- elif fallible.success.direct %}
-        if (!{{ fallible.success.parser }}(fallible_payload, &{{ fallible.success.value }})) {
+        if (!{{ fallible.success.parser() }}(fallible_payload, &{{ fallible.success.value() }})) {
             goto done;
         }
-        *{{ fallible.success.out }} = {{ fallible.success.value }};
+        *{{ fallible.success.out() }} = {{ fallible.success.value() }};
 {%- endif %}
     } else {
         if (!{{ fallible.error.parser }}(fallible_payload, &return_wire, &return_ptr, &return_len)) {
@@ -68,12 +68,12 @@ static {{ returns.c_type }} {{ invoke }}(void *context{% for param in params %}{
 {%- else %}
 {%- if returns.has_value() %}
 {%- if returns.wire %}
-    if (!{{ returns.parser }}(result, &return_wire, &return_ptr, &return_len)) {
+    if (!{{ returns.parser() }}(result, &return_wire, &return_ptr, &return_len)) {
         goto done;
     }
-    {{ returns.value }} = {{ copy_buffer_storage }}(return_ptr, return_len);
+    {{ returns.value() }} = {{ copy_buffer_storage }}(return_ptr, return_len);
 {%- else %}
-    if (!{{ returns.parser }}(result, &{{ returns.value }})) {
+    if (!{{ returns.parser() }}(result, &{{ returns.value() }})) {
         goto done;
     }
 {%- endif %}
@@ -93,7 +93,7 @@ done:
     Py_XDECREF(arguments);
     PyGILState_Release(gil);
 {%- if returns.has_value() %}
-    return {{ returns.value }};
+    return {{ returns.value() }};
 {%- endif %}
 }
 
