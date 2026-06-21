@@ -15,9 +15,14 @@ class AsyncResultTests(AsyncDemoTestCase):
         self.demo_case("case:results.async_results.fallible_fetch.should_reject_negative_key")
         await self.assert_runtime_error_contains("invalid key", lambda: demo.async_fallible_fetch(-1))
 
-    async def test_safe_divide_success(self) -> None:
+    async def test_safe_divide(self) -> None:
         self.demo_case("case:results.async_results.safe_divide.should_return_quotient")
         self.assertEqual(await demo.async_safe_divide(10, 2), 5)
+        self.demo_case("case:results.async_results.safe_divide.should_reject_division_by_zero")
+        await self.assert_runtime_error_value(
+            demo.MathError.DIVISION_BY_ZERO,
+            lambda: demo.async_safe_divide(10, 0),
+        )
 
     async def test_find_value(self) -> None:
         self.demo_case("case:results.async_results.find_value.should_return_some_for_positive_key")

@@ -1369,6 +1369,29 @@ mod tests {
     }
 
     #[test]
+    fn python_target_decodes_async_result_error_payloads() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub async fn fetch(value: i32) -> Result<i32, String> {
+                    if value > 0 {
+                        Ok(value)
+                    } else {
+                        Err("invalid value".to_string())
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render async result errors");
+        let init = file(&output, "demo/__init__.py");
+
+        assert!(init.contains("except RuntimeError as error:"));
+        assert!(init.contains("raise RuntimeError(decoder(error.args[0])) from error"));
+        assert!(init.contains("error_decoder=_boltffi_read_"));
+    }
+
+    #[test]
     fn python_target_requires_bool_objects_for_bool_parameters() {
         let output = target()
             .render(&bindings(

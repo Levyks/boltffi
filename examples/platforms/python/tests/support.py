@@ -30,4 +30,7 @@ class DemoTestCase(DemoCaseMixin, unittest.TestCase):
 
 
 class AsyncDemoTestCase(DemoCaseMixin, unittest.IsolatedAsyncioTestCase):
-    pass
+    async def assert_runtime_error_value(self, expected: object, call) -> None:
+        with self.assertRaises(RuntimeError) as error:
+            await call()
+        self.assertEqual(error.exception.args, (expected,))

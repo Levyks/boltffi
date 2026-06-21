@@ -34,15 +34,33 @@ _native._initialize_loader(str(Path(__file__).resolve().with_name(_shared_librar
 
 {% if uses_async_helpers %}
 class _BoltFfiNativeFuture:
-    __slots__ = ("_handle", "_poll", "_complete", "_cancel", "_free", "_panic_message")
+    __slots__ = (
+        "_handle",
+        "_poll",
+        "_complete",
+        "_cancel",
+        "_free",
+        "_panic_message",
+        "_error_decoder",
+    )
 
-    def __init__(self, handle, poll, complete, cancel, free, panic_message) -> None:
+    def __init__(
+        self,
+        handle,
+        poll,
+        complete,
+        cancel,
+        free,
+        panic_message,
+        error_decoder=None,
+    ) -> None:
         self._handle = handle
         self._poll = poll
         self._complete = complete
         self._cancel = cancel
         self._free = free
         self._panic_message = panic_message
+        self._error_decoder = error_decoder
 
     def __del__(self) -> None:
         try:
@@ -64,6 +82,11 @@ class _BoltFfiNativeFuture:
             raise
         try:
             return self._complete(handle)
+        except RuntimeError as error:
+            decoder = self._error_decoder
+            if decoder is not None and error.args and isinstance(error.args[0], bytes):
+                raise RuntimeError(decoder(error.args[0])) from error
+            raise
         finally:
             self.release()
 
