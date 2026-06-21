@@ -1,7 +1,7 @@
 import unittest
 
 
-class DemoTestCase(unittest.TestCase):
+class DemoCaseMixin:
     def setUp(self) -> None:
         self._current_demo_case = None
 
@@ -23,3 +23,11 @@ class DemoTestCase(unittest.TestCase):
             if case_id is not None and "case:" not in str(error):
                 raise AssertionError(f"{case_id}: {error}") from error
             raise
+
+
+class DemoTestCase(DemoCaseMixin, unittest.TestCase):
+    pass
+
+
+class AsyncDemoTestCase(DemoCaseMixin, unittest.IsolatedAsyncioTestCase):
+    pass

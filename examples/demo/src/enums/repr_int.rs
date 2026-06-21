@@ -106,12 +106,7 @@ pub fn echo_vec_log_level(levels: Vec<LogLevel>) -> Vec<LogLevel> {
 #[demo_bench_macros::demo_case(
     "enums.repr_int.http_code.should_expose_discriminant_values",
     justification = "Ensure HttpCode exposes the exact repr(u16) discriminants generated from Rust.",
-    directions = "Inspect or construct `enums::repr_int::HttpCode` through the generated binding and assert HttpCode exposes the exact repr(u16) discriminants generated from Rust.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports C-style enums with explicit integer tags, but the demo suite has no assertion for HttpCode discriminants yet."
-    )
+    directions = "Inspect or construct `enums::repr_int::HttpCode` through the generated binding and assert HttpCode exposes the exact repr(u16) discriminants generated from Rust."
 )]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,12 +120,7 @@ pub enum HttpCode {
 #[demo_bench_macros::demo_case(
     "enums.repr_int.http_code.should_roundtrip_values",
     justification = "Ensure a host-provided repr(u16) HttpCode value crosses the FFI boundary and returns unchanged.",
-    directions = "Call `enums::repr_int::echo_http_code` through the generated binding and assert a host-provided repr(u16) HttpCode value crosses the FFI boundary and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports C-style enums with explicit integer tags, but the demo suite has no assertion for HttpCode round-trips yet."
-    )
+    directions = "Call `enums::repr_int::echo_http_code` through the generated binding and assert a host-provided repr(u16) HttpCode value crosses the FFI boundary and returns unchanged."
 )]
 #[export]
 pub fn echo_http_code(code: HttpCode) -> HttpCode {
@@ -140,12 +130,7 @@ pub fn echo_http_code(code: HttpCode) -> HttpCode {
 #[demo_bench_macros::demo_case(
     "enums.repr_int.http_code.should_return_not_found",
     justification = "Ensure Rust can return the gapped HttpCode::NotFound discriminant to generated bindings.",
-    directions = "Call `enums::repr_int::http_code_not_found` through the generated binding and assert Rust can return the gapped HttpCode::NotFound discriminant to generated bindings.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports C-style enums with explicit integer tags, but the demo suite has no assertion for HttpCode constructors yet."
-    )
+    directions = "Call `enums::repr_int::http_code_not_found` through the generated binding and assert Rust can return the gapped HttpCode::NotFound discriminant to generated bindings."
 )]
 #[export]
 pub fn http_code_not_found() -> HttpCode {
@@ -167,12 +152,7 @@ pub fn http_code_not_found() -> HttpCode {
 #[demo_bench_macros::demo_case(
     "enums.repr_int.sign.should_expose_signed_discriminant_values",
     justification = "Ensure Sign exposes the exact signed repr(i8) discriminants generated from Rust.",
-    directions = "Inspect or construct `enums::repr_int::Sign` through the generated binding and assert Sign exposes the exact signed repr(i8) discriminants generated from Rust.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports signed C-style enum tags, but the demo suite has no assertion for Sign discriminants yet."
-    )
+    directions = "Inspect or construct `enums::repr_int::Sign` through the generated binding and assert Sign exposes the exact signed repr(i8) discriminants generated from Rust."
 )]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,12 +166,7 @@ pub enum Sign {
 #[demo_bench_macros::demo_case(
     "enums.repr_int.sign.should_roundtrip_signed_values",
     justification = "Ensure a host-provided repr(i8) Sign value crosses the FFI boundary with its signed value intact.",
-    directions = "Call `enums::repr_int::echo_sign` through the generated binding and assert a host-provided repr(i8) Sign value crosses the FFI boundary with its signed value intact.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports signed C-style enum tags, but the demo suite has no assertion for Sign round-trips yet."
-    )
+    directions = "Call `enums::repr_int::echo_sign` through the generated binding and assert a host-provided repr(i8) Sign value crosses the FFI boundary with its signed value intact."
 )]
 #[export]
 pub fn echo_sign(s: Sign) -> Sign {
@@ -201,12 +176,7 @@ pub fn echo_sign(s: Sign) -> Sign {
 #[demo_bench_macros::demo_case(
     "enums.repr_int.sign.should_return_negative",
     justification = "Ensure Rust can return the negative Sign discriminant to generated bindings.",
-    directions = "Call `enums::repr_int::sign_negative` through the generated binding and assert Rust can return the negative Sign discriminant to generated bindings.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports signed C-style enum tags, but the demo suite has no assertion for Sign constructors yet."
-    )
+    directions = "Call `enums::repr_int::sign_negative` through the generated binding and assert Rust can return the negative Sign discriminant to generated bindings."
 )]
 #[export]
 pub fn sign_negative() -> Sign {

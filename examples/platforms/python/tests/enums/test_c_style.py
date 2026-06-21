@@ -58,6 +58,42 @@ class CStyleEnumsTests(DemoTestCase):
         self.assertEqual(demo.direction_to_degrees(demo.Direction.SOUTH), 180)
         self.assertEqual(demo.direction_to_degrees(demo.Direction.WEST), 270)
 
+    def test_direction_optional_results(self) -> None:
+        self.demo_case("case:enums.c_style.direction.should_generate_sequence")
+        self.assertEqual(
+            demo.generate_directions(5),
+            [
+                demo.Direction.NORTH,
+                demo.Direction.EAST,
+                demo.Direction.SOUTH,
+                demo.Direction.WEST,
+                demo.Direction.NORTH,
+            ],
+        )
+        self.demo_case("case:enums.c_style.direction.should_count_north_values")
+        self.assertEqual(
+            demo.count_north(
+                [
+                    demo.Direction.NORTH,
+                    demo.Direction.EAST,
+                    demo.Direction.SOUTH,
+                    demo.Direction.WEST,
+                ]
+            ),
+            1,
+        )
+        self.demo_case("case:enums.c_style.direction.find_direction.should_return_some_for_known_id")
+        self.assertEqual(demo.find_direction(2), demo.Direction.SOUTH)
+        self.demo_case("case:enums.c_style.direction.find_direction.should_return_none_for_unknown_id")
+        self.assertIsNone(demo.find_direction(99))
+        self.demo_case("case:enums.c_style.direction.find_directions.should_return_sequence_for_positive_count")
+        self.assertEqual(
+            demo.find_directions(3),
+            [demo.Direction.NORTH, demo.Direction.EAST, demo.Direction.SOUTH],
+        )
+        self.demo_case("case:enums.c_style.direction.find_directions.should_return_none_for_non_positive_count")
+        self.assertIsNone(demo.find_directions(0))
+
     def test_repr_int_enums(self) -> None:
         self.demo_case("case:enums.repr_int.priority.should_roundtrip_value")
         self.assertEqual(demo.echo_priority(demo.Priority.HIGH), demo.Priority.HIGH)
@@ -80,6 +116,24 @@ class CStyleEnumsTests(DemoTestCase):
             ),
             [demo.LogLevel.TRACE, demo.LogLevel.INFO, demo.LogLevel.ERROR],
         )
+
+    def test_gapped_repr_int_enums(self) -> None:
+        self.demo_case("case:enums.repr_int.http_code.should_expose_discriminant_values")
+        self.assertEqual(int(demo.HttpCode.OK), 200)
+        self.assertEqual(int(demo.HttpCode.NOT_FOUND), 404)
+        self.assertEqual(int(demo.HttpCode.SERVER_ERROR), 500)
+        self.demo_case("case:enums.repr_int.http_code.should_roundtrip_values")
+        self.assertEqual(demo.echo_http_code(demo.HttpCode.OK), demo.HttpCode.OK)
+        self.demo_case("case:enums.repr_int.http_code.should_return_not_found")
+        self.assertEqual(demo.http_code_not_found(), demo.HttpCode.NOT_FOUND)
+        self.demo_case("case:enums.repr_int.sign.should_expose_signed_discriminant_values")
+        self.assertEqual(int(demo.Sign.NEGATIVE), -1)
+        self.assertEqual(int(demo.Sign.ZERO), 0)
+        self.assertEqual(int(demo.Sign.POSITIVE), 1)
+        self.demo_case("case:enums.repr_int.sign.should_roundtrip_signed_values")
+        self.assertEqual(demo.echo_sign(demo.Sign.POSITIVE), demo.Sign.POSITIVE)
+        self.demo_case("case:enums.repr_int.sign.should_return_negative")
+        self.assertEqual(demo.sign_negative(), demo.Sign.NEGATIVE)
 
     def test_rejects_plain_ints_for_enum_parameters(self) -> None:
         with self.assertRaises(TypeError):

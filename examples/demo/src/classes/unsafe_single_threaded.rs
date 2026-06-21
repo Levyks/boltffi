@@ -43,12 +43,7 @@ impl MapView {
     #[demo_bench_macros::demo_case(
         "classes.unsafe_single_threaded.map_view.add_marker.should_return_single_threaded_marker_handle",
         justification = "Ensure a single-threaded class method returns another single-threaded class as an owned object handle.",
-        directions = "Call `classes::unsafe_single_threaded::MapView::add_marker` through the generated binding and assert the returned Marker handle exposes the MarkerOptions fields.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer does not currently emit class/object bindings. Include this case when Python class bindings are implemented."
-        )
+        directions = "Call `classes::unsafe_single_threaded::MapView::add_marker` through the generated binding and assert the returned Marker handle exposes the MarkerOptions fields."
     )]
     pub fn add_marker(&self, options: MarkerOptions) -> Marker {
         self.markers_created.set(self.markers_created.get() + 1);

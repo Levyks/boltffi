@@ -70,6 +70,12 @@ class PrimitiveVecsTests(DemoTestCase):
         self.assertTrue(math.isclose(values[0], 1.25, rel_tol=0.0, abs_tol=1e-6))
         self.assertTrue(math.isclose(values[1], -2.5, rel_tol=0.0, abs_tol=1e-6))
 
+    def test_echo_vec_string(self) -> None:
+        self.demo_case("case:primitives.vecs.string.should_roundtrip_values")
+        self.assertEqual(demo.echo_vec_string(["hello", "world"]), ["hello", "world"])
+        self.demo_case("case:primitives.vecs.string.should_report_utf8_byte_lengths")
+        self.assertEqual(demo.vec_string_lengths(["hi", "café"]), [2, 5])
+
     def test_make_range(self) -> None:
         self.demo_case("case:primitives.vecs.i32.should_make_range")
         self.assertEqual(demo.make_range(0, 5), [0, 1, 2, 3, 4])
@@ -77,3 +83,15 @@ class PrimitiveVecsTests(DemoTestCase):
     def test_reverse_vec_i32(self) -> None:
         self.demo_case("case:primitives.vecs.i32.should_reverse_values")
         self.assertEqual(demo.reverse_vec_i32([1, 2, 3]), [3, 2, 1])
+
+    def test_benchmark_vecs(self) -> None:
+        self.demo_case("case:primitives.vecs.i32.should_generate_sequence")
+        self.assertEqual(demo.generate_i32_vec(4), [0, 1, 2, 3])
+        self.demo_case("case:primitives.vecs.i32.should_sum_benchmark_values")
+        self.assertEqual(demo.sum_i32_vec([10, 20, 30]), 60)
+        self.demo_case("case:primitives.vecs.f64.should_generate_sequence")
+        self.assertEqual(demo.generate_f64_vec(3), [0.0, 0.1, 0.2])
+        self.demo_case("case:primitives.vecs.f64.should_sum_values")
+        self.assertEqual(demo.sum_f64_vec([1.5, 2.5, 4.0]), 8.0)
+        self.demo_case("case:primitives.vecs.u64.should_increment_value")
+        self.assertEqual(demo.inc_u64_value(41), 42)

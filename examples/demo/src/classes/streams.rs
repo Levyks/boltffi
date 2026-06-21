@@ -80,11 +80,6 @@ impl EventBus {
             typescript,
             reason = ExclusionReason::ImplementationGap,
             details = "The WASM/TypeScript backend does not currently expose class stream subscriptions. Include this case when WASM stream subscriptions are implemented."
-        ),
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer does not currently emit class/object stream bindings. Include this case when Python class streams are implemented."
         )
     )]
     #[ffi_stream(item = StreamMessage)]

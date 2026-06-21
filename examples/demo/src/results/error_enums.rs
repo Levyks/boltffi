@@ -36,7 +36,7 @@ impl From<UnexpectedFfiCallbackError> for MathError {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -65,7 +65,7 @@ pub fn checked_divide(a: i32, b: i32) -> Result<i32, MathError> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -94,7 +94,7 @@ pub fn checked_sqrt(x: f64) -> Result<f64, MathError> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -134,7 +134,7 @@ impl std::error::Error for AppError {}
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -166,7 +166,7 @@ pub fn may_fail(valid: bool) -> Result<String, AppError> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -223,7 +223,7 @@ impl std::error::Error for ValidationError {}
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -309,32 +309,17 @@ pub struct BenchmarkResponse {
 #[demo_bench_macros::demo_case(
     "results.error_enums.process_value.should_return_success_variant",
     justification = "Ensure process_value returns the Success data enum variant for positive input.",
-    directions = "Call `results::error_enums::process_value` through the generated binding and assert process_value returns the Success data enum variant for positive input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::process_value` through the generated binding and assert process_value returns the Success data enum variant for positive input."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.process_value.should_return_error_code_variant",
     justification = "Ensure process_value returns the ErrorCode data enum variant for zero input.",
-    directions = "Call `results::error_enums::process_value` through the generated binding and assert process_value returns the ErrorCode data enum variant for zero input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::process_value` through the generated binding and assert process_value returns the ErrorCode data enum variant for zero input."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.process_value.should_return_error_with_data_variant",
     justification = "Ensure process_value returns the ErrorWithData data enum variant for negative input.",
-    directions = "Call `results::error_enums::process_value` through the generated binding and assert process_value returns the ErrorWithData data enum variant for negative input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::process_value` through the generated binding and assert process_value returns the ErrorWithData data enum variant for negative input."
 )]
 #[export]
 pub fn process_value(value: i32) -> ApiResult {
@@ -353,12 +338,7 @@ pub fn process_value(value: i32) -> ApiResult {
 #[demo_bench_macros::demo_case(
     "results.error_enums.api_result_is_success.should_report_success_variant",
     justification = "Ensure api_result_is_success returns true for the Success data enum variant.",
-    directions = "Call `results::error_enums::api_result_is_success` through the generated binding and assert api_result_is_success returns true for the Success data enum variant.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::api_result_is_success` through the generated binding and assert api_result_is_success returns true for the Success data enum variant."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.api_result_is_success.should_report_error_variant",
@@ -382,7 +362,7 @@ pub fn api_result_is_success(result: ApiResult) -> bool {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -409,12 +389,7 @@ pub fn try_compute(value: i32) -> Result<i32, ComputeError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_make_success_response",
     justification = "Ensure create_success_response returns a BenchmarkResponse carrying an Ok DataPoint result.",
-    directions = "Call `results::error_enums::create_success_response` through the generated binding and assert create_success_response returns a BenchmarkResponse carrying an Ok DataPoint result.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::create_success_response` through the generated binding and assert create_success_response returns a BenchmarkResponse carrying an Ok DataPoint result."
 )]
 #[export]
 pub fn create_success_response(request_id: i64, point: DataPoint) -> BenchmarkResponse {
@@ -445,12 +420,7 @@ pub fn create_error_response(request_id: i64, error: ComputeError) -> BenchmarkR
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_report_success_response",
     justification = "Ensure is_response_success returns true for a BenchmarkResponse carrying an Ok result.",
-    directions = "Call `results::error_enums::is_response_success` through the generated binding and assert is_response_success returns true for a BenchmarkResponse carrying an Ok result.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::is_response_success` through the generated binding and assert is_response_success returns true for a BenchmarkResponse carrying an Ok result."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_report_error_response",
@@ -470,12 +440,7 @@ pub fn is_response_success(response: BenchmarkResponse) -> bool {
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_return_value_for_success_response",
     justification = "Ensure get_response_value returns Some(DataPoint) for a BenchmarkResponse carrying an Ok result.",
-    directions = "Call `results::error_enums::get_response_value` through the generated binding and assert get_response_value returns Some(DataPoint) for a BenchmarkResponse carrying an Ok result.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::get_response_value` through the generated binding and assert get_response_value returns Some(DataPoint) for a BenchmarkResponse carrying an Ok result."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_return_none_for_error_response",

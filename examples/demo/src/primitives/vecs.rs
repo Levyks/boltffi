@@ -153,12 +153,7 @@ pub fn echo_vec_bool(v: Vec<bool>) -> Vec<bool> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.string.should_roundtrip_values",
     justification = "Ensure a non-empty string vector crosses the wire and returns unchanged.",
-    directions = "Call `primitives::vecs::echo_vec_string` through the generated binding and assert a non-empty string vector crosses the wire and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle Vec<String>. Include this case when string-vector support is implemented for Python."
-    )
+    directions = "Call `primitives::vecs::echo_vec_string` through the generated binding and assert a non-empty string vector crosses the wire and returns unchanged."
 )]
 #[export]
 pub fn echo_vec_string(v: Vec<String>) -> Vec<String> {
@@ -168,12 +163,7 @@ pub fn echo_vec_string(v: Vec<String>) -> Vec<String> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.string.should_report_utf8_byte_lengths",
     justification = "Ensure a string vector crosses the wire and returns UTF-8 byte lengths for each string.",
-    directions = "Call `primitives::vecs::vec_string_lengths` through the generated binding and assert a string vector crosses the wire and returns UTF-8 byte lengths for each string.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle Vec<String>. Include this case when string-vector support is implemented for Python."
-    )
+    directions = "Call `primitives::vecs::vec_string_lengths` through the generated binding and assert a string vector crosses the wire and returns UTF-8 byte lengths for each string."
 )]
 #[export]
 pub fn vec_string_lengths(v: Vec<String>) -> Vec<u32> {
@@ -203,12 +193,7 @@ pub fn reverse_vec_i32(v: Vec<i32>) -> Vec<i32> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.i32.should_generate_sequence",
     justification = "Ensure an i32 count crosses the wire and returns a generated i32 sequence.",
-    directions = "Call `primitives::vecs::generate_i32_vec` through the generated binding and assert an i32 count crosses the wire and returns a generated i32 sequence.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive vector returns, but the demo suite has no assertion for this benchmark vector generator yet."
-    )
+    directions = "Call `primitives::vecs::generate_i32_vec` through the generated binding and assert an i32 count crosses the wire and returns a generated i32 sequence."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -219,12 +204,7 @@ pub fn generate_i32_vec(count: i32) -> Vec<i32> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.i32.should_sum_benchmark_values",
     justification = "Ensure an i32 vector crosses the wire through the benchmark sum helper and returns as an i64 sum.",
-    directions = "Call `primitives::vecs::sum_i32_vec` through the generated binding and assert an i32 vector crosses the wire through the benchmark sum helper and returns as an i64 sum.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive vector parameters and primitive returns, but the demo suite has no assertion for this benchmark sum helper yet."
-    )
+    directions = "Call `primitives::vecs::sum_i32_vec` through the generated binding and assert an i32 vector crosses the wire through the benchmark sum helper and returns as an i64 sum."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -235,12 +215,7 @@ pub fn sum_i32_vec(values: Vec<i32>) -> i64 {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.f64.should_generate_sequence",
     justification = "Ensure an i32 count crosses the wire and returns a generated f64 sequence.",
-    directions = "Call `primitives::vecs::generate_f64_vec` through the generated binding and assert an i32 count crosses the wire and returns a generated f64 sequence.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive vector returns, but the demo suite has no assertion for this benchmark vector generator yet."
-    )
+    directions = "Call `primitives::vecs::generate_f64_vec` through the generated binding and assert an i32 count crosses the wire and returns a generated f64 sequence."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -251,12 +226,7 @@ pub fn generate_f64_vec(count: i32) -> Vec<f64> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.f64.should_sum_values",
     justification = "Ensure a f64 vector crosses the wire and returns as a f64 sum.",
-    directions = "Call `primitives::vecs::sum_f64_vec` through the generated binding and assert a f64 vector crosses the wire and returns as a f64 sum.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive vector parameters and f64 returns, but the demo suite has no assertion for this vector sum helper yet."
-    )
+    directions = "Call `primitives::vecs::sum_f64_vec` through the generated binding and assert a f64 vector crosses the wire and returns as a f64 sum."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -285,12 +255,7 @@ pub fn inc_u64(values: &mut [u64]) {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.u64.should_increment_value",
     justification = "Ensure a u64 value crosses the wire and returns incremented by one.",
-    directions = "Call `primitives::vecs::inc_u64_value` through the generated binding and assert a u64 value crosses the wire and returns incremented by one.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive scalar calls, but the demo suite has no assertion for this benchmark increment helper yet."
-    )
+    directions = "Call `primitives::vecs::inc_u64_value` through the generated binding and assert a u64 value crosses the wire and returns incremented by one."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]

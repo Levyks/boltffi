@@ -216,12 +216,7 @@ pub fn direction_to_degrees(direction: Direction) -> i32 {
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.should_generate_sequence",
     justification = "Ensure generate_directions returns a cyclic sequence of Direction values.",
-    directions = "Call `enums::c_style::generate_directions` through the generated binding and assert generate_directions returns a cyclic sequence of Direction values.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports C-style enum vectors, but the demo suite has no assertion for direction sequence helpers yet."
-    )
+    directions = "Call `enums::c_style::generate_directions` through the generated binding and assert generate_directions returns a cyclic sequence of Direction values."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -240,12 +235,7 @@ pub fn generate_directions(count: i32) -> Vec<Direction> {
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.should_count_north_values",
     justification = "Ensure count_north returns the number of North variants in a Direction vector.",
-    directions = "Call `enums::c_style::count_north` through the generated binding and assert count_north returns the number of North variants in a Direction vector.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports C-style enum vectors, but the demo suite has no assertion for direction sequence helpers yet."
-    )
+    directions = "Call `enums::c_style::count_north` through the generated binding and assert count_north returns the number of North variants in a Direction vector."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -259,22 +249,12 @@ pub fn count_north(directions: Vec<Direction>) -> i32 {
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.find_direction.should_return_some_for_known_id",
     justification = "Ensure find_direction returns Some(Direction) for a known id.",
-    directions = "Call `enums::c_style::find_direction` through the generated binding and assert find_direction returns Some(Direction) for a known id.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; C-style enums are emitted, but Option<Direction> returns are not. Include this case when optional enum returns are implemented for Python."
-    )
+    directions = "Call `enums::c_style::find_direction` through the generated binding and assert find_direction returns Some(Direction) for a known id."
 )]
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.find_direction.should_return_none_for_unknown_id",
     justification = "Ensure find_direction returns None for an unknown id.",
-    directions = "Call `enums::c_style::find_direction` through the generated binding and assert find_direction returns None for an unknown id.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; C-style enums are emitted, but Option<Direction> returns are not. Include this case when optional enum returns are implemented for Python."
-    )
+    directions = "Call `enums::c_style::find_direction` through the generated binding and assert find_direction returns None for an unknown id."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -291,22 +271,12 @@ pub fn find_direction(id: i32) -> Option<Direction> {
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.find_directions.should_return_sequence_for_positive_count",
     justification = "Ensure find_directions returns Some generated directions for a positive count.",
-    directions = "Call `enums::c_style::find_directions` through the generated binding and assert find_directions returns Some generated directions for a positive count.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; C-style enum vectors are emitted, but Option<Vec<Direction>> returns are not. Include this case when optional enum-vector returns are implemented for Python."
-    )
+    directions = "Call `enums::c_style::find_directions` through the generated binding and assert find_directions returns Some generated directions for a positive count."
 )]
 #[demo_bench_macros::demo_case(
     "enums.c_style.direction.find_directions.should_return_none_for_non_positive_count",
     justification = "Ensure find_directions returns None for a non-positive count.",
-    directions = "Call `enums::c_style::find_directions` through the generated binding and assert find_directions returns None for a non-positive count.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; C-style enum vectors are emitted, but Option<Vec<Direction>> returns are not. Include this case when optional enum-vector returns are implemented for Python."
-    )
+    directions = "Call `enums::c_style::find_directions` through the generated binding and assert find_directions returns None for a non-positive count."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi)]

@@ -19,12 +19,7 @@ impl ServiceConfig {
     #[demo_bench_macros::demo_case(
         "records.default_values.service_config.from_owned_name.should_return_config",
         justification = "Ensure a non-blittable record constructor accepts an owned String and returns the encoded record.",
-        directions = "Call `records::default_values::ServiceConfig::from_owned_name` through the generated binding and assert it returns a ServiceConfig using the provided name.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
-        )
+        directions = "Call `records::default_values::ServiceConfig::from_owned_name` through the generated binding and assert it returns a ServiceConfig using the provided name."
     )]
     pub fn from_owned_name(name: String) -> Self {
         Self {
@@ -39,12 +34,7 @@ impl ServiceConfig {
     #[demo_bench_macros::demo_case(
         "records.default_values.service_config.from_borrowed_name.should_return_config",
         justification = "Ensure a non-blittable record constructor accepts a borrowed string and returns the encoded record.",
-        directions = "Call `records::default_values::ServiceConfig::from_borrowed_name` through the generated binding and assert it returns a ServiceConfig using the provided name.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
-        )
+        directions = "Call `records::default_values::ServiceConfig::from_borrowed_name` through the generated binding and assert it returns a ServiceConfig using the provided name."
     )]
     pub fn from_borrowed_name(name: &str) -> Self {
         Self {
@@ -59,12 +49,7 @@ impl ServiceConfig {
     #[demo_bench_macros::demo_case(
         "records.default_values.service_config.from_string_ref_name.should_return_config",
         justification = "Ensure a non-blittable record constructor accepts a borrowed String reference and returns the encoded record.",
-        directions = "Call `records::default_values::ServiceConfig::from_string_ref_name` through the generated binding and assert it returns a ServiceConfig using the provided name.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
-        )
+        directions = "Call `records::default_values::ServiceConfig::from_string_ref_name` through the generated binding and assert it returns a ServiceConfig using the provided name."
     )]
     #[allow(clippy::ptr_arg)]
     pub fn from_string_ref_name(name: &String) -> Self {
@@ -80,12 +65,7 @@ impl ServiceConfig {
     #[demo_bench_macros::demo_case(
         "records.default_values.service_config.should_describe_values",
         justification = "Ensure ServiceConfig::describe formats defaulted and explicit fields into a stable string.",
-        directions = "Call `records::default_values::ServiceConfig::describe` through the generated binding and assert ServiceConfig::describe formats defaulted and explicit fields into a stable string.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
-        )
+        directions = "Call `records::default_values::ServiceConfig::describe` through the generated binding and assert ServiceConfig::describe formats defaulted and explicit fields into a stable string."
     )]
     pub fn describe(&self) -> String {
         let endpoint = self.endpoint.as_deref().unwrap_or("none");
@@ -99,12 +79,7 @@ impl ServiceConfig {
     #[demo_bench_macros::demo_case(
         "records.default_values.service_config.should_describe_with_prefix",
         justification = "Ensure ServiceConfig::describe_with_prefix prepends a caller-provided string to the description.",
-        directions = "Call `records::default_values::ServiceConfig::describe_with_prefix` through the generated binding and assert ServiceConfig::describe_with_prefix prepends a caller-provided string to the description.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
-        )
+        directions = "Call `records::default_values::ServiceConfig::describe_with_prefix` through the generated binding and assert ServiceConfig::describe_with_prefix prepends a caller-provided string to the description."
     )]
     pub fn describe_with_prefix(&self, prefix: String) -> String {
         format!("{}:{}", prefix, self.describe())
@@ -133,11 +108,6 @@ impl ServiceConfig {
             typescript,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for fallible non-blittable record constructors."
-        ),
-        exclude(
-            python,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Python demo suite yet. Add it when Python demo coverage expands for fallible non-blittable record constructors."
         )
     )]
     #[demo_bench_macros::demo_case(
@@ -163,11 +133,6 @@ impl ServiceConfig {
             typescript,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for fallible non-blittable record constructors."
-        ),
-        exclude(
-            python,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Python demo suite yet. Add it when Python demo coverage expands for fallible non-blittable record constructors."
         )
     )]
     pub fn try_with_retries(retries: i32) -> Result<Self, String> {
@@ -207,11 +172,6 @@ impl ServiceConfig {
             typescript,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for optional non-blittable record constructors."
-        ),
-        exclude(
-            python,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Python demo suite yet. Add it when Python demo coverage expands for optional non-blittable record constructors."
         )
     )]
     #[demo_bench_macros::demo_case(
@@ -237,11 +197,6 @@ impl ServiceConfig {
             typescript,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for optional non-blittable record constructors."
-        ),
-        exclude(
-            python,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Python demo suite yet. Add it when Python demo coverage expands for optional non-blittable record constructors."
         )
     )]
     pub fn maybe_with_retries(retries: i32) -> Option<Self> {
@@ -262,12 +217,7 @@ impl ServiceConfig {
 #[demo_bench_macros::demo_case(
     "records.default_values.service_config.should_roundtrip_value",
     justification = "Ensure a ServiceConfig record with defaulted and explicit fields crosses the wire and returns unchanged.",
-    directions = "Call `records::default_values::echo_service_config` through the generated binding and assert a ServiceConfig record with defaulted and explicit fields crosses the wire and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently emits only primitive-field blittable records. Include this case when non-blittable records are implemented for Python."
-    )
+    directions = "Call `records::default_values::echo_service_config` through the generated binding and assert a ServiceConfig record with defaulted and explicit fields crosses the wire and returns unchanged."
 )]
 #[export]
 pub fn echo_service_config(config: ServiceConfig) -> ServiceConfig {

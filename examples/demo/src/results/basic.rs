@@ -9,7 +9,7 @@ use crate::records::blittable::Point;
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -19,7 +19,7 @@ use crate::records::blittable::Point;
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -38,7 +38,7 @@ pub fn safe_divide(a: i32, b: i32) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -48,7 +48,7 @@ pub fn safe_divide(a: i32, b: i32) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -67,7 +67,7 @@ pub fn safe_sqrt(x: f64) -> Result<f64, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -77,7 +77,7 @@ pub fn safe_sqrt(x: f64) -> Result<f64, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -104,7 +104,7 @@ pub fn parse_point(s: String) -> Result<Point, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -119,7 +119,7 @@ pub fn always_ok(v: i32) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -130,22 +130,12 @@ pub fn always_err(msg: String) -> Result<i32, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.result_to_string.should_render_ok",
     justification = "Ensure result_to_string receives an Ok Result value over FFI and renders its success payload.",
-    directions = "Call `results::basic::result_to_string` through the generated binding and assert result_to_string receives an Ok Result value over FFI and renders its success payload.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently accept Result<T, E> parameters. Include this case when Result parameters are implemented for Python."
-    )
+    directions = "Call `results::basic::result_to_string` through the generated binding and assert result_to_string receives an Ok Result value over FFI and renders its success payload."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.result_to_string.should_render_err",
     justification = "Ensure result_to_string receives an Err Result value over FFI and renders its error payload.",
-    directions = "Call `results::basic::result_to_string` through the generated binding and assert result_to_string receives an Err Result value over FFI and renders its error payload.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently accept Result<T, E> parameters. Include this case when Result parameters are implemented for Python."
-    )
+    directions = "Call `results::basic::result_to_string` through the generated binding and assert result_to_string receives an Err Result value over FFI and renders its error payload."
 )]
 #[export]
 pub fn result_to_string(v: Result<i32, String>) -> String {
@@ -162,7 +152,7 @@ pub fn result_to_string(v: Result<i32, String>) -> String {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -172,7 +162,7 @@ pub fn result_to_string(v: Result<i32, String>) -> String {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -187,7 +177,7 @@ pub fn divide(a: i32, b: i32) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -197,7 +187,7 @@ pub fn divide(a: i32, b: i32) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]
@@ -214,7 +204,7 @@ pub fn parse_int(input: String) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -224,7 +214,7 @@ pub fn parse_int(input: String) -> Result<i32, String> {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result-returning functions. Include this case when Result returns are implemented for Python."
+        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
     )
 )]
 #[export]

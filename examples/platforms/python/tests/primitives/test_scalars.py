@@ -29,6 +29,9 @@ class ScalarsTests(DemoTestCase):
     def test_add_i32(self) -> None:
         self.assertEqual(demo.add_i32(10, 20), 30, "case:primitives.scalars.i32.should_add_two_values")
 
+    def test_add_alias(self) -> None:
+        self.assertEqual(demo.add(10, 20), 30, "case:primitives.scalars.i32.should_add_with_benchmark_alias")
+
     def test_echo_u32(self) -> None:
         self.assertEqual(demo.echo_u32(4_000_000_000), 4_000_000_000, "case:primitives.scalars.u32.should_roundtrip_large_value")
 
@@ -67,8 +70,17 @@ class ScalarsTests(DemoTestCase):
             "case:primitives.scalars.f64.should_add_two_values_with_tolerance",
         )
 
+    def test_multiply_f64(self) -> None:
+        self.assertTrue(
+            math.isclose(demo.multiply(1.5, 2.5), 3.75, rel_tol=0.0, abs_tol=1e-12),
+            "case:primitives.scalars.f64.should_multiply_two_values",
+        )
+
     def test_echo_usize(self) -> None:
         self.assertEqual(demo.echo_usize(123), 123, "case:primitives.scalars.usize.should_roundtrip_value")
 
     def test_echo_isize(self) -> None:
         self.assertEqual(demo.echo_isize(-123), -123, "case:primitives.scalars.isize.should_roundtrip_negative_value")
+
+    def test_noop(self) -> None:
+        self.assertIsNone(demo.noop(), "case:primitives.scalars.noop.should_cross_without_values")

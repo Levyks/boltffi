@@ -182,12 +182,7 @@ pub fn echo_isize(v: isize) -> isize {
 #[demo_bench_macros::demo_case(
     "primitives.scalars.noop.should_cross_without_values",
     justification = "Ensure a no-argument no-op call crosses the wire without returning a value.",
-    directions = "Call `primitives::scalars::noop` through the generated binding and assert a no-argument no-op call crosses the wire without returning a value.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive scalar calls, but the demo suite has no assertion for the scalar noop benchmark helper yet."
-    )
+    directions = "Call `primitives::scalars::noop` through the generated binding and assert a no-argument no-op call crosses the wire without returning a value."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -196,12 +191,7 @@ pub fn noop() {}
 #[demo_bench_macros::demo_case(
     "primitives.scalars.i32.should_add_with_benchmark_alias",
     justification = "Ensure two i32 values cross the wire through the benchmark add alias and return as their sum.",
-    directions = "Call `primitives::scalars::add` through the generated binding and assert two i32 values cross the wire through the benchmark add alias and return as their sum.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive scalar calls, but the demo suite has no assertion for the benchmark add alias yet."
-    )
+    directions = "Call `primitives::scalars::add` through the generated binding and assert two i32 values cross the wire through the benchmark add alias and return as their sum."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
@@ -212,12 +202,7 @@ pub fn add(a: i32, b: i32) -> i32 {
 #[demo_bench_macros::demo_case(
     "primitives.scalars.f64.should_multiply_two_values",
     justification = "Ensure two f64 values cross the wire and return as their product.",
-    directions = "Call `primitives::scalars::multiply` through the generated binding and assert two f64 values cross the wire and return as their product.",
-    exclude(
-        python,
-        reason = ExclusionReason::CoverageGap,
-        details = "Python supports primitive scalar calls, but the demo suite has no assertion for the scalar multiply helper yet."
-    )
+    directions = "Call `primitives::scalars::multiply` through the generated binding and assert two f64 values cross the wire and return as their product."
 )]
 #[export]
 #[benchmark_candidate(function, uniffi, wasm_bindgen)]
