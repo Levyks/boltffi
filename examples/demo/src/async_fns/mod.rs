@@ -77,7 +77,7 @@ pub async fn async_concat(strings: Vec<String>) -> String {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently omits async functions. Include this case when async Python bindings are implemented."
+        details = "Python async Result<T, E> failures currently raise raw encoded error bytes for typed errors. Include this case when async typed Result failures decode the error payload for Python."
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -87,7 +87,7 @@ pub async fn async_concat(strings: Vec<String>) -> String {
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently omits async functions. Include this case when async Python bindings are implemented."
+        details = "Python async Result<T, E> failures currently raise raw encoded error bytes for typed errors. Include this case when async typed Result failures decode the error payload for Python."
     )
 )]
 #[export]

@@ -397,12 +397,7 @@ pub fn create_success_response(request_id: i64, point: DataPoint) -> BenchmarkRe
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_make_error_response",
     justification = "Ensure create_error_response returns or surfaces a BenchmarkResponse carrying an Err ComputeError result.",
-    directions = "Call `results::error_enums::create_error_response` through the generated binding and assert create_error_response returns or surfaces a BenchmarkResponse carrying an Err ComputeError result.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::create_error_response` through the generated binding and assert create_error_response returns or surfaces a BenchmarkResponse carrying an Err ComputeError result."
 )]
 #[export]
 pub fn create_error_response(request_id: i64, error: ComputeError) -> BenchmarkResponse {
@@ -420,12 +415,7 @@ pub fn create_error_response(request_id: i64, error: ComputeError) -> BenchmarkR
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_report_error_response",
     justification = "Ensure is_response_success returns false for a BenchmarkResponse carrying an Err result.",
-    directions = "Call `results::error_enums::is_response_success` through the generated binding and assert is_response_success returns false for a BenchmarkResponse carrying an Err result.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::is_response_success` through the generated binding and assert is_response_success returns false for a BenchmarkResponse carrying an Err result."
 )]
 #[export]
 pub fn is_response_success(response: BenchmarkResponse) -> bool {
@@ -440,12 +430,7 @@ pub fn is_response_success(response: BenchmarkResponse) -> bool {
 #[demo_bench_macros::demo_case(
     "results.error_enums.benchmark_response.should_return_none_for_error_response",
     justification = "Ensure get_response_value returns None for a BenchmarkResponse carrying an Err result.",
-    directions = "Call `results::error_enums::get_response_value` through the generated binding and assert get_response_value returns None for a BenchmarkResponse carrying an Err result.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::get_response_value` through the generated binding and assert get_response_value returns None for a BenchmarkResponse carrying an Err result."
 )]
 #[export]
 pub fn get_response_value(response: BenchmarkResponse) -> Option<DataPoint> {

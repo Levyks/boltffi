@@ -14,7 +14,7 @@ use super::error_enums::MathError;
     exclude(
         python,
         reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently omits async functions and Result returns. Include this case when async Result support is implemented for Python."
+        details = "Python async Result<T, E> failures currently raise raw encoded error bytes for typed errors. Include this case when async typed Result failures decode the error payload for Python."
     )
 )]
 #[export]
