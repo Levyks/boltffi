@@ -519,6 +519,21 @@ impl SupportFunctions {
     pub fn functions(&self) -> &[Function] {
         &self.functions
     }
+
+    /// Returns the C ABI support function that releases a BoltFFI buffer.
+    pub fn buffer_free(&self) -> Result<&Function> {
+        self.function("boltffi_free_buf", "missing C free buffer support symbol")
+    }
+
+    fn function(&self, name: &str, shape: &'static str) -> Result<&Function> {
+        self.functions
+            .iter()
+            .find(|function| function.name() == name)
+            .ok_or(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape,
+            })
+    }
 }
 
 impl Enum {

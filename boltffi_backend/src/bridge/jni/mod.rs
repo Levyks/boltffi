@@ -9,7 +9,10 @@ mod name;
 mod template;
 
 pub use bridge::JniBridge;
-pub use contract::{JniBridgeContract, JniType, NativeMethod, NativeParameter, NativeReturn};
+pub use contract::{
+    BytesParameter, JniBridgeContract, JniType, NativeMethod, NativeParameter, NativeParameterKind,
+    NativeReturn, ScalarParameter,
+};
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
 #[cfg(test)]
@@ -73,6 +76,11 @@ mod tests {
 
             #[export]
             pub fn refresh() {}
+
+            #[export]
+            pub fn echo_bytes(bytes: Vec<u8>) -> Vec<u8> {
+                bytes
+            }
             "#,
         );
         let header = files
@@ -95,6 +103,10 @@ mod tests {
         assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1refresh(JNIEnv *env, jclass cls)"));
         assert!(source.contains("FfiStatus status = boltffi_function_demo_refresh();"));
         assert!(source.contains("boltffi_jni_throw_status(env, status);"));
+        assert!(source.contains("JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1bytes(JNIEnv *env, jclass cls, jbyteArray bytes)"));
+        assert!(source.contains("jbyte *__boltffi_bytes_ptr = NULL;"));
+        assert!(source.contains("FfiBuf_u8 result = boltffi_function_demo_echo_bytes((const uint8_t *)__boltffi_bytes_ptr, (uintptr_t)__boltffi_bytes_len);"));
+        assert!(source.contains("return boltffi_jni_buffer_to_byte_array(env, result);"));
     }
 
     #[test]
