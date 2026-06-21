@@ -3,26 +3,28 @@ use boltffi_binding::{DirectValueType, FieldKey, IntrinsicOp, OpRender, ValueRef
 use crate::{
     core::{Error, Result},
     target::python::{
-        codec::value::ValueExpression,
+        codec::value::{SelfPositionAccess, ValueExpression},
         cpython::render::primitive,
         syntax::{CallExpression, Expression, Identifier, Literal},
     },
 };
 
 pub struct Operation {
-    self_value: ValueRef,
+    current_value: ValueRef,
+    self_position_access: SelfPositionAccess,
 }
 
 impl Operation {
-    pub fn with_self_value(value: &ValueRef) -> Self {
+    pub fn new(current_value: &ValueRef, self_position_access: SelfPositionAccess) -> Self {
         Self {
-            self_value: value.clone(),
+            current_value: current_value.clone(),
+            self_position_access,
         }
     }
 
     fn value_ref(&self, value: &ValueRef) -> ValueRef {
         match value.root() {
-            ValueRoot::SelfValue => self.self_value.clone(),
+            ValueRoot::SelfValue => self.current_value.clone(),
             _ => value.clone(),
         }
     }
@@ -51,7 +53,11 @@ impl OpRender for Operation {
     type Expr = Result<Expression>;
 
     fn value(&mut self, value: &ValueRef) -> Self::Expr {
-        ValueExpression::new(&self.value_ref(value)).render()
+        ValueExpression::with_self_position_access(
+            &self.value_ref(value),
+            self.self_position_access,
+        )
+        .render()
     }
 
     fn byte_count(&mut self, bytes: u64) -> Self::Expr {

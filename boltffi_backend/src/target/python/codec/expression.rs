@@ -3,7 +3,7 @@ use boltffi_binding::{ReadPlan, WritePlan};
 use crate::{
     core::Result,
     target::python::{
-        codec::{read::Reader, write::Writer},
+        codec::{read::Reader, value::SelfPositionAccess, write::Writer},
         render::Package,
         syntax::Expression as PythonExpression,
     },
@@ -32,6 +32,13 @@ impl Expression {
 
     pub fn write(plan: &WritePlan, package: &Package) -> Result<Self> {
         let mut writer = Writer::new(package);
+        Ok(Self {
+            expression: Writer::single(plan.render_with(&mut writer))?,
+        })
+    }
+
+    pub fn write_record_field(plan: &WritePlan, package: &Package) -> Result<Self> {
+        let mut writer = Writer::with_self_position_access(package, SelfPositionAccess::Attribute);
         Ok(Self {
             expression: Writer::single(plan.render_with(&mut writer))?,
         })

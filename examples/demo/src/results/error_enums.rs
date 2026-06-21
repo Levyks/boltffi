@@ -343,12 +343,7 @@ pub fn process_value(value: i32) -> ApiResult {
 #[demo_bench_macros::demo_case(
     "results.error_enums.api_result_is_success.should_report_error_variant",
     justification = "Ensure api_result_is_success returns false for non-success data enum variants.",
-    directions = "Call `results::error_enums::api_result_is_success` through the generated binding and assert api_result_is_success returns false for non-success data enum variants.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::api_result_is_success` through the generated binding and assert api_result_is_success returns false for non-success data enum variants."
 )]
 #[export]
 pub fn api_result_is_success(result: ApiResult) -> bool {

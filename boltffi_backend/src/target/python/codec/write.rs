@@ -6,7 +6,11 @@ use boltffi_binding::{
 use crate::{
     core::{Error, Result},
     target::python::{
-        codec::{operation::Operation, read::EnumCodec, value::ValueExpression},
+        codec::{
+            operation::Operation,
+            read::EnumCodec,
+            value::{SelfPositionAccess, ValueExpression},
+        },
         cpython::render::primitive,
         render::Package,
         syntax::{CallExpression, Expression, Identifier, Literal},
@@ -15,11 +19,25 @@ use crate::{
 
 pub struct Writer<'package> {
     package: &'package Package<'package>,
+    self_position_access: SelfPositionAccess,
 }
 
 impl<'package> Writer<'package> {
     pub fn new(package: &'package Package<'package>) -> Self {
-        Self { package }
+        Self {
+            package,
+            self_position_access: SelfPositionAccess::Subscript,
+        }
+    }
+
+    pub fn with_self_position_access(
+        package: &'package Package<'package>,
+        self_position_access: SelfPositionAccess,
+    ) -> Self {
+        Self {
+            package,
+            self_position_access,
+        }
     }
 
     pub fn single(expressions: Vec<Result<Expression>>) -> Result<Expression> {
@@ -34,7 +52,7 @@ impl<'package> Writer<'package> {
     }
 
     fn value(&self, value: &ValueRef) -> Result<Expression> {
-        ValueExpression::new(value).render()
+        ValueExpression::with_self_position_access(value, self.self_position_access).render()
     }
 
     fn binder(binder: BinderId) -> Result<Identifier> {
@@ -210,7 +228,7 @@ impl<'package> CodecWrite for Writer<'package> {
         element: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|wire_value| {
-            let count = len.render_with(&mut Operation::with_self_value(value));
+            let count = len.render_with(&mut Operation::new(value, self.self_position_access));
             Self::call(
                 Identifier::parse("_boltffi_wire_sequence")?,
                 [

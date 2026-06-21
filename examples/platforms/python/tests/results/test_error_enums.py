@@ -13,6 +13,8 @@ class ErrorEnumResultTests(DemoTestCase):
         self.assertEqual(demo.process_value(-3), demo.ApiResultErrorWithData(-3, -6))
         self.demo_case("case:results.error_enums.api_result_is_success.should_report_success_variant")
         self.assertIs(demo.api_result_is_success(demo.ApiResultSuccess()), True)
+        self.demo_case("case:results.error_enums.api_result_is_success.should_report_error_variant")
+        self.assertIs(demo.api_result_is_success(demo.ApiResultErrorCode(-1)), False)
 
     def test_success_response(self) -> None:
         point = demo.DataPoint(1.0, 2.0, 3)

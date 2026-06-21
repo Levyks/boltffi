@@ -475,7 +475,7 @@ impl Field {
     fn python_name(key: &FieldKey) -> Result<PythonIdentifier> {
         match key {
             FieldKey::Named(name) => Name::new(name).function(),
-            FieldKey::Position(position) => PythonIdentifier::parse(format!("field_{position}")),
+            FieldKey::Position(position) => Name::position_field(*position),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown record field key",

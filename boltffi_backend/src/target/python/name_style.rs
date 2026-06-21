@@ -57,6 +57,10 @@ impl Name {
             .join("_")
     }
 
+    pub fn position_field(position: u32) -> Result<Identifier> {
+        Identifier::parse(format!("field_{position}"))
+    }
+
     fn capitalized(part: &str) -> String {
         let mut characters = part.chars();
         characters.next().map_or_else(String::new, |first| {

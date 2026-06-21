@@ -215,7 +215,7 @@ impl RecordField {
     pub fn name(key: &FieldKey) -> Result<Identifier> {
         match key {
             FieldKey::Named(name) => Name::new(name).function(),
-            FieldKey::Position(position) => Identifier::parse(format!("field_{position}")),
+            FieldKey::Position(position) => Name::position_field(*position),
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
                 shape: "unknown record field annotation",
@@ -247,7 +247,7 @@ impl EncodedRecordField {
     pub fn from_field(field: &EncodedFieldDecl, package: &Package) -> Result<Self> {
         let name = RecordField::name(field.key())?;
         Ok(Self {
-            encode: CodecExpression::write(field.write(), package)?.into_expression(),
+            encode: CodecExpression::write_record_field(field.write(), package)?.into_expression(),
             decode: CodecExpression::read(field.read(), package)?.into_expression(),
             name,
         })

@@ -10,12 +10,23 @@ use crate::{
 
 pub struct ValueExpression {
     value: ValueRef,
+    self_position_access: SelfPositionAccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelfPositionAccess {
+    Attribute,
+    Subscript,
 }
 
 impl ValueExpression {
-    pub fn new(value: &ValueRef) -> Self {
+    pub fn with_self_position_access(
+        value: &ValueRef,
+        self_position_access: SelfPositionAccess,
+    ) -> Self {
         Self {
             value: value.clone(),
+            self_position_access,
         }
     }
 
@@ -39,7 +50,15 @@ impl ValueExpression {
 
     pub fn render(self) -> Result<Expression> {
         let root = Self::root(&self.value)?;
-        self.value.path().iter().try_fold(root, Self::field)
+        let mut fields = self.value.path().iter();
+        let root = match (self.value.root(), self.self_position_access, fields.next()) {
+            (ValueRoot::SelfValue, SelfPositionAccess::Attribute, Some(field)) => {
+                Self::self_field(root, field)?
+            }
+            (_, _, Some(field)) => Self::field(root, field)?,
+            (_, _, None) => root,
+        };
+        fields.try_fold(root, Self::field)
     }
 
     pub fn field(expression: Expression, field: &FieldKey) -> Result<Expression> {
@@ -49,6 +68,21 @@ impl ValueExpression {
                 expression,
                 Expression::literal(Literal::integer(i128::from(*position))),
             ),
+            _ => {
+                return Err(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "unknown codec value field",
+                });
+            }
+        })
+    }
+
+    fn self_field(expression: Expression, field: &FieldKey) -> Result<Expression> {
+        Ok(match field {
+            FieldKey::Named(name) => Expression::attribute(expression, Name::new(name).function()?),
+            FieldKey::Position(position) => {
+                Expression::attribute(expression, Name::position_field(*position)?)
+            }
             _ => {
                 return Err(Error::UnsupportedTarget {
                     target: "python",
