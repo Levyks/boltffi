@@ -253,6 +253,15 @@ def _boltffi_enum_value(value, enum_type, enum_name: str) -> int:
     return int(value)
 
 
+def _boltffi_call(error_decoder, call):
+    try:
+        return call()
+    except RuntimeError as error:
+        if error.args and isinstance(error.args[0], bytes):
+            raise RuntimeError(error_decoder(error.args[0])) from error
+        raise
+
+
 class _BoltFfiWireReader:
     __slots__ = ("_data", "_offset")
 

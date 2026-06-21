@@ -25,15 +25,11 @@ impl CallableBody {
         native_call: Expression,
         returned: &ReturnedValue,
     ) -> Result<Self> {
+        let error_decoder = ErrorDecoder::from_callable(callable)?;
         match callable.execution() {
-            ExecutionDecl::Synchronous(_) => returned.statement(native_call).map(Self::sync),
+            ExecutionDecl::Synchronous(_) => Self::sync(native_call, returned, error_decoder),
             ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle { .. }) => {
-                Self::native_future(
-                    native_name,
-                    native_call,
-                    returned,
-                    AsyncErrorDecoder::from_callable(callable)?,
-                )
+                Self::native_future(native_name, native_call, returned, error_decoder)
             }
             _ => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -56,18 +52,23 @@ impl CallableBody {
         self.lines
     }
 
-    fn sync(line: Statement) -> Self {
-        Self {
+    fn sync(
+        native_call: Expression,
+        returned: &ReturnedValue,
+        error_decoder: ErrorDecoder,
+    ) -> Result<Self> {
+        let native_call = error_decoder.sync_call(native_call)?;
+        Ok(Self {
             asynchronous: false,
-            lines: vec![line],
-        }
+            lines: vec![returned.statement(native_call)?],
+        })
     }
 
     fn native_future(
         native_name: &Identifier,
         native_call: Expression,
         returned: &ReturnedValue,
-        error_decoder: AsyncErrorDecoder,
+        error_decoder: ErrorDecoder,
     ) -> Result<Self> {
         let methods = NativeFutureMethods::new(native_name.clone())?;
         let future = Identifier::parse("__boltffi_future")?;
@@ -111,12 +112,12 @@ impl CallableBody {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum AsyncErrorDecoder {
+enum ErrorDecoder {
     None,
     Encoded(Identifier),
 }
 
-impl AsyncErrorDecoder {
+impl ErrorDecoder {
     fn from_callable(callable: &ExportedCallable<Native>) -> Result<Self> {
         match callable.error().channel() {
             ErrorChannel::None => Ok(Self::None),
@@ -146,6 +147,17 @@ impl AsyncErrorDecoder {
             Self::Encoded(decoder) => Ok(call.keyword(
                 Identifier::parse("error_decoder")?,
                 Expression::identifier(decoder.clone()),
+            )),
+        }
+    }
+
+    fn sync_call(&self, native_call: Expression) -> Result<Expression> {
+        match self {
+            Self::None => Ok(native_call),
+            Self::Encoded(decoder) => Ok(Expression::call(
+                CallExpression::new(Expression::identifier(Identifier::parse("_boltffi_call")?))
+                    .positional(Expression::identifier(decoder.clone()))
+                    .positional(Expression::no_arg_lambda(native_call)),
             )),
         }
     }

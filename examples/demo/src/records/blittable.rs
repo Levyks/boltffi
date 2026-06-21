@@ -47,22 +47,12 @@ impl Point {
     #[demo_bench_macros::demo_case(
         "records.blittable.point.should_normalize_unit_vector",
         justification = "Ensure Point::try_unit returns a normalized Point for non-zero coordinates.",
-        directions = "Call `records::blittable::Point::try_unit` through the generated binding and assert Point::try_unit returns a normalized Point for non-zero coordinates.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently omits Result-returning record methods. Include this case when fallible record methods are implemented for Python."
-        )
+        directions = "Call `records::blittable::Point::try_unit` through the generated binding and assert Point::try_unit returns a normalized Point for non-zero coordinates."
     )]
     #[demo_bench_macros::demo_case(
         "records.blittable.point.should_reject_zero_unit_vector",
         justification = "Ensure Point::try_unit rejects zero coordinates instead of returning an invalid unit vector.",
-        directions = "Call `records::blittable::Point::try_unit` through the generated binding and assert Point::try_unit rejects zero coordinates instead of returning an invalid unit vector.",
-        exclude(
-            python,
-            reason = ExclusionReason::ImplementationGap,
-            details = "Python is experimental; its lowerer currently omits Result-returning record methods. Include this case when fallible record methods are implemented for Python."
-        )
+        directions = "Call `records::blittable::Point::try_unit` through the generated binding and assert Point::try_unit rejects zero coordinates instead of returning an invalid unit vector."
     )]
     pub fn try_unit(x: f64, y: f64) -> Result<Self, String> {
         let len = (x * x + y * y).sqrt();

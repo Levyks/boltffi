@@ -1392,6 +1392,29 @@ mod tests {
     }
 
     #[test]
+    fn python_target_decodes_sync_result_error_payloads() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn divide(value: i32) -> Result<i32, String> {
+                    if value > 0 {
+                        Ok(value)
+                    } else {
+                        Err("invalid value".to_string())
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render sync result errors");
+        let init = file(&output, "demo/__init__.py");
+
+        assert!(init.contains("def _boltffi_call(error_decoder, call):"));
+        assert!(init.contains("raise RuntimeError(error_decoder(error.args[0])) from error"));
+        assert!(init.contains("return _boltffi_call(_boltffi_read_"));
+    }
+
+    #[test]
     fn python_target_requires_bool_objects_for_bool_parameters() {
         let output = target()
             .render(&bindings(

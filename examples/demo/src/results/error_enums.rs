@@ -32,22 +32,12 @@ impl From<UnexpectedFfiCallbackError> for MathError {
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_divide.should_return_quotient",
     justification = "Ensure checked_divide returns the integer quotient when the divisor is non-zero.",
-    directions = "Call `results::error_enums::checked_divide` through the generated binding and assert checked_divide returns the integer quotient when the divisor is non-zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::checked_divide` through the generated binding and assert checked_divide returns the integer quotient when the divisor is non-zero."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_divide.should_reject_division_by_zero",
     justification = "Ensure checked_divide returns a typed MathError when the divisor is zero.",
-    directions = "Call `results::error_enums::checked_divide` through the generated binding and assert checked_divide returns a typed MathError when the divisor is zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::checked_divide` through the generated binding and assert checked_divide returns a typed MathError when the divisor is zero."
 )]
 #[export]
 pub fn checked_divide(a: i32, b: i32) -> Result<i32, MathError> {
@@ -61,22 +51,12 @@ pub fn checked_divide(a: i32, b: i32) -> Result<i32, MathError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_sqrt.should_return_square_root",
     justification = "Ensure checked_sqrt returns the square root for non-negative floating-point input.",
-    directions = "Call `results::error_enums::checked_sqrt` through the generated binding and assert checked_sqrt returns the square root for non-negative floating-point input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::checked_sqrt` through the generated binding and assert checked_sqrt returns the square root for non-negative floating-point input."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_sqrt.should_reject_negative_input",
     justification = "Ensure checked_sqrt returns a typed MathError for negative floating-point input.",
-    directions = "Call `results::error_enums::checked_sqrt` through the generated binding and assert checked_sqrt returns a typed MathError for negative floating-point input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::checked_sqrt` through the generated binding and assert checked_sqrt returns a typed MathError for negative floating-point input."
 )]
 #[export]
 pub fn checked_sqrt(x: f64) -> Result<f64, MathError> {
@@ -90,22 +70,12 @@ pub fn checked_sqrt(x: f64) -> Result<f64, MathError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_add.should_return_sum",
     justification = "Ensure checked_add returns the sum when the i32 addition does not overflow.",
-    directions = "Call `results::error_enums::checked_add` through the generated binding and assert checked_add returns the sum when the i32 addition does not overflow.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::checked_add` through the generated binding and assert checked_add returns the sum when the i32 addition does not overflow."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_add.should_reject_overflow",
     justification = "Ensure checked_add returns a typed MathError when i32 addition overflows.",
-    directions = "Call `results::error_enums::checked_add` through the generated binding and assert checked_add returns a typed MathError when i32 addition overflows.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::checked_add` through the generated binding and assert checked_add returns a typed MathError when i32 addition overflows."
 )]
 #[export]
 pub fn checked_add(a: i32, b: i32) -> Result<i32, MathError> {
@@ -130,22 +100,12 @@ impl std::error::Error for AppError {}
 #[demo_bench_macros::demo_case(
     "results.error_enums.may_fail.should_return_success_when_valid",
     justification = "Ensure may_fail returns an Ok success string when the input is valid.",
-    directions = "Call `results::error_enums::may_fail` through the generated binding and assert may_fail returns an Ok success string when the input is valid.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::may_fail` through the generated binding and assert may_fail returns an Ok success string when the input is valid."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.may_fail.should_return_app_error_when_invalid",
     justification = "Ensure may_fail returns a structured AppError when the input is invalid.",
-    directions = "Call `results::error_enums::may_fail` through the generated binding and assert may_fail returns a structured AppError when the input is invalid.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::may_fail` through the generated binding and assert may_fail returns a structured AppError when the input is invalid."
 )]
 #[export]
 pub fn may_fail(valid: bool) -> Result<String, AppError> {
@@ -162,22 +122,12 @@ pub fn may_fail(valid: bool) -> Result<String, AppError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.divide_app.should_return_quotient",
     justification = "Ensure divide_app returns the integer quotient when the divisor is non-zero.",
-    directions = "Call `results::error_enums::divide_app` through the generated binding and assert divide_app returns the integer quotient when the divisor is non-zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::divide_app` through the generated binding and assert divide_app returns the integer quotient when the divisor is non-zero."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.divide_app.should_return_app_error_for_division_by_zero",
     justification = "Ensure divide_app returns a structured AppError when the divisor is zero.",
-    directions = "Call `results::error_enums::divide_app` through the generated binding and assert divide_app returns a structured AppError when the divisor is zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::divide_app` through the generated binding and assert divide_app returns a structured AppError when the divisor is zero."
 )]
 #[export]
 pub fn divide_app(a: i32, b: i32) -> Result<i32, AppError> {
@@ -219,42 +169,22 @@ impl std::error::Error for ValidationError {}
 #[demo_bench_macros::demo_case(
     "results.error_enums.validate_username.should_accept_valid_name",
     justification = "Ensure validate_username returns the provided name when it satisfies all validation rules.",
-    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the provided name when it satisfies all validation rules.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the provided name when it satisfies all validation rules."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.validate_username.should_reject_too_short_name",
     justification = "Ensure validate_username returns the TooShort typed error when the name has fewer than three characters.",
-    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the TooShort typed error when the name has fewer than three characters.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the TooShort typed error when the name has fewer than three characters."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.validate_username.should_reject_too_long_name",
     justification = "Ensure validate_username returns the TooLong typed error when the name has more than twenty characters.",
-    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the TooLong typed error when the name has more than twenty characters.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the TooLong typed error when the name has more than twenty characters."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.validate_username.should_reject_invalid_format",
     justification = "Ensure validate_username returns the InvalidFormat typed error when the name contains spaces.",
-    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the InvalidFormat typed error when the name contains spaces.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the InvalidFormat typed error when the name contains spaces."
 )]
 #[export]
 pub fn validate_username(name: String) -> Result<String, ValidationError> {
@@ -353,22 +283,12 @@ pub fn api_result_is_success(result: ApiResult) -> bool {
 #[demo_bench_macros::demo_case(
     "results.error_enums.try_compute.should_return_doubled_value",
     justification = "Ensure try_compute returns an Ok value containing positive input doubled.",
-    directions = "Call `results::error_enums::try_compute` through the generated binding and assert try_compute returns an Ok value containing positive input doubled.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
-    )
+    directions = "Call `results::error_enums::try_compute` through the generated binding and assert try_compute returns an Ok value containing positive input doubled."
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.try_compute.should_return_overflow_error",
     justification = "Ensure try_compute returns the Overflow typed error for negative input.",
-    directions = "Call `results::error_enums::try_compute` through the generated binding and assert try_compute returns the Overflow typed error for negative input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently emit Result returns or structured error payloads. Include this case when typed Result support is implemented for Python."
-    )
+    directions = "Call `results::error_enums::try_compute` through the generated binding and assert try_compute returns the Overflow typed error for negative input."
 )]
 #[export]
 pub fn try_compute(value: i32) -> Result<i32, ComputeError> {
