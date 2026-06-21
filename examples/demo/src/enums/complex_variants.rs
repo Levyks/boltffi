@@ -31,12 +31,7 @@ pub enum Filter {
 #[demo_bench_macros::demo_case(
     "enums.complex_variants.filter.by_groups.should_roundtrip_nested_string_vectors",
     justification = "Ensure the Filter::ByGroups variant preserves nested UTF-8 string vectors when round-tripped.",
-    directions = "Call `enums::complex_variants::echo_filter` through the generated binding and assert the Filter::ByGroups variant preserves nested UTF-8 string vectors when round-tripped.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently emits only C-style enums, not data-enum payloads. Include this case when Python data-enum bindings are implemented."
-    )
+    directions = "Call `enums::complex_variants::echo_filter` through the generated binding and assert the Filter::ByGroups variant preserves nested UTF-8 string vectors when round-tripped."
 )]
 #[demo_bench_macros::demo_case(
     "enums.complex_variants.filter.by_points.should_roundtrip_record_vector_payload",
@@ -66,12 +61,7 @@ pub fn echo_filter(f: Filter) -> Filter {
 #[demo_bench_macros::demo_case(
     "enums.complex_variants.filter.by_groups.should_describe_nested_string_vectors",
     justification = "Ensure describe_filter counts the outer vector in a ByGroups nested vector payload.",
-    directions = "Call `enums::complex_variants::describe_filter` through the generated binding and assert describe_filter counts the outer vector in a ByGroups nested vector payload.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently emits only C-style enums, not data-enum payloads. Include this case when Python data-enum bindings are implemented."
-    )
+    directions = "Call `enums::complex_variants::describe_filter` through the generated binding and assert describe_filter counts the outer vector in a ByGroups nested vector payload."
 )]
 #[demo_bench_macros::demo_case(
     "enums.complex_variants.filter.by_points.should_describe_record_vector_payload",
