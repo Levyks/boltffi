@@ -56,9 +56,7 @@ body:
         - [ ] Enums
         - [ ] Classes
         - [ ] Callbacks
-        - [ ] Closures
         - [ ] Async
-        - [ ] Streams
         - [ ] Enum and class methods
         - [ ] Bytes
         - [ ] Builtins
@@ -93,3 +91,13 @@ body:
       placeholder: GitHub handle
     validations:
       required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before starting
+      options:
+        - label: I have read the adding-a-target guide and I am building on the IR path, not the frozen render path.
+          required: true
+        - label: I understand an experimental target is expected to reach GA in six to eight weeks of active work, and a stalled target may be removed.
+          required: true
