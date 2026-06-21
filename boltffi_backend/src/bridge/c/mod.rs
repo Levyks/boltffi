@@ -15,7 +15,7 @@ pub use contract::{
     CBridgeContract, Callback, Enum, EnumVariant, Field, Function, Parameter, Record,
     SupportFunctions, Type,
 };
-pub use header::CBridge;
+pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use syntax::{ArgumentList, Expression, Literal, Statement, Syntax, TypeFragment};
 

@@ -58,6 +58,14 @@ pub enum BackendError {
         /// Binding shape that has no C ABI rendering.
         shape: &'static str,
     },
+    /// A bridge layer cannot render the supplied lower bridge shape.
+    #[error("{bridge} bridge cannot render {shape}")]
+    UnsupportedBridge {
+        /// Bridge layer name.
+        bridge: &'static str,
+        /// Shape that has no bridge rendering.
+        shape: &'static str,
+    },
     /// A backend saw a binding shape that should not reach that rendering path.
     #[error("{layer} received unexpected binding shape `{shape}`")]
     UnexpectedBindingShape {
@@ -93,6 +101,18 @@ pub enum BackendError {
     InvalidCIncludePath {
         /// Invalid include path text.
         path: String,
+    },
+    /// A generated JVM package name was invalid.
+    #[error("invalid JVM package name `{name}`")]
+    InvalidJvmPackageName {
+        /// Invalid package name text.
+        name: String,
+    },
+    /// A generated JVM class name was invalid.
+    #[error("invalid JVM class name `{name}`")]
+    InvalidJvmClassName {
+        /// Invalid class name text.
+        name: String,
     },
     /// A generated CPython method name was invalid.
     #[error("invalid CPython method name `{name}`")]

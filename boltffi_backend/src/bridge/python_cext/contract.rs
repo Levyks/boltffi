@@ -1,12 +1,10 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
 
 use boltffi_binding::{CallbackId, EnumId, Native, NativeSymbol, RecordId};
 
 use crate::{
-    bridge::c::{self, CBridgeContract, Function, Identifier},
+    bridge::c::{self, CBridgeContract, Function, HeaderInclude, Identifier},
     core::{
         BridgeCapabilities, BridgeCapability, BridgeContract, Error, FilePath, Result,
         contract::sealed,
@@ -20,20 +18,13 @@ pub struct PythonCExtBridgeContract {
     capabilities: BridgeCapabilities,
     module: PythonExtensionName,
     source_path: FilePath,
-    c_header: CHeaderInclude,
+    c_header: HeaderInclude,
     symbols: ModuleSymbols,
     source_direct_records: BTreeMap<RecordId, c::Record>,
     source_c_style_enums: BTreeMap<EnumId, c::Enum>,
     source_callbacks: BTreeMap<CallbackId, c::Callback>,
     functions: Vec<LoadedFunction>,
     loader: ExtensionMethod,
-}
-
-/// C include path used by the generated CPython source file.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
-pub struct CHeaderInclude {
-    path: String,
 }
 
 /// CPython extension module name used by `PyInit_<name>`.
@@ -118,7 +109,7 @@ impl PythonCExtBridgeContract {
             symbols: ModuleSymbols::new(&module)?,
             functions,
             loader: ExtensionMethod::loader()?,
-            c_header: CHeaderInclude::from_files(&source_path, c_bridge.header_path())?,
+            c_header: HeaderInclude::from_files(&source_path, c_bridge.header_path())?,
             source_direct_records: c_bridge.source_direct_records().clone(),
             source_c_style_enums: c_bridge.source_c_style_enums().clone(),
             source_callbacks: c_bridge
@@ -142,7 +133,7 @@ impl PythonCExtBridgeContract {
     }
 
     /// Returns the C header include path used by the extension source.
-    pub fn c_header(&self) -> &CHeaderInclude {
+    pub fn c_header(&self) -> &HeaderInclude {
         &self.c_header
     }
 
@@ -224,72 +215,6 @@ impl BridgeContract for PythonCExtBridgeContract {
 }
 
 impl sealed::BridgeContract for PythonCExtBridgeContract {}
-
-impl CHeaderInclude {
-    /// Creates an include path relative to a generated CPython source file.
-    pub fn from_files(source_path: &FilePath, header_path: &FilePath) -> Result<Self> {
-        Self::new(Self::relative_to_source(
-            source_path.as_path(),
-            header_path.as_path(),
-        ))
-    }
-
-    /// Returns the include path text.
-    pub fn as_str(&self) -> &str {
-        &self.path
-    }
-
-    fn new(path: PathBuf) -> Result<Self> {
-        let path = path
-            .as_os_str()
-            .to_str()
-            .map(str::to_owned)
-            .ok_or_else(|| Error::InvalidCIncludePath {
-                path: path.display().to_string(),
-            })?
-            .replace('\\', "/");
-        if path.is_empty() || path.bytes().any(|byte| matches!(byte, 0 | b'"')) {
-            Err(Error::InvalidCIncludePath { path })
-        } else {
-            Ok(Self { path })
-        }
-    }
-
-    fn relative_to_source(source_path: &Path, header_path: &Path) -> PathBuf {
-        let Some(source_dir) = source_path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        else {
-            return header_path.to_path_buf();
-        };
-        if header_path.is_absolute() {
-            return header_path.to_path_buf();
-        }
-        let source = Self::components(source_dir);
-        let header = Self::components(header_path);
-        let shared = source
-            .iter()
-            .zip(header.iter())
-            .take_while(|(source, header)| source == header)
-            .count();
-        let mut relative = PathBuf::new();
-        std::iter::repeat_with(|| OsString::from(".."))
-            .take(source.len().saturating_sub(shared))
-            .chain(header.into_iter().skip(shared))
-            .for_each(|component| relative.push(component));
-        relative
-    }
-
-    fn components(path: &Path) -> Vec<OsString> {
-        path.components()
-            .filter_map(|component| match component {
-                Component::Normal(component) => Some(component.to_os_string()),
-                Component::ParentDir => Some(OsString::from("..")),
-                Component::CurDir | Component::RootDir | Component::Prefix(_) => None,
-            })
-            .collect()
-    }
-}
 
 impl PythonExtensionName {
     /// Creates a CPython extension module name.

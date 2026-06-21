@@ -8,8 +8,9 @@ mod contract;
 mod extension;
 mod template;
 
+pub use crate::bridge::c::HeaderInclude as CHeaderInclude;
 pub use contract::{
-    CHeaderInclude, ExtensionMethod, LoadedFunction, MethodFlags, MethodName, ModuleSymbols,
+    ExtensionMethod, LoadedFunction, MethodFlags, MethodName, ModuleSymbols,
     PythonCExtBridgeContract, PythonExtensionName,
 };
 pub use extension::PythonCExtBridge;
