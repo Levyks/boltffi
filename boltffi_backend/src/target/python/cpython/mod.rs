@@ -838,6 +838,7 @@ mod tests {
                     Success = 0,
                     ErrorCode(i32) = 1,
                     ErrorWithValues(Vec<i32>) = 2,
+                    ErrorPair((i32, i32)) = 3,
                 }
 
                 #[export]
@@ -856,6 +857,10 @@ mod tests {
         assert!(init.contains(
             "_boltffi_wire_sequence(self.field_0, len(self.field_0), lambda __boltffi_value_0: _boltffi_wire_i32(__boltffi_value_0))"
         ));
+        assert!(init.contains("class ApiResultErrorPair(ApiResult):"));
+        assert!(init.contains("_boltffi_wire_i32(self.field_0[0])"));
+        assert!(init.contains("_boltffi_wire_i32(self.field_0[1])"));
+        assert!(!init.contains("self.field_0.field_0"));
         assert!(!init.contains("self[0]"));
         assert!(stub.contains("class ApiResultErrorCode(ApiResult):"));
         assert!(stub.contains("def is_success(value: ApiResult) -> bool: ..."));

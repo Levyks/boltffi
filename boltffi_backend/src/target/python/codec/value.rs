@@ -10,20 +10,23 @@ use crate::{
 
 pub struct ValueExpression {
     value: ValueRef,
-    position_fields: PositionFieldAccess,
+    self_position_access: SelfPositionAccess,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PositionFieldAccess {
+pub enum SelfPositionAccess {
     Attribute,
     Subscript,
 }
 
 impl ValueExpression {
-    pub fn with_position_fields(value: &ValueRef, position_fields: PositionFieldAccess) -> Self {
+    pub fn with_self_position_access(
+        value: &ValueRef,
+        self_position_access: SelfPositionAccess,
+    ) -> Self {
         Self {
             value: value.clone(),
-            position_fields,
+            self_position_access,
         }
     }
 
@@ -47,22 +50,24 @@ impl ValueExpression {
 
     pub fn render(self) -> Result<Expression> {
         let root = Self::root(&self.value)?;
-        self.value
-            .path()
-            .iter()
-            .try_fold(root, |expression, field| {
-                Self::field_with_position_fields(expression, field, self.position_fields)
-            })
+        let mut fields = self.value.path().iter();
+        let root = match (self.value.root(), self.self_position_access, fields.next()) {
+            (ValueRoot::SelfValue, SelfPositionAccess::Attribute, Some(field)) => {
+                Self::self_field(root, field)?
+            }
+            (_, _, Some(field)) => Self::field(root, field)?,
+            (_, _, None) => root,
+        };
+        fields.try_fold(root, Self::field)
     }
 
-    pub fn field_with_position_fields(
-        expression: Expression,
-        field: &FieldKey,
-        position_fields: PositionFieldAccess,
-    ) -> Result<Expression> {
+    pub fn field(expression: Expression, field: &FieldKey) -> Result<Expression> {
         Ok(match field {
             FieldKey::Named(name) => Expression::attribute(expression, Name::new(name).function()?),
-            FieldKey::Position(position) => position_fields.expression(expression, *position)?,
+            FieldKey::Position(position) => Expression::subscript(
+                expression,
+                Expression::literal(Literal::integer(i128::from(*position))),
+            ),
             _ => {
                 return Err(Error::UnsupportedTarget {
                     target: "python",
@@ -71,16 +76,19 @@ impl ValueExpression {
             }
         })
     }
-}
 
-impl PositionFieldAccess {
-    fn expression(self, expression: Expression, position: u32) -> Result<Expression> {
-        Ok(match self {
-            Self::Attribute => Expression::attribute(expression, Name::position_field(position)?),
-            Self::Subscript => Expression::subscript(
-                expression,
-                Expression::literal(Literal::integer(i128::from(position))),
-            ),
+    fn self_field(expression: Expression, field: &FieldKey) -> Result<Expression> {
+        Ok(match field {
+            FieldKey::Named(name) => Expression::attribute(expression, Name::new(name).function()?),
+            FieldKey::Position(position) => {
+                Expression::attribute(expression, Name::position_field(*position)?)
+            }
+            _ => {
+                return Err(Error::UnsupportedTarget {
+                    target: "python",
+                    shape: "unknown codec value field",
+                });
+            }
         })
     }
 }
