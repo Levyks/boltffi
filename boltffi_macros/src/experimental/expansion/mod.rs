@@ -4870,7 +4870,8 @@ mod tests {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn boltffi_function_demo_rewrite(
                     __boltffi_name_ptr: *const u8,
-                    __boltffi_name_len: usize
+                    __boltffi_name_len: usize,
+                    __boltffi_name_out: *mut ::boltffi::__private::FfiBuf
                 ) -> u32 {
                     let mut __boltffi_name_storage: String = {
                         if __boltffi_name_ptr.is_null() && __boltffi_name_len > 0 {
@@ -4905,7 +4906,23 @@ mod tests {
                         }
                     };
                     let name = __boltffi_name_storage.as_mut_str();
-                    rewrite(name)
+                    if __boltffi_name_out.is_null() {
+                        ::boltffi::__private::set_last_error(format!(
+                            "{}: writeback pointer is null",
+                            stringify!(__boltffi_name_out)
+                        ));
+                        return <u32 as ::core::default::Default>::default();
+                    }
+                    let __boltffi_result = rewrite(name);
+                    unsafe {
+                        ::core::ptr::write(
+                            __boltffi_name_out,
+                            ::boltffi::__private::FfiBuf::wire_encode(
+                                &__boltffi_name_storage
+                            )
+                        );
+                    }
+                    __boltffi_result
                 }
             }
             .to_string()
@@ -5183,7 +5200,8 @@ mod tests {
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn boltffi_function_demo_rename(
                     __boltffi_profile_ptr: *const u8,
-                    __boltffi_profile_len: usize
+                    __boltffi_profile_len: usize,
+                    __boltffi_profile_out: *mut ::boltffi::__private::FfiBuf
                 ) -> u32 {
                     let mut __boltffi_profile_storage: Profile = {
                         if __boltffi_profile_ptr.is_null() && __boltffi_profile_len > 0 {
@@ -5218,7 +5236,23 @@ mod tests {
                         }
                     };
                     let profile = &mut __boltffi_profile_storage;
-                    rename(profile)
+                    if __boltffi_profile_out.is_null() {
+                        ::boltffi::__private::set_last_error(format!(
+                            "{}: writeback pointer is null",
+                            stringify!(__boltffi_profile_out)
+                        ));
+                        return <u32 as ::core::default::Default>::default();
+                    }
+                    let __boltffi_result = rename(profile);
+                    unsafe {
+                        ::core::ptr::write(
+                            __boltffi_profile_out,
+                            ::boltffi::__private::FfiBuf::wire_encode(
+                                &__boltffi_profile_storage
+                            )
+                        );
+                    }
+                    __boltffi_result
                 }
             }
             .to_string()

@@ -1132,6 +1132,22 @@ struct AsyncCallbackPayloadType {
 
 struct FallibleAsyncCallbackSuccess;
 
+trait EncodedWritebackReceive {
+    fn needs_encoded_writeback(self) -> bool;
+}
+
+impl EncodedWritebackReceive for Receive {
+    fn needs_encoded_writeback(self) -> bool {
+        self == Receive::ByMutRef
+    }
+}
+
+impl EncodedWritebackReceive for () {
+    fn needs_encoded_writeback(self) -> bool {
+        false
+    }
+}
+
 impl CallableReturnType {
     fn direct_slot(&self, slot: ReturnValueSlot, ty: &DirectValueType) -> Result<Type> {
         match slot {
@@ -1178,6 +1194,7 @@ impl CallableReturnType {
 impl<'plan, D> ParamPlanRender<'plan, Native, D> for ValueParameter
 where
     D: Direction,
+    D::Receive: EncodedWritebackReceive,
 {
     type Output = Result<Vec<Parameter>>;
 
@@ -1193,16 +1210,25 @@ where
         _: &'plan TypeRef,
         _: &'plan D::Codec,
         shape: native::BufferShape,
-        _: D::Receive,
+        receive: D::Receive,
     ) -> Self::Output {
         match shape {
-            native::BufferShape::Slice => Ok(vec![
-                Parameter::new(
-                    format!("{}_ptr", self.name),
-                    Type::ConstPointer(Box::new(Type::Uint8)),
-                )?,
-                Parameter::new(format!("{}_len", self.name), Type::PointerWidth)?,
-            ]),
+            native::BufferShape::Slice => {
+                let mut parameters = vec![
+                    Parameter::new(
+                        format!("{}_ptr", self.name),
+                        Type::ConstPointer(Box::new(Type::Uint8)),
+                    )?,
+                    Parameter::new(format!("{}_len", self.name), Type::PointerWidth)?,
+                ];
+                if receive.needs_encoded_writeback() {
+                    parameters.push(Parameter::new(
+                        format!("{}_out", self.name),
+                        Type::MutPointer(Box::new(Type::Buffer)),
+                    )?);
+                }
+                Ok(parameters)
+            }
             native::BufferShape::Buffer | native::BufferShape::BufferPointer => {
                 Err(Error::UnexpectedBindingShape {
                     layer: C_BRIDGE_LAYER,
@@ -1761,6 +1787,7 @@ impl Signature {
     fn value_param<D>(&self, name: &str, plan: &ParamPlan<Native, D>) -> Result<Vec<Parameter>>
     where
         D: Direction,
+        D::Receive: EncodedWritebackReceive,
     {
         plan.render_with(&mut ValueParameter {
             signature: self.clone(),

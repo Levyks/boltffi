@@ -1,4 +1,4 @@
-use boltffi_binding::{ReadPlan, WritePlan};
+use boltffi_binding::{CodecNode, ReadPlan, WritePlan};
 
 use crate::{
     core::Result,
@@ -19,6 +19,13 @@ impl Expression {
         let mut reader = Reader::new(package);
         Ok(Self {
             expression: plan.render_with(&mut reader)?,
+        })
+    }
+
+    pub fn read_codec(codec: &CodecNode, package: &Package) -> Result<Self> {
+        let mut reader = Reader::new(package);
+        Ok(Self {
+            expression: codec.render_read_with(&mut reader)?,
         })
     }
 

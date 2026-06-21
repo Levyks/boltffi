@@ -1,7 +1,8 @@
 use boltffi_binding::{
-    ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel, ErrorPlacement,
-    ExportedCallable, HandlePresence, HandleTarget, Native, OutOfRust, Primitive, ReadPlan,
-    ReturnPlan, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
+    ClosureReturn, CodecNode, DirectValueType, DirectVectorElementType, ErrorChannel,
+    ErrorPlacement, ExportedCallable, HandlePresence, HandleTarget, IncomingParam, IntoRust,
+    Native, OutOfRust, ParamDecl, ParamPlanRender, Primitive, ReadPlan, Receive, ReturnPlan,
+    ReturnPlanRender, ReturnValueSlot, TypeRef, WritePlan, native,
 };
 
 use crate::{
@@ -28,6 +29,9 @@ impl ReturnStub {
     }
 
     pub fn from_callable(callable: &ExportedCallable<Native>, package: &Package) -> Result<Self> {
+        if let Some(returned) = Self::from_mutable_parameter(callable, package)? {
+            return Ok(returned);
+        }
         match callable.error().channel() {
             ErrorChannel::None => Self::from_plan(callable.returns().plan(), package),
             ErrorChannel::Encoded {
@@ -79,6 +83,23 @@ impl ReturnStub {
             annotation: TypeHint::from_return(plan, package)?.into_annotation(),
             value: ReturnedValue::from_success_plan(plan, package)?,
         })
+    }
+
+    fn from_mutable_parameter(
+        callable: &ExportedCallable<Native>,
+        package: &Package,
+    ) -> Result<Option<Self>> {
+        if !matches!(callable.error().channel(), ErrorChannel::None)
+            || !matches!(callable.returns().plan(), ReturnPlan::Void)
+        {
+            return Ok(None);
+        }
+        callable
+            .params()
+            .iter()
+            .map(|parameter| MutableParameterReturn { package }.render(parameter))
+            .collect::<Result<Vec<_>>>()
+            .map(|returned| returned.into_iter().flatten().next())
     }
 }
 
@@ -163,6 +184,80 @@ impl ReturnedValue {
     fn from_encoded_plan(codec: &ReadPlan, package: &Package) -> Result<Self> {
         CodecExpression::read_return(codec, package)
             .map(|decode| Self::Wire(decode.into_expression()))
+    }
+
+    fn from_encoded_codec(codec: &CodecNode, package: &Package) -> Result<Self> {
+        CodecExpression::read_codec(codec, package)
+            .map(|decode| Self::Wire(decode.into_expression()))
+    }
+}
+
+struct MutableParameterReturn<'package> {
+    package: &'package Package<'package>,
+}
+
+impl<'package> MutableParameterReturn<'package> {
+    fn render(&self, parameter: &ParamDecl<Native, IntoRust>) -> Result<Option<ReturnStub>> {
+        match parameter.payload() {
+            IncomingParam::Value(plan) => plan.render_with(&mut MutableParameterReturnRender {
+                package: self.package,
+            }),
+            IncomingParam::Closure(_) => Ok(None),
+        }
+    }
+}
+
+struct MutableParameterReturnRender<'package> {
+    package: &'package Package<'package>,
+}
+
+impl<'plan, 'package> ParamPlanRender<'plan, Native, IntoRust>
+    for MutableParameterReturnRender<'package>
+{
+    type Output = Result<Option<ReturnStub>>;
+
+    fn direct(&mut self, _: &DirectValueType, _: Receive) -> Self::Output {
+        Ok(None)
+    }
+
+    fn encoded(
+        &mut self,
+        ty: &TypeRef,
+        codec: &WritePlan,
+        shape: native::BufferShape,
+        receive: Receive,
+    ) -> Self::Output {
+        if receive != Receive::ByMutRef {
+            return Ok(None);
+        }
+        match shape {
+            native::BufferShape::Slice => Ok(Some(ReturnStub {
+                annotation: TypeHint::from_type_ref(ty, self.package)?.into_annotation(),
+                value: ReturnedValue::from_encoded_codec(codec.root(), self.package)?,
+            })),
+            _ => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "mutable encoded parameter",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+        _: Receive,
+    ) -> Self::Output {
+        Ok(None)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(None)
+    }
+
+    fn direct_vector(&mut self, _: &DirectVectorElementType) -> Self::Output {
+        Ok(None)
     }
 }
 

@@ -1,4 +1,4 @@
-use boltffi_binding::{DirectValueType, IncomingParam, IntoRust, ParamDecl, ParamPlan};
+use boltffi_binding::{DirectValueType, IncomingParam, IntoRust, ParamDecl, ParamPlan, Receive};
 use proc_macro2::TokenStream;
 
 use crate::experimental::{
@@ -123,17 +123,21 @@ where
                 shape,
                 receive,
                 ..
-            }) => <encoded::Renderer as Render<S, _>>::render(
-                encoded::Renderer,
-                encoded::Input::new(
+            }) => {
+                let encoded_input = encoded::Input::new(
                     codec,
                     *shape,
                     input.source.decode_target(*receive)?,
                     ident,
                     input.failure,
                     input.expansion,
-                ),
-            ),
+                );
+                let encoded_input = match receive {
+                    Receive::ByMutRef => encoded_input.with_writeback(),
+                    _ => encoded_input,
+                };
+                <encoded::Renderer as Render<S, _>>::render(encoded::Renderer, encoded_input)
+            }
             IncomingParam::Value(ParamPlan::ScalarOption { primitive }) => {
                 input.source.scalar_option(*primitive)?;
                 <scalar_option::Renderer as Render<S, _>>::render(

@@ -12,7 +12,7 @@ use crate::{
     core::{Error, RenderContext, Result},
     target::python::{
         cpython::render::{
-            callback, closure, direct, direct_vector, enumeration, primitive, record,
+            callback, closure, direct, direct_vector, enumeration, primitive, record, result,
         },
         name_style::Name,
     },
@@ -290,6 +290,10 @@ impl Conversion {
             Kind::Buffered(buffered) => buffered.mutation.clone(),
             Kind::Direct(_) | Kind::Closure(_) => None,
         }
+    }
+
+    pub fn mutation_owned_buffer(&self) -> Option<result::OwnedBuffer> {
+        self.mutation().and_then(|mutation| mutation.owned_buffer())
     }
 
     pub fn closure_declaration(&self) -> &str {

@@ -388,17 +388,35 @@ impl UnsupportedCallable {
     }
 
     fn from_callable(callable: &ExportedCallable<Native>) -> Option<Self> {
-        callable
+        let mutation_count = callable
             .params()
             .iter()
-            .find_map(|parameter| match parameter.payload() {
-                IncomingParam::Value(plan) if plan.render_with(&mut MutableEncodedParameter) => {
-                    Some(Self {
-                        shape: "mutable encoded parameter",
-                    })
-                }
-                IncomingParam::Value(_) | IncomingParam::Closure(_) => None,
+            .filter(|parameter| match parameter.payload() {
+                IncomingParam::Value(plan) => plan.render_with(&mut MutableEncodedParameter),
+                IncomingParam::Closure(_) => false,
             })
+            .count();
+        if mutation_count == 0 {
+            return None;
+        }
+        if matches!(callable.execution(), ExecutionDecl::Asynchronous(_)) {
+            return Some(Self {
+                shape: "async mutable encoded parameter",
+            });
+        }
+        if mutation_count > 1 {
+            return Some(Self {
+                shape: "multiple mutable encoded parameters",
+            });
+        }
+        if !matches!(callable.error().channel(), ErrorChannel::None)
+            || !matches!(callable.returns().plan(), ReturnPlan::Void)
+        {
+            return Some(Self {
+                shape: "mutable encoded parameter with non-void return",
+            });
+        }
+        None
     }
 
     fn shape(self) -> &'static str {
@@ -611,11 +629,15 @@ impl SyncFunction {
     }
 
     fn owned_buffers(&self) -> impl Iterator<Item = result::OwnedBuffer> + '_ {
-        self.returns.owned_buffer().into_iter().chain(
-            self.fallible
-                .iter()
-                .filter_map(FallibleResult::owned_buffer),
-        )
+        self.params
+            .iter()
+            .filter_map(argument::Conversion::mutation_owned_buffer)
+            .chain(self.returns.owned_buffer())
+            .chain(
+                self.fallible
+                    .iter()
+                    .filter_map(FallibleResult::owned_buffer),
+            )
     }
 
     fn has_string_argument(&self) -> bool {
@@ -815,11 +837,15 @@ impl AsyncFunction {
     }
 
     fn owned_buffers(&self) -> impl Iterator<Item = result::OwnedBuffer> + '_ {
-        self.returns.owned_buffer().into_iter().chain(
-            self.fallible
-                .iter()
-                .filter_map(FallibleResult::owned_buffer),
-        )
+        self.params
+            .iter()
+            .filter_map(argument::Conversion::mutation_owned_buffer)
+            .chain(self.returns.owned_buffer())
+            .chain(
+                self.fallible
+                    .iter()
+                    .filter_map(FallibleResult::owned_buffer),
+            )
     }
 
     fn has_string_argument(&self) -> bool {

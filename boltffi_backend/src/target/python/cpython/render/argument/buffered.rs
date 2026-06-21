@@ -1,7 +1,7 @@
 use crate::{
     bridge::c::{Expression, Identifier, TypeFragment},
     core::{Error, Result},
-    target::python::cpython::render::{direct_vector, primitive},
+    target::python::cpython::render::{direct_vector, primitive, result},
 };
 
 #[derive(Clone)]
@@ -58,13 +58,17 @@ impl BufferedArgument {
             Self::RegisteredObject(registered) => Ok(Some(MutationOutput::new(
                 Identifier::parse(format!("{name}_out"))?,
                 registered.owned_decoder.clone(),
+                None,
             ))),
-            Self::OptionalPrimitive(_) | Self::RawWire | Self::DirectVector(_) => {
-                Err(Error::UnsupportedTarget {
-                    target: "python",
-                    shape: "mutable encoded parameter",
-                })
-            }
+            Self::RawWire => Ok(Some(MutationOutput::new(
+                Identifier::parse(format!("{name}_out"))?,
+                result::OwnedBuffer::RawWire.converter()?,
+                Some(result::OwnedBuffer::RawWire),
+            ))),
+            Self::OptionalPrimitive(_) | Self::DirectVector(_) => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape: "mutable encoded parameter",
+            }),
         }
     }
 
@@ -106,11 +110,20 @@ impl RegisteredObject {
 pub struct MutationOutput {
     buffer: Identifier,
     decoder: Identifier,
+    owned_buffer: Option<result::OwnedBuffer>,
 }
 
 impl MutationOutput {
-    fn new(buffer: Identifier, decoder: Identifier) -> Self {
-        Self { buffer, decoder }
+    fn new(
+        buffer: Identifier,
+        decoder: Identifier,
+        owned_buffer: Option<result::OwnedBuffer>,
+    ) -> Self {
+        Self {
+            buffer,
+            decoder,
+            owned_buffer,
+        }
     }
 
     pub fn buffer(&self) -> &Identifier {
@@ -119,5 +132,9 @@ impl MutationOutput {
 
     pub fn decoder(&self) -> &Identifier {
         &self.decoder
+    }
+
+    pub fn owned_buffer(&self) -> Option<result::OwnedBuffer> {
+        self.owned_buffer.clone()
     }
 }

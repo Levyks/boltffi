@@ -117,5 +117,8 @@ class PrimitiveVecsTests(DemoTestCase):
         self.assertEqual(demo.generate_f64_vec(3), [0.0, 0.1, 0.2])
         self.demo_case("case:primitives.vecs.f64.should_sum_values")
         self.assertEqual(demo.sum_f64_vec([1.5, 2.5, 4.0]), 8.0)
+        self.demo_case("case:primitives.vecs.u64.should_increment_first_value_in_place")
+        self.assertEqual(demo.inc_u64([10, 20, 30]), [11, 20, 30])
+        self.assertEqual(demo.inc_u64([]), [])
         self.demo_case("case:primitives.vecs.u64.should_increment_value")
         self.assertEqual(demo.inc_u64_value(41), 42)

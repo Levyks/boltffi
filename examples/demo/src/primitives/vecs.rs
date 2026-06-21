@@ -238,12 +238,7 @@ pub fn sum_f64_vec(values: Vec<f64>) -> f64 {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.u64.should_increment_first_value_in_place",
     justification = "Ensure a mutable u64 slice crosses the wire and increments its first value in place.",
-    directions = "Call `primitives::vecs::inc_u64` through the generated binding and assert a mutable u64 slice crosses the wire and increments its first value in place.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer only accepts value parameters today, so mutable slice parameters are omitted. Include this case when in-place sequence parameters are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::inc_u64` through the generated binding and assert a mutable u64 slice crosses the wire and increments its first value in place."
 )]
 #[export]
 pub fn inc_u64(values: &mut [u64]) {
