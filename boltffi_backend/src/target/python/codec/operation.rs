@@ -1,4 +1,4 @@
-use boltffi_binding::{DirectValueType, FieldKey, IntrinsicOp, OpRender, ValueRef};
+use boltffi_binding::{DirectValueType, FieldKey, IntrinsicOp, OpRender, ValueRef, ValueRoot};
 
 use crate::{
     core::{Error, Result},
@@ -9,9 +9,24 @@ use crate::{
     },
 };
 
-pub struct Operation;
+pub struct Operation {
+    self_value: ValueRef,
+}
 
 impl Operation {
+    pub fn with_self_value(value: &ValueRef) -> Self {
+        Self {
+            self_value: value.clone(),
+        }
+    }
+
+    fn value_ref(&self, value: &ValueRef) -> ValueRef {
+        match value.root() {
+            ValueRoot::SelfValue => self.self_value.clone(),
+            _ => value.clone(),
+        }
+    }
+
     fn binary(
         left: Result<Expression>,
         right: Result<Expression>,
@@ -36,7 +51,7 @@ impl OpRender for Operation {
     type Expr = Result<Expression>;
 
     fn value(&mut self, value: &ValueRef) -> Self::Expr {
-        ValueExpression::new(value).render()
+        ValueExpression::new(&self.value_ref(value)).render()
     }
 
     fn byte_count(&mut self, bytes: u64) -> Self::Expr {

@@ -76,6 +76,30 @@ class PrimitiveVecsTests(DemoTestCase):
         self.demo_case("case:primitives.vecs.string.should_report_utf8_byte_lengths")
         self.assertEqual(demo.vec_string_lengths(["hi", "café"]), [2, 5])
 
+    def test_nested_vecs(self) -> None:
+        self.demo_case("case:primitives.vecs.nested_i32.should_roundtrip_values")
+        self.assertEqual(demo.echo_vec_vec_i32([[1, 2], [], [-3]]), [[1, 2], [], [-3]])
+        self.demo_case("case:primitives.vecs.nested_i32.should_roundtrip_empty_outer")
+        self.assertEqual(demo.echo_vec_vec_i32([]), [])
+        self.demo_case("case:primitives.vecs.nested_bool.should_roundtrip_values")
+        self.assertEqual(
+            demo.echo_vec_vec_bool([[True, False], [], [False]]),
+            [[True, False], [], [False]],
+        )
+        self.demo_case("case:primitives.vecs.nested_isize.should_roundtrip_values")
+        self.assertEqual(demo.echo_vec_vec_isize([[-2, 0, 5], []]), [[-2, 0, 5], []])
+        self.demo_case("case:primitives.vecs.nested_usize.should_roundtrip_values")
+        self.assertEqual(demo.echo_vec_vec_usize([[0, 2, 4], []]), [[0, 2, 4], []])
+        self.demo_case("case:primitives.vecs.nested_string.should_roundtrip_utf8_values")
+        self.assertEqual(
+            demo.echo_vec_vec_string([["hello", "café"], [], ["world"]]),
+            [["hello", "café"], [], ["world"]],
+        )
+        self.demo_case("case:primitives.vecs.nested_i32.should_flatten_values")
+        self.assertEqual(demo.flatten_vec_vec_i32([[1, 2], [], [3]]), [1, 2, 3])
+        self.demo_case("case:primitives.vecs.nested_i32.should_flatten_empty")
+        self.assertEqual(demo.flatten_vec_vec_i32([]), [])
+
     def test_make_range(self) -> None:
         self.demo_case("case:primitives.vecs.i32.should_make_range")
         self.assertEqual(demo.make_range(0, 5), [0, 1, 2, 3, 4])

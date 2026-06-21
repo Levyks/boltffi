@@ -576,6 +576,58 @@ mod tests {
     }
 
     #[test]
+    fn python_target_renders_nested_vector_lengths_from_bound_value() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn echo_values(values: Vec<Vec<i32>>) -> Vec<Vec<i32>> {
+                    values
+                }
+                "#,
+            ))
+            .expect("Python target should render nested vector");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(init.contains(
+            "_boltffi_wire_sequence(__boltffi_value_0, len(__boltffi_value_0), lambda __boltffi_value_1: _boltffi_wire_i32(__boltffi_value_1))"
+        ));
+        assert!(!init.contains("len(self)"));
+        assert!(stub.contains("from collections.abc import Sequence"));
+        assert!(
+            stub.contains(
+                "def echo_values(values: Sequence[Sequence[int]]) -> list[list[int]]: ..."
+            )
+        );
+    }
+
+    #[test]
+    fn python_target_renders_record_vector_lengths_from_field_value() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[data]
+                pub struct Profile {
+                    tags: Vec<String>,
+                }
+
+                #[export]
+                pub fn echo_profile(profile: Profile) -> Profile {
+                    profile
+                }
+                "#,
+            ))
+            .expect("Python target should render record vector");
+        let init = file(&output, "demo/__init__.py");
+
+        assert!(init.contains(
+            "_boltffi_wire_sequence(self.tags, len(self.tags), lambda __boltffi_value_0: _boltffi_wire_string(__boltffi_value_0))"
+        ));
+        assert!(!init.contains("self.tags.tags"));
+    }
+
+    #[test]
     fn python_target_renders_direct_record_associated_callables() {
         let output = target()
             .render(&bindings(

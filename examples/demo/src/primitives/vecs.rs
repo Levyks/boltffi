@@ -266,22 +266,12 @@ pub fn inc_u64_value(value: u64) -> u64 {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.nested_i32.should_roundtrip_values",
     justification = "Ensure a nested i32 vector crosses the wire and returns unchanged.",
-    directions = "Call `primitives::vecs::echo_vec_vec_i32` through the generated binding and assert a nested i32 vector crosses the wire and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::echo_vec_vec_i32` through the generated binding and assert a nested i32 vector crosses the wire and returns unchanged."
 )]
 #[demo_bench_macros::demo_case(
     "primitives.vecs.nested_i32.should_roundtrip_empty_outer",
     justification = "Ensure an empty outer i32 vector crosses the wire and returns as an empty nested vector.",
-    directions = "Call `primitives::vecs::echo_vec_vec_i32` through the generated binding and assert an empty outer i32 vector crosses the wire and returns as an empty nested vector.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::echo_vec_vec_i32` through the generated binding and assert an empty outer i32 vector crosses the wire and returns as an empty nested vector."
 )]
 #[export]
 pub fn echo_vec_vec_i32(v: Vec<Vec<i32>>) -> Vec<Vec<i32>> {
@@ -291,12 +281,7 @@ pub fn echo_vec_vec_i32(v: Vec<Vec<i32>>) -> Vec<Vec<i32>> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.nested_bool.should_roundtrip_values",
     justification = "Ensure a nested boolean vector crosses the wire and returns unchanged.",
-    directions = "Call `primitives::vecs::echo_vec_vec_bool` through the generated binding and assert a nested boolean vector crosses the wire and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::echo_vec_vec_bool` through the generated binding and assert a nested boolean vector crosses the wire and returns unchanged."
 )]
 #[export]
 pub fn echo_vec_vec_bool(v: Vec<Vec<bool>>) -> Vec<Vec<bool>> {
@@ -307,11 +292,6 @@ pub fn echo_vec_vec_bool(v: Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     "primitives.vecs.nested_isize.should_roundtrip_values",
     justification = "Ensure a nested isize vector crosses the wire and returns unchanged.",
     directions = "Call `primitives::vecs::echo_vec_vec_isize` through the generated binding and assert a nested isize vector crosses the wire and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    ),
     exclude(
         typescript,
         reason = ExclusionReason::ImplementationGap,
@@ -328,11 +308,6 @@ pub fn echo_vec_vec_isize(v: Vec<Vec<isize>>) -> Vec<Vec<isize>> {
     justification = "Ensure a nested usize vector crosses the wire and returns unchanged.",
     directions = "Call `primitives::vecs::echo_vec_vec_usize` through the generated binding and assert a nested usize vector crosses the wire and returns unchanged.",
     exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    ),
-    exclude(
         typescript,
         reason = ExclusionReason::ImplementationGap,
         details = "#203: TypeScript nested Vec<Vec<usize>> lowering passes plain Number values to BigInt setters in the generated writer. Include this case when the nested usize writer coerces elements to BigInt."
@@ -346,12 +321,7 @@ pub fn echo_vec_vec_usize(v: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.nested_string.should_roundtrip_utf8_values",
     justification = "Ensure a nested string vector with UTF-8 values crosses the wire and returns unchanged.",
-    directions = "Call `primitives::vecs::echo_vec_vec_string` through the generated binding and assert a nested string vector with UTF-8 values crosses the wire and returns unchanged.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::echo_vec_vec_string` through the generated binding and assert a nested string vector with UTF-8 values crosses the wire and returns unchanged."
 )]
 #[export]
 pub fn echo_vec_vec_string(v: Vec<Vec<String>>) -> Vec<Vec<String>> {
@@ -361,22 +331,12 @@ pub fn echo_vec_vec_string(v: Vec<Vec<String>>) -> Vec<Vec<String>> {
 #[demo_bench_macros::demo_case(
     "primitives.vecs.nested_i32.should_flatten_values",
     justification = "Ensure a nested i32 vector crosses the wire and returns as a flattened i32 vector.",
-    directions = "Call `primitives::vecs::flatten_vec_vec_i32` through the generated binding and assert a nested i32 vector crosses the wire and returns as a flattened i32 vector.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::flatten_vec_vec_i32` through the generated binding and assert a nested i32 vector crosses the wire and returns as a flattened i32 vector."
 )]
 #[demo_bench_macros::demo_case(
     "primitives.vecs.nested_i32.should_flatten_empty",
     justification = "Ensure an empty nested i32 vector crosses the wire and returns as an empty i32 vector.",
-    directions = "Call `primitives::vecs::flatten_vec_vec_i32` through the generated binding and assert an empty nested i32 vector crosses the wire and returns as an empty i32 vector.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer does not currently handle nested Vec<T> shapes. Include this case when nested vectors are implemented for Python."
-    )
+    directions = "Call `primitives::vecs::flatten_vec_vec_i32` through the generated binding and assert an empty nested i32 vector crosses the wire and returns as an empty i32 vector."
 )]
 #[export]
 pub fn flatten_vec_vec_i32(v: Vec<Vec<i32>>) -> Vec<i32> {
