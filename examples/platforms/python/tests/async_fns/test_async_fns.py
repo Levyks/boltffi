@@ -32,6 +32,16 @@ class AsyncFunctionTests(AsyncDemoTestCase):
         await self.assert_runtime_error_contains("invalid id", lambda: demo.fetch_data(0))
         self.demo_case("case:async_fns.results.try_compute.should_return_doubled_value")
         self.assertEqual(await demo.try_compute_async(4), 8)
+        self.demo_case("case:async_fns.results.try_compute.should_return_overflow_for_negative_value")
+        await self.assert_runtime_error_value(
+            demo.ComputeErrorOverflow(-1, 0),
+            lambda: demo.try_compute_async(-1),
+        )
+        self.demo_case("case:async_fns.results.try_compute.should_return_invalid_input_for_zero")
+        await self.assert_runtime_error_value(
+            demo.ComputeErrorInvalidInput(-999),
+            lambda: demo.try_compute_async(0),
+        )
 
     async def test_async_mixed_record_functions(self) -> None:
         record = demo.MixedRecord(

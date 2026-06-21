@@ -253,7 +253,7 @@ where
                     body: quote! {
                         if !#out.is_null() {
                             unsafe {
-                                *#out = #success_ident;
+                                ::core::ptr::write(#out, #success_ident);
                             }
                         }
                     },
@@ -271,7 +271,10 @@ where
                     body: quote! {
                         if !#out.is_null() {
                             unsafe {
-                                *#out = <#ok as ::boltffi::__private::Passable>::pack(#success_ident);
+                                ::core::ptr::write(
+                                    #out,
+                                    <#ok as ::boltffi::__private::Passable>::pack(#success_ident),
+                                );
                             }
                         }
                     },
@@ -292,7 +295,7 @@ where
                     body: quote! {
                         if !#out.is_null() {
                             unsafe {
-                                *#out = #encoded_value;
+                                ::core::ptr::write(#out, #encoded_value);
                             }
                         }
                     },
@@ -325,7 +328,7 @@ where
                     body: quote! {
                         if !#out.is_null() {
                             unsafe {
-                                *#out = #handle_value;
+                                ::core::ptr::write(#out, #handle_value);
                             }
                         }
                     },

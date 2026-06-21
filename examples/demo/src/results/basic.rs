@@ -5,22 +5,12 @@ use crate::records::blittable::Point;
 #[demo_bench_macros::demo_case(
     "results.basic.safe_divide.should_return_quotient",
     justification = "Ensure safe_divide returns the integer quotient when the divisor is non-zero.",
-    directions = "Call `results::basic::safe_divide` through the generated binding and assert safe_divide returns the integer quotient when the divisor is non-zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::safe_divide` through the generated binding and assert safe_divide returns the integer quotient when the divisor is non-zero."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.safe_divide.should_reject_division_by_zero",
     justification = "Ensure safe_divide returns a language-native error when the divisor is zero.",
-    directions = "Call `results::basic::safe_divide` through the generated binding and assert safe_divide returns a language-native error when the divisor is zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::safe_divide` through the generated binding and assert safe_divide returns a language-native error when the divisor is zero."
 )]
 #[export]
 pub fn safe_divide(a: i32, b: i32) -> Result<i32, String> {
@@ -34,22 +24,12 @@ pub fn safe_divide(a: i32, b: i32) -> Result<i32, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.safe_sqrt.should_return_square_root",
     justification = "Ensure safe_sqrt returns the square root for non-negative floating-point input.",
-    directions = "Call `results::basic::safe_sqrt` through the generated binding and assert safe_sqrt returns the square root for non-negative floating-point input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::safe_sqrt` through the generated binding and assert safe_sqrt returns the square root for non-negative floating-point input."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.safe_sqrt.should_reject_negative_input",
     justification = "Ensure safe_sqrt returns a language-native error for negative floating-point input.",
-    directions = "Call `results::basic::safe_sqrt` through the generated binding and assert safe_sqrt returns a language-native error for negative floating-point input.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::safe_sqrt` through the generated binding and assert safe_sqrt returns a language-native error for negative floating-point input."
 )]
 #[export]
 pub fn safe_sqrt(x: f64) -> Result<f64, String> {
@@ -63,22 +43,12 @@ pub fn safe_sqrt(x: f64) -> Result<f64, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.parse_point.should_parse_coordinates",
     justification = "Ensure parse_point parses a comma-separated coordinate string into a Point record.",
-    directions = "Call `results::basic::parse_point` through the generated binding and assert parse_point parses a comma-separated coordinate string into a Point record.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::parse_point` through the generated binding and assert parse_point parses a comma-separated coordinate string into a Point record."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.parse_point.should_reject_malformed_input",
     justification = "Ensure parse_point returns a language-native error when the input is not a coordinate pair.",
-    directions = "Call `results::basic::parse_point` through the generated binding and assert parse_point returns a language-native error when the input is not a coordinate pair.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::parse_point` through the generated binding and assert parse_point returns a language-native error when the input is not a coordinate pair."
 )]
 #[export]
 pub fn parse_point(s: String) -> Result<Point, String> {
@@ -100,12 +70,7 @@ pub fn parse_point(s: String) -> Result<Point, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.always_ok.should_return_doubled_value",
     justification = "Ensure always_ok returns an Ok value containing the input doubled.",
-    directions = "Call `results::basic::always_ok` through the generated binding and assert always_ok returns an Ok value containing the input doubled.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::always_ok` through the generated binding and assert always_ok returns an Ok value containing the input doubled."
 )]
 #[export]
 pub fn always_ok(v: i32) -> Result<i32, String> {
@@ -115,12 +80,7 @@ pub fn always_ok(v: i32) -> Result<i32, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.always_err.should_return_message_error",
     justification = "Ensure always_err returns an error containing the caller-provided message.",
-    directions = "Call `results::basic::always_err` through the generated binding and assert always_err returns an error containing the caller-provided message.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::always_err` through the generated binding and assert always_err returns an error containing the caller-provided message."
 )]
 #[export]
 pub fn always_err(msg: String) -> Result<i32, String> {
@@ -148,22 +108,12 @@ pub fn result_to_string(v: Result<i32, String>) -> String {
 #[demo_bench_macros::demo_case(
     "results.basic.divide.should_return_quotient",
     justification = "Ensure divide returns the integer quotient when the divisor is non-zero.",
-    directions = "Call `results::basic::divide` through the generated binding and assert divide returns the integer quotient when the divisor is non-zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::divide` through the generated binding and assert divide returns the integer quotient when the divisor is non-zero."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.divide.should_reject_division_by_zero",
     justification = "Ensure divide returns a language-native error when the divisor is zero.",
-    directions = "Call `results::basic::divide` through the generated binding and assert divide returns a language-native error when the divisor is zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::divide` through the generated binding and assert divide returns a language-native error when the divisor is zero."
 )]
 #[export]
 pub fn divide(a: i32, b: i32) -> Result<i32, String> {
@@ -173,22 +123,12 @@ pub fn divide(a: i32, b: i32) -> Result<i32, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.parse_int.should_parse_integer",
     justification = "Ensure parse_int parses a decimal string into an i32 value.",
-    directions = "Call `results::basic::parse_int` through the generated binding and assert parse_int parses a decimal string into an i32 value.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::parse_int` through the generated binding and assert parse_int parses a decimal string into an i32 value."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.parse_int.should_reject_invalid_integer",
     justification = "Ensure parse_int returns a language-native error when the string is not a valid i32.",
-    directions = "Call `results::basic::parse_int` through the generated binding and assert parse_int returns a language-native error when the string is not a valid i32.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::parse_int` through the generated binding and assert parse_int returns a language-native error when the string is not a valid i32."
 )]
 #[export]
 pub fn parse_int(input: String) -> Result<i32, String> {
@@ -200,22 +140,12 @@ pub fn parse_int(input: String) -> Result<i32, String> {
 #[demo_bench_macros::demo_case(
     "results.basic.validate_name.should_greet_valid_name",
     justification = "Ensure validate_name returns a greeting for a non-empty name within the length limit.",
-    directions = "Call `results::basic::validate_name` through the generated binding and assert validate_name returns a greeting for a non-empty name within the length limit.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::validate_name` through the generated binding and assert validate_name returns a greeting for a non-empty name within the length limit."
 )]
 #[demo_bench_macros::demo_case(
     "results.basic.validate_name.should_reject_empty_name",
     justification = "Ensure validate_name returns a language-native error when the provided name is empty.",
-    directions = "Call `results::basic::validate_name` through the generated binding and assert validate_name returns a language-native error when the provided name is empty.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python direct synchronous Result<T, String> returns abort on the Python 3.11 universal2 CI build. Include this case when sync Result return propagation is stable for Python."
-    )
+    directions = "Call `results::basic::validate_name` through the generated binding and assert validate_name returns a language-native error when the provided name is empty."
 )]
 #[export]
 pub fn validate_name(name: String) -> Result<String, String> {

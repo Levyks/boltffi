@@ -24,6 +24,13 @@ class BlittableRecordsTests(DemoTestCase):
         self.assert_point(demo.Point.origin(), x=0.0, y=0.0)
         self.demo_case("case:records.blittable.point.should_construct_from_polar_coordinates")
         self.assert_point(demo.Point.from_polar(2.0, math.pi / 2.0), x=0.0, y=2.0, tolerance=1e-9)
+        self.demo_case("case:records.blittable.point.should_normalize_unit_vector")
+        self.assert_point(demo.Point.try_unit(3.0, 4.0), x=0.6, y=0.8)
+        self.demo_case("case:records.blittable.point.should_reject_zero_unit_vector")
+        self.assert_runtime_error_value(
+            "cannot normalize zero vector",
+            lambda: demo.Point.try_unit(0.0, 0.0),
+        )
         self.demo_case("case:records.blittable.point.should_return_some_for_checked_unit")
         self.assert_point(demo.Point.checked_unit(3.0, 4.0), x=0.6, y=0.8)
         self.demo_case("case:records.blittable.point.should_return_none_for_zero_checked_unit")

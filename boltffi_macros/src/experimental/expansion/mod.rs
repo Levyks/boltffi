@@ -3088,6 +3088,32 @@ mod tests {
     }
 
     #[test]
+    fn native_encoded_record_expansion_emits_fallible_initializer_success_out() {
+        let initializer = record_method(
+            "try_from_name",
+            Receiver::None,
+            vec![parameter("name", TypeExpr::String)],
+            result_return(TypeExpr::SelfType, TypeExpr::String),
+        );
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(profile_record_with_method(initializer));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_init_record_demo_profile_try_from_name"));
+        assert!(
+            rendered.contains("__boltffi_return_out : * mut :: boltffi :: __private :: FfiBuf")
+        );
+        assert!(rendered.contains("Profile :: try_from_name (name)"));
+        assert!(rendered.contains(
+            ":: core :: ptr :: write (__boltffi_return_out , :: boltffi :: __private :: FfiBuf :: wire_encode"
+        ));
+    }
+
+    #[test]
     fn native_encoded_record_expansion_emits_instance_method_wrapper() {
         let method = record_method(
             "display_name",
@@ -4152,7 +4178,10 @@ mod tests {
                             }
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
-                                    *__boltffi_return_out = __boltffi_success;
+                                    ::core::ptr::write(
+                                        __boltffi_return_out,
+                                        __boltffi_success
+                                    );
                                 }
                             }
                             ::boltffi::__private::FfiBuf::default()
@@ -6318,7 +6347,9 @@ mod tests {
         assert!(rendered.contains("fn boltffi_init_class_demo_engine_try_new"));
         assert!(rendered.contains("__boltffi_return_out : * mut u64"));
         assert!(rendered.contains("Engine :: try_new ()"));
-        assert!(rendered.contains("* __boltffi_return_out = __BoltffiEngineHandle :: new"));
+        assert!(rendered.contains(
+            ":: core :: ptr :: write (__boltffi_return_out , __BoltffiEngineHandle :: new"
+        ));
     }
 
     #[test]
@@ -7308,10 +7339,12 @@ mod tests {
                         Ok(__boltffi_success) => {
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
-                                    *__boltffi_return_out =
+                                    ::core::ptr::write(
+                                        __boltffi_return_out,
                                         __boltffi_local_demo_listener_handle(
                                             ::std::sync::Arc::from(__boltffi_success)
-                                        );
+                                        )
+                                    );
                                 }
                             }
                             ::boltffi::__private::FfiBuf::default()
@@ -8189,8 +8222,10 @@ mod tests {
                         Ok(__boltffi_success) => {
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
-                                    *__boltffi_return_out =
-                                        __BoltffiEngineHandle::new(__boltffi_success) as usize as u64;
+                                    ::core::ptr::write(
+                                        __boltffi_return_out,
+                                        __BoltffiEngineHandle::new(__boltffi_success) as usize as u64
+                                    );
                                 }
                             }
                             ::boltffi::__private::FfiBuf::default()
@@ -8397,7 +8432,10 @@ mod tests {
                         Ok(__boltffi_success) => {
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
-                                    *__boltffi_return_out = __boltffi_success;
+                                    ::core::ptr::write(
+                                        __boltffi_return_out,
+                                        __boltffi_success
+                                    );
                                 }
                             }
                             ::boltffi::__private::FfiBuf::default()
@@ -8478,10 +8516,12 @@ mod tests {
                         Ok(__boltffi_success) => {
                             if !__boltffi_return_out.is_null() {
                                 unsafe {
-                                    *__boltffi_return_out =
+                                    ::core::ptr::write(
+                                        __boltffi_return_out,
                                         ::boltffi::__private::FfiBuf::wire_encode(
                                             &__boltffi_success
-                                        ).into_packed();
+                                        ).into_packed()
+                                    );
                                 }
                             }
                             ::boltffi::__private::FfiBuf::default().into_packed()

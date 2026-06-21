@@ -10,12 +10,7 @@ use super::error_enums::MathError;
 #[demo_bench_macros::demo_case(
     "results.async_results.safe_divide.should_reject_division_by_zero",
     justification = "Ensure async_safe_divide rejects with a typed MathError when the divisor is zero.",
-    directions = "Call `results::async_results::async_safe_divide` through the generated binding and assert async_safe_divide rejects with a typed MathError when the divisor is zero.",
-    exclude(
-        python,
-        reason = ExclusionReason::ImplementationGap,
-        details = "Python is experimental; its lowerer currently omits async functions and Result returns. Include this case when async Result support is implemented for Python."
-    )
+    directions = "Call `results::async_results::async_safe_divide` through the generated binding and assert async_safe_divide rejects with a typed MathError when the divisor is zero."
 )]
 #[export]
 pub async fn async_safe_divide(a: i32, b: i32) -> Result<i32, MathError> {

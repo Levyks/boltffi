@@ -15,6 +15,9 @@ class ComplexVariantTests(DemoTestCase):
         self.demo_case("case:enums.complex_variants.filter.by_tags.should_roundtrip_string_vector_payload")
         tag_filter = demo.FilterByTags(["ffi", "jni", "café"])
         self.assertEqual(demo.echo_filter(tag_filter), tag_filter)
+        self.demo_case("case:enums.complex_variants.filter.by_groups.should_roundtrip_nested_string_vectors")
+        group_filter = demo.FilterByGroups([["ffi", "jni"], [], ["café"]])
+        self.assertEqual(demo.echo_filter(group_filter), group_filter)
         self.demo_case("case:enums.complex_variants.filter.by_points.should_roundtrip_record_vector_payload")
         self.assertEqual(demo.echo_filter(point_filter), point_filter)
         self.demo_case("case:enums.complex_variants.filter.by_name.should_describe_string_payload")
@@ -23,6 +26,8 @@ class ComplexVariantTests(DemoTestCase):
         self.assertEqual(demo.describe_filter(point_filter), "filter by 2 anchor points")
         self.demo_case("case:enums.complex_variants.filter.by_tags.should_describe_string_vector_payload")
         self.assertEqual(demo.describe_filter(demo.FilterByTags(["ffi", "jni"])), "filter by 2 tags")
+        self.demo_case("case:enums.complex_variants.filter.by_groups.should_describe_nested_string_vectors")
+        self.assertEqual(demo.describe_filter(group_filter), "filter by 3 groups")
         self.demo_case("case:enums.complex_variants.filter.by_range.should_describe_numeric_bounds")
         self.assertEqual(demo.describe_filter(demo.FilterByRange(1.0, 5.0)), "filter by range: 1..5")
 
