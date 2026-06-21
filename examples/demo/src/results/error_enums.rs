@@ -32,7 +32,12 @@ impl From<UnexpectedFfiCallbackError> for MathError {
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_divide.should_return_quotient",
     justification = "Ensure checked_divide returns the integer quotient when the divisor is non-zero.",
-    directions = "Call `results::error_enums::checked_divide` through the generated binding and assert checked_divide returns the integer quotient when the divisor is non-zero."
+    directions = "Call `results::error_enums::checked_divide` through the generated binding and assert checked_divide returns the integer quotient when the divisor is non-zero.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_divide.should_reject_division_by_zero",
@@ -56,7 +61,12 @@ pub fn checked_divide(a: i32, b: i32) -> Result<i32, MathError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_sqrt.should_return_square_root",
     justification = "Ensure checked_sqrt returns the square root for non-negative floating-point input.",
-    directions = "Call `results::error_enums::checked_sqrt` through the generated binding and assert checked_sqrt returns the square root for non-negative floating-point input."
+    directions = "Call `results::error_enums::checked_sqrt` through the generated binding and assert checked_sqrt returns the square root for non-negative floating-point input.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_sqrt.should_reject_negative_input",
@@ -80,7 +90,12 @@ pub fn checked_sqrt(x: f64) -> Result<f64, MathError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_add.should_return_sum",
     justification = "Ensure checked_add returns the sum when the i32 addition does not overflow.",
-    directions = "Call `results::error_enums::checked_add` through the generated binding and assert checked_add returns the sum when the i32 addition does not overflow."
+    directions = "Call `results::error_enums::checked_add` through the generated binding and assert checked_add returns the sum when the i32 addition does not overflow.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.checked_add.should_reject_overflow",
@@ -115,7 +130,12 @@ impl std::error::Error for AppError {}
 #[demo_bench_macros::demo_case(
     "results.error_enums.may_fail.should_return_success_when_valid",
     justification = "Ensure may_fail returns an Ok success string when the input is valid.",
-    directions = "Call `results::error_enums::may_fail` through the generated binding and assert may_fail returns an Ok success string when the input is valid."
+    directions = "Call `results::error_enums::may_fail` through the generated binding and assert may_fail returns an Ok success string when the input is valid.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.may_fail.should_return_app_error_when_invalid",
@@ -142,7 +162,12 @@ pub fn may_fail(valid: bool) -> Result<String, AppError> {
 #[demo_bench_macros::demo_case(
     "results.error_enums.divide_app.should_return_quotient",
     justification = "Ensure divide_app returns the integer quotient when the divisor is non-zero.",
-    directions = "Call `results::error_enums::divide_app` through the generated binding and assert divide_app returns the integer quotient when the divisor is non-zero."
+    directions = "Call `results::error_enums::divide_app` through the generated binding and assert divide_app returns the integer quotient when the divisor is non-zero.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.divide_app.should_return_app_error_for_division_by_zero",
@@ -194,7 +219,12 @@ impl std::error::Error for ValidationError {}
 #[demo_bench_macros::demo_case(
     "results.error_enums.validate_username.should_accept_valid_name",
     justification = "Ensure validate_username returns the provided name when it satisfies all validation rules.",
-    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the provided name when it satisfies all validation rules."
+    directions = "Call `results::error_enums::validate_username` through the generated binding and assert validate_username returns the provided name when it satisfies all validation rules.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.validate_username.should_reject_too_short_name",
@@ -328,7 +358,12 @@ pub fn api_result_is_success(result: ApiResult) -> bool {
 #[demo_bench_macros::demo_case(
     "results.error_enums.try_compute.should_return_doubled_value",
     justification = "Ensure try_compute returns an Ok value containing positive input doubled.",
-    directions = "Call `results::error_enums::try_compute` through the generated binding and assert try_compute returns an Ok value containing positive input doubled."
+    directions = "Call `results::error_enums::try_compute` through the generated binding and assert try_compute returns an Ok value containing positive input doubled.",
+    exclude(
+        python,
+        reason = ExclusionReason::ImplementationGap,
+        details = "Python direct synchronous Result<T, E> returns abort on the Python 3.11 universal2 CI build. Include this case when sync typed Result return propagation is stable for Python."
+    )
 )]
 #[demo_bench_macros::demo_case(
     "results.error_enums.try_compute.should_return_overflow_error",

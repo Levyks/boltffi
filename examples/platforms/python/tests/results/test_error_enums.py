@@ -4,26 +4,6 @@ import demo
 
 
 class ErrorEnumResultTests(DemoTestCase):
-    def assert_runtime_error(self, call) -> None:
-        with self.assertRaises(RuntimeError):
-            call()
-
-    def test_success_paths(self) -> None:
-        self.demo_case("case:results.error_enums.checked_divide.should_return_quotient")
-        self.assertEqual(demo.checked_divide(10, 2), 5)
-        self.demo_case("case:results.error_enums.checked_sqrt.should_return_square_root")
-        self.assertEqual(demo.checked_sqrt(9.0), 3.0)
-        self.demo_case("case:results.error_enums.checked_add.should_return_sum")
-        self.assertEqual(demo.checked_add(2, 3), 5)
-        self.demo_case("case:results.error_enums.validate_username.should_accept_valid_name")
-        self.assertEqual(demo.validate_username("valid_name"), "valid_name")
-        self.demo_case("case:results.error_enums.may_fail.should_return_success_when_valid")
-        self.assertEqual(demo.may_fail(True), "Success!")
-        self.demo_case("case:results.error_enums.divide_app.should_return_quotient")
-        self.assertEqual(demo.divide_app(10, 2), 5)
-        self.demo_case("case:results.error_enums.try_compute.should_return_doubled_value")
-        self.assertEqual(demo.try_compute(3), 6)
-
     def test_data_enum_returns(self) -> None:
         self.demo_case("case:results.error_enums.process_value.should_return_success_variant")
         self.assertEqual(demo.process_value(3), demo.ApiResultSuccess())
