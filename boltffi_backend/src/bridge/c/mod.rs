@@ -366,6 +366,47 @@ mod tests {
     }
 
     #[test]
+    fn c_contract_groups_encoded_receiver_byte_slice_parameters() {
+        let contract = contract(
+            r#"
+            #[data]
+            pub struct Person {
+                pub name: String,
+            }
+
+            #[data(impl)]
+            impl Person {
+                pub fn rename(&self, name: String) -> String {
+                    name
+                }
+            }
+            "#,
+        );
+        let function = contract
+            .functions()
+            .iter()
+            .find(|function| function.name() == "boltffi_method_record_demo_person_rename")
+            .expect("encoded record method");
+        let [
+            ParameterGroup::ByteSlice(receiver),
+            ParameterGroup::ByteSlice(name),
+        ] = function.parameter_groups()
+        else {
+            panic!("expected receiver and name byte-slice parameter groups");
+        };
+
+        assert_eq!(receiver.name(), "receiver");
+        assert_eq!(
+            function.parameter(receiver.pointer()).name(),
+            "receiver_ptr"
+        );
+        assert_eq!(function.parameter(receiver.length()).name(), "receiver_len");
+        assert_eq!(name.name(), "name");
+        assert_eq!(function.parameter(name.pointer()).name(), "name_ptr");
+        assert_eq!(function.parameter(name.length()).name(), "name_len");
+    }
+
+    #[test]
     fn c_contract_groups_async_poll_continuations() {
         let contract = contract(
             r#"

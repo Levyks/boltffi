@@ -31,11 +31,8 @@ impl ReceiverAbi {
     pub fn encoded(name: &str) -> Result<Self> {
         Ok(Self {
             input: vec![
-                Parameter::new(
-                    format!("{name}_ptr"),
-                    Type::ConstPointer(Box::new(Type::Uint8)),
-                )?,
-                Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
+                Parameter::byte_pointer(name)?,
+                Parameter::byte_length(name)?,
             ],
             writeback: Some(Parameter::new(
                 format!("{name}_out"),
