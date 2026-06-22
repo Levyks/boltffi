@@ -40,10 +40,35 @@ impl JvmMethodReturn {
                     create_handle: Identifier::parse(declaration.create_handle().name())?,
                 })
             }
-            ty => Ok(Self::Value {
+            ty @ (c::Type::Bool
+            | c::Type::Int8
+            | c::Type::Uint8
+            | c::Type::Int16
+            | c::Type::Uint16
+            | c::Type::Int32
+            | c::Type::Uint32
+            | c::Type::Int64
+            | c::Type::Uint64
+            | c::Type::SignedPointerWidth
+            | c::Type::PointerWidth
+            | c::Type::Float32
+            | c::Type::Float64
+            | c::Type::FutureHandle
+            | c::Type::StreamPollResult
+            | c::Type::WaitResult
+            | c::Type::ConstPointer(_)
+            | c::Type::MutPointer(_)
+            | c::Type::FunctionPointer { .. }
+            | c::Type::CStyleEnum { .. }) => Ok(Self::Value {
                 c_type: TypeFragment::anonymous(ty)?,
                 jni_type: JniType::from_c_type(ty)?,
             }),
+            c::Type::Status | c::Type::String | c::Type::Span | c::Type::Named(_) => {
+                Err(Error::UnsupportedBridge {
+                    bridge: JNI_BRIDGE,
+                    shape: "JVM method return",
+                })
+            }
         }
     }
 
