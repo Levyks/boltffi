@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/native_methods.rs
-expression: "rendered_fixture(\"native_methods/jni_bridge_renders_encoded_closure_parameters_from_contract_group\")"
+expression: "rendered_fixture(\"exports/encoded_closure_parameter\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -132,6 +132,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -139,6 +140,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -175,6 +177,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -188,6 +191,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -206,7 +210,6 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->DeleteLocalRef(env, exception_class);
 }
 
-
 static jclass g____closure__string_to_string_class = NULL;
 static jmethodID g____closure__string_to_string_call_method = NULL;
 static jmethodID g____closure__string_to_string_free_method = NULL;
@@ -220,7 +223,6 @@ static FfiBuf_u8 boltffi_jni____closure__string_to_string_call(void *user_data, 
 
     jbyteArray arg0 = NULL;
 
-
     arg0 = boltffi_jni_bytes_to_byte_array(env, arg0_ptr, arg0_len);
     if (arg0 == NULL) {
         boltffi_jni_clear_exception(env);
@@ -232,8 +234,6 @@ static FfiBuf_u8 boltffi_jni____closure__string_to_string_call(void *user_data, 
 
         return (FfiBuf_u8){0};
     }
-
-
 
     jbyteArray __boltffi_return_array = (jbyteArray)(*env)->CallStaticObjectMethod(env, g____closure__string_to_string_class, g____closure__string_to_string_call_method, handle, arg0);
     if (boltffi_jni_clear_exception(env)) {
@@ -261,6 +261,7 @@ static FfiBuf_u8 boltffi_jni____closure__string_to_string_call(void *user_data, 
     boltffi_jni_exit(env, attached);
     return result;
 }
+
 static void boltffi_jni____closure__string_to_string_release(void *user_data) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -271,6 +272,7 @@ static void boltffi_jni____closure__string_to_string_release(void *user_data) {
     boltffi_jni_clear_exception(env);
     boltffi_jni_exit(env, attached);
 }
+
 static bool boltffi_jni_load____closure__string_to_string(JNIEnv *env) {
     jclass local_class = (*env)->FindClass(env, "com/boltffi/demo/ClosureStringToStringCallbacks");
     if (local_class == NULL) {
@@ -295,6 +297,7 @@ fail:
     g____closure__string_to_string_class = NULL;
     return false;
 }
+
 static void boltffi_jni_unload____closure__string_to_string(JNIEnv *env) {
     if (g____closure__string_to_string_class != NULL) {
         (*env)->DeleteGlobalRef(env, g____closure__string_to_string_class);
@@ -303,6 +306,7 @@ static void boltffi_jni_unload____closure__string_to_string(JNIEnv *env) {
     g____closure__string_to_string_call_method = NULL;
     g____closure__string_to_string_free_method = NULL;
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -327,6 +331,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -339,11 +344,13 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = NULL;
     boltffi_jni_native_class = NULL;
 }
+
 static void boltffi_jni_throw_status(JNIEnv *env, FfiStatus status) {
     if (status.code != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI call failed");
     }
 }
+
 static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
     if (buffer.ptr == NULL) {
         if (buffer.len != 0) {
@@ -369,6 +376,7 @@ static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer
     }
     return array;
 }
+
 static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
     if (bytes == NULL && len != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
@@ -391,6 +399,7 @@ static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *by
     }
     return array;
 }
+
 static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
     FfiBuf_u8 empty = {0};
     if (array == NULL) {
@@ -419,11 +428,9 @@ static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array)
     };
     return buffer;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong callback) {
     (void)cls;
-
-
-
 
     FfiStatus status = boltffi_function_demo_install(boltffi_jni____closure__string_to_string_call, (void *)callback, boltffi_jni____closure__string_to_string_release);
 

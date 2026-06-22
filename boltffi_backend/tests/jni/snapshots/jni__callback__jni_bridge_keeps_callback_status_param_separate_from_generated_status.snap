@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/callback.rs
-expression: "rendered_fixture(\"callback/jni_bridge_keeps_callback_status_param_separate_from_generated_status\")"
+expression: "rendered_fixture(\"callback/callback_status_result\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -138,6 +138,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -145,6 +146,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -181,6 +183,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -194,6 +197,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -242,6 +246,7 @@ static uint64_t ___StatusMapperVTable_clone(uint64_t handle) {
     boltffi_jni_exit(env, attached);
     return (uint64_t)result;
 }
+
 static FfiBuf_u8 ___StatusMapperVTable_map_status(uint64_t handle, int32_t *return_out, int32_t status) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -249,13 +254,6 @@ static FfiBuf_u8 ___StatusMapperVTable_map_status(uint64_t handle, int32_t *retu
 
         return (FfiBuf_u8){0};
     }
-
-
-
-
-
-
-
 
     jbyteArray __boltffi_return_array = (jbyteArray)(*env)->CallStaticObjectMethod(env, g____StatusMapperVTable_class, g____StatusMapperVTable_map_status_method, (jlong)handle, (jlong)return_out, (jint)status);
 
@@ -319,6 +317,7 @@ static void boltffi_jni_unload____StatusMapperVTable_callbacks(JNIEnv *env) {
     g____StatusMapperVTable_clone_method = NULL;
     g____StatusMapperVTable_map_status_method = NULL;
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -343,6 +342,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -355,6 +355,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = NULL;
     boltffi_jni_native_class = NULL;
 }
+
 static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
     if (buffer.ptr == NULL) {
         if (buffer.len != 0) {
@@ -380,6 +381,7 @@ static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer
     }
     return array;
 }
+
 static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
     if (bytes == NULL && len != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
@@ -402,6 +404,7 @@ static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *by
     }
     return array;
 }
+
 static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
     FfiBuf_u8 empty = {0};
     if (array == NULL) {

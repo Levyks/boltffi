@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/native_methods.rs
-expression: "rendered_fixture(\"native_methods/jni_bridge_renders_direct_vector_closure_parameters_from_contract_group\")"
+expression: "rendered_fixture(\"exports/direct_vector_closure_parameter\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -131,6 +131,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -138,6 +139,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -174,6 +176,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -187,6 +190,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -205,7 +209,6 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->DeleteLocalRef(env, exception_class);
 }
 
-
 static jclass g____closure__vec_u32_to_u32_class = NULL;
 static jmethodID g____closure__vec_u32_to_u32_call_method = NULL;
 static jmethodID g____closure__vec_u32_to_u32_free_method = NULL;
@@ -216,9 +219,6 @@ static uint32_t boltffi_jni____closure__vec_u32_to_u32_call(void *user_data, con
         return 0;
     }
     jlong handle = (jlong)(uintptr_t)user_data;
-
-
-
 
     jintArray arg0 = NULL;
 
@@ -272,6 +272,7 @@ static uint32_t boltffi_jni____closure__vec_u32_to_u32_call(void *user_data, con
     boltffi_jni_exit(env, attached);
     return result;
 }
+
 static void boltffi_jni____closure__vec_u32_to_u32_release(void *user_data) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -282,6 +283,7 @@ static void boltffi_jni____closure__vec_u32_to_u32_release(void *user_data) {
     boltffi_jni_clear_exception(env);
     boltffi_jni_exit(env, attached);
 }
+
 static bool boltffi_jni_load____closure__vec_u32_to_u32(JNIEnv *env) {
     jclass local_class = (*env)->FindClass(env, "com/boltffi/demo/ClosureVecU32ToU32Callbacks");
     if (local_class == NULL) {
@@ -306,6 +308,7 @@ fail:
     g____closure__vec_u32_to_u32_class = NULL;
     return false;
 }
+
 static void boltffi_jni_unload____closure__vec_u32_to_u32(JNIEnv *env) {
     if (g____closure__vec_u32_to_u32_class != NULL) {
         (*env)->DeleteGlobalRef(env, g____closure__vec_u32_to_u32_class);
@@ -314,6 +317,7 @@ static void boltffi_jni_unload____closure__vec_u32_to_u32(JNIEnv *env) {
     g____closure__vec_u32_to_u32_call_method = NULL;
     g____closure__vec_u32_to_u32_free_method = NULL;
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -338,6 +342,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -350,16 +355,15 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = NULL;
     boltffi_jni_native_class = NULL;
 }
+
 static void boltffi_jni_throw_status(JNIEnv *env, FfiStatus status) {
     if (status.code != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI call failed");
     }
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong callback) {
     (void)cls;
-
-
-
 
     FfiStatus status = boltffi_function_demo_install(boltffi_jni____closure__vec_u32_to_u32_call, (void *)callback, boltffi_jni____closure__vec_u32_to_u32_release);
 

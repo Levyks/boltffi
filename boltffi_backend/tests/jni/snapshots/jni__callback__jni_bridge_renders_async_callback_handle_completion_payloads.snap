@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/callback.rs
-expression: "rendered_fixture(\"callback/jni_bridge_renders_async_callback_handle_completion_payloads\")"
+expression: "rendered_fixture(\"callback/async_callback_returning_callback_handle\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -143,6 +143,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -150,6 +151,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -186,6 +188,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -230,6 +233,7 @@ static uint64_t ___ChildVTable_clone(uint64_t handle) {
     boltffi_jni_exit(env, attached);
     return (uint64_t)result;
 }
+
 static uint32_t ___ChildVTable_on_value(uint64_t handle, uint32_t value) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -237,13 +241,6 @@ static uint32_t ___ChildVTable_on_value(uint64_t handle, uint32_t value) {
 
         return 0;
     }
-
-
-
-
-
-
-
 
     uint32_t result = (uint32_t)(*env)->CallStaticIntMethod(env, g____ChildVTable_class, g____ChildVTable_on_value_method, (jlong)handle, (jint)value);
 
@@ -301,6 +298,7 @@ static void boltffi_jni_unload____ChildVTable_callbacks(JNIEnv *env) {
     g____ChildVTable_clone_method = NULL;
     g____ChildVTable_on_value_method = NULL;
 }
+
 static jclass g____ListenerVTable_class = NULL;
 static jmethodID g____ListenerVTable_free_method = NULL;
 static jmethodID g____ListenerVTable_clone_method = NULL;
@@ -331,6 +329,7 @@ static uint64_t ___ListenerVTable_clone(uint64_t handle) {
     boltffi_jni_exit(env, attached);
     return (uint64_t)result;
 }
+
 static void ___ListenerVTable_child(uint64_t handle, void (*complete)(void *, FfiStatus, BoltFFICallbackHandle), void *complete_context) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -339,12 +338,6 @@ static void ___ListenerVTable_child(uint64_t handle, void (*complete)(void *, Ff
         complete(complete_context, (FfiStatus){.code = 1}, (BoltFFICallbackHandle){0});
         return;
     }
-
-
-
-
-
-
 
     (*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_child_method, (jlong)handle, (jlong)complete, (jlong)complete_context);
 
@@ -399,6 +392,7 @@ static void boltffi_jni_unload____ListenerVTable_callbacks(JNIEnv *env) {
     g____ListenerVTable_clone_method = NULL;
     g____ListenerVTable_child_method = NULL;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1complete_1Callback_1BoltFFICallbackHandle(JNIEnv *env, jclass cls, jlong callback, jlong context, jlong result) {
     (void)cls;
     void (*complete)(void *, FfiStatus, BoltFFICallbackHandle) = (void (*)(void *, FfiStatus, BoltFFICallbackHandle))callback;
@@ -412,6 +406,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1co
     void (*complete)(void *, FfiStatus, BoltFFICallbackHandle) = (void (*)(void *, FfiStatus, BoltFFICallbackHandle))callback;
     complete((void *)context, (FfiStatus){.code = 1}, (BoltFFICallbackHandle){0});
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -444,6 +439,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;

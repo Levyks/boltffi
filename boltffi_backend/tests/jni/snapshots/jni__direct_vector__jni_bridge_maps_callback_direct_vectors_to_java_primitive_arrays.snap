@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/direct_vector.rs
-expression: "rendered_fixture(\"direct_vector/jni_bridge_maps_callback_direct_vectors_to_java_primitive_arrays\")"
+expression: "rendered_fixture(\"direct_vector/callback_vector_parameter\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -137,6 +137,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -144,6 +145,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -180,6 +182,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -193,6 +196,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -241,6 +245,7 @@ static uint64_t ___CollectorVTable_clone(uint64_t handle) {
     boltffi_jni_exit(env, attached);
     return (uint64_t)result;
 }
+
 static void ___CollectorVTable_on_values(uint64_t handle, const int32_t *values_ptr, uintptr_t values_len) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -248,7 +253,6 @@ static void ___CollectorVTable_on_values(uint64_t handle, const int32_t *values_
 
         return;
     }
-
 
     jintArray values = NULL;
     if (values_len > (uintptr_t)INT32_MAX) {
@@ -284,10 +288,6 @@ static void ___CollectorVTable_on_values(uint64_t handle, const int32_t *values_
 
         return;
     }
-
-
-
-
 
     (*env)->CallStaticVoidMethod(env, g____CollectorVTable_class, g____CollectorVTable_on_values_method, (jlong)handle, values);
 
@@ -344,6 +344,7 @@ static void boltffi_jni_unload____CollectorVTable_callbacks(JNIEnv *env) {
     g____CollectorVTable_clone_method = NULL;
     g____CollectorVTable_on_values_method = NULL;
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -368,6 +369,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;

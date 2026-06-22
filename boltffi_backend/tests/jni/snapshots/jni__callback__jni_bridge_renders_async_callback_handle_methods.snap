@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/callback.rs
-expression: "rendered_fixture(\"callback/jni_bridge_renders_async_callback_handle_methods\")"
+expression: "rendered_fixture(\"callback/returned_async_callback_handle\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -138,6 +138,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -145,6 +146,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -181,6 +183,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -194,6 +197,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -211,6 +215,7 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 typedef struct {
     void (*free)(uint64_t handle);
     uint64_t (*clone)(uint64_t handle);
@@ -311,6 +316,7 @@ static uint64_t ___ListenerVTable_clone(uint64_t handle) {
     boltffi_jni_exit(env, attached);
     return (uint64_t)result;
 }
+
 static void ___ListenerVTable_load(uint64_t handle, uint32_t key, void (*complete)(void *, FfiStatus, uint32_t), void *complete_context) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -319,12 +325,6 @@ static void ___ListenerVTable_load(uint64_t handle, uint32_t key, void (*complet
         complete(complete_context, (FfiStatus){.code = 1}, (uint32_t){0});
         return;
     }
-
-
-
-
-
-
 
     (*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_load_method, (jlong)handle, (jint)key, (jlong)complete, (jlong)complete_context);
 
@@ -361,10 +361,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1handle_1d
         return;
     }
 
-
-
     vtable->load(callback_handle->handle, key, ___ListenerVTable_load_handle_completion, (void *)(uintptr_t)callback_data);
-
 
 }
 
@@ -423,6 +420,7 @@ static void boltffi_jni_unload____ListenerVTable_callbacks(JNIEnv *env) {
     g____ListenerVTable_load_success_method = NULL;
     g____ListenerVTable_load_failure_method = NULL;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1complete_1U32(JNIEnv *env, jclass cls, jlong callback, jlong context, jint result) {
     (void)cls;
     void (*complete)(void *, FfiStatus, uint32_t) = (void (*)(void *, FfiStatus, uint32_t))callback;
@@ -436,6 +434,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1co
     void (*complete)(void *, FfiStatus, uint32_t) = (void (*)(void *, FfiStatus, uint32_t))callback;
     complete((void *)context, (FfiStatus){.code = 1}, (uint32_t){0});
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -460,6 +459,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -472,15 +472,12 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = NULL;
     boltffi_jni_native_class = NULL;
 }
+
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1make_1listener(JNIEnv *env, jclass cls) {
     (void)cls;
 
-
-
-
     (void)env;
     BoltFFICallbackHandle result = boltffi_function_demo_make_listener();
-
 
     return boltffi_jni_callback_handle_new_owned(env, result);
 }

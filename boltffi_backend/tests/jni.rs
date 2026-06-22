@@ -64,7 +64,7 @@ pub fn bridge_fixture(name: &str) -> BridgeOutput<JniBridgeContract> {
 }
 
 fn fixture(name: &str) -> String {
-    fs::read_to_string(fixture_path(name)).expect("JNI fixture source")
+    fs::read_to_string(fixture_path(name)).expect("source fixture")
 }
 
 fn fixture_path(name: &str) -> PathBuf {

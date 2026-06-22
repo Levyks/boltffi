@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/constant.rs
-expression: "rendered_fixture(\"constant/jni_bridge_renders_accessor_constants\")"
+expression: "rendered_fixture(\"constant/accessor_constants\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -95,6 +95,7 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
     if (buffer.ptr == NULL) {
         if (buffer.len != 0) {
@@ -120,6 +121,7 @@ static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer
     }
     return array;
 }
+
 static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
     if (bytes == NULL && len != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
@@ -142,6 +144,7 @@ static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *by
     }
     return array;
 }
+
 static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
     FfiBuf_u8 empty = {0};
     if (array == NULL) {
@@ -170,15 +173,12 @@ static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array)
     };
     return buffer;
 }
+
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1const_1demo_1magic(JNIEnv *env, jclass cls) {
     (void)cls;
 
-
-
-
     (void)env;
     FfiBuf_u8 result = boltffi_const_demo_magic();
-
 
     return boltffi_jni_buffer_to_byte_array(env, result);
 }

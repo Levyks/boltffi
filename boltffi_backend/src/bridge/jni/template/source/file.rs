@@ -111,7 +111,7 @@ impl SourceFile {
             &closures,
             &closure_handles,
         );
-        Ok(SourceFileTemplate {
+        let rendered = SourceFileTemplate {
             c_header: Literal::string(contract.c_header().as_str()),
             class_name: Literal::string(&contract.class().as_jni_class_name()),
             free_buffer: contract.free_buffer().clone(),
@@ -143,6 +143,55 @@ impl SourceFile {
             methods,
             direct_stream_batches,
         }
-        .render()?)
+        .render()?;
+
+        Ok(Self::format_source(rendered))
+    }
+
+    fn format_source(rendered: String) -> String {
+        let mut previous_blank = false;
+        let mut source = rendered
+            .lines()
+            .fold(Vec::new(), |mut lines, line| {
+                let blank = line.trim().is_empty();
+                if blank {
+                    if !previous_blank {
+                        lines.push(line);
+                    }
+                    previous_blank = true;
+                    return lines;
+                }
+
+                if lines
+                    .last()
+                    .is_some_and(|previous| Self::needs_section_break(previous, line))
+                {
+                    lines.push("");
+                }
+
+                previous_blank = blank;
+                lines.push(line);
+                lines
+            })
+            .join("\n");
+
+        source.push('\n');
+        source
+    }
+
+    fn needs_section_break(previous: &str, current: &str) -> bool {
+        !previous.trim().is_empty()
+            && !current.starts_with(' ')
+            && !current.starts_with('\t')
+            && matches!(previous, "}" | "};" | "#endif")
+            && Self::starts_top_level_declaration(current)
+    }
+
+    fn starts_top_level_declaration(line: &str) -> bool {
+        line.starts_with("JNIEXPORT")
+            || line.starts_with("static ")
+            || line.starts_with("typedef ")
+            || line.starts_with("Ffi")
+            || line.starts_with("Bolt")
     }
 }

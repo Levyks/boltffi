@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/native_methods.rs
-expression: "rendered_fixture(\"native_methods/jni_bridge_renders_class_handles_and_methods\")"
+expression: "rendered_fixture(\"exports/class_handles_and_methods\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -102,11 +102,13 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 static void boltffi_jni_throw_status(JNIEnv *env, FfiStatus status) {
     if (status.code != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI call failed");
     }
 }
+
 static bool boltffi_jni_read_record(JNIEnv *env, jbyteArray array, uintptr_t expected_len, void *output) {
     if (array == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array argument was null");
@@ -137,49 +139,39 @@ static jbyteArray boltffi_jni_record_to_byte_array(JNIEnv *env, const void *reco
     }
     return array;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1release_1class_1demo_1engine(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
-
-
-
 
     (void)env;
     boltffi_release_class_demo_engine(handle);
 
-
 }
+
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1class_1demo_1engine_1new(JNIEnv *env, jclass cls, jlong seed) {
     (void)cls;
-
-
-
 
     (void)env;
     uint64_t result = boltffi_init_class_demo_engine_new(seed);
 
-
     return (jlong)result;
 }
+
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1version(JNIEnv *env, jclass cls) {
     (void)cls;
-
-
-
 
     (void)env;
     uint32_t result = boltffi_method_class_demo_engine_version();
 
-
     return (jint)result;
 }
+
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1score(JNIEnv *env, jclass cls, jlong receiver, jbyteArray point) {
     (void)cls;
 
     ___Point __boltffi_point_value;
 
-
     if (!boltffi_jni_read_record(env, point, (uintptr_t)sizeof(___Point), &__boltffi_point_value)) {
-
 
         return 0;
     }
@@ -187,14 +179,11 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo
     (void)env;
     uint32_t result = boltffi_method_class_demo_engine_score(receiver, __boltffi_point_value);
 
-
     return (jint)result;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1advance(JNIEnv *env, jclass cls, jlong receiver, jint delta) {
     (void)cls;
-
-
-
 
     FfiStatus status = boltffi_method_class_demo_engine_advance(receiver, delta);
 

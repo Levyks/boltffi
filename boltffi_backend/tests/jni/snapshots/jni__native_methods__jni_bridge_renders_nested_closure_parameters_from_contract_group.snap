@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/native_methods.rs
-expression: "rendered_fixture(\"native_methods/jni_bridge_renders_nested_closure_parameters_from_contract_group\")"
+expression: "rendered_fixture(\"exports/nested_closure_parameter\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -131,6 +131,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -138,6 +139,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -174,6 +176,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -187,6 +190,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -205,7 +209,6 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->DeleteLocalRef(env, exception_class);
 }
 
-
 typedef struct {
     uint32_t (*call)(void *, uint32_t);
     void *context;
@@ -214,6 +217,7 @@ typedef struct {
 static BoltFFIJniClosure___closure__u32_to_u32 *boltffi_jni____closure__u32_to_u32_handle_ref(jlong value) {
     return value == 0 ? NULL : (BoltFFIJniClosure___closure__u32_to_u32 *)(uintptr_t)value;
 }
+
 static void boltffi_jni____closure__u32_to_u32_handle_release(jlong value) {
     BoltFFIJniClosure___closure__u32_to_u32 *closure = boltffi_jni____closure__u32_to_u32_handle_ref(value);
     if (closure == NULL) {
@@ -239,11 +243,13 @@ static jlong boltffi_jni____closure__u32_to_u32_handle_new(JNIEnv *env, uint32_t
     closure->release = release;
     return (jlong)(uintptr_t)closure;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1closure_1_1_1_1closure_1_1u32_1to_1u32_1release(JNIEnv *env, jclass cls, jlong value) {
     (void)env;
     (void)cls;
     boltffi_jni____closure__u32_to_u32_handle_release(value);
 }
+
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1closure_1_1_1_1closure_1_1u32_1to_1u32_1call(JNIEnv *env, jclass cls, jlong value, jint arg0) {
     (void)env;
     (void)cls;
@@ -252,14 +258,10 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1closure_1
         return 0;
     }
 
-
-
-
     uint32_t result = closure->call(closure->context, (uint32_t)arg0);
 
     return (jint)result;
 }
-
 
 static jclass g____closure__box_closure_to_u32_class = NULL;
 static jmethodID g____closure__box_closure_to_u32_call_method = NULL;
@@ -272,11 +274,7 @@ static uint32_t boltffi_jni____closure__box_closure_to_u32_call(void *user_data,
     }
     jlong handle = (jlong)(uintptr_t)user_data;
 
-
     jlong __boltffi_arg0_handle = 0;
-
-
-
 
     __boltffi_arg0_handle = boltffi_jni____closure__u32_to_u32_handle_new(env, arg0_call, (void *)arg0_context, arg0_release);
     if ((*env)->ExceptionCheck(env)) {
@@ -298,6 +296,7 @@ static uint32_t boltffi_jni____closure__box_closure_to_u32_call(void *user_data,
     boltffi_jni_exit(env, attached);
     return result;
 }
+
 static void boltffi_jni____closure__box_closure_to_u32_release(void *user_data) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -308,6 +307,7 @@ static void boltffi_jni____closure__box_closure_to_u32_release(void *user_data) 
     boltffi_jni_clear_exception(env);
     boltffi_jni_exit(env, attached);
 }
+
 static bool boltffi_jni_load____closure__box_closure_to_u32(JNIEnv *env) {
     jclass local_class = (*env)->FindClass(env, "com/boltffi/demo/ClosureBoxClosureToU32Callbacks");
     if (local_class == NULL) {
@@ -332,6 +332,7 @@ fail:
     g____closure__box_closure_to_u32_class = NULL;
     return false;
 }
+
 static void boltffi_jni_unload____closure__box_closure_to_u32(JNIEnv *env) {
     if (g____closure__box_closure_to_u32_class != NULL) {
         (*env)->DeleteGlobalRef(env, g____closure__box_closure_to_u32_class);
@@ -352,11 +353,6 @@ static uint32_t boltffi_jni____closure__u32_to_u32_call(void *user_data, uint32_
     }
     jlong handle = (jlong)(uintptr_t)user_data;
 
-
-
-
-
-
     uint32_t result = (uint32_t)(*env)->CallStaticIntMethod(env, g____closure__u32_to_u32_class, g____closure__u32_to_u32_call_method, handle, (jint)arg0);
     if (boltffi_jni_clear_exception(env)) {
 
@@ -367,6 +363,7 @@ static uint32_t boltffi_jni____closure__u32_to_u32_call(void *user_data, uint32_
     boltffi_jni_exit(env, attached);
     return result;
 }
+
 static void boltffi_jni____closure__u32_to_u32_release(void *user_data) {
     JNIEnv *env = NULL;
     int attached = 0;
@@ -377,6 +374,7 @@ static void boltffi_jni____closure__u32_to_u32_release(void *user_data) {
     boltffi_jni_clear_exception(env);
     boltffi_jni_exit(env, attached);
 }
+
 static bool boltffi_jni_load____closure__u32_to_u32(JNIEnv *env) {
     jclass local_class = (*env)->FindClass(env, "com/boltffi/demo/ClosureU32ToU32Callbacks");
     if (local_class == NULL) {
@@ -401,6 +399,7 @@ fail:
     g____closure__u32_to_u32_class = NULL;
     return false;
 }
+
 static void boltffi_jni_unload____closure__u32_to_u32(JNIEnv *env) {
     if (g____closure__u32_to_u32_class != NULL) {
         (*env)->DeleteGlobalRef(env, g____closure__u32_to_u32_class);
@@ -409,6 +408,7 @@ static void boltffi_jni_unload____closure__u32_to_u32(JNIEnv *env) {
     g____closure__u32_to_u32_call_method = NULL;
     g____closure__u32_to_u32_free_method = NULL;
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -441,6 +441,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -454,16 +455,15 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = NULL;
     boltffi_jni_native_class = NULL;
 }
+
 static void boltffi_jni_throw_status(JNIEnv *env, FfiStatus status) {
     if (status.code != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI call failed");
     }
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong callback) {
     (void)cls;
-
-
-
 
     FfiStatus status = boltffi_function_demo_install(boltffi_jni____closure__box_closure_to_u32_call, (void *)callback, boltffi_jni____closure__box_closure_to_u32_release);
 

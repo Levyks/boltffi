@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/direct_vector.rs
-expression: "rendered_fixture(\"direct_vector/jni_bridge_maps_direct_record_vectors_to_java_byte_arrays\")"
+expression: "rendered_fixture(\"direct_vector/record_vector_parameter\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -97,6 +97,7 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1count(JNIEnv *env, jclass cls, jbyteArray values) {
     (void)cls;
 
@@ -122,7 +123,6 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1cou
 
         return 0;
     }
-
 
     (void)env;
     uint32_t result = boltffi_function_demo_count((const uint8_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);

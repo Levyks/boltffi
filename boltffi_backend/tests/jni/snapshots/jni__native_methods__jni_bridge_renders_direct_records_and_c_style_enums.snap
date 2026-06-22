@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/jni/native_methods.rs
-expression: "rendered_fixture(\"native_methods/jni_bridge_renders_direct_records_and_c_style_enums\")"
+expression: "rendered_fixture(\"exports/direct_records_and_c_style_enums\")"
 ---
 ===== jni/demo.h =====
 #pragma once
@@ -102,6 +102,7 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 static bool boltffi_jni_read_record(JNIEnv *env, jbyteArray array, uintptr_t expected_len, void *output) {
     if (array == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array argument was null");
@@ -132,14 +133,13 @@ static jbyteArray boltffi_jni_record_to_byte_array(JNIEnv *env, const void *reco
     }
     return array;
 }
+
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1point(JNIEnv *env, jclass cls, jbyteArray point) {
     (void)cls;
 
     ___Point __boltffi_point_value;
 
-
     if (!boltffi_jni_read_record(env, point, (uintptr_t)sizeof(___Point), &__boltffi_point_value)) {
-
 
         return NULL;
     }
@@ -147,18 +147,14 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
     (void)env;
     ___Point result = boltffi_function_demo_echo_point(__boltffi_point_value);
 
-
     return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));
 }
+
 JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1mode(JNIEnv *env, jclass cls, jbyte mode) {
     (void)cls;
 
-
-
-
     (void)env;
     ___Mode result = boltffi_function_demo_echo_mode((___Mode)mode);
-
 
     return (jbyte)result;
 }

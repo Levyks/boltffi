@@ -140,6 +140,7 @@ static jint boltffi_jni_android_attach_cached(JavaVM *vm, JNIEnv **env, int *att
     return JNI_OK;
 }
 #endif
+
 static bool boltffi_jni_clear_exception(JNIEnv *env) {
     if (!(*env)->ExceptionCheck(env)) {
         return false;
@@ -147,6 +148,7 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
     (*env)->ExceptionClear(env);
     return true;
 }
+
 static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
     if (boltffi_jni_vm == NULL) {
         return false;
@@ -183,6 +185,7 @@ static bool boltffi_jni_enter(JNIEnv **env, int *attached) {
 
     return true;
 }
+
 static void boltffi_jni_exit(JNIEnv *env, int attached) {
 #if defined(__ANDROID__)
     if (env != NULL) {
@@ -196,6 +199,7 @@ static void boltffi_jni_exit(JNIEnv *env, int attached) {
         (*boltffi_jni_vm)->DetachCurrentThread(boltffi_jni_vm);
     }
 }
+
 static jmethodID boltffi_jni_continuation_method = NULL;
 
 static bool boltffi_jni_continuation_load(JNIEnv *env) {
@@ -224,6 +228,7 @@ static void boltffi_jni_continuation_callback(uint64_t handle, int8_t poll_resul
     boltffi_jni_clear_exception(env);
     boltffi_jni_exit(env, attached);
 }
+
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
     jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (exception_class == NULL) {
@@ -241,6 +246,7 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -264,6 +270,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = vm;
     return JNI_VERSION_1_6;
 }
+
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
@@ -276,6 +283,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     boltffi_jni_vm = NULL;
     boltffi_jni_native_class = NULL;
 }
+
 static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
     if (buffer.ptr == NULL) {
         if (buffer.len != 0) {
@@ -301,6 +309,7 @@ static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer
     }
     return array;
 }
+
 static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
     if (bytes == NULL && len != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
@@ -323,6 +332,7 @@ static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *by
     }
     return array;
 }
+
 static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
     FfiBuf_u8 empty = {0};
     if (array == NULL) {
@@ -351,72 +361,54 @@ static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array)
     };
     return buffer;
 }
+
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1enum_1demo_1mode_1compute(JNIEnv *env, jclass cls, jbyte receiver) {
     (void)cls;
-
-
-
 
     (void)env;
     RustFutureHandle result = boltffi_method_enum_demo_mode_compute((___Mode)receiver);
 
-
     return (jlong)result;
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1enum_1demo_1mode_1compute_1poll(JNIEnv *env, jclass cls, jlong handle, jlong callback_data) {
     (void)cls;
-
-
-
 
     (void)env;
     boltffi_async_method_enum_demo_mode_compute_poll((RustFutureHandle)handle, callback_data, boltffi_jni_continuation_callback);
 
-
 }
+
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1enum_1demo_1mode_1compute_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status) {
     (void)cls;
-
-
-
 
     (void)env;
     uint32_t result = boltffi_async_method_enum_demo_mode_compute_complete((RustFutureHandle)handle, (FfiStatus *)out_status);
 
-
     return (jint)result;
 }
+
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1enum_1demo_1mode_1compute_1panic_1message(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
-
-
-
 
     (void)env;
     FfiBuf_u8 result = boltffi_async_method_enum_demo_mode_compute_panic_message((RustFutureHandle)handle);
 
-
     return boltffi_jni_buffer_to_byte_array(env, result);
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1enum_1demo_1mode_1compute_1cancel(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
-
-
-
 
     (void)env;
     boltffi_async_method_enum_demo_mode_compute_cancel((RustFutureHandle)handle);
 
-
 }
+
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1enum_1demo_1mode_1compute_1free(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
 
-
-
-
     (void)env;
     boltffi_async_method_enum_demo_mode_compute_free((RustFutureHandle)handle);
-
 
 }

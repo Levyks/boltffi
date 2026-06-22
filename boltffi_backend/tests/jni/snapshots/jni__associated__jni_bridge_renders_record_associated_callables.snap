@@ -101,6 +101,7 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+
 static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
     if (buffer.ptr == NULL) {
         if (buffer.len != 0) {
@@ -126,6 +127,7 @@ static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer
     }
     return array;
 }
+
 static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
     if (bytes == NULL && len != 0) {
         boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
@@ -148,6 +150,7 @@ static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *by
     }
     return array;
 }
+
 static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
     FfiBuf_u8 empty = {0};
     if (array == NULL) {
@@ -176,6 +179,7 @@ static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array)
     };
     return buffer;
 }
+
 static bool boltffi_jni_read_record(JNIEnv *env, jbyteArray array, uintptr_t expected_len, void *output) {
     if (array == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array argument was null");
@@ -206,32 +210,27 @@ static jbyteArray boltffi_jni_record_to_byte_array(JNIEnv *env, const void *reco
     }
     return array;
 }
+
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1record_1demo_1point_1origin(JNIEnv *env, jclass cls) {
     (void)cls;
-
-
-
 
     (void)env;
     ___Point result = boltffi_init_record_demo_point_origin();
 
-
     return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));
 }
+
 JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1demo_1point_1distance(JNIEnv *env, jclass cls, jbyteArray receiver, jbyteArray other) {
     (void)cls;
 
     ___Point __boltffi_receiver_value;
     ___Point __boltffi_other_value;
 
-
     if (!boltffi_jni_read_record(env, receiver, (uintptr_t)sizeof(___Point), &__boltffi_receiver_value)) {
-
 
         return 0;
     }
     if (!boltffi_jni_read_record(env, other, (uintptr_t)sizeof(___Point), &__boltffi_other_value)) {
-
 
         return 0;
     }
@@ -239,9 +238,9 @@ JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1
     (void)env;
     double result = boltffi_method_record_demo_point_distance(__boltffi_receiver_value, __boltffi_other_value);
 
-
     return (jdouble)result;
 }
+
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1demo_1person_1rename(JNIEnv *env, jclass cls, jbyteArray receiver, jbyteArray name) {
     (void)cls;
 
@@ -300,7 +299,6 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1recor
 
         return NULL;
     }
-
 
     (void)env;
     FfiBuf_u8 result = boltffi_method_record_demo_person_rename((const uint8_t *)__boltffi_receiver_ptr, (uintptr_t)__boltffi_receiver_len, (const uint8_t *)__boltffi_name_ptr, (uintptr_t)__boltffi_name_len);
