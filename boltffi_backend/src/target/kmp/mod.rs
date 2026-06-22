@@ -7,8 +7,15 @@
 
 mod bridge;
 mod host;
+pub mod lower;
+pub mod plan;
 mod syntax;
 
 pub use bridge::{KmpBridge, KmpBridgeContract};
 pub use host::KmpHost;
+pub use lower::{KmpLowerError, KmpLowerer, KmpLoweringOptions};
+pub use plan::{
+    KmpApiPlan, KmpCapability, KmpCapabilitySet, KmpCommonModule, KmpModule, KmpPlatform,
+    KmpPlatformModule, KmpSupportApi, KmpSupportMode, KmpSupportReport,
+};
 pub use syntax::Syntax;

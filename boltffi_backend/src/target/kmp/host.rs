@@ -4,41 +4,83 @@ use boltffi_binding::{
 };
 
 use crate::core::{
-    BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, Error, GeneratedOutput,
-    HostCapabilities, RenderContext, RenderedDeclaration, Result, Target, contract::sealed, host,
+    BindingCapability, BridgeCapability, CapabilityRequirements, DeclarationLabel, Diagnostic,
+    Emitted, GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
+    contract::sealed, host,
 };
 
-use super::{KmpBridge, KmpBridgeContract, Syntax};
+use super::{
+    KmpBridge, KmpBridgeContract, KmpPlatform, KmpSupportMode, Syntax,
+    lower::{KmpLowerer, KmpLoweringOptions, admission::KmpAdmission},
+};
 
-const M1A_ADMISSION_REASON: &str =
-    "KMP IR backend skeleton rejects exported APIs until M1b admission is implemented";
-
-/// Kotlin Multiplatform host renderer for the IR backend skeleton.
+/// Kotlin Multiplatform host renderer for the IR backend plan.
 ///
-/// M1a wires KMP into the typed backend pipeline but deliberately does not
-/// admit any exported API. Complete coverage generation therefore fails for
-/// non-empty binding surfaces, preserving the strict KMP contract until the
-/// M1b plan/lower/admission layer can decide the supported common surface.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+/// The host currently lowers to a typed [`super::KmpModule`] plan and emits no
+/// Kotlin strings. Complete coverage rendering remains strict: APIs outside
+/// the selected platform capability intersection produce diagnostics that the
+/// backend driver turns into generation failures.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
-pub struct KmpHost;
+pub struct KmpHost {
+    selected_platforms: Vec<KmpPlatform>,
+}
 
 impl KmpHost {
     /// Creates a KMP host renderer.
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self {
+            selected_platforms: KmpPlatform::default_selected(),
+        }
+    }
+
+    /// Selects the KMP platform matrix checked by admission.
+    pub fn selected_platforms(mut self, platforms: impl Into<Vec<KmpPlatform>>) -> Self {
+        self.selected_platforms = platforms.into();
+        self
     }
 
     /// Creates the backend target stack for this skeletal KMP host.
-    pub const fn into_target(self) -> Target<Self, KmpBridge> {
+    pub fn into_target(self) -> Target<Self, KmpBridge> {
         Target::new(self, KmpBridge)
     }
 
-    fn unsupported(&self, shape: &'static str) -> Result<Emitted> {
-        Err(Error::UnsupportedTarget {
-            target: "kotlin_multiplatform",
-            shape,
-        })
+    fn emit_admitted(
+        &self,
+        declaration: boltffi_binding::DeclarationRef<'_, Native>,
+        bindings: &Bindings<Native>,
+    ) -> Emitted {
+        let label = DeclarationLabel::from_ref(declaration);
+        let records = KmpAdmission::for_bindings(self.selected_platforms.clone(), bindings)
+            .evaluate_declaration(declaration);
+        let diagnostics = records
+            .iter()
+            .filter(|record| !record.is_admitted())
+            .map(|record| Diagnostic::new(admission_message(&label, record)))
+            .collect::<Vec<_>>();
+        if diagnostics.is_empty() {
+            Emitted::primary("")
+        } else {
+            Emitted::primary("").with_diagnostics(diagnostics)
+        }
+    }
+}
+
+fn admission_message(
+    label: &DeclarationLabel,
+    record: &super::lower::admission::KmpAdmissionRecord,
+) -> String {
+    let reason = record.reason().unwrap_or("unsupported");
+    if record.kind() == label.kind() && record.name() == label.name() {
+        reason.to_owned()
+    } else {
+        format!("{} {}: {reason}", record.kind(), record.name())
+    }
+}
+
+impl Default for KmpHost {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -53,14 +95,14 @@ impl host::HostBackend for KmpHost {
 
     fn binding_capabilities(&self) -> HostCapabilities {
         HostCapabilities::new()
-            .in_progress(BindingCapability::Records, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::Enums, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::Functions, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::Classes, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::Callbacks, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::Streams, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::Constants, M1A_ADMISSION_REASON)
-            .in_progress(BindingCapability::CustomTypes, M1A_ADMISSION_REASON)
+            .stable(BindingCapability::Records)
+            .stable(BindingCapability::Enums)
+            .stable(BindingCapability::Functions)
+            .stable(BindingCapability::Classes)
+            .stable(BindingCapability::Callbacks)
+            .stable(BindingCapability::Streams)
+            .stable(BindingCapability::Constants)
+            .stable(BindingCapability::CustomTypes)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -69,84 +111,121 @@ impl host::HostBackend for KmpHost {
 
     fn record(
         &self,
-        _decl: &RecordDecl<Self::Surface>,
+        decl: &RecordDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("record declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Record(decl),
+            context.bindings(),
+        ))
     }
 
     fn enumeration(
         &self,
-        _decl: &EnumDecl<Self::Surface>,
+        decl: &EnumDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("enum declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Enum(decl),
+            context.bindings(),
+        ))
     }
 
     fn function(
         &self,
-        _decl: &FunctionDecl<Self::Surface>,
+        decl: &FunctionDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("function declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Function(decl),
+            context.bindings(),
+        ))
     }
 
     fn class(
         &self,
-        _decl: &ClassDecl<Self::Surface>,
+        decl: &ClassDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("class declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Class(decl),
+            context.bindings(),
+        ))
     }
 
     fn callback(
         &self,
-        _decl: &CallbackDecl<Self::Surface>,
+        decl: &CallbackDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("callback declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Callback(decl),
+            context.bindings(),
+        ))
     }
 
     fn stream(
         &self,
-        _decl: &StreamDecl<Self::Surface>,
+        decl: &StreamDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("stream declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Stream(decl),
+            context.bindings(),
+        ))
     }
 
     fn constant(
         &self,
-        _decl: &ConstantDecl<Self::Surface>,
+        decl: &ConstantDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("constant declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::Constant(decl),
+            context.bindings(),
+        ))
     }
 
     fn custom_type(
         &self,
-        _decl: &CustomTypeDecl,
+        decl: &CustomTypeDecl,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        self.unsupported("custom type declarations")
+        Ok(self.emit_admitted(
+            boltffi_binding::DeclarationRef::CustomType(decl),
+            context.bindings(),
+        ))
     }
 
     fn assemble<'decl>(
         &self,
-        _bindings: &Bindings<Self::Surface>,
+        bindings: &Bindings<Self::Surface>,
         _bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
-        _declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
+        declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
-        Ok(GeneratedOutput::empty())
+        KmpLowerer::new(
+            KmpLoweringOptions::new()
+                .selected_platforms(self.selected_platforms.clone())
+                .support_mode(KmpSupportMode::PreviewPruneUnsupported),
+        )
+        .lower(bindings)
+        .map_err(|error| error.into_backend_error())?;
+        Ok(GeneratedOutput::new(
+            Vec::new(),
+            declarations
+                .iter()
+                .flat_map(|declaration| declaration.emitted().diagnostics().iter().cloned())
+                .collect(),
+        ))
     }
 }
 
@@ -159,8 +238,7 @@ mod tests {
 
     use crate::{
         Error,
-        core::{BindingCapability, CapabilityStatus},
-        target::kmp::KmpHost,
+        target::kmp::{KmpHost, KmpPlatform},
     };
 
     fn bindings(source: &str) -> Bindings<Native> {
@@ -185,8 +263,8 @@ mod tests {
     }
 
     #[test]
-    fn kmp_target_rejects_exported_apis_in_complete_mode() {
-        let error = KmpHost::new()
+    fn kmp_target_renders_admitted_sync_function_without_files() {
+        let output = KmpHost::new()
             .into_target()
             .render(&bindings(
                 r#"
@@ -196,14 +274,116 @@ mod tests {
                 }
                 "#,
             ))
-            .expect_err("KMP IR skeleton should reject exported APIs");
+            .expect("KMP IR plan should admit sync primitive functions for JVM and Android");
+
+        assert!(output.files().is_empty());
+        assert!(output.diagnostics().is_empty());
+        assert!(output.coverage().is_complete());
+    }
+
+    #[test]
+    fn kmp_target_rejects_apis_outside_platform_intersection() {
+        let error = KmpHost::new()
+            .selected_platforms(vec![KmpPlatform::Jvm, KmpPlatform::IosSimulatorArm64])
+            .into_target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
+            .expect_err("KMP IR plan should reject APIs not supported by every platform");
 
         match error {
-            Error::BindingCapability {
+            Error::IncompleteCoverage {
                 target: "kotlin_multiplatform",
-                capability: BindingCapability::Functions,
-                status: CapabilityStatus::InProgress { reason },
-            } => assert_eq!(reason, super::M1A_ADMISSION_REASON),
+                reason,
+            } => {
+                assert!(reason.contains("function add"));
+                assert!(reason.contains("synchronous callables on iosSimulatorArm64"));
+            }
+            other => panic!("unexpected KMP IR skeleton error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kmp_target_rejects_empty_platform_matrix() {
+        let error = KmpHost::new()
+            .selected_platforms(Vec::<KmpPlatform>::new())
+            .into_target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
+            .expect_err("KMP IR plan should require at least one selected platform");
+
+        match error {
+            Error::IncompleteCoverage {
+                target: "kotlin_multiplatform",
+                reason,
+            } => {
+                assert!(reason.contains("function add"), "{reason}");
+                assert!(reason.contains("no selected KMP platforms"), "{reason}");
+            }
+            other => panic!("unexpected KMP IR skeleton error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kmp_target_rejects_empty_platform_matrix_without_apis() {
+        let error = KmpHost::new()
+            .selected_platforms(Vec::<KmpPlatform>::new())
+            .into_target()
+            .render(&bindings(""))
+            .expect_err("KMP IR plan should require at least one selected platform");
+
+        match error {
+            Error::UnsupportedTarget {
+                target: "kotlin_multiplatform",
+                shape: "invalid KMP platform matrix",
+            } => {}
+            other => panic!("unexpected KMP IR skeleton error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kmp_target_rejects_api_using_custom_type_with_unsupported_representation() {
+        let error = KmpHost::new()
+            .into_target()
+            .render(&bindings(
+                r#"
+                use std::time::Duration;
+
+                custom_type!(
+                    BadDuration,
+                    remote = RemoteDuration,
+                    repr = Duration,
+                    into_ffi = |_value: &RemoteDuration| Duration::from_secs(0),
+                    try_from_ffi = |_value: Duration| Ok(RemoteDuration),
+                );
+
+                #[export]
+                pub fn echo_bad(value: RemoteDuration) -> RemoteDuration {
+                    value
+                }
+                "#,
+            ))
+            .expect_err("KMP IR plan should reject custom type representations it cannot admit");
+
+        match error {
+            Error::IncompleteCoverage {
+                target: "kotlin_multiplatform",
+                reason,
+            } => {
+                assert!(reason.contains("function echo::bad"), "{reason}");
+                assert!(reason.contains("unknown binding shapes on jvm"), "{reason}");
+            }
             other => panic!("unexpected KMP IR skeleton error: {other:?}"),
         }
     }
@@ -214,9 +394,13 @@ mod tests {
             .into_target()
             .render_partial(&bindings(
                 r#"
-                #[export]
-                pub fn add(left: i32, right: i32) -> i32 {
-                    left + right
+                pub struct Engine;
+
+                #[export(single_threaded)]
+                impl Engine {
+                    pub fn new() -> Self {
+                        Engine
+                    }
                 }
                 "#,
             ))
@@ -224,9 +408,70 @@ mod tests {
         let unsupported = output.coverage().unsupported();
 
         assert!(output.files().is_empty());
-        assert_eq!(unsupported.len(), 1);
-        assert_eq!(unsupported[0].declaration().kind(), "function");
-        assert_eq!(unsupported[0].declaration().name(), "add");
-        assert_eq!(unsupported[0].reason(), super::M1A_ADMISSION_REASON);
+        assert_eq!(output.diagnostics().len(), 2);
+        assert!(
+            output
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message()
+                    == "unsupported classes on jvm, classes on android")
+        );
+        assert!(
+            output
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message()
+                    == "class initializer engine::new: unsupported classes on jvm, classes on android")
+        );
+        assert_eq!(unsupported.len(), 2);
+        assert_eq!(unsupported[0].declaration().kind(), "class");
+        assert_eq!(unsupported[0].declaration().name(), "engine");
+        assert_eq!(
+            unsupported[0].reason(),
+            "unsupported classes on jvm, classes on android"
+        );
+    }
+
+    #[test]
+    fn kmp_target_reports_every_unsupported_owned_api_in_partial_mode() {
+        let output = KmpHost::new()
+            .into_target()
+            .render_partial(&bindings(
+                r#"
+                #[repr(C)]
+                #[data]
+                pub struct Point {
+                    pub x: i32,
+                }
+
+                #[data(impl)]
+                impl Point {
+                    pub async fn load(&self) -> i32 {
+                        1
+                    }
+
+                    pub async fn save(&self) -> i32 {
+                        2
+                    }
+                }
+                "#,
+            ))
+            .expect("partial KMP IR skeleton should report every unsupported owned API");
+        let unsupported = output.coverage().unsupported();
+        let diagnostics = output.diagnostics();
+
+        assert!(output.files().is_empty());
+        assert_eq!(diagnostics.len(), 2);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message().contains("record method point::load"))
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message().contains("record method point::save"))
+        );
+        assert_eq!(unsupported.len(), 2);
     }
 }
