@@ -462,7 +462,7 @@ const result = await process({
   python={`async def process(provider: object) -> str: ...
 
 class MyProvider:
-    async def fetch(self, key: str) -> str:
+    def fetch(self, key: str) -> str:
         return f"value for {key}"
 
 result = await process(MyProvider())`}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 {% if !records.is_empty() || has_data_enums %}
 from dataclasses import dataclass
 
@@ -19,7 +21,7 @@ PACKAGE_VERSION: str | None
 @dataclass(frozen=True, slots=True)
 class {{ record.class_name }}:
 {%- for field in record.fields %}
-    {{ field.name }}: {{ field.annotation }}
+    {{ field.name }}: {{ field.annotation }}{% if let Some(default) = field.default %} = {{ default }}{% endif %}
 {%- endfor %}
 {%- for constructor in record.constructors %}
     @classmethod
@@ -33,6 +35,12 @@ class {{ record.class_name }}:
     {% if method.asynchronous %}async {% endif %}def {{ method.python_name }}(self{% for parameter in method.parameters %}, {{ parameter.name }}: {{ parameter.annotation }}{% endfor %}) -> {{ method.return_annotation }}: ...
 {%- endfor %}
 
+{% if let Some(exception_name) = record.exception_name %}
+class {{ exception_name }}(RuntimeError):
+    error: {{ record.class_name }}
+    def __init__(self, error: {{ record.class_name }}) -> None: ...
+
+{% endif %}
 {% endfor %}
 {% for enumeration in enums %}
 {%- if let Some(wire) = enumeration.wire %}
@@ -57,7 +65,7 @@ class {{ enumeration.class_name }}:
 class {{ variant.class_name }}({{ enumeration.class_name }}):
 {%- if variant.has_fields() %}
 {%- for field in variant.fields %}
-    {{ field.name }}: {{ field.annotation }}
+    {{ field.name }}: {{ field.annotation }}{% if let Some(default) = field.default %} = {{ default }}{% endif %}
 {%- endfor %}
 {%- else %}
     pass
@@ -82,6 +90,12 @@ class {{ enumeration.class_name }}(IntEnum):
 {%- endfor %}
 
 {%- endif %}
+{% if let Some(exception_name) = enumeration.exception_name %}
+class {{ exception_name }}(RuntimeError):
+    error: {{ enumeration.class_name }}
+    def __init__(self, error: {{ enumeration.class_name }}) -> None: ...
+
+{% endif %}
 {% endfor %}
 {% for class in classes %}
 class {{ class.class_name }}:

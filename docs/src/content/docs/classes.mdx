@@ -423,9 +423,14 @@ try {
         console.log("file not found")
     }
 }`}
-  python={`class DbError(IntEnum):
+  python={`from enum import IntEnum
+
+class DbError(IntEnum):
     NOT_FOUND = 0
     PERMISSION_DENIED = 1
+
+class DbErrorException(RuntimeError):
+    error: DbError
 
 class Database:
     @classmethod
@@ -433,8 +438,8 @@ class Database:
 
 try:
     db = Database.open("data.db")
-except RuntimeError as error:
-    if error.args[0] == DbError.NOT_FOUND:
+except DbErrorException as error:
+    if error.error == DbError.NOT_FOUND:
         print("file not found")`}
 />
 
@@ -556,11 +561,19 @@ try {
 } catch (e) {
     console.log(e)
 }`}
-  python={`class Account:
+  python={`from enum import IntEnum
+
+class Account:
     def __init__(self) -> None: ...
     def balance(self) -> int: ...
     def deposit(self, amount: int) -> None: ...
     def withdraw(self, amount: int) -> None: ...
+
+class AccountError(IntEnum):
+    INSUFFICIENT_FUNDS = 0
+
+class AccountErrorException(RuntimeError):
+    error: AccountError
 
 acc = Account()
 acc.deposit(100)
@@ -568,7 +581,7 @@ print(acc.balance())
 
 try:
     acc.withdraw(50)
-except RuntimeError as error:
+except AccountErrorException as error:
     print(error)`}
 />
 

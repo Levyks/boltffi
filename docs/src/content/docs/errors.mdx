@@ -233,12 +233,15 @@ class ParseError:
     column: int
     message: str
 
+class ParseErrorException(RuntimeError):
+    error: ParseError
+
 def parse_config(input: str) -> Config: ...
 
 try:
     config = parse_config(src)
-except RuntimeError as error:
-    details = error.args[0]
+except ParseErrorException as error:
+    details = error.error
     print(f"{details.line}:{details.column}: {details.message}")`}
 />
 
@@ -390,17 +393,22 @@ try {
         }
     }
 }`}
-  python={`class AuthError(IntEnum):
+  python={`from enum import IntEnum
+
+class AuthError(IntEnum):
     INVALID_CREDENTIALS = 0
     SESSION_EXPIRED = 1
     ACCOUNT_LOCKED = 2
+
+class AuthErrorException(RuntimeError):
+    error: AuthError
 
 def login(user: str, pass_: str) -> Session: ...
 
 try:
     session = login(u, p)
-except RuntimeError as error:
-    match error.args[0]:
+except AuthErrorException as error:
+    match error.error:
         case AuthError.INVALID_CREDENTIALS:
             print("Wrong username or password")
         case AuthError.SESSION_EXPIRED:
@@ -582,12 +590,15 @@ class ApiErrorNotFound(ApiError):
 class ApiErrorRateLimited(ApiError):
     retry_after: int
 
+class ApiErrorException(RuntimeError):
+    error: ApiError
+
 def fetch_user(id: int) -> User: ...
 
 try:
     user = fetch_user(42)
-except RuntimeError as error:
-    details = error.args[0]
+except ApiErrorException as error:
+    details = error.error
     if isinstance(details, ApiErrorNetwork):
         print(f"Network error: {details.message}")
     elif isinstance(details, ApiErrorNotFound):
@@ -659,11 +670,17 @@ try {
         handle(e)
     }
 }`}
-  python={`async def fetch_data(url: str) -> bytes: ...
+  python={`class FetchError:
+    pass
+
+class FetchErrorException(RuntimeError):
+    error: FetchError
+
+async def fetch_data(url: str) -> bytes: ...
 
 try:
     data = await fetch_data(endpoint)
     process(data)
-except RuntimeError as error:
+except FetchErrorException as error:
     handle(error)`}
 />

@@ -327,6 +327,9 @@ pub(crate) enum PackTargetArg {
         #[arg(long)]
         no_build: bool,
 
+        #[arg(long, hide = true)]
+        experimental: bool,
+
         #[arg(
             long = "python",
             action = clap::ArgAction::Append,
@@ -611,6 +614,7 @@ pub(crate) fn execute_command(
                     release,
                     regenerate,
                     no_build,
+                    experimental: _,
                     python_interpreters,
                 } => PackCommand::Python(PackPythonOptions {
                     execution: pack_execution_options(
@@ -1419,6 +1423,22 @@ enabled = true
             cli.command,
             Commands::Pack {
                 target: PackTargetArg::Kmp {
+                    experimental: true,
+                    ..
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_pack_python_experimental_flag() {
+        let cli = Cli::try_parse_from(["boltffi", "pack", "python", "--experimental"])
+            .expect("cli parse should succeed");
+
+        assert!(matches!(
+            cli.command,
+            Commands::Pack {
+                target: PackTargetArg::Python {
                     experimental: true,
                     ..
                 }

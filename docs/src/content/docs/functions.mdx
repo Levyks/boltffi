@@ -219,14 +219,14 @@ const d = distance(
     Unit.Meters
 )`}
   python={`from dataclasses import dataclass
-from enum import Enum
+from enum import IntEnum
 
 @dataclass
 class Point:
     x: float
     y: float
 
-class Unit(Enum):
+class Unit(IntEnum):
     METERS = 0
     FEET = 1
 
@@ -757,13 +757,13 @@ try {
         }
     }
 }`}
-  python={`from enum import Enum
+  python={`from enum import IntEnum
 
-class ParseError(Enum):
+class ParseError(IntEnum):
     INVALID_FORMAT = 0
     OUT_OF_RANGE = 1
 
-class ParseErrorException(Exception):
+class ParseErrorException(RuntimeError):
     error: ParseError
 
 def parse_port(s: str) -> int: ...

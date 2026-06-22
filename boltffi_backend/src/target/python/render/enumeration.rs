@@ -46,6 +46,7 @@ impl VariantStyle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumClass {
     pub class_name: Identifier,
+    pub exception_name: Option<Identifier>,
     pub register_method: Identifier,
     pub variants: Vec<EnumVariant>,
     pub wire: Option<DataEnumWire>,
@@ -55,7 +56,11 @@ pub struct EnumClass {
 }
 
 impl EnumClass {
-    pub fn from_c_style(enumeration: &CStyleEnumDecl<Native>, package: &Package) -> Result<Self> {
+    pub fn from_c_style(
+        enumeration: &CStyleEnumDecl<Native>,
+        package: &Package,
+        error_type: bool,
+    ) -> Result<Self> {
         let class = enumeration_render::PythonClass::from_c_style(enumeration, package.bridge)?;
         let c_enum = package.bridge.source_c_style_enum(enumeration.id()).ok_or(
             Error::UnsupportedTarget {
@@ -66,6 +71,9 @@ impl EnumClass {
         let symbols = enumeration_render::Symbols::from_c_style(enumeration, c_enum)?;
         Ok(Self {
             class_name: class.class_name().clone(),
+            exception_name: error_type
+                .then(|| package.exception_name(class.class_name()))
+                .transpose()?,
             register_method: class.register_method().clone(),
             variants: class
                 .variants()
@@ -79,11 +87,18 @@ impl EnumClass {
         })
     }
 
-    pub fn from_data(enumeration: &DataEnumDecl<Native>, package: &Package) -> Result<Self> {
+    pub fn from_data(
+        enumeration: &DataEnumDecl<Native>,
+        package: &Package,
+        error_type: bool,
+    ) -> Result<Self> {
         let symbols = enumeration_render::Symbols::from_data(enumeration)?;
         let class_name = symbols.class_name().clone();
         Ok(Self {
             class_name: class_name.clone(),
+            exception_name: error_type
+                .then(|| package.exception_name(&class_name))
+                .transpose()?,
             register_method: symbols.register_method().clone(),
             variants: Vec::new(),
             wire: Some(DataEnumWire {
@@ -149,6 +164,15 @@ impl EnumClass {
             self.class_name.to_string(),
             format!("enum `{}`", self.class_name),
         )
+    }
+
+    pub fn exception_top_level_name(&self) -> Option<(String, String)> {
+        self.exception_name.as_ref().map(|exception_name| {
+            (
+                exception_name.to_string(),
+                format!("enum error `{}`", exception_name),
+            )
+        })
     }
 
     pub fn data_variant_names(&self) -> impl Iterator<Item = (String, String)> + '_ {
@@ -305,7 +329,11 @@ impl DataEnumVariant {
     fn validate_names(&self) -> Result<()> {
         NameScope::new(format!("data enum variant `{}`", self.class_name))
             .insert_all(self.fields.iter().map(RecordField::field_name))
-            .map(|_| ())
+            .map(|_| ())?;
+        RecordField::validate_default_order(
+            &self.fields,
+            "data enum payload default before required field",
+        )
     }
 
     fn top_level_name(&self) -> (String, String) {

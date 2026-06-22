@@ -54,6 +54,7 @@ done
 
 SELECTED_PYTHON="$(resolve_python)"
 mkdir -p "$RESULTS_DIR" "$GENERATED_DIR"
+rm -f "$RESULTS_DIR/results.json" "$RESULTS_DIR/benchmark_run.json"
 
 rm -rf "$VENV_DIR"
 "$SELECTED_PYTHON" -m venv "$VENV_DIR"

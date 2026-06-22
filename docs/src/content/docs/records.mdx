@@ -656,7 +656,7 @@ Config cfg = new Config("myapp");`}
 const cfg: Config = { name: "myapp", retries: 3, enabled: true, host: "localhost" }`}
   python={`from dataclasses import dataclass
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Config:
     name: str
     retries: int = 3
@@ -759,9 +759,9 @@ string label = MyLib.StatusLabel(Status.Active);`}
 function statusLabel(s: Status): string
 
 const label = statusLabel(Status.Active)`}
-  python={`from enum import Enum
+  python={`from enum import IntEnum
 
-class Status(Enum):
+class Status(IntEnum):
     PENDING = 0
     ACTIVE = 1
     COMPLETED = 2
@@ -1342,9 +1342,9 @@ namespace Direction {
 
 const d = Direction.opposite(Direction.North)
 const e = Direction.fromDegrees(90)`}
-  python={`from enum import Enum
+  python={`from enum import IntEnum
 
-class Direction(Enum):
+class Direction(IntEnum):
     NORTH = 0
     EAST = 1
     SOUTH = 2
