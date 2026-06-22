@@ -424,6 +424,34 @@ fn jni_bridge_renders_encoded_closure_parameters_from_contract_group() {
 }
 
 #[test]
+fn jni_bridge_renders_encoded_closure_return_shapes_as_byte_arrays() {
+    let files = files(
+        r#"
+            #[export]
+            pub fn install_vec(callback: impl Fn() -> Vec<u32>) {}
+
+            #[export]
+            pub fn install_option(callback: impl Fn() -> Option<i32>) {}
+            "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "static FfiBuf_u8 boltffi_jni____closure__to_vec_u32_call(void *user_data)",
+        "GetStaticMethodID(env, g____closure__to_vec_u32_class, \"call\", \"(J)[B\")",
+        "static FfiBuf_u8 boltffi_jni____closure__to_opt_i32_call(void *user_data)",
+        "GetStaticMethodID(env, g____closure__to_opt_i32_class, \"call\", \"(J)[B\")",
+        "FfiBuf_u8 result = boltffi_jni_byte_array_to_buffer(env, __boltffi_return_array);",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}\n{source}"));
+}
+
+#[test]
 fn jni_bridge_renders_direct_vector_closure_parameters_from_contract_group() {
     let files = files(
         r#"

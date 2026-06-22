@@ -422,6 +422,32 @@ fn jni_bridge_renders_callback_encoded_returns() {
 }
 
 #[test]
+fn jni_bridge_keeps_callback_status_param_separate_from_generated_status() {
+    let files = files(
+        r#"
+            #[export]
+            pub trait StatusMapper {
+                fn map_status(&self, status: i32) -> Result<i32, String>;
+            }
+            "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "___StatusMapperVTable_map_status(uint64_t handle, int32_t *return_out, int32_t status)",
+        "jbyteArray __boltffi_return_array = (jbyteArray)(*env)->CallStaticObjectMethod(env, g____StatusMapperVTable_class, g____StatusMapperVTable_map_status_method, (jlong)handle, (jlong)return_out, (jint)status);",
+        "GetStaticMethodID(env, g____StatusMapperVTable_class, \"map_status\", \"(JJI)[B\")",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}\n{source}"));
+    assert!(!source.contains("int32_t *status"));
+}
+
+#[test]
 fn jni_bridge_renders_callback_record_returns() {
     let files = files(
         r#"
