@@ -41,7 +41,7 @@ def collect_incoming_paths(incoming_inputs: list[Path]) -> list[Path]:
     for incoming_input in incoming_inputs:
         resolved_input = incoming_input.expanduser()
         if resolved_input.is_dir():
-            incoming_paths.extend(sorted(resolved_input.rglob("benchmark_run.json")))
+            incoming_paths.extend(sorted(resolved_input.rglob("*benchmark_run.json")))
         elif resolved_input.is_file():
             incoming_paths.append(resolved_input)
         else:
