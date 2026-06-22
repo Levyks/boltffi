@@ -488,7 +488,7 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1handle_1
     if (callback_handle == NULL || callback_handle->handle == 0 || vtable == NULL || vtable->make_handler == NULL) {
         boltffi_jni_throw_runtime(env, "BoltFFI callback handle was null or invalid");
 
-        return 0;
+    return 0;
     }
 
     typedef struct {

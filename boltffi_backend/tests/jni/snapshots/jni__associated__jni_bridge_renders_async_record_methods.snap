@@ -400,14 +400,15 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1de
     ___Point __boltffi_receiver_value;
 
     if (!boltffi_jni_read_record(env, receiver, (uintptr_t)sizeof(___Point), &__boltffi_receiver_value)) {
-
-        return 0;
+        goto __boltffi_error;
     }
 
     (void)env;
     RustFutureHandle result = boltffi_method_record_demo_point_compute(__boltffi_receiver_value);
 
     return (jlong)result;
+__boltffi_error:
+    return 0;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1record_1demo_1point_1compute_1poll(JNIEnv *env, jclass cls, jlong handle, jlong callback_data) {
@@ -416,6 +417,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1reco
     (void)env;
     boltffi_async_method_record_demo_point_compute_poll((RustFutureHandle)handle, callback_data, boltffi_jni_continuation_callback);
 
+    return;
 }
 
 JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1record_1demo_1point_1compute_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status) {
@@ -442,6 +444,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1reco
     (void)env;
     boltffi_async_method_record_demo_point_compute_cancel((RustFutureHandle)handle);
 
+    return;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1record_1demo_1point_1compute_1free(JNIEnv *env, jclass cls, jlong handle) {
@@ -450,4 +453,5 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1reco
     (void)env;
     boltffi_async_method_record_demo_point_compute_free((RustFutureHandle)handle);
 
+    return;
 }

@@ -358,7 +358,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1handle_1d
     if (callback_handle == NULL || callback_handle->handle == 0 || vtable == NULL || vtable->load == NULL) {
         boltffi_jni_throw_runtime(env, "BoltFFI callback handle was null or invalid");
 
-        return;
+    return;
     }
 
     vtable->load(callback_handle->handle, key, ___ListenerVTable_load_handle_completion, (void *)(uintptr_t)callback_data);

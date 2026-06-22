@@ -627,7 +627,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1handle_1d
     if (callback_handle == NULL || callback_handle->handle == 0 || vtable == NULL || vtable->name == NULL) {
         boltffi_jni_throw_runtime(env, "BoltFFI callback handle was null or invalid");
 
-        return;
+    return;
     }
 
     vtable->name(callback_handle->handle, ___ListenerVTable_name_handle_completion, (void *)(uintptr_t)callback_data);
@@ -667,7 +667,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1handle_1d
     if (callback_handle == NULL || callback_handle->handle == 0 || vtable == NULL || vtable->point == NULL) {
         boltffi_jni_throw_runtime(env, "BoltFFI callback handle was null or invalid");
 
-        return;
+    return;
     }
 
     vtable->point(callback_handle->handle, ___ListenerVTable_point_handle_completion, (void *)(uintptr_t)callback_data);
@@ -705,7 +705,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1callback_1handle_1d
     if (callback_handle == NULL || callback_handle->handle == 0 || vtable == NULL || vtable->child == NULL) {
         boltffi_jni_throw_runtime(env, "BoltFFI callback handle was null or invalid");
 
-        return;
+    return;
     }
 
     vtable->child(callback_handle->handle, ___ListenerVTable_child_handle_completion, (void *)(uintptr_t)callback_data);

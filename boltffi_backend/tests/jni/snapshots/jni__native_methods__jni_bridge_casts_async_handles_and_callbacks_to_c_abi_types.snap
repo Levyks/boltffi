@@ -374,6 +374,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1de
     (void)env;
     boltffi_async_function_demo_fetch_count_poll((RustFutureHandle)handle, callback_data, boltffi_jni_continuation_callback);
 
+    return;
 }
 
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1fetch_1count_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status) {
@@ -400,6 +401,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1de
     (void)env;
     boltffi_async_function_demo_fetch_count_cancel((RustFutureHandle)handle);
 
+    return;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1fetch_1count_1free(JNIEnv *env, jclass cls, jlong handle) {
@@ -408,4 +410,5 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1de
     (void)env;
     boltffi_async_function_demo_fetch_count_free((RustFutureHandle)handle);
 
+    return;
 }

@@ -327,8 +327,10 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1ins
 
     FfiStatus status = boltffi_function_demo_install(boltffi_jni____closure__u32_to_u32_call, (void *)callback, boltffi_jni____closure__u32_to_u32_release);
 
-    if (status.code == 0) {
-
+    if (status.code != 0) {
+        boltffi_jni_throw_status(env, status);
+        return;
     }
-    boltffi_jni_throw_status(env, status);
+
+    return;
 }

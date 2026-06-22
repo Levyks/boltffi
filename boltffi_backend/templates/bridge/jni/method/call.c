@@ -3,13 +3,16 @@
     {{ method.c_function }}({{ method.arguments }});
 {% include "bridge/jni/method/cleanup_arrays.c" %}
 {% include "bridge/jni/method/writebacks.c" %}
+    return;
 {%- else if method.checks_status %}
     {{ method.c_result_type }} status = {{ method.c_function }}({{ method.arguments }});
 {% include "bridge/jni/method/cleanup_arrays.c" %}
-    if (status.code == 0) {
-{% include "bridge/jni/method/writebacks.c" %}
+    if (status.code != 0) {
+        boltffi_jni_throw_status(env, status);
+        return;
     }
-    boltffi_jni_throw_status(env, status);
+{% include "bridge/jni/method/writebacks.c" %}
+    return;
 {%- else %}
     (void)env;
     {{ method.c_result_type }} result = {{ method.c_function }}({{ method.arguments }});

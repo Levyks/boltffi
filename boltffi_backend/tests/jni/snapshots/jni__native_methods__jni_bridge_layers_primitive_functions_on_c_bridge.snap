@@ -206,10 +206,12 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1ref
 
     FfiStatus status = boltffi_function_demo_refresh();
 
-    if (status.code == 0) {
-
+    if (status.code != 0) {
+        boltffi_jni_throw_status(env, status);
+        return;
     }
-    boltffi_jni_throw_status(env, status);
+
+    return;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1bytes(JNIEnv *env, jclass cls, jbyteArray bytes) {
@@ -220,30 +222,27 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
 
     if (bytes == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
-
-        if (__boltffi_bytes_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
     __boltffi_bytes_len = (*env)->GetArrayLength(env, bytes);
     __boltffi_bytes_ptr = (*env)->GetByteArrayElements(env, bytes, NULL);
     if (__boltffi_bytes_ptr == NULL) {
-
-        if (__boltffi_bytes_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
 
     (void)env;
     FfiBuf_u8 result = boltffi_function_demo_echo_bytes((const uint8_t *)__boltffi_bytes_ptr, (uintptr_t)__boltffi_bytes_len);
 
-        if (__boltffi_bytes_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);
-        }
+    if (__boltffi_bytes_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);
+        __boltffi_bytes_ptr = NULL;
+    }
 
     return boltffi_jni_buffer_to_byte_array(env, result);
+__boltffi_error:
+    if (__boltffi_bytes_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);
+        __boltffi_bytes_ptr = NULL;
+    }
+    return NULL;
 }

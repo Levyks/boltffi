@@ -376,6 +376,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1release_1class_1dem
     (void)env;
     boltffi_release_class_demo_engine(handle);
 
+    return;
 }
 
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1points_1subscribe(JNIEnv *env, jclass cls, jlong receiver) {
@@ -402,6 +403,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engin
     (void)env;
     boltffi_stream_demo_engine_points_poll(subscription, callback_data, boltffi_jni_continuation_callback);
 
+    return;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1points_1unsubscribe(JNIEnv *env, jclass cls, jlong subscription) {
@@ -410,6 +412,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engin
     (void)env;
     boltffi_stream_demo_engine_points_unsubscribe(subscription);
 
+    return;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1points_1free(JNIEnv *env, jclass cls, jlong subscription) {
@@ -418,6 +421,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engin
     (void)env;
     boltffi_stream_demo_engine_points_free(subscription);
 
+    return;
 }
 
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1names_1subscribe(JNIEnv *env, jclass cls, jlong receiver) {
@@ -453,6 +457,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engin
     (void)env;
     boltffi_stream_demo_engine_names_poll(subscription, callback_data, boltffi_jni_continuation_callback);
 
+    return;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1names_1unsubscribe(JNIEnv *env, jclass cls, jlong subscription) {
@@ -461,6 +466,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engin
     (void)env;
     boltffi_stream_demo_engine_names_unsubscribe(subscription);
 
+    return;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1names_1free(JNIEnv *env, jclass cls, jlong subscription) {
@@ -469,6 +475,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engin
     (void)env;
     boltffi_stream_demo_engine_names_free(subscription);
 
+    return;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1points_1pop_1batch(JNIEnv *env, jclass cls, jlong subscription, jlong max_count) {

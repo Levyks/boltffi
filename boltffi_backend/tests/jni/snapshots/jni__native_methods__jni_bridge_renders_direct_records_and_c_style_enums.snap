@@ -140,14 +140,15 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
     ___Point __boltffi_point_value;
 
     if (!boltffi_jni_read_record(env, point, (uintptr_t)sizeof(___Point), &__boltffi_point_value)) {
-
-        return NULL;
+        goto __boltffi_error;
     }
 
     (void)env;
     ___Point result = boltffi_function_demo_echo_point(__boltffi_point_value);
 
     return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));
+__boltffi_error:
+    return NULL;
 }
 
 JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1mode(JNIEnv *env, jclass cls, jbyte mode) {

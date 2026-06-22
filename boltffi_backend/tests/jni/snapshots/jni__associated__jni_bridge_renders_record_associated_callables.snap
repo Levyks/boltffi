@@ -227,18 +227,18 @@ JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1
     ___Point __boltffi_other_value;
 
     if (!boltffi_jni_read_record(env, receiver, (uintptr_t)sizeof(___Point), &__boltffi_receiver_value)) {
-
-        return 0;
+        goto __boltffi_error;
     }
     if (!boltffi_jni_read_record(env, other, (uintptr_t)sizeof(___Point), &__boltffi_other_value)) {
-
-        return 0;
+        goto __boltffi_error;
     }
 
     (void)env;
     double result = boltffi_method_record_demo_point_distance(__boltffi_receiver_value, __boltffi_other_value);
 
     return (jdouble)result;
+__boltffi_error:
+    return 0;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1demo_1person_1rename(JNIEnv *env, jclass cls, jbyteArray receiver, jbyteArray name) {
@@ -251,64 +251,44 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1recor
 
     if (receiver == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
-
-        if (__boltffi_receiver_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
-        }
-        if (__boltffi_name_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
     __boltffi_receiver_len = (*env)->GetArrayLength(env, receiver);
     __boltffi_receiver_ptr = (*env)->GetByteArrayElements(env, receiver, NULL);
     if (__boltffi_receiver_ptr == NULL) {
-
-        if (__boltffi_receiver_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
-        }
-        if (__boltffi_name_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
     if (name == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
-
-        if (__boltffi_receiver_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
-        }
-        if (__boltffi_name_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
     __boltffi_name_len = (*env)->GetArrayLength(env, name);
     __boltffi_name_ptr = (*env)->GetByteArrayElements(env, name, NULL);
     if (__boltffi_name_ptr == NULL) {
-
-        if (__boltffi_receiver_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
-        }
-        if (__boltffi_name_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
 
     (void)env;
     FfiBuf_u8 result = boltffi_method_record_demo_person_rename((const uint8_t *)__boltffi_receiver_ptr, (uintptr_t)__boltffi_receiver_len, (const uint8_t *)__boltffi_name_ptr, (uintptr_t)__boltffi_name_len);
 
-        if (__boltffi_receiver_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
-        }
-        if (__boltffi_name_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
-        }
+    if (__boltffi_receiver_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
+        __boltffi_receiver_ptr = NULL;
+    }
+    if (__boltffi_name_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
+        __boltffi_name_ptr = NULL;
+    }
 
     return boltffi_jni_buffer_to_byte_array(env, result);
+__boltffi_error:
+    if (__boltffi_receiver_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
+        __boltffi_receiver_ptr = NULL;
+    }
+    if (__boltffi_name_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
+        __boltffi_name_ptr = NULL;
+    }
+    return NULL;
 }

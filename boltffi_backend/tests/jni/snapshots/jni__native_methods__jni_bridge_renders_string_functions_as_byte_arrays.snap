@@ -183,32 +183,29 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
 
     if (message == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
-
-        if (__boltffi_message_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
     __boltffi_message_len = (*env)->GetArrayLength(env, message);
     __boltffi_message_ptr = (*env)->GetByteArrayElements(env, message, NULL);
     if (__boltffi_message_ptr == NULL) {
-
-        if (__boltffi_message_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
 
     (void)env;
     FfiBuf_u8 result = boltffi_function_demo_echo_string((const uint8_t *)__boltffi_message_ptr, (uintptr_t)__boltffi_message_len);
 
-        if (__boltffi_message_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
-        }
+    if (__boltffi_message_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
+        __boltffi_message_ptr = NULL;
+    }
 
     return boltffi_jni_buffer_to_byte_array(env, result);
+__boltffi_error:
+    if (__boltffi_message_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
+        __boltffi_message_ptr = NULL;
+    }
+    return NULL;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1str(JNIEnv *env, jclass cls, jbyteArray message) {
@@ -219,30 +216,27 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
 
     if (message == NULL) {
         boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
-
-        if (__boltffi_message_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
     __boltffi_message_len = (*env)->GetArrayLength(env, message);
     __boltffi_message_ptr = (*env)->GetByteArrayElements(env, message, NULL);
     if (__boltffi_message_ptr == NULL) {
-
-        if (__boltffi_message_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
-        }
-
-        return NULL;
+        goto __boltffi_error;
     }
 
     (void)env;
     FfiBuf_u8 result = boltffi_function_demo_echo_str((const uint8_t *)__boltffi_message_ptr, (uintptr_t)__boltffi_message_len);
 
-        if (__boltffi_message_ptr != NULL) {
-            (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
-        }
+    if (__boltffi_message_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
+        __boltffi_message_ptr = NULL;
+    }
 
     return boltffi_jni_buffer_to_byte_array(env, result);
+__boltffi_error:
+    if (__boltffi_message_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, message, __boltffi_message_ptr, JNI_ABORT);
+        __boltffi_message_ptr = NULL;
+    }
+    return NULL;
 }

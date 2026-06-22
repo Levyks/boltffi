@@ -146,6 +146,7 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1release_1class_1dem
     (void)env;
     boltffi_release_class_demo_engine(handle);
 
+    return;
 }
 
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1class_1demo_1engine_1new(JNIEnv *env, jclass cls, jlong seed) {
@@ -172,14 +173,15 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo
     ___Point __boltffi_point_value;
 
     if (!boltffi_jni_read_record(env, point, (uintptr_t)sizeof(___Point), &__boltffi_point_value)) {
-
-        return 0;
+        goto __boltffi_error;
     }
 
     (void)env;
     uint32_t result = boltffi_method_class_demo_engine_score(receiver, __boltffi_point_value);
 
     return (jint)result;
+__boltffi_error:
+    return 0;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1advance(JNIEnv *env, jclass cls, jlong receiver, jint delta) {
@@ -187,8 +189,10 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo
 
     FfiStatus status = boltffi_method_class_demo_engine_advance(receiver, delta);
 
-    if (status.code == 0) {
-
+    if (status.code != 0) {
+        boltffi_jni_throw_status(env, status);
+        return;
     }
-    boltffi_jni_throw_status(env, status);
+
+    return;
 }

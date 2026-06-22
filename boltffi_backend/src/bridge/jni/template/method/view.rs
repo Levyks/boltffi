@@ -42,10 +42,21 @@ pub struct NativeMethodView {
     pub return_value: Expression,
     pub checks_status: bool,
     pub uses_continuations: bool,
+    pub has_error_label: bool,
 }
 
 impl NativeMethodView {
     pub fn from_method(method: &NativeMethod) -> Result<Self> {
+        let borrowed_arrays = method
+            .parameters()
+            .iter()
+            .flat_map(BorrowedArrayParameterView::from_parameter)
+            .collect::<Result<Vec<_>>>()?;
+        let record_arrays = method
+            .parameters()
+            .iter()
+            .filter_map(|parameter| parameter.record().map(RecordParameterView::from_record))
+            .collect::<Vec<_>>();
         Ok(Self {
             symbol: method.symbol().as_identifier().clone(),
             c_function: Identifier::parse(method.c_function().name())?,
@@ -56,16 +67,9 @@ impl NativeMethodView {
                 .iter()
                 .map(NativeParameterView::from_parameter)
                 .collect(),
-            borrowed_arrays: method
-                .parameters()
-                .iter()
-                .flat_map(BorrowedArrayParameterView::from_parameter)
-                .collect::<Result<Vec<_>>>()?,
-            record_arrays: method
-                .parameters()
-                .iter()
-                .filter_map(|parameter| parameter.record().map(RecordParameterView::from_record))
-                .collect(),
+            has_error_label: !borrowed_arrays.is_empty() || !record_arrays.is_empty(),
+            borrowed_arrays,
+            record_arrays,
             arguments: ArgumentList::from_iter(
                 method
                     .parameters()
