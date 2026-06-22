@@ -638,14 +638,8 @@ impl Signature {
                 symbols.poll.name().as_str(),
                 vec![
                     Parameter::new("handle", Type::FutureHandle)?,
-                    Parameter::new("callback_data", Type::Uint64)?,
-                    Parameter::new(
-                        "callback",
-                        Type::FunctionPointer {
-                            returns: Box::new(Type::Void),
-                            params: vec![Type::Uint64, Type::Int8],
-                        },
-                    )?,
+                    Parameter::continuation_data("callback")?,
+                    Parameter::continuation_callback("callback", Type::Int8)?,
                 ],
                 Type::Void,
             )?,

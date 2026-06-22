@@ -26,7 +26,8 @@ pub use function::Function;
 pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use parameter::{
-    ByteSliceParameter, ClosureParameter, Parameter, ParameterGroup, ParameterIndex,
+    ByteSliceParameter, ClosureParameter, ContinuationParameter, Parameter, ParameterGroup,
+    ParameterIndex,
 };
 pub use record::{Field, Record};
 pub use support::SupportFunctions;
@@ -284,5 +285,39 @@ mod tests {
         assert_eq!(bytes.name(), "name");
         assert_eq!(function.parameter(bytes.pointer()).name(), "name_ptr");
         assert_eq!(function.parameter(bytes.length()).name(), "name_len");
+    }
+
+    #[test]
+    fn c_contract_groups_async_poll_continuations() {
+        let contract = contract(
+            r#"
+            #[export]
+            pub async fn fetch_count() -> u32 {
+                7
+            }
+            "#,
+        );
+        let function = contract
+            .functions()
+            .iter()
+            .find(|function| function.name() == "boltffi_async_function_demo_fetch_count_poll")
+            .expect("async poll function");
+        let [
+            ParameterGroup::Value(_),
+            ParameterGroup::Continuation(continuation),
+        ] = function.parameter_groups()
+        else {
+            panic!("expected handle plus continuation parameter groups");
+        };
+
+        assert_eq!(continuation.name(), "callback");
+        assert_eq!(
+            function.parameter(continuation.data()).name(),
+            "callback_data"
+        );
+        assert_eq!(
+            function.parameter(continuation.callback()).name(),
+            "callback"
+        );
     }
 }

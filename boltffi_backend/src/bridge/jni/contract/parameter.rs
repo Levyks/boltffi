@@ -1,7 +1,7 @@
 use crate::{
     bridge::{
         c::{self, Expression, Identifier, TypeFragment},
-        jni::{BytesParameter, RecordParameter, ScalarParameter},
+        jni::{BytesParameter, ContinuationParameter, RecordParameter, ScalarParameter},
     },
     core::{Error, Result},
 };
@@ -22,6 +22,7 @@ impl NativeParameter {
             NativeParameterKind::Scalar(parameter) => parameter.name(),
             NativeParameterKind::Bytes(parameter) => parameter.name(),
             NativeParameterKind::Record(parameter) => parameter.name(),
+            NativeParameterKind::Continuation(parameter) => parameter.name(),
         }
     }
 
@@ -31,6 +32,7 @@ impl NativeParameter {
             NativeParameterKind::Scalar(parameter) => parameter.ty().as_type_fragment(),
             NativeParameterKind::Bytes(_) => TypeFragment::new("jbyteArray"),
             NativeParameterKind::Record(_) => TypeFragment::new("jbyteArray"),
+            NativeParameterKind::Continuation(parameter) => parameter.ty(),
         }
     }
 
@@ -53,13 +55,16 @@ impl NativeParameter {
             NativeParameterKind::Record(parameter) => {
                 Ok(vec![Expression::identifier(parameter.local().clone())])
             }
+            NativeParameterKind::Continuation(parameter) => parameter.c_arguments(),
         }
     }
 
     /// Returns byte-array parameter details when this parameter carries bytes.
     pub fn bytes(&self) -> Option<&BytesParameter> {
         match &self.kind {
-            NativeParameterKind::Scalar(_) | NativeParameterKind::Record(_) => None,
+            NativeParameterKind::Scalar(_)
+            | NativeParameterKind::Record(_)
+            | NativeParameterKind::Continuation(_) => None,
             NativeParameterKind::Bytes(parameter) => Some(parameter),
         }
     }
@@ -67,9 +72,16 @@ impl NativeParameter {
     /// Returns direct-record parameter details when this parameter carries a record.
     pub fn record(&self) -> Option<&RecordParameter> {
         match &self.kind {
-            NativeParameterKind::Scalar(_) | NativeParameterKind::Bytes(_) => None,
+            NativeParameterKind::Scalar(_)
+            | NativeParameterKind::Bytes(_)
+            | NativeParameterKind::Continuation(_) => None,
             NativeParameterKind::Record(parameter) => Some(parameter),
         }
+    }
+
+    /// Returns whether this parameter supplies a C poll continuation.
+    pub fn is_continuation(&self) -> bool {
+        matches!(self.kind, NativeParameterKind::Continuation(_))
     }
 
     /// Creates JNI parameters from C ABI parameter groups.
@@ -99,6 +111,13 @@ impl NativeParameter {
                     kind: NativeParameterKind::Bytes(bytes),
                 })
             }
+            c::ParameterGroup::Continuation(continuation) => {
+                ContinuationParameter::from_c_group(continuation, function).map(|continuation| {
+                    Self {
+                        kind: NativeParameterKind::Continuation(continuation),
+                    }
+                })
+            }
             c::ParameterGroup::Closure(_) => Err(Error::UnsupportedBridge {
                 bridge: JNI_BRIDGE,
                 shape: "closure parameter",
@@ -117,4 +136,6 @@ pub enum NativeParameterKind {
     Bytes(BytesParameter),
     /// A `jbyteArray` copied into one direct C record value.
     Record(RecordParameter),
+    /// A `jlong` callback data value paired with the generated JNI continuation callback.
+    Continuation(ContinuationParameter),
 }

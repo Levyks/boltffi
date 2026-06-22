@@ -215,14 +215,8 @@ impl Function {
                 protocol.poll().name().as_str(),
                 vec![
                     Parameter::new("subscription", subscription.clone())?,
-                    Parameter::new("callback_data", Type::Uint64)?,
-                    Parameter::new(
-                        "callback",
-                        Type::FunctionPointer {
-                            returns: Box::new(Type::Void),
-                            params: vec![Type::Uint64, Type::StreamPollResult],
-                        },
-                    )?,
+                    Parameter::continuation_data("callback")?,
+                    Parameter::continuation_callback("callback", Type::StreamPollResult)?,
                 ],
                 Type::Void,
             )?,

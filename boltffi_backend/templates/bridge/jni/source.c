@@ -7,6 +7,10 @@
 
 #include {{ c_header }}
 
+{%- if uses_continuations %}
+{% include "bridge/jni/continuation.c" %}
+{%- endif %}
+
 {%- if uses_exceptions %}
 
 static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {

@@ -53,6 +53,16 @@ impl JvmClassPath {
             .join(".")
     }
 
+    /// Returns the slash-separated class name used by JNI class lookup.
+    pub fn as_jni_class_name(&self) -> String {
+        self.package
+            .iter()
+            .chain(std::iter::once(&self.class))
+            .map(JvmNameSegment::as_str)
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
     /// Returns the class path as the prefix used by a JNI exported symbol.
     pub fn jni_prefix(&self) -> String {
         self.package

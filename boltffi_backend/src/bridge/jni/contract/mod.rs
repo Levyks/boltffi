@@ -1,5 +1,6 @@
 mod bridge;
 mod bytes;
+mod continuation;
 mod jni_type;
 mod method;
 mod parameter;
@@ -9,6 +10,7 @@ mod scalar;
 
 pub use bridge::JniBridgeContract;
 pub use bytes::BytesParameter;
+pub use continuation::ContinuationParameter;
 pub use jni_type::JniType;
 pub use method::NativeMethod;
 pub use parameter::{NativeParameter, NativeParameterKind};

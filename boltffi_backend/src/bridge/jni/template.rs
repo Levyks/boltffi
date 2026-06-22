@@ -12,11 +12,13 @@ use crate::{
 #[template(path = "bridge/jni/source.c", escape = "none")]
 struct SourceFileTemplate {
     c_header: Literal,
+    class_name: Literal,
     free_buffer: Identifier,
     checks_status: bool,
     uses_byte_arrays: bool,
     uses_record_arrays: bool,
     uses_exceptions: bool,
+    uses_continuations: bool,
     methods: Vec<NativeMethodView>,
 }
 
@@ -33,6 +35,7 @@ impl SourceFile {
             .collect::<Result<Vec<_>>>()?;
         Ok(SourceFileTemplate {
             c_header: Literal::string(contract.c_header().as_str()),
+            class_name: Literal::string(&contract.class().as_jni_class_name()),
             free_buffer: contract.free_buffer().clone(),
             checks_status: methods.iter().any(|method| method.checks_status),
             uses_byte_arrays: methods.iter().any(|method| {
@@ -51,6 +54,7 @@ impl SourceFile {
                     || !method.byte_arrays.is_empty()
                     || !method.record_arrays.is_empty()
             }),
+            uses_continuations: methods.iter().any(|method| method.uses_continuations),
             methods,
         }
         .render()?)
@@ -72,6 +76,7 @@ struct NativeMethodView {
     returns_record: bool,
     return_value: Expression,
     checks_status: bool,
+    uses_continuations: bool,
 }
 
 impl NativeMethodView {
@@ -113,6 +118,10 @@ impl NativeMethodView {
                 .returns()
                 .return_expression(Expression::identifier(Identifier::parse("result")?)),
             checks_status: method.checks_status(),
+            uses_continuations: method
+                .parameters()
+                .iter()
+                .any(NativeParameter::is_continuation),
         })
     }
 }

@@ -10,8 +10,9 @@ mod template;
 
 pub use bridge::JniBridge;
 pub use contract::{
-    BytesParameter, JniBridgeContract, JniType, NativeMethod, NativeParameter, NativeParameterKind,
-    NativeReturn, RecordParameter, RecordValue, ScalarParameter, ScalarReturn,
+    BytesParameter, ContinuationParameter, JniBridgeContract, JniType, NativeMethod,
+    NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
+    ScalarParameter, ScalarReturn,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -268,8 +269,11 @@ mod tests {
         assert!(source.contains("JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1fetch_1count(JNIEnv *env, jclass cls)"));
         assert!(source.contains("RustFutureHandle result = boltffi_function_demo_fetch_count();"));
         assert!(source.contains("return (jlong)result;"));
-        assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1fetch_1count_1poll(JNIEnv *env, jclass cls, jlong handle, jlong callback_data, jlong callback)"));
-        assert!(source.contains("boltffi_async_function_demo_fetch_count_poll((RustFutureHandle)handle, callback_data, (void (*)(uint64_t, int8_t))callback);"));
+        assert!(source.contains("JNI_OnLoad(JavaVM *vm, void *reserved)"));
+        assert!(source.contains("FindClass(env, \"com/boltffi/demo/Native\")"));
+        assert!(source.contains("boltffiFutureContinuationCallback"));
+        assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1fetch_1count_1poll(JNIEnv *env, jclass cls, jlong handle, jlong callback_data)"));
+        assert!(source.contains("boltffi_async_function_demo_fetch_count_poll((RustFutureHandle)handle, callback_data, boltffi_jni_continuation_callback);"));
         assert!(source.contains("JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1fetch_1count_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status)"));
         assert!(source.contains("uint32_t result = boltffi_async_function_demo_fetch_count_complete((RustFutureHandle)handle, (FfiStatus *)out_status);"));
         assert!(source.contains("return (jint)result;"));
