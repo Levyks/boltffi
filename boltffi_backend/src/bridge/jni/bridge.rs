@@ -1,13 +1,16 @@
-//! Construction point for a generated JNI bridge file.
+//! Backend entry point for one generated JNI source file.
 //!
-//! `JniBridge` is the value a JVM target places above a `CBridge` in the backend
-//! stack. The target chooses the Java package, owner class, and output path. The
-//! C header include and all ABI details come from the lower bridge contract.
+//! A JVM target places `JniBridge` above a `CBridge` in the backend stack. The
+//! target supplies only the JVM-facing choices: package name, owner class, and
+//! generated file path. The Rust ABI still comes from the lower C bridge
+//! contract, including symbol names, record layouts, callback vtables, stream
+//! protocols, and buffer release functions.
 //!
-//! Rendering produces the generated C source file for that JVM class. The file
-//! contains the native entry points and the support code they need: lifecycle
-//! hooks, callback dispatch, closure registration, stream protocol helpers,
-//! async continuations, and forwarding calls into the C ABI.
+//! Rendering is a two-step operation. First, the bridge builds a
+//! `JniBridgeContract` from the C bridge contract. Then the template layer turns
+//! that contract into a C file containing `Java_*` native methods, callback
+//! dispatchers, closure trampolines, stream helpers, async completion glue, and
+//! the support code needed to call the C ABI safely from JNI.
 
 use std::path::PathBuf;
 

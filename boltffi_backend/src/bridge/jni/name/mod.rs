@@ -1,13 +1,15 @@
-//! Names that must obey JVM and JNI spelling rules.
+//! JVM names and JNI symbol spellings.
 //!
-//! The same logical class appears in several spellings. Java source uses dotted
-//! package names, JNI lookup uses slash-separated class names, generated files
-//! need stable paths, and native exports use the `Java_*` escaping rules.
-//! Treating those as unrelated raw strings is how bridge code drifts.
+//! One generated class has several valid spellings. Java source uses dotted
+//! package names, class lookup uses slash-separated paths, generated files need a
+//! stable path, and native functions use JNI's escaped `Java_*` symbol form.
+//! Keeping those as loose strings would let each caller apply a slightly
+//! different rule.
 //!
-//! This module validates JVM name pieces once and exposes the spellings needed by
-//! the contract builder and templates. Code outside this module asks for a class
-//! path or symbol. It does not split package names or hand-roll JNI escaping.
+//! This module validates JVM name segments once and exposes the specific
+//! spellings needed by the bridge contract and templates. Code outside this
+//! module asks for a class path or a JNI symbol; it does not split packages,
+//! uppercase fragments, or hand-roll underscore escaping.
 
 mod class_path;
 mod segment;

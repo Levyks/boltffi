@@ -1,12 +1,14 @@
-//! Template views for `Java_*` native methods.
+//! Source-shaped views for generated `Java_*` native methods.
 //!
-//! Native method contracts are typed for correctness. The Askama template needs
-//! a source-ready view: parameter declarations, borrowed array locals,
-//! direct-record writeback fields, status checks, C bridge arguments, and the
-//! final return expression.
+//! A native method contract is typed for correctness, but a C template needs a
+//! linear method body: JNI parameter declarations, borrowed array locals,
+//! direct-record writeback variables, status checks, C bridge call arguments,
+//! cleanup blocks, and the final return expression.
 //!
-//! This module performs that projection for method rendering only. Parameter and
-//! return semantics already live in the contract layer.
+//! This module performs only that projection. It does not decide what a
+//! parameter means or how a return crosses the boundary. Those facts come from
+//! `contract::parameter` and `contract::return_value`; this module prepares the
+//! exact fields the Askama method template prints.
 
 mod array;
 mod parameter;

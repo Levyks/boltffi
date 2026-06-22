@@ -1,13 +1,15 @@
-//! Values returned by generated `Java_*` native methods.
+//! Return values from generated `Java_*` native methods.
 //!
-//! The value Java sees is not always the raw C bridge return. Encoded values and
-//! direct records become Java byte arrays. Callback handles become opaque tokens.
-//! Fallible void calls report status. Async starts return a future handle that is
-//! completed through separate protocol methods.
+//! Java rarely receives the raw C bridge return unchanged. Encoded payloads and
+//! direct records become `jbyteArray`, callback handles become opaque numeric
+//! tokens, fallible void calls become status checks, and async starts return a
+//! future handle that is completed by separate protocol methods.
 //!
-//! This module owns the native-method return contract. Templates ask it which
-//! JNI type to declare and how the C bridge result leaves the method. They do
-//! not infer return behavior from the original Rust type.
+//! This module owns the native-method return contract. It answers the questions
+//! the method template actually needs: which JNI type to declare, which C result
+//! local to allocate, whether direct-record bytes must be copied out, and which
+//! expression leaves the `Java_*` method. Those answers come from the C bridge
+//! return shape, not from reinterpreting the original Rust return type.
 
 use crate::{
     bridge::{

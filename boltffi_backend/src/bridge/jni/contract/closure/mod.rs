@@ -1,14 +1,15 @@
-//! JNI contract for inline closures owned by the JVM.
+//! Inline closure signatures owned by the JVM.
 //!
-//! Inline closures enter Rust as a C function pointer, user-data handle, and
-//! release function. The callable itself lives on the JVM. The bridge therefore
-//! needs a registered trampoline for each closure signature so Rust can call back
-//! into the JVM without knowing anything about Java objects.
+//! Inline closures are not named callback traits. They cross the C ABI as a call
+//! function, a context handle, and a release function. The actual callable lives
+//! on the JVM, so Rust needs a generated trampoline for each closure signature it
+//! may call.
 //!
-//! This module owns those registered signatures. It deduplicates them across
-//! functions, callback methods, nested closure arguments, and returned closures,
-//! then records the JVM bridge class, cached method ids, call trampoline,
-//! release trampoline, arguments, and return handling for each signature.
+//! This module owns that registration table. It deduplicates closure signatures
+//! across exported functions, callback methods, nested closure arguments, and
+//! returned closures. Each registration records the generated JVM bridge class,
+//! cached method ids, C call and release trampolines, argument conversion, and
+//! return conversion needed for that exact signature.
 
 mod argument;
 mod callback_handle;

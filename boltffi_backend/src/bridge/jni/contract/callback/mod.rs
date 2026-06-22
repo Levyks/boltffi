@@ -1,16 +1,17 @@
-//! JNI contract for callback traits implemented on the JVM.
+//! Callback traits implemented on the JVM side.
 //!
-//! Rust sees callback traits as C vtables. The JVM sees static methods on a
-//! generated callback class. This module connects those views: it records the C
-//! vtable slot, the JVM method descriptor, cached method ids, argument
-//! conversion, return conversion, and async completion hooks for each callback
-//! method.
+//! A BoltFFI callback trait is a named protocol. Rust calls it through a C
+//! vtable, while the JVM bridge dispatches each vtable slot to a static method
+//! on a generated callback class. This module is the contract between those two
+//! worlds: C slot parameters, JVM argument values, method descriptors, cached
+//! method ids, return handling, and async completion hooks all live here.
 //!
-//! Callback traits are different from inline closures. A callback trait is a
-//! named protocol with vtable slots. An inline closure is registered by function
-//! signature and travels as call, context, and release values. Keeping those two
-//! contracts separate prevents one path from guessing the ownership rules of the
-//! other.
+//! This is separate from `closure` because the ownership model is different. A
+//! callback trait has a stable declaration and vtable slots. An inline closure
+//! is just a signature plus call, context, and release pointers. Mixing those
+//! paths would make the bridge guess who owns a handle, when a JVM global
+//! reference must be retained, and which generated class should receive the
+//! call.
 
 mod argument;
 mod bytes;

@@ -1,17 +1,23 @@
-//! Typed JNI view of the lower C bridge contract.
+//! Typed JNI contract built from the lower C bridge contract.
 //!
-//! The C bridge has already made the ABI decisions. It knows which symbols
-//! exist, which parameters are byte buffers or direct records, which returns use
-//! out-pointers, how callbacks are shaped, and how streams are driven. JNI needs
-//! the same facts in a different form: Java parameter types, JNI descriptors,
-//! borrowed array locals, cached method ids, generated `Java_*` symbols, and
-//! cleanup obligations.
+//! The C bridge has already decided how Rust is called. It knows the exported C
+//! functions, the grouped parameters they accept, the return slots they fill,
+//! the callback vtables Rust calls, and the stream protocol functions. JNI needs
+//! the same contract in JVM terms: Java parameter types, JNI descriptors,
+//! borrowed array lifetimes, callback method ids, `Java_*` symbols, and cleanup
+//! paths tied to `JNIEnv`.
 //!
-//! This module is the translation boundary between those two views. It does not
-//! lower Rust declarations again, inspect source syntax, or decide transport
-//! rules from `TypeRef`. It reads the C bridge contract, validates that each C
-//! shape has a JNI representation, and gives rendering code typed values rather
-//! than loose strings.
+//! This module is the only place where that adaptation happens. It reads the C
+//! bridge contract, validates that every C shape has a JVM representation, and
+//! stores the result as typed values. Rendering code consumes those values; it
+//! does not inspect `TypeRef`, re-walk codec plans, or rebuild parameter groups
+//! from raw C fragments.
+//!
+//! The child modules split the contract by owned responsibility: `parameter`
+//! groups C arguments into Java parameters, `return_value` describes what Java
+//! receives, `callback` and `closure` model the two callback directions,
+//! `stream` keeps stream protocols together, and `record`, `scalar`, `bytes`,
+//! and `direct_vector` own the reusable ABI shapes shared by those paths.
 
 mod bridge;
 mod bytes;

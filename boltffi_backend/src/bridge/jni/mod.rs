@@ -1,16 +1,22 @@
-//! JVM bridge layered on top of the C ABI bridge.
+//! JVM bridge layered above the C ABI bridge.
 //!
-//! The lower C bridge already describes the Rust-facing ABI: exported symbols,
-//! record layouts, callback vtables, stream protocols, async continuations, and
-//! owned buffers. A JVM target cannot call that contract directly. It needs
-//! `Java_*` entry points, JNI descriptors, Java arrays, cached classes and
-//! method ids, global references, and `JNIEnv`-scoped cleanup.
+//! The C bridge is the stable Rust-facing ABI. It knows the exported symbols,
+//! buffer ownership rules, callback vtables, stream protocols, async
+//! continuations, and direct-record layouts. That is enough for a C caller, but
+//! it is not enough for a JVM caller. JNI needs `Java_*` entry points, JVM method
+//! descriptors, Java arrays, global references, cached method ids, and cleanup
+//! that is tied to a live `JNIEnv`.
 //!
-//! This module owns that second bridge. It reads the C bridge contract once,
-//! builds a typed JNI contract, and renders one C source file that the Java or
-//! Kotlin target can compile beside the C bridge output. Host targets compose
-//! with this bridge instead of rediscovering JNI naming, callback ownership, or
-//! parameter grouping in their own renderers.
+//! This bridge exists to adapt one complete C bridge contract into that JVM
+//! shape. It does not lower `Bindings` again and it does not inspect Rust source.
+//! The flow is deliberately narrow: `JniBridge` receives a `CBridgeContract`,
+//! `contract` turns it into typed JNI facts, `name` owns JVM and JNI spelling,
+//! and `template` prints the final C source through Askama.
+//!
+//! Keeping this layer separate gives Java and Kotlin targets one shared JNI
+//! bridge instead of forcing each host language to rediscover callback
+//! ownership, byte-array borrowing, stream helper names, or `Java_*` symbol
+//! escaping.
 
 mod bridge;
 mod contract;
