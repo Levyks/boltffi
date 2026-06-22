@@ -27,7 +27,7 @@ pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use parameter::{
     ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ContinuationParameter,
-    Parameter, ParameterGroup, ParameterIndex,
+    DirectVectorElementAbi, DirectVectorParameter, Parameter, ParameterGroup, ParameterIndex,
 };
 pub use record::{Field, Record};
 pub use support::SupportFunctions;

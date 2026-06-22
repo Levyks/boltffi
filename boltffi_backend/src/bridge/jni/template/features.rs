@@ -5,6 +5,7 @@ use super::{
 };
 
 pub struct SourceFeatures {
+    pub uses_limits: bool,
     pub checks_status: bool,
     pub uses_byte_arrays: bool,
     pub uses_record_arrays: bool,
@@ -23,39 +24,36 @@ impl SourceFeatures {
         closure_handles: &[CallbackClosureHandleView],
     ) -> Self {
         let callback_byte_arrays = Self::callback_byte_arrays(callbacks);
+        let callback_direct_vectors = Self::callback_direct_vectors(callbacks);
         let callback_record_arrays = Self::callback_record_arrays(callbacks);
         let callback_handles = Self::callback_handles(callbacks);
         let uses_closure_handles = !closure_handles.is_empty();
         let byte_array_returns = Self::byte_array_returns(callbacks, closures);
         let record_returns = Self::record_returns(callbacks, closures);
-        let method_byte_arrays = methods.iter().any(|method| {
-            method.returns_bytes
-                || method.returns_record
-                || !method.byte_arrays.is_empty()
-                || !method.record_arrays.is_empty()
-        });
+        let method_byte_array_returns = methods.iter().any(|method| method.returns_bytes);
+        let method_record_arrays = methods
+            .iter()
+            .any(|method| method.returns_record || !method.record_arrays.is_empty());
         let method_exceptions = methods.iter().any(|method| {
             method.checks_status
                 || method.returns_bytes
                 || method.returns_record
                 || method.returns_callback
-                || !method.byte_arrays.is_empty()
+                || !method.borrowed_arrays.is_empty()
                 || !method.record_arrays.is_empty()
         });
         let uses_continuations = methods.iter().any(|method| method.uses_continuations);
+        let uses_byte_arrays =
+            callback_byte_arrays || byte_array_returns || method_byte_array_returns;
+        let uses_record_arrays = method_record_arrays || callback_record_arrays || record_returns;
 
         Self {
+            uses_limits: uses_byte_arrays || uses_record_arrays || callback_direct_vectors,
             checks_status: methods.iter().any(|method| method.checks_status),
-            uses_byte_arrays: callback_byte_arrays
-                || callback_record_arrays
-                || byte_array_returns
-                || method_byte_arrays,
-            uses_record_arrays: methods
-                .iter()
-                .any(|method| method.returns_record || !method.record_arrays.is_empty())
-                || callback_record_arrays
-                || record_returns,
+            uses_byte_arrays,
+            uses_record_arrays,
             uses_exceptions: callback_byte_arrays
+                || callback_direct_vectors
                 || callback_record_arrays
                 || callback_handles
                 || uses_closure_handles
@@ -84,6 +82,15 @@ impl SourceFeatures {
                 .methods
                 .iter()
                 .any(|method| !method.record_arrays.is_empty())
+        })
+    }
+
+    fn callback_direct_vectors(callbacks: &[CallbackRegistrationView]) -> bool {
+        callbacks.iter().any(|callback| {
+            callback
+                .methods
+                .iter()
+                .any(|method| !method.direct_vectors.is_empty())
         })
     }
 

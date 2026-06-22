@@ -3,7 +3,7 @@ use crate::{
         c::{self, Expression, Identifier, TypeFragment},
         jni::{
             BytesParameter, CallbackParameter, ClosureParameter, ClosureRegistration,
-            ContinuationParameter, RecordParameter, ScalarParameter,
+            ContinuationParameter, DirectVectorParameter, RecordParameter, ScalarParameter,
         },
     },
     core::{Error, Result},
@@ -24,6 +24,7 @@ impl NativeParameter {
         match &self.kind {
             NativeParameterKind::Scalar(parameter) => parameter.name(),
             NativeParameterKind::Bytes(parameter) => parameter.name(),
+            NativeParameterKind::DirectVector(parameter) => parameter.name(),
             NativeParameterKind::Record(parameter) => parameter.name(),
             NativeParameterKind::Callback(parameter) => parameter.name(),
             NativeParameterKind::Closure(parameter) => parameter.name(),
@@ -36,6 +37,7 @@ impl NativeParameter {
         match &self.kind {
             NativeParameterKind::Scalar(parameter) => parameter.ty().as_type_fragment(),
             NativeParameterKind::Bytes(_) => TypeFragment::new("jbyteArray"),
+            NativeParameterKind::DirectVector(parameter) => parameter.array_type(),
             NativeParameterKind::Record(_) => TypeFragment::new("jbyteArray"),
             NativeParameterKind::Callback(parameter) => parameter.ty(),
             NativeParameterKind::Closure(parameter) => parameter.ty(),
@@ -59,6 +61,7 @@ impl NativeParameter {
                     Expression::identifier(parameter.length().clone()),
                 ),
             ]),
+            NativeParameterKind::DirectVector(parameter) => Ok(parameter.c_arguments()),
             NativeParameterKind::Record(parameter) => {
                 Ok(vec![Expression::identifier(parameter.local().clone())])
             }
@@ -72,6 +75,7 @@ impl NativeParameter {
     pub fn bytes(&self) -> Option<&BytesParameter> {
         match &self.kind {
             NativeParameterKind::Scalar(_)
+            | NativeParameterKind::DirectVector(_)
             | NativeParameterKind::Record(_)
             | NativeParameterKind::Callback(_)
             | NativeParameterKind::Closure(_)
@@ -85,10 +89,24 @@ impl NativeParameter {
         match &self.kind {
             NativeParameterKind::Scalar(_)
             | NativeParameterKind::Bytes(_)
+            | NativeParameterKind::DirectVector(_)
             | NativeParameterKind::Callback(_)
             | NativeParameterKind::Closure(_)
             | NativeParameterKind::Continuation(_) => None,
             NativeParameterKind::Record(parameter) => Some(parameter),
+        }
+    }
+
+    /// Returns direct-vector parameter details when this parameter carries a Java array.
+    pub fn direct_vector(&self) -> Option<&DirectVectorParameter> {
+        match &self.kind {
+            NativeParameterKind::Scalar(_)
+            | NativeParameterKind::Bytes(_)
+            | NativeParameterKind::Record(_)
+            | NativeParameterKind::Callback(_)
+            | NativeParameterKind::Closure(_)
+            | NativeParameterKind::Continuation(_) => None,
+            NativeParameterKind::DirectVector(parameter) => Some(parameter),
         }
     }
 
@@ -138,6 +156,11 @@ impl NativeParameter {
                     kind: NativeParameterKind::Bytes(bytes),
                 })
             }
+            c::ParameterGroup::DirectVector(vector) => {
+                DirectVectorParameter::from_c_group(vector, function).map(|vector| Self {
+                    kind: NativeParameterKind::DirectVector(vector),
+                })
+            }
             c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "callback completion parameter group cannot appear on a JNI native method",
@@ -166,6 +189,8 @@ pub enum NativeParameterKind {
     Scalar(ScalarParameter),
     /// A `jbyteArray` expanded to pointer and length C bridge arguments.
     Bytes(BytesParameter),
+    /// A Java primitive array expanded to pointer and length C bridge arguments.
+    DirectVector(DirectVectorParameter),
     /// A `jbyteArray` copied into one direct C record value.
     Record(RecordParameter),
     /// A `jlong` Java callback handle converted through a C callback constructor.

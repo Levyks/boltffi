@@ -63,6 +63,12 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- endif %}
     }
 {%- endfor %}
+{%- for vector in method.direct_vectors %}
+    {{ vector.array_type }} {{ vector.array }} = NULL;
+{%- endfor %}
+{%- for vector in method.direct_vectors %}
+{% include "bridge/jni/callback_direct_vector_argument.c" %}
+{%- endfor %}
 {%- for callback_handle in method.callback_handles %}
     jlong {{ callback_handle.handle }} = 0;
 {%- endfor %}
@@ -74,6 +80,11 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
     if ({{ record.array }} == NULL) {
 {%- for bytes in method.byte_arrays %}
         (*env)->DeleteLocalRef(env, {{ bytes.name }});
+{%- endfor %}
+{%- for vector in method.direct_vectors %}
+        if ({{ vector.array }} != NULL) {
+            (*env)->DeleteLocalRef(env, {{ vector.array }});
+        }
 {%- endfor %}
         boltffi_jni_clear_exception(env);
         boltffi_jni_exit(attached);
@@ -92,6 +103,11 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
     if ((*env)->ExceptionCheck(env)) {
 {%- for bytes in method.byte_arrays %}
         (*env)->DeleteLocalRef(env, {{ bytes.name }});
+{%- endfor %}
+{%- for vector in method.direct_vectors %}
+        if ({{ vector.array }} != NULL) {
+            (*env)->DeleteLocalRef(env, {{ vector.array }});
+        }
 {%- endfor %}
 {%- for record in method.record_arrays %}
         (*env)->DeleteLocalRef(env, {{ record.array }});
@@ -116,6 +132,11 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
     if ((*env)->ExceptionCheck(env)) {
 {%- for bytes in method.byte_arrays %}
         (*env)->DeleteLocalRef(env, {{ bytes.name }});
+{%- endfor %}
+{%- for vector in method.direct_vectors %}
+        if ({{ vector.array }} != NULL) {
+            (*env)->DeleteLocalRef(env, {{ vector.array }});
+        }
 {%- endfor %}
 {%- for record in method.record_arrays %}
         (*env)->DeleteLocalRef(env, {{ record.array }});
@@ -143,6 +164,11 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- for bytes in method.byte_arrays %}
     (*env)->DeleteLocalRef(env, {{ bytes.name }});
 {%- endfor %}
+{%- for vector in method.direct_vectors %}
+    if ({{ vector.array }} != NULL) {
+        (*env)->DeleteLocalRef(env, {{ vector.array }});
+    }
+{%- endfor %}
 {%- for record in method.record_arrays %}
     (*env)->DeleteLocalRef(env, {{ record.array }});
 {%- endfor %}
@@ -160,6 +186,11 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- endif %}
 {%- for bytes in method.byte_arrays %}
     (*env)->DeleteLocalRef(env, {{ bytes.name }});
+{%- endfor %}
+{%- for vector in method.direct_vectors %}
+    if ({{ vector.array }} != NULL) {
+        (*env)->DeleteLocalRef(env, {{ vector.array }});
+    }
 {%- endfor %}
 {%- for record in method.record_arrays %}
     (*env)->DeleteLocalRef(env, {{ record.array }});

@@ -2,6 +2,7 @@ mod byte_slice;
 mod callback_completion;
 mod closure;
 mod continuation;
+mod direct_vector;
 mod group;
 
 use crate::core::Result;
@@ -14,6 +15,7 @@ pub use byte_slice::ByteSliceParameter;
 pub use callback_completion::CallbackCompletionParameter;
 pub use closure::ClosureParameter;
 pub use continuation::ContinuationParameter;
+pub use direct_vector::{DirectVectorElementAbi, DirectVectorParameter};
 pub use group::ParameterGroup;
 
 /// A C function parameter.
@@ -37,6 +39,11 @@ enum ParameterRole {
     Value,
     BytePointer(Identifier),
     ByteLength(Identifier),
+    DirectVectorPointer {
+        name: Identifier,
+        element: DirectVectorElementAbi,
+    },
+    DirectVectorLength(Identifier),
     CallbackCompletionCallback(Identifier),
     CallbackCompletionContext(Identifier),
     ContinuationData(Identifier),
@@ -70,6 +77,27 @@ impl Parameter {
             format!("{name}_len"),
             Type::PointerWidth,
             ParameterRole::ByteLength(Identifier::escape(name)?),
+        )
+    }
+
+    /// Creates the pointer half of a borrowed direct-vector C ABI parameter group.
+    pub fn direct_vector_pointer(name: &str, element: DirectVectorElementAbi) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_ptr"),
+            element.pointer_type(),
+            ParameterRole::DirectVectorPointer {
+                name: Identifier::escape(name)?,
+                element,
+            },
+        )
+    }
+
+    /// Creates the length half of a borrowed direct-vector C ABI parameter group.
+    pub fn direct_vector_length(name: &str, element: &DirectVectorElementAbi) -> Result<Self> {
+        Self::with_role(
+            element.length_name(name),
+            Type::PointerWidth,
+            ParameterRole::DirectVectorLength(Identifier::escape(name)?),
         )
     }
 
@@ -178,6 +206,10 @@ impl ParameterIndex {
 impl ParameterRole {
     fn is_byte_length(&self, expected: &Identifier) -> bool {
         matches!(self, Self::ByteLength(name) if name == expected)
+    }
+
+    fn is_direct_vector_length(&self, expected: &Identifier) -> bool {
+        matches!(self, Self::DirectVectorLength(name) if name == expected)
     }
 
     fn is_callback_completion_context(&self, expected: &Identifier) -> bool {

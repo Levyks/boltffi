@@ -3,7 +3,7 @@ use crate::core::{Error, Result};
 use super::super::C_BRIDGE_CONTRACT;
 use super::{
     ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ContinuationParameter,
-    Parameter, ParameterIndex, ParameterRole,
+    DirectVectorParameter, Parameter, ParameterIndex, ParameterRole,
 };
 
 /// Source-level parameter group represented by one or more C ABI parameters.
@@ -14,6 +14,8 @@ pub enum ParameterGroup {
     Value(ParameterIndex),
     /// One source parameter maps to a borrowed byte pointer and byte length.
     ByteSlice(ByteSliceParameter),
+    /// One source parameter maps to a borrowed direct-vector pointer and length.
+    DirectVector(DirectVectorParameter),
     /// One async callback completion maps to callback and context parameters.
     CallbackCompletion(CallbackCompletionParameter),
     /// One poll continuation maps to callback data and a function pointer.
@@ -46,6 +48,14 @@ impl ParameterGroup {
                 bridge: C_BRIDGE_CONTRACT,
                 invariant: "byte slice parameter group does not start with pointer parameter",
             }),
+            ParameterRole::DirectVectorPointer { name, element } => {
+                DirectVectorParameter::from_params(params, index, name, element)
+                    .map(Self::DirectVector)
+            }
+            ParameterRole::DirectVectorLength(_) => Err(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "direct-vector parameter group does not start with pointer parameter",
+            }),
             ParameterRole::CallbackCompletionCallback(name) => {
                 CallbackCompletionParameter::from_params(params, index, name)
                     .map(Self::CallbackCompletion)
@@ -77,6 +87,7 @@ impl ParameterGroup {
         match self {
             Self::Value(_) => 1,
             Self::ByteSlice(_) => 2,
+            Self::DirectVector(_) => 2,
             Self::CallbackCompletion(_) => 2,
             Self::Continuation(_) => 2,
             Self::Closure(_) => 3,

@@ -1,7 +1,7 @@
 #include <jni.h>
 #include <stdint.h>
 #include <stdbool.h>
-{%- if uses_byte_arrays %}
+{%- if uses_limits %}
 #include <limits.h>
 {%- endif %}
 {%- if uses_callback_handles || uses_closure_handles || uses_byte_arrays %}
@@ -184,19 +184,19 @@ static jbyteArray boltffi_jni_record_to_byte_array(JNIEnv *env, const void *reco
 
 JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jclass cls{% for parameter in method.parameters %}, {{ parameter.ty }} {{ parameter.name }}{% endfor %}) {
     (void)cls;
-{%- for parameter in method.byte_arrays %}
-    jbyte *{{ parameter.pointer }} = NULL;
+{%- for parameter in method.borrowed_arrays %}
+    {{ parameter.element_type }} *{{ parameter.pointer }} = NULL;
     jsize {{ parameter.length }} = 0;
 {%- endfor %}
 {%- for parameter in method.record_arrays %}
     {{ parameter.c_type }} {{ parameter.local }};
 {%- endfor %}
-{%- for parameter in method.byte_arrays %}
+{%- for parameter in method.borrowed_arrays %}
     if ({{ parameter.name }} == NULL) {
-        boltffi_jni_throw_illegal_argument(env, "BoltFFI byte array argument was null");
-{%- for cleanup in method.byte_arrays %}
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
+{%- for cleanup in method.borrowed_arrays %}
         if ({{ cleanup.pointer }} != NULL) {
-            (*env)->ReleaseByteArrayElements(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
+            (*env)->{{ cleanup.releaser }}(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
         }
 {%- endfor %}
 {%- if method.returns_void || method.checks_status %}
@@ -210,11 +210,11 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
 {%- endif %}
     }
     {{ parameter.length }} = (*env)->GetArrayLength(env, {{ parameter.name }});
-    {{ parameter.pointer }} = (*env)->GetByteArrayElements(env, {{ parameter.name }}, NULL);
+    {{ parameter.pointer }} = (*env)->{{ parameter.getter }}(env, {{ parameter.name }}, NULL);
     if ({{ parameter.pointer }} == NULL) {
-{%- for cleanup in method.byte_arrays %}
+{%- for cleanup in method.borrowed_arrays %}
         if ({{ cleanup.pointer }} != NULL) {
-            (*env)->ReleaseByteArrayElements(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
+            (*env)->{{ cleanup.releaser }}(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
         }
 {%- endfor %}
 {%- if method.returns_void || method.checks_status %}
@@ -230,9 +230,9 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
 {%- endfor %}
 {%- for parameter in method.record_arrays %}
     if (!boltffi_jni_read_record(env, {{ parameter.name }}, (uintptr_t)sizeof({{ parameter.c_type }}), &{{ parameter.local }})) {
-{%- for cleanup in method.byte_arrays %}
+{%- for cleanup in method.borrowed_arrays %}
         if ({{ cleanup.pointer }} != NULL) {
-            (*env)->ReleaseByteArrayElements(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
+            (*env)->{{ cleanup.releaser }}(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
         }
 {%- endfor %}
 {%- if method.returns_void || method.checks_status %}
@@ -249,25 +249,25 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
 {%- if method.returns_void %}
     (void)env;
     {{ method.c_function }}({{ method.arguments }});
-{%- for parameter in method.byte_arrays %}
+{%- for parameter in method.borrowed_arrays %}
     if ({{ parameter.pointer }} != NULL) {
-        (*env)->ReleaseByteArrayElements(env, {{ parameter.name }}, {{ parameter.pointer }}, JNI_ABORT);
+        (*env)->{{ parameter.releaser }}(env, {{ parameter.name }}, {{ parameter.pointer }}, JNI_ABORT);
     }
 {%- endfor %}
 {%- else if method.checks_status %}
     {{ method.c_result_type }} status = {{ method.c_function }}({{ method.arguments }});
-{%- for parameter in method.byte_arrays %}
+{%- for parameter in method.borrowed_arrays %}
     if ({{ parameter.pointer }} != NULL) {
-        (*env)->ReleaseByteArrayElements(env, {{ parameter.name }}, {{ parameter.pointer }}, JNI_ABORT);
+        (*env)->{{ parameter.releaser }}(env, {{ parameter.name }}, {{ parameter.pointer }}, JNI_ABORT);
     }
 {%- endfor %}
     boltffi_jni_throw_status(env, status);
 {%- else %}
     (void)env;
     {{ method.c_result_type }} result = {{ method.c_function }}({{ method.arguments }});
-{%- for parameter in method.byte_arrays %}
+{%- for parameter in method.borrowed_arrays %}
     if ({{ parameter.pointer }} != NULL) {
-        (*env)->ReleaseByteArrayElements(env, {{ parameter.name }}, {{ parameter.pointer }}, JNI_ABORT);
+        (*env)->{{ parameter.releaser }}(env, {{ parameter.name }}, {{ parameter.pointer }}, JNI_ABORT);
     }
 {%- endfor %}
 {%- if method.returns_bytes %}

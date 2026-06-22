@@ -3,6 +3,7 @@ mod bytes;
 mod callback;
 mod closure;
 mod continuation;
+mod direct_vector;
 mod jni_type;
 mod jvm_method;
 mod method;
@@ -15,11 +16,13 @@ pub use bridge::JniBridgeContract;
 pub use bytes::BytesParameter;
 pub use callback::{
     CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
-    CallbackCompletionArgument, CallbackHandleArgument, CallbackMethod, CallbackParameter,
-    CallbackRecordArgument, CallbackRegistration, CallbackReturn,
+    CallbackCompletionArgument, CallbackDirectVectorArgument, CallbackHandleArgument,
+    CallbackMethod, CallbackParameter, CallbackRecordArgument, CallbackRegistration,
+    CallbackReturn,
 };
 pub use closure::{CallbackClosureHandle, ClosureArgument, ClosureParameter, ClosureRegistration};
 pub use continuation::ContinuationParameter;
+pub use direct_vector::DirectVectorParameter;
 pub use jni_type::JniType;
 pub use jvm_method::JvmMethodReturn;
 pub use method::NativeMethod;

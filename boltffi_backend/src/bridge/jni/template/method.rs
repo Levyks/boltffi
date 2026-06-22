@@ -1,7 +1,11 @@
+mod array;
+
+use self::array::BorrowedArrayParameterView;
+
 use crate::{
     bridge::{
         c::{ArgumentList, Expression, Identifier, TypeFragment},
-        jni::{BytesParameter, NativeMethod, NativeParameter, RecordParameter},
+        jni::{NativeMethod, NativeParameter, RecordParameter},
     },
     core::Result,
 };
@@ -12,7 +16,7 @@ pub struct NativeMethodView {
     pub return_type: TypeFragment,
     pub c_result_type: TypeFragment,
     pub parameters: Vec<NativeParameterView>,
-    pub byte_arrays: Vec<ByteArrayParameterView>,
+    pub borrowed_arrays: Vec<BorrowedArrayParameterView>,
     pub record_arrays: Vec<RecordParameterView>,
     pub arguments: ArgumentList,
     pub returns_void: bool,
@@ -28,13 +32,6 @@ pub struct NativeMethodView {
 pub struct NativeParameterView {
     pub name: Identifier,
     pub ty: TypeFragment,
-}
-
-#[derive(Clone)]
-pub struct ByteArrayParameterView {
-    pub name: Identifier,
-    pub pointer: Identifier,
-    pub length: Identifier,
 }
 
 #[derive(Clone)]
@@ -56,10 +53,10 @@ impl NativeMethodView {
                 .iter()
                 .map(NativeParameterView::from_parameter)
                 .collect(),
-            byte_arrays: method
+            borrowed_arrays: method
                 .parameters()
                 .iter()
-                .filter_map(|parameter| parameter.bytes().map(ByteArrayParameterView::from_bytes))
+                .flat_map(Self::borrowed_array)
                 .collect(),
             record_arrays: method
                 .parameters()
@@ -90,6 +87,17 @@ impl NativeMethodView {
                 .any(NativeParameter::is_continuation),
         })
     }
+
+    fn borrowed_array(parameter: &NativeParameter) -> Option<BorrowedArrayParameterView> {
+        parameter
+            .bytes()
+            .map(BorrowedArrayParameterView::from_bytes)
+            .or_else(|| {
+                parameter
+                    .direct_vector()
+                    .map(BorrowedArrayParameterView::from_direct_vector)
+            })
+    }
 }
 
 impl NativeParameterView {
@@ -97,16 +105,6 @@ impl NativeParameterView {
         Self {
             name: parameter.name().clone(),
             ty: parameter.ty(),
-        }
-    }
-}
-
-impl ByteArrayParameterView {
-    fn from_bytes(parameter: &BytesParameter) -> Self {
-        Self {
-            name: parameter.name().clone(),
-            pointer: parameter.pointer().clone(),
-            length: parameter.length().clone(),
         }
     }
 }

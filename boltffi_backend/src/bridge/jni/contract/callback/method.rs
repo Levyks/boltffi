@@ -3,8 +3,8 @@ use crate::{
         c::{self, ArgumentList, Identifier, TypeFragment},
         jni::{
             CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
-            CallbackCompletionArgument, CallbackHandleArgument, CallbackRecordArgument,
-            ClosureRegistration, JvmMethodReturn,
+            CallbackCompletionArgument, CallbackDirectVectorArgument, CallbackHandleArgument,
+            CallbackRecordArgument, ClosureRegistration, JvmMethodReturn,
         },
     },
     core::{Error, Result},
@@ -102,6 +102,14 @@ impl CallbackMethod {
         self.arguments
             .iter()
             .filter_map(CallbackArgument::bytes)
+            .collect()
+    }
+
+    /// Returns direct-vector callback arguments.
+    pub fn direct_vectors(&self) -> Vec<CallbackDirectVectorArgument<'_>> {
+        self.arguments
+            .iter()
+            .filter_map(CallbackArgument::direct_vector)
             .collect()
     }
 

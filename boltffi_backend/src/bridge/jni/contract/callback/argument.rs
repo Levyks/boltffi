@@ -3,8 +3,8 @@ use crate::{
         c::{self, ArgumentList, Expression, Identifier, Literal, TypeFragment},
         jni::{
             CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
-            CallbackCompletionArgument, CallbackHandleArgument, CallbackRecordArgument,
-            ClosureRegistration, JniType,
+            CallbackCompletionArgument, CallbackDirectVectorArgument, CallbackHandleArgument,
+            CallbackRecordArgument, ClosureRegistration, JniType,
         },
     },
     core::{Error, Result},
@@ -29,6 +29,12 @@ enum CallbackArgumentKind {
         name: Identifier,
         pointer: CallbackCParameter,
         length: CallbackCParameter,
+    },
+    DirectVector {
+        array: Identifier,
+        pointer: CallbackCParameter,
+        length: CallbackCParameter,
+        jni_type: JniType,
     },
     Record {
         array: Identifier,
@@ -60,6 +66,9 @@ impl CallbackArgument {
             CallbackArgumentKind::Value { parameter, .. } => vec![parameter.clone()],
             CallbackArgumentKind::Bytes {
                 pointer, length, ..
+            }
+            | CallbackArgumentKind::DirectVector {
+                pointer, length, ..
             } => vec![pointer.clone(), length.clone()],
             CallbackArgumentKind::Record { parameter, .. }
             | CallbackArgumentKind::CallbackHandle { parameter, .. } => vec![parameter.clone()],
@@ -80,6 +89,7 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { jni_type, .. } => jni_type.signature(),
             CallbackArgumentKind::Bytes { .. } | CallbackArgumentKind::Record { .. } => "[B",
+            CallbackArgumentKind::DirectVector { jni_type, .. } => jni_type.array_signature(),
             CallbackArgumentKind::CallbackHandle { .. } | CallbackArgumentKind::Closure { .. } => {
                 "J"
             }
@@ -99,6 +109,9 @@ impl CallbackArgument {
             )],
             CallbackArgumentKind::Bytes { name, .. } => {
                 vec![Expression::identifier(name.clone())]
+            }
+            CallbackArgumentKind::DirectVector { array, .. } => {
+                vec![Expression::identifier(array.clone())]
             }
             CallbackArgumentKind::Record { array, .. } => {
                 vec![Expression::identifier(array.clone())]
@@ -127,7 +140,7 @@ impl CallbackArgument {
     /// Returns byte-array setup data when this argument carries borrowed bytes.
     pub fn bytes(&self) -> Option<CallbackBytesArgument<'_>> {
         match &self.kind {
-            CallbackArgumentKind::Value { .. } => None,
+            CallbackArgumentKind::Value { .. } | CallbackArgumentKind::DirectVector { .. } => None,
             CallbackArgumentKind::Bytes {
                 name,
                 pointer,
@@ -145,10 +158,35 @@ impl CallbackArgument {
         }
     }
 
+    /// Returns direct-vector setup data when this argument carries a Java array.
+    pub fn direct_vector(&self) -> Option<CallbackDirectVectorArgument<'_>> {
+        match &self.kind {
+            CallbackArgumentKind::Value { .. }
+            | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::Record { .. }
+            | CallbackArgumentKind::CallbackHandle { .. }
+            | CallbackArgumentKind::Closure { .. }
+            | CallbackArgumentKind::Completion { .. } => None,
+            CallbackArgumentKind::DirectVector {
+                array,
+                pointer,
+                length,
+                jni_type,
+            } => Some(CallbackDirectVectorArgument::new(
+                array,
+                pointer.name(),
+                length.name(),
+                *jni_type,
+            )),
+        }
+    }
+
     /// Returns record-array setup data when this argument carries a direct record.
     pub fn record(&self) -> Option<CallbackRecordArgument<'_>> {
         match &self.kind {
-            CallbackArgumentKind::Value { .. } | CallbackArgumentKind::Bytes { .. } => None,
+            CallbackArgumentKind::Value { .. }
+            | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::DirectVector { .. } => None,
             CallbackArgumentKind::CallbackHandle { .. } => None,
             CallbackArgumentKind::Closure { .. } => None,
             CallbackArgumentKind::Completion { .. } => None,
@@ -163,6 +201,7 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { .. }
             | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::DirectVector { .. }
             | CallbackArgumentKind::Record { .. }
             | CallbackArgumentKind::Closure { .. }
             | CallbackArgumentKind::Completion { .. } => None,
@@ -177,6 +216,7 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { .. }
             | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::DirectVector { .. }
             | CallbackArgumentKind::Record { .. }
             | CallbackArgumentKind::CallbackHandle { .. }
             | CallbackArgumentKind::Completion { .. } => None,
@@ -203,6 +243,7 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { .. }
             | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::DirectVector { .. }
             | CallbackArgumentKind::Record { .. }
             | CallbackArgumentKind::CallbackHandle { .. } => None,
             CallbackArgumentKind::Closure { .. } => None,
@@ -240,6 +281,7 @@ impl CallbackArgument {
         match group {
             c::ParameterGroup::Value(index) => Self::from_parameter(slot.parameter(*index)),
             c::ParameterGroup::ByteSlice(bytes) => Self::from_bytes(slot, bytes),
+            c::ParameterGroup::DirectVector(vector) => Self::from_direct_vector(slot, vector),
             c::ParameterGroup::CallbackCompletion(completion) => {
                 Self::from_completion(slot, completion)
             }
@@ -282,6 +324,25 @@ impl CallbackArgument {
                 name: Identifier::escape(bytes.name())?,
                 pointer: CallbackCParameter::from_parameter(slot.parameter(bytes.pointer()))?,
                 length: CallbackCParameter::from_parameter(slot.parameter(bytes.length()))?,
+            },
+        })
+    }
+
+    fn from_direct_vector(
+        slot: &c::CallbackSlot,
+        vector: &c::DirectVectorParameter,
+    ) -> Result<Self> {
+        Ok(Self {
+            kind: CallbackArgumentKind::DirectVector {
+                array: Identifier::escape(vector.name())?,
+                pointer: CallbackCParameter::from_parameter(slot.parameter(vector.pointer()))?,
+                length: CallbackCParameter::from_parameter(slot.parameter(vector.length()))?,
+                jni_type: match vector.element() {
+                    c::DirectVectorElementAbi::Typed(element) => JniType::from_c_type(element)?,
+                    c::DirectVectorElementAbi::PackedBytes => {
+                        JniType::from_c_type(&c::Type::Uint8)?
+                    }
+                },
             },
         })
     }

@@ -9,32 +9,14 @@ use boltffi_binding::{
 use crate::core::{Error, Result};
 
 use super::{Function, poll::PollHandleSymbols};
-use crate::bridge::c::{C_BRIDGE_LAYER, Parameter, Type, name, names::Names};
+use crate::bridge::c::{
+    C_BRIDGE_LAYER, DirectVectorElementAbi, Parameter, Type, name, names::Names,
+};
 
 #[derive(Clone, Debug)]
 pub struct Signature {
     names: Names,
     receiver: Vec<Parameter>,
-}
-
-enum DirectVectorElementAbi {
-    TypedElement(Type),
-    PackedBytes,
-}
-
-impl DirectVectorElementAbi {
-    fn new(element: &DirectVectorElementType) -> Result<Self> {
-        match element {
-            DirectVectorElementType::Primitive(primitive) => {
-                Type::primitive(primitive.primitive()).map(Self::TypedElement)
-            }
-            DirectVectorElementType::Record(_) => Ok(Self::PackedBytes),
-            _ => Err(Error::UnexpectedBindingShape {
-                layer: C_BRIDGE_LAYER,
-                shape: "direct vector element",
-            }),
-        }
-    }
 }
 
 struct ValueParameter {
@@ -720,19 +702,11 @@ impl Signature {
         name: &str,
         element: &DirectVectorElementType,
     ) -> Result<Vec<Parameter>> {
-        match DirectVectorElementAbi::new(element)? {
-            DirectVectorElementAbi::TypedElement(element) => Ok(vec![
-                Parameter::new(format!("{name}_ptr"), Type::ConstPointer(Box::new(element)))?,
-                Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
-            ]),
-            DirectVectorElementAbi::PackedBytes => Ok(vec![
-                Parameter::new(
-                    format!("{name}_ptr"),
-                    Type::ConstPointer(Box::new(Type::Uint8)),
-                )?,
-                Parameter::new(format!("{name}_byte_len"), Type::PointerWidth)?,
-            ]),
-        }
+        let element = DirectVectorElementAbi::from_binding(element)?;
+        Ok(vec![
+            Parameter::direct_vector_pointer(name, element.clone())?,
+            Parameter::direct_vector_length(name, &element)?,
+        ])
     }
 
     fn incoming_closure_param(

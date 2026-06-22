@@ -1,3 +1,7 @@
+mod direct_vector;
+
+use self::direct_vector::CallbackDirectVectorArgumentView;
+
 use crate::bridge::{
     c::{ArgumentList, Expression, Identifier, Literal, Statement, TypeFragment},
     jni::{
@@ -36,6 +40,7 @@ pub struct CallbackMethodView {
     pub failure_value: Expression,
     pub c_parameters: Vec<CallbackCParameterView>,
     pub byte_arrays: Vec<CallbackBytesArgumentView>,
+    pub direct_vectors: Vec<CallbackDirectVectorArgumentView>,
     pub record_arrays: Vec<CallbackRecordArgumentView>,
     pub callback_handles: Vec<CallbackHandleArgumentView>,
     pub closure_handles: Vec<CallbackClosureArgumentView>,
@@ -125,6 +130,11 @@ impl CallbackMethodView {
                 .byte_arrays()
                 .iter()
                 .map(CallbackBytesArgumentView::from_argument)
+                .collect(),
+            direct_vectors: method
+                .direct_vectors()
+                .iter()
+                .map(CallbackDirectVectorArgumentView::from_argument)
                 .collect(),
             record_arrays: method
                 .record_arrays()

@@ -39,6 +39,45 @@ impl JniType {
         })
     }
 
+    /// Returns the JNI array type as C syntax.
+    pub fn as_array_type_fragment(self) -> TypeFragment {
+        TypeFragment::new(match self {
+            Self::Boolean => "jbooleanArray",
+            Self::Byte => "jbyteArray",
+            Self::Short => "jshortArray",
+            Self::Int => "jintArray",
+            Self::Long => "jlongArray",
+            Self::Float => "jfloatArray",
+            Self::Double => "jdoubleArray",
+        })
+    }
+
+    /// Returns the `Get*ArrayElements` JNI function table member.
+    pub fn array_elements_getter(self) -> &'static str {
+        match self {
+            Self::Boolean => "GetBooleanArrayElements",
+            Self::Byte => "GetByteArrayElements",
+            Self::Short => "GetShortArrayElements",
+            Self::Int => "GetIntArrayElements",
+            Self::Long => "GetLongArrayElements",
+            Self::Float => "GetFloatArrayElements",
+            Self::Double => "GetDoubleArrayElements",
+        }
+    }
+
+    /// Returns the `Release*ArrayElements` JNI function table member.
+    pub fn array_elements_releaser(self) -> &'static str {
+        match self {
+            Self::Boolean => "ReleaseBooleanArrayElements",
+            Self::Byte => "ReleaseByteArrayElements",
+            Self::Short => "ReleaseShortArrayElements",
+            Self::Int => "ReleaseIntArrayElements",
+            Self::Long => "ReleaseLongArrayElements",
+            Self::Float => "ReleaseFloatArrayElements",
+            Self::Double => "ReleaseDoubleArrayElements",
+        }
+    }
+
     /// Returns whether this type is `jboolean`.
     pub fn is_boolean(self) -> bool {
         matches!(self, Self::Boolean)
@@ -54,6 +93,45 @@ impl JniType {
             Self::Long => "J",
             Self::Float => "F",
             Self::Double => "D",
+        }
+    }
+
+    /// Returns the JNI array descriptor for this scalar type.
+    pub fn array_signature(self) -> &'static str {
+        match self {
+            Self::Boolean => "[Z",
+            Self::Byte => "[B",
+            Self::Short => "[S",
+            Self::Int => "[I",
+            Self::Long => "[J",
+            Self::Float => "[F",
+            Self::Double => "[D",
+        }
+    }
+
+    /// Returns the `New*Array` JNI function table member.
+    pub fn new_array(self) -> &'static str {
+        match self {
+            Self::Boolean => "NewBooleanArray",
+            Self::Byte => "NewByteArray",
+            Self::Short => "NewShortArray",
+            Self::Int => "NewIntArray",
+            Self::Long => "NewLongArray",
+            Self::Float => "NewFloatArray",
+            Self::Double => "NewDoubleArray",
+        }
+    }
+
+    /// Returns the `Set*ArrayRegion` JNI function table member.
+    pub fn set_array_region(self) -> &'static str {
+        match self {
+            Self::Boolean => "SetBooleanArrayRegion",
+            Self::Byte => "SetByteArrayRegion",
+            Self::Short => "SetShortArrayRegion",
+            Self::Int => "SetIntArrayRegion",
+            Self::Long => "SetLongArrayRegion",
+            Self::Float => "SetFloatArrayRegion",
+            Self::Double => "SetDoubleArrayRegion",
         }
     }
 

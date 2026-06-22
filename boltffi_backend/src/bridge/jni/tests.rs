@@ -13,6 +13,7 @@ mod associated;
 mod callback;
 mod constant;
 mod core;
+mod direct_vector;
 mod stream;
 
 fn bindings(source: &str) -> boltffi_binding::Bindings<Native> {
