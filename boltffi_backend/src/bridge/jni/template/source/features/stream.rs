@@ -1,4 +1,4 @@
-use super::DirectStreamBatchView;
+use crate::bridge::jni::template::stream::DirectStreamBatchView;
 
 pub struct StreamFeatures {
     pub returns_direct_batches: bool,

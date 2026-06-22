@@ -1,4 +1,4 @@
-use super::ClosureRegistrationView;
+use crate::bridge::jni::template::closure::ClosureRegistrationView;
 
 pub struct ClosureFeatures {
     pub has_registrations: bool,

@@ -1,4 +1,4 @@
-use super::NativeMethodView;
+use crate::bridge::jni::template::method::NativeMethodView;
 
 pub struct MethodFeatures {
     pub checks_status: bool,

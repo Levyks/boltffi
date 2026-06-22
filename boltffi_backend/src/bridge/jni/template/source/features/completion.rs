@@ -1,4 +1,4 @@
-use super::CallbackCompletionInvokerView;
+use crate::bridge::jni::template::callback::CallbackCompletionInvokerView;
 
 pub struct CompletionFeatures {
     pub uses_byte_arrays: bool,

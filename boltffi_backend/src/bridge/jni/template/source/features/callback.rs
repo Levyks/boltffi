@@ -1,4 +1,4 @@
-use super::CallbackRegistrationView;
+use crate::bridge::jni::template::callback::CallbackRegistrationView;
 
 pub struct CallbackFeatures {
     pub has_registrations: bool,
