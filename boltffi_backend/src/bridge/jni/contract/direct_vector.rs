@@ -1,3 +1,10 @@
+//! Direct-vector parameters for JNI native methods.
+//!
+//! Direct vectors are Java primitive arrays whose contents can be passed to the
+//! C bridge as pointer plus length. The contract records the JNI array type,
+//! local pinned pointer, byte length, and C pointer cast needed by the generated
+//! method body.
+
 use crate::{
     bridge::{
         c::{self, Expression, Identifier, TypeFragment},

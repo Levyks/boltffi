@@ -1,3 +1,8 @@
+//! Template view for closure byte-array arguments.
+//!
+//! Closure call templates need a Java byte array local plus the C pointer and
+//! length inputs that fill it. This module prepares those fields.
+
 use crate::bridge::{c::Identifier, jni::ClosureBytesArgument};
 
 pub struct ClosureBytesArgumentView {

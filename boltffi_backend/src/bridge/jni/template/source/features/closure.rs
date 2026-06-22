@@ -1,3 +1,9 @@
+//! Feature scan for closure template fragments.
+//!
+//! Closure registrations decide whether the source file needs byte-array
+//! helpers, direct-vector helpers, return-buffer helpers, record helpers, or
+//! callback-handle closure helpers.
+
 use crate::bridge::jni::template::closure::ClosureRegistrationView;
 
 pub struct ClosureFeatures {

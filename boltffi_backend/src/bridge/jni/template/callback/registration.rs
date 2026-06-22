@@ -1,3 +1,8 @@
+//! Template view for callback registrations.
+//!
+//! Callback registrations provide the generated class name, global method ids,
+//! vtable methods, and local protocol symbols needed by the callback templates.
+
 use crate::bridge::{
     c::{Identifier, Literal},
     jni::CallbackRegistration,

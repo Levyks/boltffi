@@ -1,3 +1,8 @@
+//! Closure registrations referenced by callback methods.
+//!
+//! Callback vtable slots can receive closure arguments or return closures. This
+//! module scans each slot and feeds the shared closure registration index.
+
 use crate::{
     bridge::{c, jni::JvmClassPath},
     core::Result,

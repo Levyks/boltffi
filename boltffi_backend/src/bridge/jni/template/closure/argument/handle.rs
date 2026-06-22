@@ -1,3 +1,8 @@
+//! Template view for nested closure handles.
+//!
+//! Nested closures are passed to the JVM as handle tokens. This module prepares
+//! the symbols needed to allocate, call, and release those handles.
+
 use crate::bridge::{c::Identifier, jni::ClosureHandleArgument};
 
 pub struct ClosureHandleArgumentView {

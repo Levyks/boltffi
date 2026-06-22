@@ -1,3 +1,9 @@
+//! Failure values for JVM method dispatch.
+//!
+//! Generated C must return a valid ABI value when a JVM callback or closure call
+//! fails before Rust receives a result. This module provides that fallback value
+//! from the typed JVM return contract.
+
 use crate::bridge::{
     c::{Expression, Literal},
     jni::JvmMethodReturn,

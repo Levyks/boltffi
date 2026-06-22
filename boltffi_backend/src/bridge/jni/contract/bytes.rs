@@ -1,3 +1,9 @@
+//! Byte-array parameters for JNI native methods.
+//!
+//! Encoded parameters cross the JVM boundary as `jbyteArray`. The C bridge does
+//! not accept Java objects, so this contract records the Java parameter and the
+//! local pointer and length variables passed into the C ABI call.
+
 use crate::{
     bridge::c::{self, Identifier},
     core::Result,

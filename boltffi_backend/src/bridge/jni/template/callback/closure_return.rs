@@ -1,3 +1,9 @@
+//! Template view for closure returns from callbacks.
+//!
+//! The callback template needs storage, output pointers, and release expressions
+//! when a JVM callback method returns an inline closure. This module prepares
+//! that view from the callback contract.
+
 use crate::bridge::{
     c::{Identifier, Statement},
     jni::CallbackClosureReturn,

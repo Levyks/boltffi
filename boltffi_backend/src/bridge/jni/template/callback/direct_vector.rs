@@ -1,3 +1,9 @@
+//! Template view for callback direct vectors.
+//!
+//! Direct-vector callback arguments need a Java array local, a pinned pointer,
+//! and the JNI array functions for the element type. This module prepares those
+//! template fields.
+
 use crate::bridge::{
     c::{Identifier, TypeFragment},
     jni::CallbackDirectVectorArgument,

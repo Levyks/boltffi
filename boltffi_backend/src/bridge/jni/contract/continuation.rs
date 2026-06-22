@@ -1,3 +1,9 @@
+//! Continuation parameters for async polling.
+//!
+//! C async polling functions need both a user-data handle and a completion
+//! callback. JVM code supplies the user data as a scalar token; the JNI bridge
+//! supplies the fixed continuation callback symbol.
+
 use crate::{
     bridge::{
         c::{self, Expression, Identifier, TypeFragment},

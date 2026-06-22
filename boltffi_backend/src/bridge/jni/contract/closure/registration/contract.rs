@@ -1,3 +1,9 @@
+//! Contract for one registered closure signature.
+//!
+//! A closure signature produces one JVM bridge class and one pair of generated C
+//! trampolines. This module stores the signature, bridge class, C function
+//! pointer type, argument contract, return contract, and callback-handle helpers.
+
 mod build;
 mod index;
 

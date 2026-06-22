@@ -1,3 +1,9 @@
+//! Callback method argument projections.
+//!
+//! Templates need grouped views of a callback method's arguments: byte arrays,
+//! direct vectors, direct records, handles, closures, and completion callbacks.
+//! This module derives those views from the method contract.
+
 use crate::bridge::{
     c::ArgumentList,
     jni::{

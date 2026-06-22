@@ -1,3 +1,8 @@
+//! Scalar arguments passed into JVM-owned closures.
+//!
+//! Scalar closure arguments keep the C parameter and JNI primitive type together
+//! so the trampoline can cast before calling the JVM method.
+
 use crate::{
     bridge::{
         c::{self, Expression},

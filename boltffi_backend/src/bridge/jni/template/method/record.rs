@@ -1,3 +1,9 @@
+//! Template view for direct-record method parameters.
+//!
+//! Direct records require byte-array length checks, local record storage, and
+//! optional mutation writeback. This module prepares those fields for the native
+//! method template.
+
 use crate::bridge::{c::Identifier, jni::RecordParameter};
 
 #[derive(Clone)]

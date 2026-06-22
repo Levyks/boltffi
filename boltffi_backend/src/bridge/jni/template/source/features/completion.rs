@@ -1,3 +1,8 @@
+//! Feature scan for async completion fragments.
+//!
+//! Completion invokers decide whether the source file needs byte-array and
+//! direct-record helpers for async callback payloads.
+
 use crate::bridge::jni::template::callback::CallbackCompletionInvokerView;
 
 pub struct CompletionFeatures {

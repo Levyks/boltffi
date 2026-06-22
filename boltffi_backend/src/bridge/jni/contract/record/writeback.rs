@@ -1,3 +1,9 @@
+//! Direct-record mutation writeback.
+//!
+//! Mutable direct-record parameters need a second C local that receives the
+//! updated record from Rust. This module names that local and the original Java
+//! byte array that must be updated after the C bridge call succeeds.
+
 use crate::{
     bridge::c::{self, Identifier},
     core::Result,

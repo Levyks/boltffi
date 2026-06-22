@@ -1,3 +1,9 @@
+//! Builder from C callback slots to JNI callback methods.
+//!
+//! The C bridge slot is the source of truth for parameter grouping and return
+//! shape. This module validates that slot and creates the JNI method descriptor
+//! and local contract used by generated callback glue.
+
 use crate::{
     bridge::{
         c::{self, Identifier},

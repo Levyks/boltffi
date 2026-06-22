@@ -1,3 +1,9 @@
+//! Borrowed-byte callback arguments from C callback slots.
+//!
+//! The C bridge passes encoded callback payloads as pointer and length
+//! parameters. This module groups those raw parameters into one JVM byte-array
+//! argument.
+
 use crate::{
     bridge::{
         c::{self, Identifier},

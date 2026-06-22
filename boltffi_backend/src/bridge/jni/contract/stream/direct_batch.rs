@@ -1,3 +1,9 @@
+//! Direct stream batch method contract.
+//!
+//! Some stream item types can be copied as a Java primitive byte array instead
+//! of decoded item by item. This module describes the extra JNI method that
+//! returns that direct batch from the C stream protocol.
+
 use crate::{
     bridge::{
         c::{self, TypeFragment},

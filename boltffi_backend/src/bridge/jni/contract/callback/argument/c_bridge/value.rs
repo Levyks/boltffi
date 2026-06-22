@@ -1,3 +1,9 @@
+//! Value callback arguments from C callback slots.
+//!
+//! This module maps a single C callback parameter into the JVM value it
+//! represents. Scalars stay scalar, direct records become byte arrays, and
+//! callback handles become JVM handle tokens.
+
 use crate::{
     bridge::{
         c::{self, Identifier},

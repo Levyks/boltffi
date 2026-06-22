@@ -1,3 +1,9 @@
+//! Closure callback arguments from C callback slots.
+//!
+//! Rust can pass inline closures into a JVM callback method. The C bridge carries
+//! those closures as function pointer, context, and release parameters; this
+//! module groups them into one JVM closure handle.
+
 use crate::{
     bridge::{
         c::{self, Identifier},

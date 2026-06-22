@@ -1,3 +1,9 @@
+//! Template view for one native method.
+//!
+//! This module is the final shape consumed by the native-method Askama template.
+//! It collects parameters, borrowed arrays, direct records, C bridge arguments,
+//! return handling, and status checks from the method contract.
+
 use crate::{
     bridge::{
         c::{ArgumentList, Expression, Identifier, TypeFragment},

@@ -1,3 +1,9 @@
+//! Closure registrations referenced by parameter groups.
+//!
+//! C bridge parameter groups are the common shape used by functions, callback
+//! methods, and closure trampolines. This module extracts closure signatures
+//! from those groups for the registration index.
+
 use crate::{
     bridge::{c, jni::JvmClassPath},
     core::Result,

@@ -1,3 +1,9 @@
+//! Template views for borrowed Java arrays.
+//!
+//! Native methods borrow Java arrays for encoded bytes and direct vectors before
+//! calling the C bridge. This module prepares the local pointer, length, getter,
+//! release, and cleanup fields used by the method template.
+
 use crate::bridge::{
     c::{Identifier, TypeFragment},
     jni::{BytesParameter, DirectVectorParameter},

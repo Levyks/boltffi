@@ -1,3 +1,9 @@
+//! Feature scan for callback template fragments.
+//!
+//! Callback registrations decide whether the source file needs byte-array
+//! helpers, direct-vector helpers, record-array helpers, handle storage, closure
+//! handles, async completion, or callback-return helpers.
+
 use crate::bridge::jni::template::callback::CallbackRegistrationView;
 
 pub struct CallbackFeatures {

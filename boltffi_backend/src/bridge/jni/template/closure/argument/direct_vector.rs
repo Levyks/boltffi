@@ -1,3 +1,9 @@
+//! Template view for closure direct-vector arguments.
+//!
+//! Direct-vector closure arguments need Java array locals, pinned pointers, JNI
+//! array accessors, and cleanup calls. This module prepares those template
+//! fields from the closure argument contract.
+
 use crate::bridge::{
     c::{Identifier, TypeFragment},
     jni::ClosureDirectVectorArgument,

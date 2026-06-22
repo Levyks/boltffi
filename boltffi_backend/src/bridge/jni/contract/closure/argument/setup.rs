@@ -1,3 +1,9 @@
+//! Setup views for closure arguments.
+//!
+//! Closure templates need grouped setup data for byte arrays, direct vectors, and
+//! nested handles. This module exposes those views from the typed closure
+//! argument contract.
+
 use super::{
     ClosureArgument, ClosureArgumentKind, ClosureBytesArgument, ClosureDirectVectorArgument,
     ClosureHandleArgument,

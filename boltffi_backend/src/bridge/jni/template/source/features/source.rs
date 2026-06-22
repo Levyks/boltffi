@@ -1,3 +1,9 @@
+//! Source-wide feature scan.
+//!
+//! The root JNI source template includes runtime fragments only when the bridge
+//! contract uses them. This module combines method, callback, closure,
+//! completion, and stream feature scans into one source view.
+
 use crate::bridge::jni::template::{
     callback::{CallbackCompletionInvokerView, CallbackRegistrationView},
     closure::{CallbackClosureHandleView, ClosureRegistrationView},

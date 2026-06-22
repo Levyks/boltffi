@@ -1,3 +1,8 @@
+//! Direct-vector closure arguments from C parameter groups.
+//!
+//! The C bridge groups direct vectors as pointer and length. This module keeps
+//! that group as one Java primitive array argument for the closure trampoline.
+
 use crate::{
     bridge::{c, jni::ClosureDirectVectorArgument},
     core::Result,

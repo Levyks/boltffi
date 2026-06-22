@@ -1,3 +1,9 @@
+//! Template views for callback arguments.
+//!
+//! Callback argument contracts are typed for bridge correctness. This module
+//! turns them into the statements, declarations, and argument lists consumed by
+//! the callback Askama templates.
+
 use crate::bridge::{
     c::{ArgumentList, Identifier, Statement},
     jni::{

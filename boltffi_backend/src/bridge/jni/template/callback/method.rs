@@ -1,3 +1,9 @@
+//! Template view for callback vtable methods.
+//!
+//! Callback method templates render the C vtable slot that calls a static JVM
+//! method. This module prepares method ids, parameter declarations, local setup,
+//! return handling, and cleanup views.
+
 use crate::bridge::{
     c::{ArgumentList, Expression, Identifier, Literal, TypeFragment},
     jni::CallbackMethod,

@@ -1,3 +1,9 @@
+//! Stream protocol methods.
+//!
+//! A stream is not one function at the JNI layer. It is a small protocol:
+//! subscribe, poll, wait, unsubscribe, free, and optionally fetch a direct batch.
+//! This module keeps those JNI methods together for one C stream protocol.
+
 use crate::{
     bridge::{
         c,

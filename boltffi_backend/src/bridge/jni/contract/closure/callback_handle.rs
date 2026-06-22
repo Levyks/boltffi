@@ -1,3 +1,9 @@
+//! JVM handles for Rust-owned closures inside callbacks.
+//!
+//! A callback method can receive a closure from Rust and pass it back to the JVM
+//! as a handle. This module builds the generated call and release native methods
+//! tied to that closure signature.
+
 use boltffi_binding::ClosureSignature;
 
 use crate::{

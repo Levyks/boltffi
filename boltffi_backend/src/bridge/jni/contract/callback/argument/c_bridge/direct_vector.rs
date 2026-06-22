@@ -1,3 +1,9 @@
+//! Direct-vector callback arguments from C callback slots.
+//!
+//! Direct vectors passed from Rust to a JVM callback arrive as pointer and length
+//! C parameters. This module turns that pair into one Java primitive array
+//! argument with the right JNI element type.
+
 use crate::{
     bridge::{
         c::{self, Identifier},

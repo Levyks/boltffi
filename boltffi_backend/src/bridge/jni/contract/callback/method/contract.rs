@@ -1,3 +1,9 @@
+//! Callback vtable slot contract.
+//!
+//! One Rust callback method becomes one C vtable slot. This module stores the C
+//! function signature, cached JVM method id, Java method descriptor, argument
+//! conversions, and return handling for that slot.
+
 mod arguments;
 mod slot;
 

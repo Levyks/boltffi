@@ -1,3 +1,9 @@
+//! Callback handles returned to the JVM.
+//!
+//! Rust can return callback implementations through the C bridge. This module
+//! converts that C handle shape into the JVM token returned by a native method or
+//! callback completion.
+
 use boltffi_binding::CallbackId;
 
 use crate::{

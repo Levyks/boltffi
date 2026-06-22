@@ -1,3 +1,8 @@
+//! Borrowed-byte arguments passed into JVM callbacks.
+//!
+//! This contract names the Java byte array and the C pointer and length
+//! parameters used to build it before a callback method is invoked.
+
 use crate::bridge::c::Identifier;
 
 /// Borrowed byte-array argument passed from Rust into a JVM callback method.

@@ -1,3 +1,9 @@
+//! Feature scan for native-method fragments.
+//!
+//! Native methods decide whether the source file needs status checks,
+//! continuation helpers, exception paths, byte-array returns, direct-record
+//! arrays, and callback handle returns.
+
 use crate::bridge::jni::template::method::NativeMethodView;
 
 pub struct MethodFeatures {

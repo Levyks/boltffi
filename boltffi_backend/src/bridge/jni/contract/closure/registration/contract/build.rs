@@ -1,3 +1,9 @@
+//! Builder for registered closure contracts.
+//!
+//! The C bridge describes closure call and release functions by signature. This
+//! module validates those functions and builds the JNI contract used by closure
+//! templates.
+
 use boltffi_binding::ClosureSignature;
 
 use crate::{

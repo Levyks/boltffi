@@ -1,3 +1,9 @@
+//! C callback-slot parameters.
+//!
+//! Generated callback functions are still C vtable slots. This module keeps the
+//! C parameter name and type for those slots so callback templates can declare
+//! the exact ABI Rust will call.
+
 use crate::{
     bridge::c::{self, Identifier, Statement, TypeFragment},
     core::Result,

@@ -1,3 +1,8 @@
+//! Direct-record arguments passed into JVM callbacks.
+//!
+//! Direct records sent from Rust into a JVM callback are copied into Java byte
+//! arrays. This module ties the array local to the original C record parameter.
+
 use crate::bridge::c::Identifier;
 
 /// Direct-record argument passed from Rust into a JVM callback method.

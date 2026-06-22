@@ -1,3 +1,8 @@
+//! Closure registrations referenced by return groups.
+//!
+//! Returned closures are represented as grouped C out-parameters. This module
+//! extracts the closure signature from that group for the registration index.
+
 use crate::{
     bridge::{c, jni::JvmClassPath},
     core::Result,

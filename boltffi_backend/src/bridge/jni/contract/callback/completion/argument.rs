@@ -1,3 +1,9 @@
+//! Callback completion failure arguments.
+//!
+//! Async callback failures are reported through a generated native completion
+//! method. This module models the status and error-buffer arguments that the JVM
+//! passes back into Rust.
+
 use crate::bridge::{
     c::{ArgumentList, Identifier},
     jni::CallbackCompletionPayload,

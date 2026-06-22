@@ -1,3 +1,9 @@
+//! Success payloads for async callback completion.
+//!
+//! A completed async callback can return void, a scalar, owned encoded bytes, a
+//! direct record, or a callback handle. This module models that payload before
+//! the generated completion method forwards it to Rust.
+
 use crate::{
     bridge::{
         c::{self, Identifier, TypeFragment},

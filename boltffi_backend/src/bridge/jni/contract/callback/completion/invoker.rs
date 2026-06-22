@@ -1,3 +1,9 @@
+//! Native invokers for async callback completion.
+//!
+//! Async callback methods do not return their payload directly. The JVM calls a
+//! generated success or failure native method later; this module deduplicates
+//! those invokers by payload shape.
+
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use crate::{

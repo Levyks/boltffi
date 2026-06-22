@@ -1,3 +1,9 @@
+//! Template views for stream helpers.
+//!
+//! Stream protocols are rendered mostly as native methods. This module prepares
+//! the extra direct-batch method view used when stream items can be returned as
+//! one Java byte array.
+
 use crate::{
     bridge::{
         c::{Identifier, TypeFragment},

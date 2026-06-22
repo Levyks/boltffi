@@ -1,3 +1,10 @@
+//! JNI scalar type vocabulary.
+//!
+//! Scalar values use JNI primitive aliases in native signatures, C primitive
+//! names in bridge calls, and array functions for direct vectors. This module
+//! keeps those related spellings behind one scalar type instead of scattering
+//! tables through templates.
+
 use crate::{
     bridge::c::{self, DirectVectorElementAbi, Literal, Type, TypeFragment},
     core::{Error, Result},

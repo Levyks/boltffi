@@ -1,3 +1,9 @@
+//! Native method contracts.
+//!
+//! Each C bridge function that is callable from the JVM becomes one JNI native
+//! method. This contract ties the exported `Java_*` symbol, JNI parameters, JNI
+//! return shape, and underlying C bridge function together.
+
 use crate::{
     bridge::{
         c,

@@ -1,3 +1,9 @@
+//! Direct-record parameters for JNI native methods.
+//!
+//! Direct records cross JNI as fixed-size byte arrays. The generated method body
+//! copies the bytes into the C bridge record layout, calls Rust, and writes the
+//! value back when the source parameter is mutable.
+
 use crate::{
     bridge::c::{self, Identifier},
     core::{Error, Result},

@@ -1,3 +1,9 @@
+//! Builder for JVM method return contracts.
+//!
+//! Callback and closure trampolines call static JVM methods and then translate
+//! the result back to the C ABI. This module builds that return contract from
+//! the C return type selected by the bridge.
+
 use crate::{
     bridge::{
         c::{self, Identifier, TypeFragment},

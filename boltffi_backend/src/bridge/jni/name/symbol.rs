@@ -1,3 +1,9 @@
+//! JNI exported symbol names.
+//!
+//! Native methods called from Java use the `Java_<package>_<class>_<method>`
+//! convention with JNI escaping for underscores and special signature
+//! characters. This module keeps that escape rule in one place.
+
 use std::fmt;
 
 use crate::{

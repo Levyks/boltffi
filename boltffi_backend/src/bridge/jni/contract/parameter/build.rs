@@ -1,3 +1,10 @@
+//! Parameter grouping from the C bridge into JNI native parameters.
+//!
+//! The C bridge exposes grouped ABI parameters such as byte slices, direct
+//! vectors, closure triples, and continuation pairs. This module maps those
+//! groups into the smaller set of Java parameters that appear in a native method
+//! signature.
+
 use crate::{
     bridge::{
         c,

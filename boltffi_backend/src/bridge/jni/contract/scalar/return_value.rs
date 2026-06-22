@@ -1,3 +1,9 @@
+//! Scalar return values for JNI native methods.
+//!
+//! Scalar C bridge returns can be passed back to Java directly, but boolean and
+//! width-sensitive values still need the right JNI type and return cast. This
+//! module owns that mapping.
+
 use crate::{
     bridge::{
         c::{self, Expression, TypeFragment},

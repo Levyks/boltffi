@@ -1,3 +1,9 @@
+//! C parameters for generated closure trampolines.
+//!
+//! Rust calls inline closures through C function pointers. This module records
+//! the exact C parameters accepted by the generated trampoline before they are
+//! projected into JVM arguments.
+
 use crate::{
     bridge::c::{self, Identifier, Statement, TypeFragment},
     core::Result,

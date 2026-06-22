@@ -1,3 +1,9 @@
+//! Direct-vector arguments passed into JVM-owned closures.
+//!
+//! Direct vectors arrive at the closure trampoline as pointer and length C
+//! parameters. This module turns that pair into the Java primitive array passed
+//! to the JVM closure method.
+
 use crate::{
     bridge::{
         c::{self, Expression, Identifier, TypeFragment},

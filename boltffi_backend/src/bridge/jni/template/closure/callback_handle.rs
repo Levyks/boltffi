@@ -1,3 +1,9 @@
+//! Template view for callback-owned closure handles.
+//!
+//! Callback methods can receive closures from Rust and expose them to the JVM.
+//! This module prepares the generated native call and release methods for those
+//! closure handles.
+
 use crate::bridge::{
     c::{Expression, Identifier, Literal, Statement, TypeFragment},
     jni::ClosureRegistration,

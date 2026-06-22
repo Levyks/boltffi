@@ -1,3 +1,9 @@
+//! Builder for the root JNI bridge contract.
+//!
+//! This is the one place where the JNI bridge reads the whole C bridge contract.
+//! It collects native methods, callback registrations, closure registrations,
+//! streams, and lifecycle symbols into the typed contract used by templates.
+
 use std::collections::BTreeSet;
 
 use crate::{

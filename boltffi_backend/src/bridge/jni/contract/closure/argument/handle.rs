@@ -1,3 +1,8 @@
+//! Nested closure handles passed into JVM-owned closures.
+//!
+//! A closure can receive another closure. This module keeps the nested closure
+//! handle, C trampoline parameters, and JVM token together.
+
 use crate::{
     bridge::{
         c::{Expression, Identifier, TypeFragment},

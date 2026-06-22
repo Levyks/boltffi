@@ -1,3 +1,9 @@
+//! Template view for registered closure signatures.
+//!
+//! A registered closure signature renders one bridge class contract: call
+//! trampoline, release trampoline, argument setup, return handling, and optional
+//! callback-handle helpers.
+
 use crate::bridge::{
     c::{ArgumentList, Expression, Identifier, Literal, TypeFragment},
     jni::{ClosureArgument, ClosureRegistration},

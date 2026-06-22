@@ -1,3 +1,9 @@
+//! Template views for async callback completion invokers.
+//!
+//! Completion invokers are native methods called later by the JVM. This module
+//! prepares the success and failure method views, including payload-specific JNI
+//! types and C bridge call arguments.
+
 use crate::bridge::{
     c::{Identifier, TypeFragment},
     jni::{CallbackCompletionInvoker, CallbackCompletionPayload},

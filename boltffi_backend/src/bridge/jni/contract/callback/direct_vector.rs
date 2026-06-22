@@ -1,3 +1,9 @@
+//! Direct-vector arguments passed into JVM callbacks.
+//!
+//! Rust supplies direct vectors through a C pointer and length pair. This module
+//! records the Java array name and JNI element type used to build the callback
+//! method argument.
+
 use crate::bridge::{
     c::{Identifier, TypeFragment},
     jni::JniType,

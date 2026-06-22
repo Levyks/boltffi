@@ -1,3 +1,9 @@
+//! Root JNI source-file template input.
+//!
+//! This module builds the full Askama context for the generated `jni_glue.c`
+//! file: header include, lifecycle symbols, native methods, callbacks,
+//! closures, streams, and the feature flags that select runtime fragments.
+
 use askama::Template as AskamaTemplate;
 
 use super::features::SourceFeatures;

@@ -1,3 +1,9 @@
+//! Rust-owned closures passed into JVM callbacks.
+//!
+//! Callback trait methods can receive inline closure parameters. The JNI bridge
+//! represents each closure as one `jlong` handle that points at the function
+//! pointer, context, and release hook held on the native side.
+
 use crate::bridge::c::Identifier;
 
 /// Rust-owned closure argument passed from Rust into a JVM callback method.

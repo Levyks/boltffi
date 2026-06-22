@@ -1,3 +1,9 @@
+//! Nested closure arguments from C parameter groups.
+//!
+//! A closure call can carry another closure through call, context, and release
+//! parameters. This module finds the matching registered signature and builds
+//! the nested JVM closure handle.
+
 use crate::{
     bridge::{
         c,

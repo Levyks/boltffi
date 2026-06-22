@@ -1,3 +1,13 @@
+//! Public JNI bridge backend.
+//!
+//! This module is the construction point for the JNI bridge layer. It receives
+//! the C bridge contract, turns it into a JNI contract, and renders one C source
+//! file containing the `Java_*` entry points that JVM targets call.
+//!
+//! The caller chooses the JVM package, owner class, and output file. The bridge
+//! owns everything below that: native-method symbols, lifecycle hooks, callback
+//! glue, closure trampolines, stream helpers, and the C header include.
+
 use std::path::PathBuf;
 
 use boltffi_binding::Native;

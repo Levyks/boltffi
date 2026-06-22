@@ -1,3 +1,9 @@
+//! Return values for JNI native methods.
+//!
+//! A native method can return void, a scalar, a byte array, a direct record byte
+//! array, a callback handle token, or report status only. This module models
+//! that JVM-facing return behavior from the C bridge return type.
+
 use crate::{
     bridge::{
         c::{self, Expression, TypeFragment},

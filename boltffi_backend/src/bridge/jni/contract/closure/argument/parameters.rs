@@ -1,3 +1,9 @@
+//! C-parameter projection for closure calls.
+//!
+//! Closure arguments can expand to one C parameter or a grouped set of C
+//! parameters. This module exposes the flat C parameter list accepted by the
+//! generated closure trampoline.
+
 use super::{ClosureArgument, ClosureArgumentKind, ClosureCParameter};
 
 impl ClosureArgument {

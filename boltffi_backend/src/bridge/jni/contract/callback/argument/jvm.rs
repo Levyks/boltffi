@@ -1,3 +1,9 @@
+//! JVM argument projection for callback methods.
+//!
+//! Callback slot parameters arrive as C values from Rust. This module turns each
+//! typed callback argument into the JNI method descriptor segment and expression
+//! list passed to the generated static JVM callback method.
+
 use crate::bridge::c::{Expression, TypeFragment};
 
 use super::{CallbackArgument, CallbackArgumentKind};

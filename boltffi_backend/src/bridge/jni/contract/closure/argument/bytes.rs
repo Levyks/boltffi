@@ -1,3 +1,8 @@
+//! Encoded arguments passed into JVM-owned closures.
+//!
+//! Rust closure calls pass encoded payloads as pointer and length C parameters.
+//! This module groups those parameters into one Java byte-array argument.
+
 use crate::{
     bridge::c::{self, Expression, Identifier, TypeFragment},
     core::Result,

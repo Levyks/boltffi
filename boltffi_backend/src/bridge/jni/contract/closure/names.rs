@@ -1,3 +1,9 @@
+//! Generated names for closure bridge classes and symbols.
+//!
+//! Closure registrations need a stable JVM class plus call, release, and helper
+//! symbols. This module derives those names from the closure signature and the
+//! owning JVM class path.
+
 use boltffi_binding::ClosureSignature;
 
 use crate::{

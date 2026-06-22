@@ -1,3 +1,8 @@
+//! Closure registrations referenced by native methods.
+//!
+//! Native methods can accept closure parameters or return closures. This module
+//! scans those C function groups and feeds the shared closure registration index.
+
 use crate::{
     bridge::{c, jni::JvmClassPath},
     core::Result,

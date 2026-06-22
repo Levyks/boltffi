@@ -1,3 +1,9 @@
+//! Validated JVM name segments.
+//!
+//! Java package segments, class names, generated callback classes, and generated
+//! closure classes all share the same identifier rules. This module validates
+//! those pieces before the JNI bridge turns them into source paths or symbols.
+
 use boltffi_binding::{CanonicalName, ClosureSignature};
 
 use crate::{

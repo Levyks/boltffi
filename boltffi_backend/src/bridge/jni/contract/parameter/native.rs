@@ -1,3 +1,9 @@
+//! Native-method parameter contract.
+//!
+//! JNI methods receive Java values, but the generated body must forward C ABI
+//! arguments to the lower C bridge. This module keeps the Java parameter shape
+//! and the C call arguments together for one method parameter.
+
 use crate::{
     bridge::{
         c::{Expression, Identifier, TypeFragment},

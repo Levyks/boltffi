@@ -1,3 +1,9 @@
+//! JVM class paths used by generated JNI glue.
+//!
+//! The JNI bridge needs the same class in three spellings: Java source form,
+//! slash-separated JNI lookup form, and escaped `Java_*` symbol prefix form.
+//! This module keeps those spellings tied to one validated class path.
+
 use std::fmt;
 
 use boltffi_binding::{CanonicalName, ClosureSignature};

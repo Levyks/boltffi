@@ -1,3 +1,9 @@
+//! Async-completion callback arguments from C callback slots.
+//!
+//! Async callback methods receive a completion function pointer and context from
+//! Rust. This module keeps that pair as one JVM argument group so the Java side
+//! can complete or fail the callback later.
+
 use crate::{
     bridge::{
         c,

@@ -1,3 +1,9 @@
+//! Closure returns from JVM callback methods.
+//!
+//! A callback method can return an inline closure through a C out-pointer. This
+//! module keeps the out-pointer parameter, JVM handle token, and release path
+//! tied to that returned closure.
+
 use crate::{
     bridge::{
         c::{self, Identifier, Statement, TypeFragment},
