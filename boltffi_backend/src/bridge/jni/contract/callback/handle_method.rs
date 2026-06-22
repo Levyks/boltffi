@@ -8,7 +8,9 @@
 //! This module builds those handle-call methods from the same C callback slots
 //! used by the lower bridge. Each method takes the handle token, unwraps the
 //! stored callback, prepares the Java-provided arguments, and dispatches through
-//! the callback vtable slot.
+//! the callback vtable slot. Synchronous methods return directly. Async methods
+//! receive completion callbacks. Closure returns use the shared closure-handle
+//! machinery instead of inventing a returned-callback-only path.
 //!
 //! Keeping this here matters because returned callbacks are not foreign
 //! callbacks. A foreign callback is implemented by the JVM and handed to Rust.
@@ -29,7 +31,11 @@ use crate::{
 
 const JNI_BRIDGE: &str = "jni";
 
-/// JNI native method that invokes one method on a Rust-owned callback handle.
+/// A JNI native method that invokes one Rust-owned callback handle slot.
+///
+/// The method is Java-visible but Rust-owned: Java passes a `jlong` handle, the
+/// generated C source recovers the stored callback object, and the call goes
+/// through the native callback vtable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct CallbackHandleMethod {
@@ -47,6 +53,10 @@ enum CallbackHandleMethodCall {
 }
 
 /// Completion callback used by an async Rust-owned callback handle method.
+///
+/// The native handle method cannot return the async result directly. It gives
+/// Rust a completion function and context, and Rust calls that function later
+/// with either a success payload or a failure status.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct CallbackHandleCompletion {

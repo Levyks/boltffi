@@ -1,23 +1,25 @@
-//! Typed JNI contract built from the lower C bridge contract.
+//! Typed JNI contract built from the C bridge contract.
 //!
-//! The C bridge has already decided how Rust is called. It knows the exported C
-//! functions, the grouped parameters they accept, the return slots they fill,
-//! the callback vtables Rust calls, and the stream protocol functions. JNI needs
-//! the same contract in JVM terms: Java parameter types, JNI descriptors,
-//! borrowed array lifetimes, callback method ids, `Java_*` symbols, and cleanup
-//! paths tied to `JNIEnv`.
+//! The C bridge has already decided how Rust is called. It knows exported C
+//! functions, grouped parameters, return slots, callback vtables, stream
+//! protocol functions, direct records, and owned byte buffers. The JNI bridge
+//! does not get to rediscover any of that. Its job is to translate those facts
+//! into JVM terms: Java parameter types, JNI descriptors, borrowed array
+//! lifetimes, callback method ids, `Java_*` symbols, and cleanup paths tied to
+//! `JNIEnv`.
 //!
-//! This module is the adaptation boundary. It reads the C bridge contract,
+//! This module is the adaptation boundary. It reads the C bridge contract once,
 //! validates that every C shape has a JVM representation, and stores the result
-//! as typed values. Rendering code consumes those values. It does not inspect
-//! `TypeRef`, re-walk codec plans, or rebuild parameter groups from raw C
-//! fragments.
+//! as typed values. Rendering code consumes those values directly. It does not
+//! inspect `TypeRef`, re-walk codec plans, or rebuild parameter groups from raw
+//! C fragments.
 //!
-//! The child modules are split by the thing they own. `parameter` groups C
-//! arguments into Java parameters. `return_value` describes what Java receives.
-//! `callback` and `closure` model the two callback directions. `stream` keeps
-//! stream protocols together. `record`, `scalar`, `bytes`, and `direct_vector`
-//! own the reusable ABI shapes shared by those paths.
+//! The child modules are split by ownership, not by convenience. `parameter`
+//! groups C arguments into Java parameters. `return_value` describes what Java
+//! receives. `callback` models named callback traits implemented on the JVM.
+//! `closure` models inline closure signatures. `stream` keeps stream protocols
+//! together. `record`, `scalar`, `bytes`, and `direct_vector` own the reusable
+//! ABI shapes shared by those paths.
 
 mod bridge;
 mod bytes;

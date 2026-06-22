@@ -1,10 +1,10 @@
 //! Crate-level JNI contract for one generated source file.
 //!
-//! `JniBridgeContract` is the collected result of adapting the lower C bridge.
-//! It names the owner JVM class, the generated source path, the included C
-//! header, the buffer release function, and every native method, callback
-//! registration, closure registration, stream protocol, and async callback
-//! completion invoker that must be emitted.
+//! `JniBridgeContract` is the finished JNI view of a crate. It names the owner
+//! JVM class, generated source path, included C header, buffer release function,
+//! and every native method, callback registration, closure registration, stream
+//! protocol, and async callback completion invoker that must appear in the C
+//! file.
 //!
 //! This is the only JNI contract module that sees the whole C bridge contract.
 //! It performs the crate-wide pass once, then hands each feature module the
@@ -29,7 +29,12 @@ use super::{
     StreamProtocolMethods,
 };
 
-/// Contract produced by the JNI bridge layer.
+/// A complete JNI bridge contract for one generated C source file.
+///
+/// The value is built from one `CBridgeContract` and is ready for rendering. It
+/// is intentionally crate-wide because JNI source generation needs shared
+/// tables for callback classes, closure signatures, lifecycle hooks, and stream
+/// helpers before individual method bodies can be printed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct JniBridgeContract {

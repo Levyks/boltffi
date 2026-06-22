@@ -24,7 +24,12 @@ use crate::{
     core::{Emitted, FileLayout, FilePath, GeneratedOutput, Result, bridge, contract::sealed},
 };
 
-/// JNI bridge backend layered above the C ABI bridge.
+/// A JNI bridge backend layered above the C ABI bridge.
+///
+/// The bridge produces one C source file for a JVM owner class. It expects the
+/// lower bridge to provide the C ABI contract and only adds the JNI adaptation:
+/// `Java_*` symbols, JVM descriptors, callback dispatch, closure trampolines,
+/// stream helpers, and lifecycle registration.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct JniBridge {

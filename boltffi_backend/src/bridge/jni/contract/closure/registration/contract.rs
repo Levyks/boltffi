@@ -7,7 +7,9 @@
 //!
 //! This module stores that complete registration. Templates render from this
 //! contract instead of asking whether a closure came from a function parameter,
-//! callback method, nested closure, or returned closure.
+//! callback method, nested closure, or returned closure. The origin is not the
+//! identity. The signature is the identity, and the registration is the one
+//! place that binds that signature to generated JNI symbols.
 
 mod build;
 mod index;
@@ -19,7 +21,11 @@ use crate::bridge::{
     jni::{CallbackClosureHandle, ClosureArgument, JvmClassPath, JvmMethodReturn},
 };
 
-/// JNI trampoline registration for one inline closure signature.
+/// A JNI trampoline registration for one inline closure signature.
+///
+/// The registration owns the generated JVM class, cached method ids, C call and
+/// release symbols, argument conversions, return conversion, and optional handle
+/// helpers for callbacks that carry Rust-owned closures back to Java.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ClosureRegistration {
