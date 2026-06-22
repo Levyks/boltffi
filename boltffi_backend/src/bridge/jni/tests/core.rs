@@ -223,6 +223,51 @@ fn jni_bridge_casts_async_handles_and_callbacks_to_c_abi_types() {
 }
 
 #[test]
+fn jni_bridge_renders_async_complete_return_shapes() {
+    let files = files(
+        r#"
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: i32,
+                pub y: i32,
+            }
+
+            #[export]
+            pub async fn refresh() {}
+
+            #[export]
+            pub async fn load_name() -> String {
+                "bolt".to_owned()
+            }
+
+            #[export]
+            pub async fn load_point() -> Point {
+                Point { x: 1, y: 2 }
+            }
+            "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1refresh_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status)",
+        "boltffi_async_function_demo_refresh_complete((RustFutureHandle)handle, (FfiStatus *)out_status);",
+        "JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1load_1name_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status)",
+        "FfiBuf_u8 result = boltffi_async_function_demo_load_name_complete((RustFutureHandle)handle, (FfiStatus *)out_status);",
+        "return boltffi_jni_buffer_to_byte_array(env, result);",
+        "JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1function_1demo_1load_1point_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status)",
+        "___Point result = boltffi_async_function_demo_load_point_complete((RustFutureHandle)handle, (FfiStatus *)out_status);",
+        "return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}"));
+}
+
+#[test]
 fn jni_bridge_renders_closure_parameters_from_contract_group() {
     let files = files(
         r#"

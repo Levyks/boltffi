@@ -322,6 +322,70 @@ fn jni_bridge_renders_async_callback_completions() {
 }
 
 #[test]
+fn jni_bridge_renders_async_callback_completion_shapes() {
+    let files = files(
+        r#"
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: i32,
+                pub y: i32,
+            }
+
+            #[repr(i32)]
+            #[data]
+            pub enum LoadError {
+                Bad = 1,
+            }
+
+            #[export]
+            pub trait Listener {
+                async fn value(&self, key: u32) -> u32;
+                async fn point(&self, point: Point) -> Point;
+                async fn values(&self, count: u32) -> Vec<u32>;
+                async fn try_load(&self, key: u32) -> Result<String, LoadError>;
+            }
+            "#,
+    );
+    let header = files
+        .iter()
+        .find(|(path, _)| path == "jni/demo.h")
+        .map(|(_, contents)| contents)
+        .expect("C header file");
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "void (*value)(uint64_t, uint32_t, void (*)(void *, FfiStatus, uint32_t), void *);",
+        "void (*point)(uint64_t, ___Point, void (*)(void *, FfiStatus, ___Point), void *);",
+        "void (*values)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);",
+        "void (*try_load)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(header.contains(expected), "{expected}"));
+
+    [
+        "static void ___ListenerVTable_value(uint64_t handle, uint32_t key, void (*complete)(void *, FfiStatus, uint32_t), void *complete_context)",
+        "complete(complete_context, (FfiStatus){.code = 1}, (uint32_t){0});",
+        "static void ___ListenerVTable_point(uint64_t handle, ___Point point, void (*complete)(void *, FfiStatus, ___Point), void *complete_context)",
+        "complete(complete_context, (FfiStatus){.code = 1}, (___Point){0});",
+        "jbyteArray __boltffi_point_array = boltffi_jni_record_to_byte_array(env, &point, (uintptr_t)sizeof(point));",
+        "static void ___ListenerVTable_values(uint64_t handle, uint32_t count, void (*complete)(void *, FfiStatus, FfiBuf_u8), void *complete_context)",
+        "complete(complete_context, (FfiStatus){.code = 1}, (FfiBuf_u8){0});",
+        "static void ___ListenerVTable_try_load(uint64_t handle, uint32_t key, void (*complete)(void *, FfiStatus, FfiBuf_u8), void *complete_context)",
+        "GetStaticMethodID(env, g____ListenerVTable_class, \"value\", \"(JIJJ)V\")",
+        "GetStaticMethodID(env, g____ListenerVTable_class, \"point\", \"(J[BJJ)V\")",
+        "GetStaticMethodID(env, g____ListenerVTable_class, \"values\", \"(JIJJ)V\")",
+        "GetStaticMethodID(env, g____ListenerVTable_class, \"try_load\", \"(JIJJ)V\")",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}"));
+}
+
+#[test]
 fn jni_bridge_renders_callback_handle_returns() {
     let files = files(
         r#"
