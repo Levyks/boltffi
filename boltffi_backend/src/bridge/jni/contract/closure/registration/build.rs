@@ -1,5 +1,3 @@
-use std::collections::{BTreeMap, btree_map::Entry};
-
 use boltffi_binding::ClosureSignature;
 
 use crate::{
@@ -13,7 +11,7 @@ use crate::{
     core::{Error, Result},
 };
 
-const JNI_BRIDGE: &str = "jni";
+use super::index::ClosureRegistrationIndex;
 
 impl ClosureRegistration {
     /// Builds unique closure registrations from C functions and callback slots.
@@ -22,120 +20,21 @@ impl ClosureRegistration {
         functions: &[c::Function],
         callbacks: &[c::Callback],
     ) -> Result<Vec<Self>> {
-        functions
-            .iter()
-            .try_fold(BTreeMap::new(), |registrations, function| {
-                Self::collect_function_closures(class, registrations, function, callbacks)
-            })
-            .and_then(|registrations| {
-                callbacks
-                    .iter()
-                    .flat_map(|callback| callback.methods().iter())
-                    .try_fold(registrations, |registrations, slot| {
-                        Self::collect_callback_closures(class, registrations, slot, callbacks)
-                    })
-            })
-            .map(BTreeMap::into_values)
-            .map(Iterator::collect)
+        ClosureRegistrationIndex::from_c_bridge(class, functions, callbacks)
+            .map(ClosureRegistrationIndex::into_registrations)
     }
+}
 
-    fn collect_function_closures(
-        class: &JvmClassPath,
-        registrations: BTreeMap<ClosureSignature, Self>,
-        function: &c::Function,
-        callbacks: &[c::Callback],
-    ) -> Result<BTreeMap<ClosureSignature, Self>> {
-        function
-            .parameter_groups()
-            .iter()
-            .try_fold(registrations, |registrations, group| {
-                Self::insert_function_closure(class, registrations, function, group, callbacks)
-            })
-    }
+pub struct ClosureRegistrationConstructor;
 
-    fn collect_callback_closures(
-        class: &JvmClassPath,
-        registrations: BTreeMap<ClosureSignature, Self>,
-        slot: &c::CallbackSlot,
-        callbacks: &[c::Callback],
-    ) -> Result<BTreeMap<ClosureSignature, Self>> {
-        slot.parameter_groups()
-            .iter()
-            .try_fold(registrations, |registrations, group| {
-                Self::insert_callback_closure(class, registrations, slot, group, callbacks)
-            })
-    }
-
-    fn insert_function_closure(
-        class: &JvmClassPath,
-        mut registrations: BTreeMap<ClosureSignature, Self>,
-        function: &c::Function,
-        group: &c::ParameterGroup,
-        callbacks: &[c::Callback],
-    ) -> Result<BTreeMap<ClosureSignature, Self>> {
-        if let c::ParameterGroup::Closure(closure) = group {
-            match registrations.entry(closure.signature().clone()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(Self::from_closure_parameter(
-                        class,
-                        function.parameter(closure.call()).ty(),
-                        closure,
-                        false,
-                        callbacks,
-                    )?);
-                }
-                Entry::Occupied(_) => {}
-            }
-        }
-        Ok(registrations)
-    }
-
-    fn insert_callback_closure(
-        class: &JvmClassPath,
-        mut registrations: BTreeMap<ClosureSignature, Self>,
-        slot: &c::CallbackSlot,
-        group: &c::ParameterGroup,
-        callbacks: &[c::Callback],
-    ) -> Result<BTreeMap<ClosureSignature, Self>> {
-        match group {
-            c::ParameterGroup::Closure(closure) => {
-                match registrations.entry(closure.signature().clone()) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(Self::from_closure_parameter(
-                            class,
-                            slot.parameter(closure.call()).ty(),
-                            closure,
-                            true,
-                            callbacks,
-                        )?);
-                    }
-                    Entry::Occupied(mut entry) => {
-                        entry
-                            .get_mut()
-                            .add_callback_handle(class, slot.parameter(closure.call()).ty())?;
-                    }
-                }
-            }
-            c::ParameterGroup::ClosureReturn(returned) => {
-                match registrations.entry(returned.signature().clone()) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(Self::from_closure_return(class, returned, callbacks)?);
-                    }
-                    Entry::Occupied(_) => {}
-                }
-            }
-            _ => {}
-        }
-        Ok(registrations)
-    }
-
-    fn from_closure_parameter(
+impl ClosureRegistrationConstructor {
+    pub fn from_closure_parameter(
         class: &JvmClassPath,
         call_type: &c::Type,
         closure: &c::ClosureParameter,
         callback_argument: bool,
         callbacks: &[c::Callback],
-    ) -> Result<Self> {
+    ) -> Result<ClosureRegistration> {
         Self::from_c_group(
             class,
             call_type,
@@ -150,11 +49,11 @@ impl ClosureRegistration {
         )
     }
 
-    fn from_closure_return(
+    pub fn from_closure_return(
         class: &JvmClassPath,
         returned: &c::ClosureReturnParameter,
         callbacks: &[c::Callback],
-    ) -> Result<Self> {
+    ) -> Result<ClosureRegistration> {
         Self::from_c_group(
             class,
             returned.call_type(),
@@ -169,6 +68,21 @@ impl ClosureRegistration {
         )
     }
 
+    pub fn retain_callback_handle(
+        registration: &mut ClosureRegistration,
+        class: &JvmClassPath,
+        call_type: &c::Type,
+    ) -> Result<()> {
+        if registration.callback_handle.is_none() {
+            registration.callback_handle = Some(CallbackClosureHandle::new(
+                class,
+                &registration.signature,
+                call_type,
+            )?);
+        }
+        Ok(())
+    }
+
     fn from_c_group(
         class: &JvmClassPath,
         call_type: &c::Type,
@@ -176,10 +90,10 @@ impl ClosureRegistration {
         callback_argument: bool,
         callbacks: &[c::Callback],
         arguments: Vec<ClosureArgument>,
-    ) -> Result<Self> {
+    ) -> Result<ClosureRegistration> {
         let c::Type::FunctionPointer { returns, params } = call_type else {
             return Err(Error::BrokenBridgeContract {
-                bridge: JNI_BRIDGE,
+                bridge: "jni",
                 invariant: "closure call parameter is not a function pointer",
             });
         };
@@ -188,12 +102,12 @@ impl ClosureRegistration {
             Some(c::Type::MutPointer(inner)) if matches!(inner.as_ref(), c::Type::Void)
         ) {
             return Err(Error::BrokenBridgeContract {
-                bridge: JNI_BRIDGE,
+                bridge: "jni",
                 invariant: "closure call parameter does not start with void context",
             });
         }
         let stem = signature.symbol_part();
-        Ok(Self {
+        Ok(ClosureRegistration {
             signature: signature.clone(),
             class: class.closure_class(signature)?,
             global_class: Identifier::parse(format!("g_{stem}_class"))?,
@@ -209,16 +123,5 @@ impl ClosureRegistration {
             returns: JvmMethodReturn::from_c_type(returns, callbacks)?,
             arguments,
         })
-    }
-
-    fn add_callback_handle(&mut self, class: &JvmClassPath, call_type: &c::Type) -> Result<()> {
-        if self.callback_handle.is_none() {
-            self.callback_handle = Some(CallbackClosureHandle::new(
-                class,
-                &self.signature,
-                call_type,
-            )?);
-        }
-        Ok(())
     }
 }

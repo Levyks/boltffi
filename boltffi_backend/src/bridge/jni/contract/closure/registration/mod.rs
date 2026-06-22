@@ -1,4 +1,5 @@
 mod build;
+mod index;
 
 use boltffi_binding::ClosureSignature;
 
