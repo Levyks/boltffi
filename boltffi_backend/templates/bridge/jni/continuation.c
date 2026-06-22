@@ -24,5 +24,5 @@ static void boltffi_jni_continuation_callback(uint64_t handle, int8_t poll_resul
     }
     (*env)->CallStaticVoidMethod(env, boltffi_jni_native_class, boltffi_jni_continuation_method, (jlong)handle, (jbyte)poll_result);
     boltffi_jni_clear_exception(env);
-    boltffi_jni_exit(attached);
+    boltffi_jni_exit(env, attached);
 }

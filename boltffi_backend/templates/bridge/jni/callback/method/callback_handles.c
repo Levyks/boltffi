@@ -3,7 +3,7 @@
     if ((*env)->ExceptionCheck(env)) {
 {% include "bridge/jni/callback/method/cleanup.c" %}
         boltffi_jni_clear_exception(env);
-        boltffi_jni_exit(attached);
+        boltffi_jni_exit(env, attached);
 {% include "bridge/jni/callback/method/fail.c" %}
     }
 {%- endfor %}

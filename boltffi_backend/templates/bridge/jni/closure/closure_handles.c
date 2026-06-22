@@ -3,7 +3,7 @@
     if ((*env)->ExceptionCheck(env)) {
 {% include "bridge/jni/closure/cleanup.c" %}
         boltffi_jni_clear_exception(env);
-        boltffi_jni_exit(attached);
+        boltffi_jni_exit(env, attached);
 {%- if closure.returns_void %}
         return;
 {%- else %}

@@ -3,7 +3,7 @@
     if ({{ bytes.name }} == NULL) {
         boltffi_jni_clear_exception(env);
 {% include "bridge/jni/closure/cleanup.c" %}
-        boltffi_jni_exit(attached);
+        boltffi_jni_exit(env, attached);
 {% include "bridge/jni/closure/fail.c" %}
     }
 {%- endfor %}

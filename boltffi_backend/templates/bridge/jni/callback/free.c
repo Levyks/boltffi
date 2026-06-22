@@ -6,5 +6,5 @@ static void {{ callback.free }}(uint64_t handle) {
     }
     (*env)->CallStaticVoidMethod(env, {{ callback.global_class }}, {{ callback.free_method }}, (jlong)handle);
     boltffi_jni_clear_exception(env);
-    boltffi_jni_exit(attached);
+    boltffi_jni_exit(env, attached);
 }

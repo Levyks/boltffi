@@ -51,6 +51,40 @@ fn jni_bridge_renders_callback_handle_parameters() {
 }
 
 #[test]
+fn jni_bridge_caches_android_callback_threads_with_local_frames() {
+    let files = files(
+        r#"
+            #[export]
+            pub trait Listener {
+                fn on_value(&self, value: u32) -> u32;
+            }
+
+            #[export]
+            pub fn install(listener: impl Listener) {}
+            "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "#include <pthread.h>",
+        "pthread_key_create(&boltffi_jni_env_key, boltffi_jni_android_env_destructor)",
+        "AttachCurrentThreadAsDaemon",
+        "pthread_setspecific(boltffi_jni_env_key, &boltffi_jni_tls_attached_marker)",
+        "JNIEnv *callback_env = *env;",
+        "(*callback_env)->PushLocalFrame(callback_env, BOLTFFI_JNI_LOCAL_FRAME_CAPACITY)",
+        "(*env)->PopLocalFrame(env, NULL);",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}"));
+
+    assert!(!source.contains("boltffiFutureContinuationCallback"));
+}
+
+#[test]
 fn jni_bridge_renders_callback_byte_slice_parameters() {
     let files = files(
         r#"
