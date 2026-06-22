@@ -1,12 +1,10 @@
-use crate::{
-    bridge::{
-        c::{self, Expression, Identifier, Literal, TypeFragment},
-        jni::JniType,
-    },
-    core::{Error, Result},
-};
+mod build;
+mod failure;
 
-const JNI_BRIDGE: &str = "jni";
+use crate::bridge::{
+    c::{Identifier, TypeFragment},
+    jni::JniType,
+};
 
 /// Return contract for a static JVM method called from generated C.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -49,45 +47,6 @@ pub enum JvmMethodReturn {
 }
 
 impl JvmMethodReturn {
-    /// Creates a JVM method return contract from one C ABI return type.
-    pub fn from_c_type(ty: &c::Type, callbacks: &[c::Callback]) -> Result<Self> {
-        match ty {
-            c::Type::Void => Ok(Self::Void {
-                c_type: TypeFragment::anonymous(ty)?,
-            }),
-            c::Type::Buffer => Ok(Self::Bytes {
-                c_type: TypeFragment::anonymous(ty)?,
-            }),
-            c::Type::DirectRecord(_) => Ok(Self::Record {
-                c_type: TypeFragment::anonymous(ty)?,
-            }),
-            c::Type::CallbackHandle(callback) => {
-                let declaration = callbacks
-                    .iter()
-                    .find(|declaration| declaration.id() == *callback)
-                    .ok_or(Error::BrokenBridgeContract {
-                        bridge: JNI_BRIDGE,
-                        invariant: "JVM callback handle return has no C callback declaration",
-                    })?;
-                Ok(Self::CallbackHandle {
-                    c_type: TypeFragment::anonymous(ty)?,
-                    create_handle: Identifier::parse(declaration.create_handle().name())?,
-                })
-            }
-            ty => Ok(Self::Value {
-                c_type: TypeFragment::anonymous(ty)?,
-                jni_type: JniType::from_c_type(ty)?,
-            }),
-        }
-    }
-
-    /// Creates the return contract for closure-return callback methods.
-    pub fn closure_status() -> Result<Self> {
-        Ok(Self::Closure {
-            c_type: TypeFragment::anonymous(&c::Type::Status)?,
-        })
-    }
-
     /// Returns the generated C return type.
     pub fn c_type(&self) -> &TypeFragment {
         match self {
@@ -106,8 +65,7 @@ impl JvmMethodReturn {
             Self::Void { c_type } => c_type.clone(),
             Self::Value { jni_type, .. } => jni_type.as_type_fragment(),
             Self::Bytes { .. } | Self::Record { .. } => TypeFragment::new("jbyteArray"),
-            Self::CallbackHandle { .. } => TypeFragment::new("jlong"),
-            Self::Closure { .. } => TypeFragment::new("jlong"),
+            Self::CallbackHandle { .. } | Self::Closure { .. } => TypeFragment::new("jlong"),
         }
     }
 
@@ -117,8 +75,7 @@ impl JvmMethodReturn {
             Self::Void { .. } => "V",
             Self::Value { jni_type, .. } => jni_type.signature(),
             Self::Bytes { .. } | Self::Record { .. } => "[B",
-            Self::CallbackHandle { .. } => "J",
-            Self::Closure { .. } => "J",
+            Self::CallbackHandle { .. } | Self::Closure { .. } => "J",
         }
     }
 
@@ -170,39 +127,7 @@ impl JvmMethodReturn {
             Self::Void { .. } => None,
             Self::Value { jni_type, .. } => Some(jni_type.call_method_suffix()),
             Self::Bytes { .. } | Self::Record { .. } => Some("Object"),
-            Self::CallbackHandle { .. } => Some("Long"),
-            Self::Closure { .. } => Some("Long"),
-        }
-    }
-
-    /// Returns the C expression used when JVM dispatch fails.
-    pub fn failure_value(&self) -> Option<Expression> {
-        match self {
-            Self::Void { .. } => None,
-            Self::Value { jni_type, .. } => Some(Expression::literal(jni_type.failure_value())),
-            Self::Bytes { c_type }
-            | Self::Record { c_type }
-            | Self::CallbackHandle { c_type, .. } => Some(Expression::cast(
-                c_type.clone(),
-                Expression::literal(Literal::compound_zero()),
-            )),
-            Self::Closure { c_type } => Some(Expression::cast(
-                c_type.clone(),
-                Expression::literal(Literal::status_failure()),
-            )),
-        }
-    }
-
-    /// Returns the JNI expression used when dispatch fails.
-    pub fn jni_failure_value(&self) -> Option<Expression> {
-        match self {
-            Self::Void { .. } => None,
-            Self::Value { jni_type, .. } => Some(Expression::literal(jni_type.failure_value())),
-            Self::Bytes { .. } | Self::Record { .. } => {
-                Some(Expression::literal(Literal::null_pointer()))
-            }
-            Self::CallbackHandle { .. } => Some(Expression::literal(Literal::integer_zero())),
-            Self::Closure { .. } => Some(Expression::literal(Literal::integer_zero())),
+            Self::CallbackHandle { .. } | Self::Closure { .. } => Some("Long"),
         }
     }
 }
