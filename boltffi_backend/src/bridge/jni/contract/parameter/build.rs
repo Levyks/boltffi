@@ -36,36 +36,27 @@ impl NativeParameter {
             c::ParameterGroup::Value(index) => {
                 Self::from_value_parameter(function.parameter(*index), callbacks)
             }
-            c::ParameterGroup::ByteSlice(bytes) => {
-                BytesParameter::from_c_group(bytes).map(|bytes| Self {
-                    kind: NativeParameterKind::Bytes(bytes),
-                })
-            }
+            c::ParameterGroup::ByteSlice(bytes) => BytesParameter::from_c_group(bytes)
+                .map(|bytes| Self::new(NativeParameterKind::Bytes(bytes))),
             c::ParameterGroup::DirectVector(vector) => {
-                DirectVectorParameter::from_c_group(vector, function).map(|vector| Self {
-                    kind: NativeParameterKind::DirectVector(vector),
-                })
+                DirectVectorParameter::from_c_group(vector, function)
+                    .map(|vector| Self::new(NativeParameterKind::DirectVector(vector)))
             }
             c::ParameterGroup::DirectWriteback(writeback) => {
-                RecordParameter::from_c_writeback(writeback, function).map(|record| Self {
-                    kind: NativeParameterKind::Record(record),
-                })
+                RecordParameter::from_c_writeback(writeback, function)
+                    .map(|record| Self::new(NativeParameterKind::Record(record)))
             }
             c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "callback completion parameter group cannot appear on a JNI native method",
             }),
             c::ParameterGroup::Continuation(continuation) => {
-                ContinuationParameter::from_c_group(continuation, function).map(|continuation| {
-                    Self {
-                        kind: NativeParameterKind::Continuation(continuation),
-                    }
-                })
+                ContinuationParameter::from_c_group(continuation, function)
+                    .map(|continuation| Self::new(NativeParameterKind::Continuation(continuation)))
             }
             c::ParameterGroup::Closure(closure) => {
-                ClosureParameter::from_c_group(closure, closures).map(|closure| Self {
-                    kind: NativeParameterKind::Closure(closure),
-                })
+                ClosureParameter::from_c_group(closure, closures)
+                    .map(|closure| Self::new(NativeParameterKind::Closure(closure)))
             }
             c::ParameterGroup::ClosureReturn(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
@@ -76,16 +67,11 @@ impl NativeParameter {
 
     fn from_value_parameter(parameter: &c::Parameter, callbacks: &[c::Callback]) -> Result<Self> {
         match RecordParameter::from_c_parameter(parameter)? {
-            Some(record) => Ok(Self {
-                kind: NativeParameterKind::Record(record),
-            }),
+            Some(record) => Ok(Self::new(NativeParameterKind::Record(record))),
             None => match CallbackParameter::from_c_parameter(parameter, callbacks)? {
-                Some(callback) => Ok(Self {
-                    kind: NativeParameterKind::Callback(callback),
-                }),
-                None => ScalarParameter::from_c_parameter(parameter).map(|scalar| Self {
-                    kind: NativeParameterKind::Scalar(scalar),
-                }),
+                Some(callback) => Ok(Self::new(NativeParameterKind::Callback(callback))),
+                None => ScalarParameter::from_c_parameter(parameter)
+                    .map(|scalar| Self::new(NativeParameterKind::Scalar(scalar))),
             },
         }
     }
