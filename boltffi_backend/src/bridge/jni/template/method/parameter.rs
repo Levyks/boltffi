@@ -1,13 +1,19 @@
-//! Template view for native method parameters.
+//! Template view for JNI native method declarations.
 //!
-//! The native method contract stores typed JNI parameters. This module prepares
-//! the small declaration view used by the root native-method template.
+//! The contract layer keeps each native parameter tied to its C bridge
+//! arguments. The C source declaration only needs the Java-facing name and JNI
+//! type. This module projects the contract down to that declaration view.
+//!
+//! Keeping this tiny view separate matters because method signatures are printed
+//! before the body borrows arrays, writes records, checks status, or calls the C
+//! bridge. The template receives only the fields that belong in the signature.
 
 use crate::bridge::{
     c::{Identifier, TypeFragment},
     jni::NativeParameter,
 };
 
+/// One parameter in the generated `Java_*` function signature.
 pub struct NativeParameterView {
     pub name: Identifier,
     pub ty: TypeFragment,

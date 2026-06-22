@@ -1,8 +1,13 @@
-//! Continuation parameters for async polling.
+//! Async poll continuation parameters for JNI native methods.
 //!
-//! C async polling functions need both a user-data handle and a completion
-//! callback. JVM code supplies the user data as a scalar token; the JNI bridge
-//! supplies the fixed continuation callback symbol.
+//! The lower C bridge polls async work with two values: caller-owned callback
+//! data and a completion function pointer. Java only supplies the callback data.
+//! The JNI bridge supplies the fixed native completion function because that
+//! function is part of the generated C source, not a Java value.
+//!
+//! This module keeps those two C arguments behind one Java parameter. Native
+//! method rendering can then pass a prepared continuation contract instead of
+//! remembering that one `jlong` Java argument expands to data plus callback.
 
 use crate::{
     bridge::{
@@ -12,7 +17,10 @@ use crate::{
     core::Result,
 };
 
-/// JNI parameter that supplies callback data for a C poll continuation.
+/// A Java callback-data token expanded to the C async poll continuation pair.
+///
+/// The first C argument is the Java token. The second C argument is the fixed
+/// JNI continuation callback emitted by the bridge source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ContinuationParameter {
