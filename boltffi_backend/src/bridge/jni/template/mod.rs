@@ -2,17 +2,16 @@ use askama::Template as AskamaTemplate;
 
 mod callback;
 mod closure;
+mod method;
 
 use self::callback::CallbackRegistrationView;
 use self::closure::ClosureRegistrationView;
+use self::method::NativeMethodView;
 
 use crate::{
     bridge::{
-        c::{ArgumentList, Expression, Identifier, Literal, TypeFragment},
-        jni::{
-            BytesParameter, JniBridgeContract, JniSymbolName, NativeMethod, NativeParameter,
-            RecordParameter,
-        },
+        c::{Identifier, Literal},
+        jni::{JniBridgeContract, JniSymbolName},
     },
     core::Result,
 };
@@ -102,120 +101,5 @@ impl SourceFile {
             methods,
         }
         .render()?)
-    }
-}
-
-struct NativeMethodView {
-    symbol: Identifier,
-    c_function: Identifier,
-    return_type: TypeFragment,
-    c_result_type: TypeFragment,
-    parameters: Vec<NativeParameterView>,
-    byte_arrays: Vec<ByteArrayParameterView>,
-    record_arrays: Vec<RecordParameterView>,
-    arguments: ArgumentList,
-    returns_void: bool,
-    returns_boolean: bool,
-    returns_bytes: bool,
-    returns_record: bool,
-    returns_callback: bool,
-    return_value: Expression,
-    checks_status: bool,
-    uses_continuations: bool,
-}
-
-impl NativeMethodView {
-    fn from_method(method: &NativeMethod) -> Result<Self> {
-        Ok(Self {
-            symbol: method.symbol().as_identifier().clone(),
-            c_function: Identifier::parse(method.c_function().name())?,
-            return_type: method.returns().jni_type(),
-            c_result_type: method.returns().c_result_type()?,
-            parameters: method
-                .parameters()
-                .iter()
-                .map(NativeParameterView::from_parameter)
-                .collect(),
-            byte_arrays: method
-                .parameters()
-                .iter()
-                .filter_map(|parameter| parameter.bytes().map(ByteArrayParameterView::from_bytes))
-                .collect(),
-            record_arrays: method
-                .parameters()
-                .iter()
-                .filter_map(|parameter| parameter.record().map(RecordParameterView::from_record))
-                .collect(),
-            arguments: ArgumentList::from_iter(
-                method
-                    .parameters()
-                    .iter()
-                    .map(NativeParameter::c_arguments)
-                    .collect::<Result<Vec<_>>>()?
-                    .into_iter()
-                    .flatten(),
-            ),
-            returns_void: method.returns_void(),
-            returns_boolean: method.returns_boolean(),
-            returns_bytes: method.returns_bytes(),
-            returns_record: method.returns_record(),
-            returns_callback: method.returns_callback(),
-            return_value: method
-                .returns()
-                .return_expression(Expression::identifier(Identifier::parse("result")?))?,
-            checks_status: method.checks_status(),
-            uses_continuations: method
-                .parameters()
-                .iter()
-                .any(NativeParameter::is_continuation),
-        })
-    }
-}
-
-struct NativeParameterView {
-    name: Identifier,
-    ty: TypeFragment,
-}
-
-impl NativeParameterView {
-    fn from_parameter(parameter: &NativeParameter) -> Self {
-        Self {
-            name: parameter.name().clone(),
-            ty: parameter.ty(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ByteArrayParameterView {
-    name: Identifier,
-    pointer: Identifier,
-    length: Identifier,
-}
-
-impl ByteArrayParameterView {
-    fn from_bytes(parameter: &BytesParameter) -> Self {
-        Self {
-            name: parameter.name().clone(),
-            pointer: parameter.pointer().clone(),
-            length: parameter.length().clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct RecordParameterView {
-    name: Identifier,
-    c_type: Identifier,
-    local: Identifier,
-}
-
-impl RecordParameterView {
-    fn from_record(parameter: &RecordParameter) -> Self {
-        Self {
-            name: parameter.name().clone(),
-            c_type: parameter.c_type().clone(),
-            local: parameter.local().clone(),
-        }
     }
 }
