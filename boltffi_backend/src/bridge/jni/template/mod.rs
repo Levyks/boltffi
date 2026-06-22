@@ -2,10 +2,12 @@ use askama::Template as AskamaTemplate;
 
 mod callback;
 mod closure;
+mod features;
 mod method;
 
 use self::callback::CallbackRegistrationView;
 use self::closure::ClosureRegistrationView;
+use self::features::SourceFeatures;
 use self::method::NativeMethodView;
 
 use crate::{
@@ -57,73 +59,18 @@ impl SourceFile {
             .iter()
             .map(ClosureRegistrationView::from_registration)
             .collect();
-        let callback_uses_byte_arrays = callbacks.iter().any(|callback| {
-            callback
-                .methods
-                .iter()
-                .any(|method| !method.byte_arrays.is_empty())
-        });
-        let callback_uses_record_arrays = callbacks.iter().any(|callback| {
-            callback
-                .methods
-                .iter()
-                .any(|method| !method.record_arrays.is_empty())
-        });
-        let callback_uses_callback_handles = callbacks.iter().any(|callback| {
-            callback
-                .methods
-                .iter()
-                .any(|method| !method.callback_handles.is_empty())
-        });
-        let callback_returns_byte_arrays = callbacks.iter().any(|callback| {
-            callback
-                .methods
-                .iter()
-                .any(|method| method.returns_bytes || method.returns_record)
-        }) || closures
-            .iter()
-            .any(|closure| closure.returns_bytes || closure.returns_record);
-        let callback_returns_records = callbacks
-            .iter()
-            .any(|callback| callback.methods.iter().any(|method| method.returns_record))
-            || closures.iter().any(|closure| closure.returns_record);
+        let features = SourceFeatures::from_views(&methods, &callbacks, &closures);
         Ok(SourceFileTemplate {
             c_header: Literal::string(contract.c_header().as_str()),
             class_name: Literal::string(&contract.class().as_jni_class_name()),
             free_buffer: contract.free_buffer().clone(),
-            checks_status: methods.iter().any(|method| method.checks_status),
-            uses_byte_arrays: callback_uses_byte_arrays
-                || callback_uses_record_arrays
-                || callback_returns_byte_arrays
-                || methods.iter().any(|method| {
-                    method.returns_bytes
-                        || method.returns_record
-                        || !method.byte_arrays.is_empty()
-                        || !method.record_arrays.is_empty()
-                }),
-            uses_record_arrays: methods
-                .iter()
-                .any(|method| method.returns_record || !method.record_arrays.is_empty())
-                || callback_uses_record_arrays
-                || callback_returns_records,
-            uses_exceptions: callback_uses_byte_arrays
-                || callback_uses_record_arrays
-                || callback_uses_callback_handles
-                || callback_returns_byte_arrays
-                || methods.iter().any(|method| {
-                    method.checks_status
-                        || method.returns_bytes
-                        || method.returns_record
-                        || method.returns_callback
-                        || !method.byte_arrays.is_empty()
-                        || !method.record_arrays.is_empty()
-                }),
-            uses_continuations: methods.iter().any(|method| method.uses_continuations),
-            uses_lifecycle: methods.iter().any(|method| method.uses_continuations)
-                || !callbacks.is_empty()
-                || !closures.is_empty(),
-            uses_callback_handles: callback_uses_callback_handles
-                || methods.iter().any(|method| method.returns_callback),
+            checks_status: features.checks_status,
+            uses_byte_arrays: features.uses_byte_arrays,
+            uses_record_arrays: features.uses_record_arrays,
+            uses_exceptions: features.uses_exceptions,
+            uses_lifecycle: features.uses_lifecycle,
+            uses_continuations: features.uses_continuations,
+            uses_callback_handles: features.uses_callback_handles,
             callback_clone_symbol: JniSymbolName::native_method(
                 contract.class(),
                 "boltffi_callback_handle_clone",
