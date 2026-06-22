@@ -5,7 +5,7 @@ mod closure;
 mod continuation;
 mod direct_vector;
 mod jni_type;
-mod jvm_method;
+mod jvm;
 mod method;
 mod parameter;
 mod record;
@@ -29,7 +29,7 @@ pub use closure::{
 pub use continuation::ContinuationParameter;
 pub use direct_vector::DirectVectorParameter;
 pub use jni_type::JniType;
-pub use jvm_method::JvmMethodReturn;
+pub use jvm::JvmMethodReturn;
 pub use method::NativeMethod;
 pub use parameter::{NativeParameter, NativeParameterKind};
 pub use record::{RecordParameter, RecordValue};
