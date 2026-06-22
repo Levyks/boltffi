@@ -1045,6 +1045,10 @@ mod tests {
         assert!(extension.contains(".free = boltffi_python_callback_value_callback_free"));
         assert!(extension.contains(".clone = boltffi_python_callback_value_callback_clone"));
         assert!(extension.contains(".on_value = boltffi_python_callback_value_callback_on_value"));
+        assert!(extension.contains("PyObject_HasAttrString(result, \"__await__\")"));
+        assert!(extension.contains(
+            "on_value() returned an awaitable, Python callback methods must return the value directly"
+        ));
         assert!(extension.contains("static int boltffi_python_bind_callback_value_callback"));
         assert!(extension.contains("boltffi_python_boltffi_register_callback_demo_value_callback(&boltffi_python_callback_value_callback_vtable)"));
         assert!(extension.contains("static int boltffi_python_parse_callback_value_callback"));
@@ -1303,6 +1307,59 @@ mod tests {
     }
 
     #[test]
+    fn python_target_renders_record_field_defaults() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[data]
+                pub struct Config {
+                    pub name: String,
+                    #[boltffi::default(3)]
+                    pub retries: i32,
+                    #[boltffi::default(true)]
+                    pub enabled: bool,
+                    #[boltffi::default("localhost")]
+                    pub host: String,
+                }
+                "#,
+            ))
+            .expect("Python target should render record defaults");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(init.contains("name: str"));
+        assert!(init.contains("retries: int = 3"));
+        assert!(init.contains("enabled: bool = True"));
+        assert!(init.contains("host: str = \"localhost\""));
+        assert!(stub.contains("retries: int = 3"));
+        assert!(stub.contains("enabled: bool = True"));
+        assert!(stub.contains("host: str = \"localhost\""));
+    }
+
+    #[test]
+    fn python_target_renders_uuid_as_python_uuid() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn echo(value: uuid::Uuid) -> uuid::Uuid {
+                    value
+                }
+                "#,
+            ))
+            .expect("Python target should render UUID builtins");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(init.contains("import uuid"));
+        assert!(init.contains("def _boltffi_wire_uuid(value: uuid.UUID | str) -> bytes:"));
+        assert!(init.contains("def echo(value: uuid.UUID) -> uuid.UUID:"));
+        assert!(init.contains("return uuid.UUID(bytes=high + low)"));
+        assert!(stub.contains("import uuid"));
+        assert!(stub.contains("def echo(value: uuid.UUID) -> uuid.UUID: ..."));
+    }
+
+    #[test]
     fn python_target_renders_accessor_constants_through_native_module() {
         let output = target()
             .render(&bindings(
@@ -1387,7 +1444,7 @@ mod tests {
         let init = file(&output, "demo/__init__.py");
 
         assert!(init.contains("except RuntimeError as error:"));
-        assert!(init.contains("raise RuntimeError(decoder(error.args[0])) from error"));
+        assert!(init.contains("raise _boltffi_error_exception(decoder(error.args[0])) from error"));
         assert!(init.contains("error_decoder=_boltffi_read_"));
     }
 
@@ -1410,8 +1467,44 @@ mod tests {
         let init = file(&output, "demo/__init__.py");
 
         assert!(init.contains("def _boltffi_call(error_decoder, call):"));
-        assert!(init.contains("raise RuntimeError(error_decoder(error.args[0])) from error"));
+        assert!(
+            init.contains(
+                "raise _boltffi_error_exception(error_decoder(error.args[0])) from error"
+            )
+        );
         assert!(init.contains("return _boltffi_call(_boltffi_read_"));
+    }
+
+    #[test]
+    fn python_target_renders_typed_result_exceptions() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[repr(i32)]
+                #[data]
+                pub enum ParseError {
+                    Empty = 1,
+                }
+
+                #[export]
+                pub fn parse(value: String) -> Result<i32, ParseError> {
+                    if value.is_empty() {
+                        Err(ParseError::Empty)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render typed result errors");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(init.contains("class ParseErrorException(RuntimeError):"));
+        assert!(init.contains("def __init__(self, error: ParseError) -> None:"));
+        assert!(init.contains("\"ParseErrorException\","));
+        assert!(stub.contains("class ParseErrorException(RuntimeError):"));
+        assert!(stub.contains("error: ParseError"));
     }
 
     #[test]

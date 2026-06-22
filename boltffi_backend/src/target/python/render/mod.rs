@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     Bindings, CanonicalName, ClassDecl, ClassId, ConstantDecl, CustomTypeDecl, CustomTypeId,
-    DeclarationRef, EnumDecl, EnumId, FunctionDecl, Native, RecordDecl, RecordId, StreamDecl,
-    TypeRef,
+    DeclarationRef, EnumDecl, EnumId, ErrorChannel, ExportedCallable, ExportedMethodDecl,
+    FunctionDecl, InitializerDecl, Native, NativeSymbol, RecordDecl, RecordId, StreamDecl, TypeRef,
 };
 
 use crate::{
@@ -123,8 +123,9 @@ impl<'bindings> Package<'bindings> {
         let module = self.module_name();
         let package = self.distribution.clone();
         let version = self.version.clone();
-        let records = self.records()?;
-        let enums = self.enums()?;
+        let error_types = ErrorTypes::from_declarations(&self.declarations);
+        let records = self.records(&error_types)?;
+        let enums = self.enums(&error_types)?;
         let classes = self.classes()?;
         let constants = self.constants()?;
         let functions = self.functions();
@@ -250,6 +251,102 @@ struct PackageDeclarations<'bindings> {
     functions: Vec<&'bindings FunctionDecl<Native>>,
     streams: Vec<&'bindings StreamDecl<Native>>,
     customs: Vec<&'bindings CustomTypeDecl>,
+}
+
+#[derive(Default)]
+struct ErrorTypes {
+    records: BTreeSet<RecordId>,
+    enums: BTreeSet<EnumId>,
+}
+
+impl ErrorTypes {
+    fn from_declarations(declarations: &PackageDeclarations<'_>) -> Self {
+        let mut types = Self::default();
+        declarations
+            .functions
+            .iter()
+            .for_each(|function| types.insert_callable(function.callable()));
+        declarations
+            .records
+            .iter()
+            .for_each(|record| types.insert_record(record));
+        declarations
+            .enums
+            .iter()
+            .for_each(|enumeration| types.insert_enum(enumeration));
+        declarations
+            .classes
+            .iter()
+            .for_each(|class| types.insert_class(class));
+        types
+    }
+
+    fn contains_record(&self, id: RecordId) -> bool {
+        self.records.contains(&id)
+    }
+
+    fn contains_enum(&self, id: EnumId) -> bool {
+        self.enums.contains(&id)
+    }
+
+    fn insert_callable(&mut self, callable: &ExportedCallable<Native>) {
+        if let ErrorChannel::Encoded { ty, .. } = callable.error().channel() {
+            self.insert_type(ty);
+        }
+    }
+
+    fn insert_record(&mut self, record: &RecordDecl<Native>) {
+        match record {
+            RecordDecl::Direct(record) => {
+                self.insert_members(record.initializers(), record.methods())
+            }
+            RecordDecl::Encoded(record) => {
+                self.insert_members(record.initializers(), record.methods())
+            }
+            _ => {}
+        }
+    }
+
+    fn insert_enum(&mut self, enumeration: &EnumDecl<Native>) {
+        match enumeration {
+            EnumDecl::CStyle(enumeration) => {
+                self.insert_members(enumeration.initializers(), enumeration.methods())
+            }
+            EnumDecl::Data(enumeration) => {
+                self.insert_members(enumeration.initializers(), enumeration.methods())
+            }
+            _ => {}
+        }
+    }
+
+    fn insert_class(&mut self, class: &ClassDecl<Native>) {
+        self.insert_members(class.initializers(), class.methods());
+    }
+
+    fn insert_members(
+        &mut self,
+        initializers: &[InitializerDecl<Native>],
+        methods: &[ExportedMethodDecl<Native, NativeSymbol>],
+    ) {
+        initializers
+            .iter()
+            .for_each(|initializer| self.insert_callable(initializer.callable()));
+        methods
+            .iter()
+            .for_each(|method| self.insert_callable(method.callable()));
+    }
+
+    fn insert_type(&mut self, ty: &TypeRef) {
+        match ty {
+            TypeRef::Record(id) => {
+                self.records.insert(*id);
+            }
+            TypeRef::Enum(id) => {
+                self.enums.insert(*id);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl<'bindings> PackageDeclarations<'bindings> {
@@ -397,14 +494,20 @@ impl<'bindings> Package<'bindings> {
             .collect()
     }
 
-    fn records(&self) -> Result<Vec<RecordClass>> {
+    fn records(&self, error_types: &ErrorTypes) -> Result<Vec<RecordClass>> {
         self.declarations
             .records
             .iter()
             .copied()
             .map(|record| match record {
-                RecordDecl::Direct(record) => RecordClass::from_direct(record, self),
-                RecordDecl::Encoded(record) => RecordClass::from_encoded(record, self),
+                RecordDecl::Direct(record) => {
+                    RecordClass::from_direct(record, self, error_types.contains_record(record.id()))
+                }
+                RecordDecl::Encoded(record) => RecordClass::from_encoded(
+                    record,
+                    self,
+                    error_types.contains_record(record.id()),
+                ),
                 _ => Err(Error::UnsupportedTarget {
                     target: "python",
                     shape: "unknown record package",
@@ -413,14 +516,22 @@ impl<'bindings> Package<'bindings> {
             .collect()
     }
 
-    fn enums(&self) -> Result<Vec<EnumClass>> {
+    fn enums(&self, error_types: &ErrorTypes) -> Result<Vec<EnumClass>> {
         self.declarations
             .enums
             .iter()
             .copied()
             .map(|enumeration| match enumeration {
-                EnumDecl::CStyle(enumeration) => EnumClass::from_c_style(enumeration, self),
-                EnumDecl::Data(enumeration) => EnumClass::from_data(enumeration, self),
+                EnumDecl::CStyle(enumeration) => EnumClass::from_c_style(
+                    enumeration,
+                    self,
+                    error_types.contains_enum(enumeration.id()),
+                ),
+                EnumDecl::Data(enumeration) => EnumClass::from_data(
+                    enumeration,
+                    self,
+                    error_types.contains_enum(enumeration.id()),
+                ),
                 _ => Err(Error::UnsupportedTarget {
                     target: "python",
                     shape: "unknown enum package",
@@ -473,6 +584,10 @@ impl<'bindings> Package<'bindings> {
             })
     }
 
+    fn exception_name(&self, class_name: &Identifier) -> Result<Identifier> {
+        Identifier::parse(format!("{class_name}Exception"))
+    }
+
     fn file(&self, path: impl Into<PathBuf>, contents: impl Into<String>) -> Result<GeneratedFile> {
         Ok(GeneratedFile::new(FilePath::new(path.into())?, contents))
     }
@@ -500,7 +615,17 @@ impl<'bindings> Package<'bindings> {
         };
         scope
             .insert_all(records.iter().map(|record| record.top_level_name()))
+            .and_then(|scope| {
+                scope.insert_all(
+                    records
+                        .iter()
+                        .filter_map(RecordClass::exception_top_level_name),
+                )
+            })
             .and_then(|scope| scope.insert_all(enums.iter().map(EnumClass::top_level_name)))
+            .and_then(|scope| {
+                scope.insert_all(enums.iter().filter_map(EnumClass::exception_top_level_name))
+            })
             .and_then(|scope| {
                 scope.insert_all(enums.iter().flat_map(EnumClass::data_variant_names))
             })

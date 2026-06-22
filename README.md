@@ -75,9 +75,10 @@ boltffi pack all
 # Produces: ./dist/java/native/<host-target>/libyour_crate_jni.* + Java bindings
 # Produces: ./dist/wasm/pkg/*.wasm + TypeScript bindings + npm package
 # Produces: ./dist/csharp/packages/*.nupkg with RID native assets
+# Produces: ./dist/python/wheelhouse/*.whl with Python package sources
 ```
 
-Use it from Swift, Kotlin, Java, C#, or TypeScript:
+Use it from Swift, Kotlin, Java, C#, TypeScript, or Python.
 
 ```swift
 let d = distance(a: Point(x: 0, y: 0), b: Point(x: 3, y: 4)) // 5.0
@@ -100,6 +101,11 @@ import { distance } from 'your-crate';
 const d = distance({ x: 0, y: 0 }, { x: 3, y: 4 }); // 5.0
 ```
 
+```python
+import your_crate
+d = your_crate.distance(your_crate.Point(0, 0), your_crate.Point(3, 4))  # 5.0
+```
+
 The generated bindings use each language's idioms. Swift gets async/await. Kotlin gets coroutines. Java gets CompletableFuture and functional interfaces. C# gets Tasks and async enumerables. TypeScript gets Promises. Errors become native exceptions.
 
 ## Supported languages
@@ -112,7 +118,7 @@ The generated bindings use each language's idioms. Swift gets async/await. Kotli
 | C#       | Full support |
 | WASM/TypeScript | Full support |
 | C        | Partial      |
-| Python   | In progress  |
+| Python   | Full support |
 | C++      | Planned      |
 | Ruby     | Planned      |
 | Dart     | In progress  |

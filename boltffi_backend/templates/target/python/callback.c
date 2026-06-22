@@ -73,6 +73,10 @@ static {{ method.returns.c_type }} {{ method.function }}(uint64_t handle{% if le
     if (result == NULL) {
         goto done;
     }
+    if (PyObject_HasAttrString(result, "__await__")) {
+        PyErr_SetString(PyExc_TypeError, "{{ method.python_name }}() returned an awaitable, Python callback methods must return the value directly");
+        goto done;
+    }
 {%- if let Some(completion) = method.completion %}
 {%- if completion.payload.fallible %}
     if (!PyTuple_Check(result) || PyTuple_GET_SIZE(result) != 2) {

@@ -1,4 +1,5 @@
 import math
+import uuid
 
 from tests.support import DemoTestCase
 
@@ -29,12 +30,12 @@ class BuiltinValueTests(DemoTestCase):
         self.assertTrue(math.isclose(demo.echo_system_time(-0.5), -0.5, rel_tol=0.0, abs_tol=1e-12))
 
     def test_uuid(self) -> None:
-        value = "123e4567-e89b-12d3-a456-426614174000"
+        value = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
 
         self.demo_case("case:builtins.uuid.should_roundtrip_value")
         self.assertEqual(demo.echo_uuid(value), value)
         self.demo_case("case:builtins.uuid.should_format_canonical_string")
-        self.assertEqual(demo.uuid_to_string(value), value)
+        self.assertEqual(demo.uuid_to_string(value), str(value))
 
     def test_url(self) -> None:
         value = "https://example.com/demo?q=boltffi"

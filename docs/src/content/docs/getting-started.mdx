@@ -1,6 +1,6 @@
 ---
 title: "Getting Started"
-description: "Set up a BoltFFI Rust library, install prerequisites, configure packaging, and generate bindings for Apple, Android, Java, C#, and WASM targets."
+description: "Set up a BoltFFI Rust library, install prerequisites, configure packaging, and generate bindings for Apple, Android, Java, C#, WASM, and Python targets."
 ---
 
 # Getting Started
@@ -15,6 +15,7 @@ This guide walks you through creating a Rust library and packaging it for use in
 - For Java: JDK 8+ with `javac` and a C compiler for the JNI bridge
 - For C#: .NET SDK 10.0+ for the current C# demo and generated binding tests
 - For WASM: Node.js 18+ and wasm-pack (`cargo install wasm-pack`)
+- For Python, Python 3.10+ with pip
 
 ## Install BoltFFI
 
@@ -84,6 +85,7 @@ This creates:
 - `dist/java/` - JNI library + Java bindings
 - `dist/csharp/` - NuGet package + native runtime assets
 - `dist/wasm/` - WASM module + TypeScript bindings
+- `dist/python/` - Python source package + wheels
 
 To build for a single platform:
 
@@ -93,6 +95,7 @@ boltffi pack android
 boltffi pack java
 boltffi pack csharp
 boltffi pack wasm
+boltffi pack python
 ```
 
 ## Use in Swift
@@ -197,6 +200,22 @@ Use the web entrypoint and call `init()`:
   const p2 = { x: 3, y: 4 };
   console.log(distance(p1, p2));  // 5.0
 </script>
+```
+
+## Use in Python
+
+Install the wheel from `dist/python/wheelhouse`, then import the generated package.
+
+```bash
+python -m pip install dist/python/wheelhouse/mylib-0.1.0-*.whl
+```
+
+```python
+import mylib
+
+p1 = mylib.Point(0, 0)
+p2 = mylib.Point(3, 4)
+print(mylib.distance(p1, p2))  # 5.0
 ```
 
 ## What you learned

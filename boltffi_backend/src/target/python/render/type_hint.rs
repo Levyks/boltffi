@@ -137,7 +137,8 @@ impl TypeHint {
     fn from_builtin(builtin: BuiltinType) -> Self {
         match builtin {
             BuiltinType::Duration | BuiltinType::SystemTime => Self::new(TypeAnnotation::float()),
-            BuiltinType::Uuid | BuiltinType::Url => Self::new(TypeAnnotation::string()),
+            BuiltinType::Uuid => Self::new(TypeAnnotation::uuid()),
+            BuiltinType::Url => Self::new(TypeAnnotation::string()),
         }
     }
 }

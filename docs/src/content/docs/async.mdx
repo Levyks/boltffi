@@ -1,6 +1,6 @@
 ---
 title: "Async"
-description: "Export async Rust functions and methods with BoltFFI and bridge futures to native async APIs in Swift, Kotlin, Java, C#, and TypeScript."
+description: "Export async Rust functions and methods with BoltFFI and bridge futures to native async APIs in Swift, Kotlin, Java, C#, TypeScript, and Python."
 ---
 
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
@@ -49,6 +49,11 @@ async function fetchUser(id: number): Promise<User>
 
 // Usage
 const user = await fetchUser(42)`}
+  python={`# Generated
+async def fetch_user(id: int) -> User: ...
+
+# Usage
+user = await fetch_user(42)`}
 />
 
 ## How It Works
@@ -102,6 +107,11 @@ async function loadConfig(path: string): Promise<Config>
 
 // Usage
 const config = await loadConfig("settings.json")`}
+  python={`# Generated
+async def load_config(path: str) -> Config: ...
+
+# Usage
+config = await load_config("settings.json")`}
 />
 
 ## Methods
@@ -187,6 +197,16 @@ declare class Database {
 // Usage
 const db = Database.connect("postgres://...")
 const rows = await db.query("SELECT * FROM users")`}
+  python={`# Generated
+class Database:
+    @classmethod
+    def connect(cls, url: str) -> "Database": ...
+    async def query(self, sql: str) -> list[Row]: ...
+    def close(self) -> None: ...
+
+# Usage
+db = Database.connect("postgres://...")
+rows = await db.query("SELECT * FROM users")`}
 />
 
 ## Error Handling
@@ -256,6 +276,14 @@ try {
 } catch (e) {
     console.log("Failed:", e)
 }`}
+  python={`# Generated
+async def fetch_user(id: int) -> User: ...
+
+# Usage
+try:
+    user = await fetch_user(42)
+except DbErrorException as error:
+    print("Failed:", error)`}
 />
 
 ## Cancellation
@@ -317,6 +345,13 @@ async function syncAll(): Promise<SyncResult>
 // Usage
 const promise = syncAll()
 const result = await promise`}
+  python={`# Generated
+async def sync_all() -> SyncResult: ...
+
+# Usage
+task = asyncio.create_task(sync_all())
+# later
+task.cancel()`}
 />
 
 ## Runtime

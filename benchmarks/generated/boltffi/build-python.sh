@@ -31,7 +31,7 @@ COMMAND=(
     --overlay boltffi.benchmark.toml
     pack python
     --release
-    --experimental
+    --regenerate
 )
 
 if [[ -n "$PYTHON_INTERPRETER" ]]; then

@@ -14,11 +14,12 @@ use crate::{
     },
 };
 
-use super::{AssociatedCallable, NameScope, type_hint::TypeHint};
+use super::{AssociatedCallable, NameScope, constant::DefaultExpression, type_hint::TypeHint};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordClass {
     pub class_name: Identifier,
+    pub exception_name: Option<Identifier>,
     pub register_method: Identifier,
     pub fields: Vec<RecordField>,
     pub wire: Option<EncodedRecordWire>,
@@ -28,7 +29,11 @@ pub struct RecordClass {
 }
 
 impl RecordClass {
-    pub fn from_direct(record: &DirectRecordDecl<Native>, package: &Package) -> Result<Self> {
+    pub fn from_direct(
+        record: &DirectRecordDecl<Native>,
+        package: &Package,
+        error_type: bool,
+    ) -> Result<Self> {
         let c_record =
             package
                 .bridge
@@ -40,11 +45,14 @@ impl RecordClass {
         let symbols = record_render::Symbols::from_direct(record, c_record)?;
         Ok(Self {
             class_name: symbols.class_name().clone(),
+            exception_name: error_type
+                .then(|| package.exception_name(symbols.class_name()))
+                .transpose()?,
             register_method: symbols.register_method().clone(),
             fields: record
                 .fields()
                 .iter()
-                .map(RecordField::from_direct)
+                .map(|field| RecordField::from_direct(field, package))
                 .collect::<Result<Vec<_>>>()?,
             wire: None,
             constructors: Self::constructors(record.initializers(), &symbols, package)?,
@@ -53,7 +61,11 @@ impl RecordClass {
         })
     }
 
-    pub fn from_encoded(record: &EncodedRecordDecl<Native>, package: &Package) -> Result<Self> {
+    pub fn from_encoded(
+        record: &EncodedRecordDecl<Native>,
+        package: &Package,
+        error_type: bool,
+    ) -> Result<Self> {
         let symbols = record_render::Symbols::from_encoded(record)?;
         let fields = record
             .fields()
@@ -67,6 +79,9 @@ impl RecordClass {
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             class_name: symbols.class_name().clone(),
+            exception_name: error_type
+                .then(|| package.exception_name(symbols.class_name()))
+                .transpose()?,
             register_method: symbols.register_method().clone(),
             fields,
             wire: Some(EncodedRecordWire {
@@ -107,6 +122,7 @@ impl RecordClass {
                 scope.insert_all(self.callables().map(AssociatedCallable::member_name))
             })
             .map(|_| ())?;
+        RecordField::validate_default_order(&self.fields, "record default before required field")?;
         self.callables()
             .try_for_each(|callable| callable.validate_names(&self.class_name))
     }
@@ -116,6 +132,15 @@ impl RecordClass {
             self.class_name.to_string(),
             format!("record `{}`", self.class_name),
         )
+    }
+
+    pub fn exception_top_level_name(&self) -> Option<(String, String)> {
+        self.exception_name.as_ref().map(|exception_name| {
+            (
+                exception_name.to_string(),
+                format!("record error `{}`", exception_name),
+            )
+        })
     }
 
     fn callables(&self) -> impl Iterator<Item = &AssociatedCallable> {
@@ -198,6 +223,7 @@ impl RecordClass {
 pub struct RecordField {
     pub name: Identifier,
     pub annotation: TypeAnnotation,
+    pub default: Option<Expression>,
 }
 
 impl RecordField {
@@ -205,11 +231,35 @@ impl RecordField {
         Ok(Self {
             name: Self::name(field.key())?,
             annotation: TypeHint::from_type_ref(field.ty(), package)?.into_annotation(),
+            default: field
+                .meta()
+                .default()
+                .map(|value| DefaultExpression::new(value, package))
+                .transpose()?
+                .map(DefaultExpression::into_expression),
         })
     }
 
     pub fn field_name(&self) -> (String, String) {
         (self.name.to_string(), format!("field `{}`", self.name))
+    }
+
+    pub fn validate_default_order(fields: &[Self], shape: &'static str) -> Result<()> {
+        match fields
+            .iter()
+            .scan(false, |default_seen, field| {
+                let required_after_default = *default_seen && field.default.is_none();
+                *default_seen |= field.default.is_some();
+                Some(required_after_default)
+            })
+            .any(|required_after_default| required_after_default)
+        {
+            true => Err(Error::UnsupportedTarget {
+                target: "python",
+                shape,
+            }),
+            false => Ok(()),
+        }
     }
 
     pub fn name(key: &FieldKey) -> Result<Identifier> {
@@ -223,10 +273,16 @@ impl RecordField {
         }
     }
 
-    fn from_direct(field: &DirectFieldDecl) -> Result<Self> {
+    fn from_direct(field: &DirectFieldDecl, package: &Package) -> Result<Self> {
         Ok(Self {
             name: Self::name(field.key())?,
             annotation: TypeHint::from_primitive(field.ty().primitive())?.into_annotation(),
+            default: field
+                .meta()
+                .default()
+                .map(|value| DefaultExpression::new(value, package))
+                .transpose()?
+                .map(DefaultExpression::into_expression),
         })
     }
 }

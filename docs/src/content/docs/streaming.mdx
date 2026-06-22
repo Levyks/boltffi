@@ -69,6 +69,16 @@ await foreach (Reading reading in
     sensor.Readings(cancellationToken)) {
     Console.WriteLine(reading.Value);
 }`}
+  python={`subscription = sensor.readings()
+
+while True:
+    status = subscription.wait(50)
+    if status < 0:
+        break
+    if status == 0:
+        continue
+    for reading in subscription.pop_batch():
+        print(f"Value: {reading.value}")`}
 />
 
 ### Callback Mode
@@ -114,6 +124,16 @@ await foreach (Reading reading in
     sensor.Readings(cancellationToken)) {
     Console.WriteLine(reading.Value);
 }`}
+  python={`subscription = sensor.readings()
+
+while True:
+    status = subscription.wait(50)
+    if status < 0:
+        break
+    if status == 0:
+        continue
+    for reading in subscription.pop_batch():
+        print(f"Value: {reading.value}")`}
 />
 
 ### Batch Mode
@@ -156,6 +176,11 @@ await foreach (Reading reading in
     sensor.Readings(cancellationToken)) {
     Process(reading);
 }`}
+  python={`subscription = sensor.readings()
+batch = subscription.pop_batch(max_count=100)
+
+for reading in batch:
+    process(reading)`}
 />
 
 ## Creating Streams
@@ -240,6 +265,12 @@ using Sensor sensor = new Sensor();
 await foreach (Reading reading in sensor.Readings()) {
     Console.WriteLine(reading.Value);
 }`}
+  python={`sensor = Sensor()
+subscription = sensor.readings()
+
+if subscription.wait(50) > 0:
+    for reading in subscription.pop_batch():
+        print(reading.value)`}
 />
 
 ### StreamProducer
@@ -322,6 +353,18 @@ await foreach (Event ev in bus.Events()) {
 await foreach (Event ev in bus.Events()) {
     Console.WriteLine("Sub 2: " + ev);
 }`}
+  python={`bus = EventBus()
+
+sub_1 = bus.events()
+sub_2 = bus.events()
+
+if sub_1.wait(50) > 0:
+    for event in sub_1.pop_batch():
+        print(f"Sub 1: {event}")
+
+if sub_2.wait(50) > 0:
+    for event in sub_2.pop_batch():
+        print(f"Sub 2: {event}")`}
 />
 
 ## Buffer Capacity
@@ -415,6 +458,14 @@ await foreach (Reading reading in
 }
 
 cts.Cancel();`}
+  python={`subscription = sensor.readings()
+
+if subscription.wait(50) > 0:
+    for reading in subscription.pop_batch():
+        if reading.value > threshold:
+            break
+
+subscription.unsubscribe()`}
 />
 
 ## How It Works

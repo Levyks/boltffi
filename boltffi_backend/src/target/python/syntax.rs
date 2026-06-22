@@ -138,6 +138,10 @@ impl TypeAnnotation {
         Self::new("str")
     }
 
+    pub(crate) fn uuid() -> Self {
+        Self::new("uuid.UUID")
+    }
+
     pub(crate) fn bytes() -> Self {
         Self::new("bytes")
     }

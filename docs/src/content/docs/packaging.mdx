@@ -54,7 +54,7 @@ boltffi pack android
 boltffi pack java
 boltffi pack csharp
 boltffi pack wasm
-boltffi pack python --experimental
+boltffi pack python
 ```
 
 Add `--release` for optimized builds:
@@ -65,7 +65,7 @@ boltffi pack android --release
 boltffi pack java --release
 boltffi pack csharp --release
 boltffi pack wasm --release
-boltffi pack python --release --experimental
+boltffi pack python --release
 ```
 
 Or run the full pipeline (check, build, generate, pack) for all platforms at once:
@@ -190,11 +190,11 @@ boltffi generate typescript
 boltffi pack wasm --release --no-build
 ```
 
-**Python:**
+**Python**
 ```bash
 boltffi build --release
-boltffi generate python --experimental
-boltffi pack python --release --experimental --no-build
+boltffi generate python
+boltffi pack python --release --no-build
 ```
 
 Use `--no-build` with `pack` when you've already built, to skip recompilation.
@@ -764,13 +764,13 @@ npm publish
 
 ## Python Packaging
 
-Package the generated Python sources plus the current-host Rust shared library:
+Package the generated Python sources plus the current-host Rust shared library.
 
 ```bash
-boltffi pack python --experimental
+boltffi pack python
 ```
 
-This flow:
+This flow does the work a Python package needs.
 
 1. regenerates the Python source package unless `--regenerate false`
 2. builds or reuses the host `cdylib`
@@ -779,11 +779,9 @@ This flow:
 
 ### Configuration
 
-Enable the target in `boltffi.toml`:
+Enable the target in `boltffi.toml`.
 
 ```toml
-experimental = ["python"]
-
 [targets.python]
 enabled = true
 module_name = "demo_runtime"
@@ -812,7 +810,7 @@ dist/python/
     └── demo_package-0.1.0-cp312-...whl
 ```
 
-The shared library filename changes per host:
+The shared library filename changes per host.
 
 - macOS: `.dylib`
 - Linux: `.so`
@@ -820,10 +818,10 @@ The shared library filename changes per host:
 
 ### Interpreter Selection
 
-To package for specific installed interpreters on the current host:
+To package for specific installed interpreters on the current host.
 
 ```bash
-boltffi pack python --experimental --python python3.12 --python python3.13
+boltffi pack python --python python3.12 --python python3.13
 ```
 
 If you omit `--python` and do not configure `[targets.python.wheel].interpreters`, BoltFFI falls back to the first available default interpreter on the host.

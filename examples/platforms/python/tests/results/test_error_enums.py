@@ -8,59 +8,68 @@ class ErrorEnumResultTests(DemoTestCase):
         self.demo_case("case:results.error_enums.checked_divide.should_return_quotient")
         self.assertEqual(demo.checked_divide(10, 2), 5)
         self.demo_case("case:results.error_enums.checked_divide.should_reject_division_by_zero")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.MathErrorException,
             demo.MathError.DIVISION_BY_ZERO,
             lambda: demo.checked_divide(10, 0),
         )
         self.demo_case("case:results.error_enums.checked_sqrt.should_return_square_root")
         self.assertEqual(demo.checked_sqrt(9.0), 3.0)
         self.demo_case("case:results.error_enums.checked_sqrt.should_reject_negative_input")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.MathErrorException,
             demo.MathError.NEGATIVE_INPUT,
             lambda: demo.checked_sqrt(-1.0),
         )
         self.demo_case("case:results.error_enums.checked_add.should_return_sum")
         self.assertEqual(demo.checked_add(20, 22), 42)
         self.demo_case("case:results.error_enums.checked_add.should_reject_overflow")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.MathErrorException,
             demo.MathError.OVERFLOW,
             lambda: demo.checked_add(2_147_483_647, 1),
         )
         self.demo_case("case:results.error_enums.may_fail.should_return_success_when_valid")
         self.assertEqual(demo.may_fail(True), "Success!")
         self.demo_case("case:results.error_enums.may_fail.should_return_app_error_when_invalid")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.AppErrorException,
             demo.AppError(400, "Invalid input"),
             lambda: demo.may_fail(False),
         )
         self.demo_case("case:results.error_enums.divide_app.should_return_quotient")
         self.assertEqual(demo.divide_app(12, 3), 4)
         self.demo_case("case:results.error_enums.divide_app.should_return_app_error_for_division_by_zero")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.AppErrorException,
             demo.AppError(500, "Division by zero"),
             lambda: demo.divide_app(12, 0),
         )
         self.demo_case("case:results.error_enums.validate_username.should_accept_valid_name")
         self.assertEqual(demo.validate_username("valid_name"), "valid_name")
         self.demo_case("case:results.error_enums.validate_username.should_reject_too_short_name")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.ValidationErrorException,
             demo.ValidationError.TOO_SHORT,
             lambda: demo.validate_username("ab"),
         )
         self.demo_case("case:results.error_enums.validate_username.should_reject_too_long_name")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.ValidationErrorException,
             demo.ValidationError.TOO_LONG,
             lambda: demo.validate_username("a" * 21),
         )
         self.demo_case("case:results.error_enums.validate_username.should_reject_invalid_format")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.ValidationErrorException,
             demo.ValidationError.INVALID_FORMAT,
             lambda: demo.validate_username("bad name"),
         )
         self.demo_case("case:results.error_enums.try_compute.should_return_doubled_value")
         self.assertEqual(demo.try_compute(4), 8)
         self.demo_case("case:results.error_enums.try_compute.should_return_overflow_error")
-        self.assert_runtime_error_value(
+        self.assert_typed_error_value(
+            demo.ComputeErrorException,
             demo.ComputeErrorOverflow(-1, 0),
             lambda: demo.try_compute(-1),
         )

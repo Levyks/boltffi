@@ -4,8 +4,6 @@ mod plan;
 mod runtime;
 mod wheel;
 
-use boltffi_bindgen::target::Target;
-
 use crate::cli::{CliError, Result};
 use crate::commands::generate::run_generate_python_with_manifest;
 use crate::commands::pack::PackPythonOptions;
@@ -24,15 +22,6 @@ pub(crate) fn pack_python(
     if !config.is_python_enabled() {
         return Err(CliError::CommandFailed {
             command: "targets.python.enabled = false".to_string(),
-            status: None,
-        });
-    }
-
-    if !config.should_process(Target::Python, options.experimental) {
-        return Err(CliError::CommandFailed {
-            command:
-                "python is experimental, use --experimental flag or add \"python\" to [experimental]"
-                    .to_string(),
             status: None,
         });
     }
@@ -142,7 +131,6 @@ mod tests {
                     no_build: true,
                     cargo_args: Vec::new(),
                 },
-                experimental: false,
                 python_interpreters: Vec::new(),
             },
             &reporter(),
@@ -153,31 +141,6 @@ mod tests {
             error,
             CliError::CommandFailed { command, status: None }
                 if command == "targets.python.enabled = false"
-        ));
-    }
-
-    #[test]
-    fn rejects_pack_python_without_experimental_gate() {
-        let error = pack_python(
-            &config(true, false),
-            PackPythonOptions {
-                execution: PackExecutionOptions {
-                    release: false,
-                    regenerate: false,
-                    no_build: true,
-                    cargo_args: Vec::new(),
-                },
-                experimental: false,
-                python_interpreters: Vec::new(),
-            },
-            &reporter(),
-        )
-        .expect_err("expected experimental gate failure");
-
-        assert!(matches!(
-            error,
-            CliError::CommandFailed { command, status: None }
-                if command.contains("python is experimental")
         ));
     }
 }

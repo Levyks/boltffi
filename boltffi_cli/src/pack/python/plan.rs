@@ -244,7 +244,7 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            experimental: vec!["python".to_string()],
+            experimental: Vec::new(),
             cargo: CargoConfig::default(),
             package: PackageConfig {
                 name: "demo-package".to_string(),

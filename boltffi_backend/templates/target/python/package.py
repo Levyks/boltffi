@@ -17,6 +17,7 @@ import asyncio
 
 {% endif %}
 import sys
+import uuid
 from pathlib import Path
 
 from . import _native
@@ -85,7 +86,7 @@ class _BoltFfiNativeFuture:
         except RuntimeError as error:
             decoder = self._error_decoder
             if decoder is not None and error.args and isinstance(error.args[0], bytes):
-                raise RuntimeError(decoder(error.args[0])) from error
+                raise _boltffi_error_exception(decoder(error.args[0])) from error
             raise
         finally:
             self.release()
@@ -209,8 +210,8 @@ def _boltffi_wire_system_time(value: float) -> bytes:
     return seconds.to_bytes(8, "little", signed=True) + nanos.to_bytes(4, "little", signed=False)
 
 
-def _boltffi_wire_uuid(value: str) -> bytes:
-    raw = __import__("uuid").UUID(str(value)).bytes
+def _boltffi_wire_uuid(value: uuid.UUID | str) -> bytes:
+    raw = uuid.UUID(str(value)).bytes
     high = int.from_bytes(raw[:8], "big")
     low = int.from_bytes(raw[8:], "big")
     return high.to_bytes(8, "little", signed=False) + low.to_bytes(8, "little", signed=False)
@@ -253,12 +254,20 @@ def _boltffi_enum_value(value, enum_type, enum_name: str) -> int:
     return int(value)
 
 
+def _boltffi_error_exception(error):
+    for error_type in type(error).__mro__:
+        exception_type = globals().get(f"{error_type.__name__}Exception")
+        if exception_type is not None:
+            return exception_type(error)
+    return RuntimeError(error)
+
+
 def _boltffi_call(error_decoder, call):
     try:
         return call()
     except RuntimeError as error:
         if error.args and isinstance(error.args[0], bytes):
-            raise RuntimeError(error_decoder(error.args[0])) from error
+            raise _boltffi_error_exception(error_decoder(error.args[0])) from error
         raise
 
 
@@ -337,10 +346,10 @@ class _BoltFfiWireReader:
     def system_time(self) -> float:
         return self.i64() + self.u32() / 1_000_000_000
 
-    def uuid(self) -> str:
+    def uuid(self) -> uuid.UUID:
         high = self.u64().to_bytes(8, "big", signed=False)
         low = self.u64().to_bytes(8, "big", signed=False)
-        return str(__import__("uuid").UUID(bytes=high + low))
+        return uuid.UUID(bytes=high + low)
 
     def url(self) -> str:
         return self.string()
@@ -395,7 +404,7 @@ _native._register_wire_codec({{ encoder.key() }}, {{ encoder.name() }})
 @dataclass(frozen=True, slots=True)
 class {{ record.class_name }}:
 {%- for field in record.fields %}
-    {{ field.name }}: {{ field.annotation }}
+    {{ field.name }}: {{ field.annotation }}{% if let Some(default) = field.default %} = {{ default }}{% endif %}
 {%- endfor %}
 {%- if let Some(wire) = record.wire %}
 
@@ -447,6 +456,15 @@ class {{ record.class_name }}:
 
 
 _native.{{ record.register_method }}({{ record.class_name }})
+{% if let Some(exception_name) = record.exception_name %}
+
+class {{ exception_name }}(RuntimeError):
+    __slots__ = ("error",)
+
+    def __init__(self, error: {{ record.class_name }}) -> None:
+        self.error = error
+        super().__init__(error)
+{% endif %}
 
 {% endfor %}
 {% for enumeration in enums %}
@@ -498,7 +516,7 @@ class {{ enumeration.class_name }}:
 class {{ variant.class_name }}({{ enumeration.class_name }}):
 {%- if variant.has_fields() %}
 {%- for field in variant.fields %}
-    {{ field.name }}: {{ field.annotation }}
+    {{ field.name }}: {{ field.annotation }}{% if let Some(default) = field.default %} = {{ default }}{% endif %}
 {%- endfor %}
 {%- else %}
     pass
@@ -560,6 +578,15 @@ class {{ enumeration.class_name }}(IntEnum):
 {%- endif %}
 
 _native.{{ enumeration.register_method }}({{ enumeration.class_name }})
+{% if let Some(exception_name) = enumeration.exception_name %}
+
+class {{ exception_name }}(RuntimeError):
+    __slots__ = ("error",)
+
+    def __init__(self, error: {{ enumeration.class_name }}) -> None:
+        self.error = error
+        super().__init__(error)
+{% endif %}
 
 {% endfor %}
 {% for class in classes %}
@@ -678,9 +705,15 @@ __all__ = [
     "PACKAGE_VERSION",
 {%- for record in records %}
     "{{ record.class_name }}",
+{%- if let Some(exception_name) = record.exception_name %}
+    "{{ exception_name }}",
+{%- endif %}
 {%- endfor %}
 {%- for enumeration in enums %}
     "{{ enumeration.class_name }}",
+{%- if let Some(exception_name) = enumeration.exception_name %}
+    "{{ exception_name }}",
+{%- endif %}
 {%- if let Some(wire) = enumeration.wire %}
 {%- for variant in wire.variants %}
     "{{ variant.class_name }}",

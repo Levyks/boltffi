@@ -107,7 +107,6 @@ pub(super) fn pack_all(
             config,
             PackPythonOptions {
                 execution: options.execution.clone(),
-                experimental: options.experimental,
                 python_interpreters: options.python_interpreters.clone(),
             },
             reporter,

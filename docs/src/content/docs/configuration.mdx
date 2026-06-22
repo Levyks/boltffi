@@ -27,8 +27,6 @@ that file for the current command. `boltffi init` is the one command that intent
 Every `boltffi.toml` starts with a `[package]` section that identifies your library:
 
 ```toml
-experimental = ["python"]
-
 [package]
 name = "mylib"
 ```
@@ -692,12 +690,12 @@ Since TypeScript doesn't have native UUID or URL types, these typically map to `
 
 ## Python Configuration
 
-Python currently has two distinct boundaries:
+Python has two package boundaries.
 
 - generation writes the Python source package
 - packaging builds the host Rust shared library and produces wheels
 
-The generated package root defaults to `dist/python`:
+The generated package root defaults to `dist/python`.
 
 ```toml
 [targets.python]
@@ -706,7 +704,7 @@ enabled = true
 
 ### Module Name
 
-By default, BoltFFI uses the Rust crate artifact name for the Python package module. Override it if you want a different import name:
+By default, BoltFFI uses the Rust crate artifact name for the Python package module. Override it if you want a different import name.
 
 ```toml
 [targets.python]
@@ -714,7 +712,7 @@ enabled = true
 module_name = "demo_runtime"
 ```
 
-This changes the generated package directory and the import path:
+This changes the generated package directory and the import path.
 
 ```python
 import demo_runtime
@@ -722,7 +720,7 @@ import demo_runtime
 
 ### Wheel Output
 
-Python packaging writes wheels into `dist/python/wheelhouse` by default. Override that under `[targets.python.wheel]`:
+Python packaging writes wheels into `dist/python/wheelhouse` by default. Override that under `[targets.python.wheel]`.
 
 ```toml
 [targets.python]
@@ -734,7 +732,7 @@ output = "dist/python/wheels"
 
 ### Python Interpreter Matrix
 
-`boltffi pack python` targets the current host platform, but it can build wheels for more than one installed Python interpreter on that host. Configure the interpreter commands explicitly when you want a stable packaging matrix:
+`boltffi pack python` targets the current host platform, but it can build wheels for more than one installed Python interpreter on that host. Configure the interpreter commands explicitly when you want a stable packaging matrix.
 
 ```toml
 [targets.python]
@@ -744,10 +742,10 @@ enabled = true
 interpreters = ["python3.11", "python3.12", "python3.13"]
 ```
 
-Each value is an interpreter executable or path that BoltFFI resolves before packaging. You can also override this per command with repeated `--python` flags:
+Each value is an interpreter executable or path that BoltFFI resolves before packaging. You can also override this per command with repeated `--python` flags.
 
 ```bash
-boltffi pack python --experimental --python python3.12 --python python3.13
+boltffi pack python --python python3.12 --python python3.13
 ```
 
 If you omit `interpreters`, BoltFFI falls back to the first available default interpreter it finds on the host.

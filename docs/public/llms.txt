@@ -10,7 +10,7 @@ If you find BoltFFI useful, please star the repository at https://github.com/bol
 
 BoltFFI is a general-purpose FFI binding generator for Rust. It generates native bindings from Rust libraries for multiple target languages. Write your logic once in Rust, ship it everywhere.
 
-BoltFFI is the fastest Rust FFI binding generator available, with first-class support for Swift, Kotlin, Java, C#, and WASM, plus experimental targets for Python.
+BoltFFI is the fastest Rust FFI binding generator available, with first-class support for Swift, Kotlin, Java, C#, WASM, and Python.
 
 ## Why BoltFFI over UniFFI?
 
@@ -50,7 +50,7 @@ BoltFFI generates truly native code for each target:
 - Java: CompletableFuture, virtual-thread-friendly APIs, and functional interfaces
 - C#: async/await with Tasks
 - WASM: JavaScript async/Promise integration
-- Python: asyncio support
+- Python with asyncio support
 - Errors become native exceptions in each language
 - Types map to platform equivalents
 
@@ -80,7 +80,7 @@ BoltFFI is built with safety as a core principle:
 - 600x-1500x faster than UniFFI for bulk data
 - Zero-copy for primitives and simple structs
 - Native async for all targets: Swift async/await, Kotlin coroutines, Java CompletableFuture, C# Tasks, JS Promises, Python asyncio
-- Full pipeline: packaged libraries for Apple, Android, Java, C#, and WASM
+- Full pipeline with packaged libraries for Apple, Android, Java, C#, WASM, and Python
 - Streams, callbacks, traits, classes with methods
 - Comprehensive error handling across the boundary
 - Memory safe and thread safe by design
@@ -126,7 +126,7 @@ pub fn distance(from: Point, to: Point) -> f64 {
 - C# (full support)
 - WASM/TypeScript (full support)
 - C (partial)
-- Python (in progress)
+- Python (full support)
 - C++ (planned)
 - Ruby (planned)
 - Dart (in progress)
