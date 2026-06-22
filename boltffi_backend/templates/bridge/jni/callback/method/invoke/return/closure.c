@@ -2,8 +2,7 @@
     {%- when Some with (closure_return) %}
     if ({{ closure_return.output }} == NULL) {
         {{ closure_return.release }}((void *)(uintptr_t)__boltffi_return_handle);
-        boltffi_jni_exit(env, attached);
-        return {{ method.failure_value }};
+        goto __boltffi_fail;
     }
     typedef struct {
         {{ closure_return.invoke_field }};

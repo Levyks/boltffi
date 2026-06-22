@@ -233,18 +233,27 @@ static uint64_t ___ListenerVTable_clone(uint64_t handle) {
 static void ___ListenerVTable_mode(uint64_t handle, void (*complete)(void *, FfiStatus, ___Mode), void *complete_context) {
     JNIEnv *env = NULL;
     int attached = 0;
-    if (!boltffi_jni_enter(&env, &attached)) {
 
+    if (!boltffi_jni_enter(&env, &attached)) {
         complete(complete_context, (FfiStatus){.code = 1}, (___Mode){0});
         return;
     }
 
     (*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_mode_method, (jlong)handle, (jlong)complete, (jlong)complete_context);
-
     if (boltffi_jni_clear_exception(env)) {
-        complete(complete_context, (FfiStatus){.code = 1}, (___Mode){0});
+        goto __boltffi_fail;
     }
+
     boltffi_jni_exit(env, attached);
+    return;
+__boltffi_fail:
+
+    boltffi_jni_clear_exception(env);
+    boltffi_jni_exit(env, attached);
+
+    complete(complete_context, (FfiStatus){.code = 1}, (___Mode){0});
+
+    return;
 }
 
 static ___ListenerVTable g____ListenerVTable_vtable = {

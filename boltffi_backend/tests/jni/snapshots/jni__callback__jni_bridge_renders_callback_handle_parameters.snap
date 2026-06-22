@@ -255,20 +255,24 @@ static uint64_t ___ListenerVTable_clone(uint64_t handle) {
 static uint32_t ___ListenerVTable_on_value(uint64_t handle, uint32_t value) {
     JNIEnv *env = NULL;
     int attached = 0;
-    if (!boltffi_jni_enter(&env, &attached)) {
 
+    if (!boltffi_jni_enter(&env, &attached)) {
         return 0;
     }
 
     uint32_t result = (uint32_t)(*env)->CallStaticIntMethod(env, g____ListenerVTable_class, g____ListenerVTable_on_value_method, (jlong)handle, (jint)value);
-
     if (boltffi_jni_clear_exception(env)) {
-        boltffi_jni_exit(env, attached);
-        return 0;
+        goto __boltffi_fail;
     }
 
     boltffi_jni_exit(env, attached);
     return result;
+__boltffi_fail:
+
+    boltffi_jni_clear_exception(env);
+    boltffi_jni_exit(env, attached);
+
+    return 0;
 }
 
 static ___ListenerVTable g____ListenerVTable_vtable = {

@@ -324,20 +324,24 @@ static uint64_t ___ChildVTable_clone(uint64_t handle) {
 static uint32_t ___ChildVTable_on_value(uint64_t handle, uint32_t value) {
     JNIEnv *env = NULL;
     int attached = 0;
-    if (!boltffi_jni_enter(&env, &attached)) {
 
+    if (!boltffi_jni_enter(&env, &attached)) {
         return 0;
     }
 
     uint32_t result = (uint32_t)(*env)->CallStaticIntMethod(env, g____ChildVTable_class, g____ChildVTable_on_value_method, (jlong)handle, (jint)value);
-
     if (boltffi_jni_clear_exception(env)) {
-        boltffi_jni_exit(env, attached);
-        return 0;
+        goto __boltffi_fail;
     }
 
     boltffi_jni_exit(env, attached);
     return result;
+__boltffi_fail:
+
+    boltffi_jni_clear_exception(env);
+    boltffi_jni_exit(env, attached);
+
+    return 0;
 }
 
 static ___ChildVTable g____ChildVTable_vtable = {
@@ -420,21 +424,26 @@ static uint64_t ___ListenerVTable_clone(uint64_t handle) {
 static BoltFFICallbackHandle ___ListenerVTable_child(uint64_t handle) {
     JNIEnv *env = NULL;
     int attached = 0;
-    if (!boltffi_jni_enter(&env, &attached)) {
 
+    if (!boltffi_jni_enter(&env, &attached)) {
         return (BoltFFICallbackHandle){0};
     }
 
     jlong __boltffi_return_handle = (*env)->CallStaticLongMethod(env, g____ListenerVTable_class, g____ListenerVTable_child_method, (jlong)handle);
-
     if (boltffi_jni_clear_exception(env)) {
-        boltffi_jni_exit(env, attached);
-        return (BoltFFICallbackHandle){0};
+        goto __boltffi_fail;
     }
 
     BoltFFICallbackHandle result = boltffi_create_callback_demo_child((uint64_t)__boltffi_return_handle);
+
     boltffi_jni_exit(env, attached);
     return result;
+__boltffi_fail:
+
+    boltffi_jni_clear_exception(env);
+    boltffi_jni_exit(env, attached);
+
+    return (BoltFFICallbackHandle){0};
 }
 
 static ___ListenerVTable g____ListenerVTable_vtable = {

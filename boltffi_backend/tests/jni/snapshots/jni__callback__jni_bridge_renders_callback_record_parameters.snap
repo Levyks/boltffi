@@ -284,27 +284,40 @@ static uint64_t ___ListenerVTable_clone(uint64_t handle) {
 static void ___ListenerVTable_on_point(uint64_t handle, ___Point point) {
     JNIEnv *env = NULL;
     int attached = 0;
-    if (!boltffi_jni_enter(&env, &attached)) {
 
+    jbyteArray __boltffi_point_array = NULL;
+    if (!boltffi_jni_enter(&env, &attached)) {
         return;
     }
 
-    jbyteArray __boltffi_point_array = boltffi_jni_record_to_byte_array(env, &point, (uintptr_t)sizeof(point));
+    __boltffi_point_array = boltffi_jni_record_to_byte_array(env, &point, (uintptr_t)sizeof(point));
     if (__boltffi_point_array == NULL) {
-
-        (*env)->DeleteLocalRef(env, __boltffi_point_array);
-        boltffi_jni_clear_exception(env);
-        boltffi_jni_exit(env, attached);
-
-        return;
+        goto __boltffi_fail;
     }
 
     (*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_on_point_method, (jlong)handle, __boltffi_point_array);
-
-        (*env)->DeleteLocalRef(env, __boltffi_point_array);
     if (boltffi_jni_clear_exception(env)) {
+        goto __boltffi_fail;
     }
+
+    if (__boltffi_point_array != NULL) {
+        (*env)->DeleteLocalRef(env, __boltffi_point_array);
+        __boltffi_point_array = NULL;
+    }
+
     boltffi_jni_exit(env, attached);
+    return;
+__boltffi_fail:
+
+    if (__boltffi_point_array != NULL) {
+        (*env)->DeleteLocalRef(env, __boltffi_point_array);
+        __boltffi_point_array = NULL;
+    }
+
+    boltffi_jni_clear_exception(env);
+    boltffi_jni_exit(env, attached);
+
+    return;
 }
 
 static ___ListenerVTable g____ListenerVTable_vtable = {

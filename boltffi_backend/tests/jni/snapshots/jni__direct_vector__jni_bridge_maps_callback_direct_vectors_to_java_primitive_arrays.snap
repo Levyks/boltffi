@@ -249,54 +249,48 @@ static uint64_t ___CollectorVTable_clone(uint64_t handle) {
 static void ___CollectorVTable_on_values(uint64_t handle, const int32_t *values_ptr, uintptr_t values_len) {
     JNIEnv *env = NULL;
     int attached = 0;
-    if (!boltffi_jni_enter(&env, &attached)) {
 
+    jintArray values = NULL;
+    if (!boltffi_jni_enter(&env, &attached)) {
         return;
     }
 
-    jintArray values = NULL;
     if (values_len > (uintptr_t)INT32_MAX) {
         boltffi_jni_throw_runtime(env, "BoltFFI vector argument too large for Java array");
-
-        if (values != NULL) {
-            (*env)->DeleteLocalRef(env, values);
-        }
-        boltffi_jni_clear_exception(env);
-        boltffi_jni_exit(env, attached);
-
-        return;
+        goto __boltffi_fail;
     }
     values = (*env)->NewIntArray(env, (jsize)values_len);
     if (values == NULL) {
-
-        if (values != NULL) {
-            (*env)->DeleteLocalRef(env, values);
-        }
-        boltffi_jni_clear_exception(env);
-        boltffi_jni_exit(env, attached);
-
-        return;
+        goto __boltffi_fail;
     }
     (*env)->SetIntArrayRegion(env, values, 0, (jsize)values_len, (const jint *)values_ptr);
     if ((*env)->ExceptionCheck(env)) {
-
-        if (values != NULL) {
-            (*env)->DeleteLocalRef(env, values);
-        }
-        boltffi_jni_clear_exception(env);
-        boltffi_jni_exit(env, attached);
-
-        return;
+        goto __boltffi_fail;
     }
 
     (*env)->CallStaticVoidMethod(env, g____CollectorVTable_class, g____CollectorVTable_on_values_method, (jlong)handle, values);
-
-        if (values != NULL) {
-            (*env)->DeleteLocalRef(env, values);
-        }
     if (boltffi_jni_clear_exception(env)) {
+        goto __boltffi_fail;
     }
+
+    if (values != NULL) {
+        (*env)->DeleteLocalRef(env, values);
+        values = NULL;
+    }
+
     boltffi_jni_exit(env, attached);
+    return;
+__boltffi_fail:
+
+    if (values != NULL) {
+        (*env)->DeleteLocalRef(env, values);
+        values = NULL;
+    }
+
+    boltffi_jni_clear_exception(env);
+    boltffi_jni_exit(env, attached);
+
+    return;
 }
 
 static ___CollectorVTable g____CollectorVTable_vtable = {
