@@ -598,6 +598,47 @@ fn jni_bridge_renders_async_callback_completion_shapes() {
 }
 
 #[test]
+fn jni_bridge_renders_c_style_enum_async_callback_completion_payloads() {
+    let files = files(
+        r#"
+            #[repr(u8)]
+            #[data]
+            pub enum Mode {
+                Fast = 1,
+                Slow = 2,
+            }
+
+            #[export]
+            pub trait Listener {
+                async fn mode(&self) -> Mode;
+            }
+            "#,
+    );
+    let header = files
+        .iter()
+        .find(|(path, _)| path == "jni/demo.h")
+        .map(|(_, contents)| contents)
+        .expect("C header file");
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    assert!(
+        header.contains("void (*mode)(uint64_t, void (*)(void *, FfiStatus, ___Mode), void *);")
+    );
+    [
+        "JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1complete_1Enum_1_1_1_1Mode(JNIEnv *env, jclass cls, jlong callback, jlong context, jbyte result)",
+        "void (*complete)(void *, FfiStatus, ___Mode) = (void (*)(void *, FfiStatus, ___Mode))callback;",
+        "complete((void *)context, (FfiStatus){.code = 0}, (___Mode)result);",
+        "complete((void *)context, (FfiStatus){.code = 1}, (___Mode){0});",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}\n{source}"));
+}
+
+#[test]
 fn jni_bridge_renders_async_callback_handle_completion_payloads() {
     let files = files(
         r#"
