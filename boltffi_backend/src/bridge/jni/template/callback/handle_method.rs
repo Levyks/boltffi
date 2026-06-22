@@ -5,9 +5,10 @@
 //! Java, validates the stored vtable, prepares the Java-provided arguments, and
 //! invokes the matching vtable slot.
 //!
-//! This module prepares that source view from `CallbackHandleMethod`. It shares
-//! native-method parameter views for arrays, records, and return conversion
-//! instead of creating callback-handle-specific copies of those rules.
+//! This module prepares the source view for that method body. It borrows the
+//! same parameter, array, record, and return views used by normal native methods,
+//! so a returned callback handle does not get a second conversion model just
+//! because the call starts from a `jlong` token.
 
 use crate::{
     bridge::{

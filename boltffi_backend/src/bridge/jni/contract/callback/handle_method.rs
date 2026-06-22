@@ -6,9 +6,15 @@
 //! for foreign callbacks.
 //!
 //! This module builds those handle-call methods from the same C callback slots
-//! used by the lower bridge. The method body takes the handle token, unwraps the
-//! stored callback, and dispatches through the callback vtable slot with the
-//! Java-provided arguments.
+//! used by the lower bridge. Each method takes the handle token, unwraps the
+//! stored callback, prepares the Java-provided arguments, and dispatches through
+//! the callback vtable slot.
+//!
+//! Keeping this here matters because returned callbacks are not foreign
+//! callbacks. A foreign callback is implemented by the JVM and handed to Rust.
+//! A returned callback is owned by Rust and called later by the JVM. Both use the
+//! same callback declaration, but the ownership and dispatch direction are
+//! different.
 
 use boltffi_binding::CallbackId;
 

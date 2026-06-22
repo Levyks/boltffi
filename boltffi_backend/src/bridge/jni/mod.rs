@@ -1,22 +1,23 @@
 //! JVM bridge layered above the C ABI bridge.
 //!
-//! The C bridge is the stable Rust-facing ABI. It knows the exported symbols,
-//! buffer ownership rules, callback vtables, stream protocols, async
-//! continuations, and direct-record layouts. That is enough for a C caller, but
-//! it is not enough for a JVM caller. JNI needs `Java_*` entry points, JVM method
-//! descriptors, Java arrays, global references, cached method ids, and cleanup
-//! that is tied to a live `JNIEnv`.
+//! The C bridge is the stable Rust-facing ABI. It knows the exported Rust
+//! symbols, buffer ownership rules, callback vtables, stream protocols, async
+//! continuations, and direct-record layouts. That contract is enough for C, but
+//! not for the JVM. A JVM caller needs `Java_*` entry points, JVM descriptors,
+//! Java arrays, global references, cached method ids, and cleanup tied to a live
+//! `JNIEnv`.
 //!
-//! This bridge exists to adapt one complete C bridge contract into that JVM
-//! shape. It does not lower `Bindings` again and it does not inspect Rust source.
-//! The flow is deliberately narrow: `JniBridge` receives a `CBridgeContract`,
-//! `contract` turns it into typed JNI facts, `name` owns JVM and JNI spelling,
-//! and `template` prints the final C source through Askama.
+//! This bridge exists so Java and Kotlin targets do not each rebuild that JNI
+//! layer. It adapts one complete `CBridgeContract` into typed JVM-facing facts,
+//! then renders one generated C source file. It does not lower `Bindings` again,
+//! inspect Rust source, or decide transport rules locally.
 //!
-//! Keeping this layer separate gives Java and Kotlin targets one shared JNI
-//! bridge instead of forcing each host language to rediscover callback
-//! ownership, byte-array borrowing, stream helper names, or `Java_*` symbol
-//! escaping.
+//! The flow is deliberately narrow. `JniBridge` receives the C bridge contract,
+//! `contract` turns it into JNI method, callback, closure, stream, and name
+//! contracts, `name` owns JVM and JNI spelling, and `template` prints the final
+//! source through Askama. That keeps callback ownership, byte-array borrowing,
+//! stream helper names, and `Java_*` escaping in one bridge instead of spreading
+//! them across every JVM host backend.
 
 mod bridge;
 mod contract;

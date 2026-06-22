@@ -7,17 +7,17 @@
 //! borrowed array lifetimes, callback method ids, `Java_*` symbols, and cleanup
 //! paths tied to `JNIEnv`.
 //!
-//! This module is the only place where that adaptation happens. It reads the C
-//! bridge contract, validates that every C shape has a JVM representation, and
-//! stores the result as typed values. Rendering code consumes those values; it
-//! does not inspect `TypeRef`, re-walk codec plans, or rebuild parameter groups
-//! from raw C fragments.
+//! This module is the adaptation boundary. It reads the C bridge contract,
+//! validates that every C shape has a JVM representation, and stores the result
+//! as typed values. Rendering code consumes those values. It does not inspect
+//! `TypeRef`, re-walk codec plans, or rebuild parameter groups from raw C
+//! fragments.
 //!
-//! The child modules split the contract by owned responsibility: `parameter`
-//! groups C arguments into Java parameters, `return_value` describes what Java
-//! receives, `callback` and `closure` model the two callback directions,
-//! `stream` keeps stream protocols together, and `record`, `scalar`, `bytes`,
-//! and `direct_vector` own the reusable ABI shapes shared by those paths.
+//! The child modules are split by the thing they own. `parameter` groups C
+//! arguments into Java parameters. `return_value` describes what Java receives.
+//! `callback` and `closure` model the two callback directions. `stream` keeps
+//! stream protocols together. `record`, `scalar`, `bytes`, and `direct_vector`
+//! own the reusable ABI shapes shared by those paths.
 
 mod bridge;
 mod bytes;

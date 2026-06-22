@@ -6,10 +6,11 @@
 //! C syntax stays in Askama templates, while Rust keeps the values typed before
 //! they reach those templates.
 //!
-//! This split keeps rendering honest. Template code may format a callback
-//! method, stream helper, closure trampoline, or native method, but it does not
-//! decide whether a value is encoded, direct, async, fallible, or borrowed. Those
-//! decisions are already present in the JNI contract.
+//! The split is intentional. Rust prepares typed values; Askama owns the shape of
+//! the generated C text. A template may format a callback method, stream helper,
+//! closure trampoline, or native method, but it does not decide whether a value
+//! is encoded, direct, async, fallible, or borrowed. Those decisions already live
+//! in the JNI contract.
 
 mod callback;
 mod closure;
