@@ -10,6 +10,10 @@
 
 #include {{ c_header }}
 
+{%- if uses_lifecycle %}
+{% include "bridge/jni/runtime.c" %}
+{%- endif %}
+
 {%- if uses_continuations %}
 {% include "bridge/jni/continuation.c" %}
 {%- endif %}
@@ -37,6 +41,10 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
 
 {%- if uses_callback_handles %}
 {% include "bridge/jni/callback.c" %}
+{%- endif %}
+
+{%- if uses_lifecycle %}
+{% include "bridge/jni/lifecycle.c" %}
 {%- endif %}
 
 {%- if checks_status %}

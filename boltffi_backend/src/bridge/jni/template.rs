@@ -21,6 +21,7 @@ struct SourceFileTemplate {
     uses_byte_arrays: bool,
     uses_record_arrays: bool,
     uses_exceptions: bool,
+    uses_lifecycle: bool,
     uses_continuations: bool,
     uses_callback_handles: bool,
     callback_clone_symbol: Identifier,
@@ -62,6 +63,7 @@ impl SourceFile {
                     || !method.record_arrays.is_empty()
             }),
             uses_continuations: methods.iter().any(|method| method.uses_continuations),
+            uses_lifecycle: methods.iter().any(|method| method.uses_continuations),
             uses_callback_handles: methods.iter().any(|method| method.returns_callback),
             callback_clone_symbol: JniSymbolName::native_method(
                 contract.class(),
