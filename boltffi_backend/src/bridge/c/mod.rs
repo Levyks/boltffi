@@ -12,8 +12,8 @@ pub(crate) mod syntax;
 mod template;
 
 pub use contract::{
-    CBridgeContract, Callback, Enum, EnumVariant, Field, Function, Parameter, Record,
-    SupportFunctions, Type,
+    CBridgeContract, Callback, ClosureParameter, Enum, EnumVariant, Field, Function, Parameter,
+    ParameterGroup, ParameterIndex, Record, SupportFunctions, Type,
 };
 pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
@@ -26,7 +26,7 @@ mod tests {
 
     use crate::core::bridge::BridgeBackend;
 
-    use super::CBridge;
+    use super::{CBridge, ParameterGroup};
 
     fn bindings(source: &str) -> boltffi_binding::Bindings<Native> {
         let file = syn::parse_str(source).expect("valid source fixture");
@@ -45,6 +45,12 @@ mod tests {
         let files = output.files();
         assert_eq!(files.len(), 1);
         files[0].contents().to_owned()
+    }
+
+    fn contract(source: &str) -> super::CBridgeContract {
+        let bindings = bindings(source);
+        let bridge = CBridge::default_header().expect("header bridge");
+        bridge.build_contract(&bindings).expect("C bridge contract")
     }
 
     #[test]
@@ -208,5 +214,34 @@ mod tests {
         ]
         .into_iter()
         .for_each(|signature| assert!(header.contains(signature), "{signature}\n{header}"));
+    }
+
+    #[test]
+    fn c_contract_groups_closure_parameter_triples() {
+        let contract = contract(
+            r#"
+            #[export]
+            pub fn install(callback: impl Fn(u32) -> u32) {}
+            "#,
+        );
+        let function = contract
+            .functions()
+            .iter()
+            .find(|function| function.name() == "boltffi_function_demo_install")
+            .expect("exported function");
+        let [ParameterGroup::Closure(closure)] = function.parameter_groups() else {
+            panic!("expected one closure parameter group");
+        };
+
+        assert_eq!(closure.name(), "callback");
+        assert_eq!(function.parameter(closure.call()).name(), "callback_call");
+        assert_eq!(
+            function.parameter(closure.context()).name(),
+            "callback_context"
+        );
+        assert_eq!(
+            function.parameter(closure.release()).name(),
+            "callback_release"
+        );
     }
 }

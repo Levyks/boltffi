@@ -91,6 +91,7 @@ pub struct Callback {
 pub struct Function {
     name: Identifier,
     params: Vec<Parameter>,
+    parameter_groups: Vec<ParameterGroup>,
     returns: Type,
 }
 
@@ -100,6 +101,42 @@ pub struct Function {
 pub struct Parameter {
     name: Identifier,
     ty: Type,
+    role: ParameterRole,
+}
+
+/// Position of a C ABI parameter in a function declaration.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub struct ParameterIndex {
+    index: usize,
+}
+
+/// Source-level parameter group represented by one or more C ABI parameters.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ParameterGroup {
+    /// One source parameter maps to one C ABI parameter.
+    Value(ParameterIndex),
+    /// One closure parameter maps to call, context, and release C ABI parameters.
+    Closure(ClosureParameter),
+}
+
+/// C ABI parameters that carry one closure argument.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct ClosureParameter {
+    name: Identifier,
+    call: ParameterIndex,
+    context: ParameterIndex,
+    release: ParameterIndex,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ParameterRole {
+    Value,
+    ClosureCall(Identifier),
+    ClosureContext(Identifier),
+    ClosureRelease(Identifier),
 }
 
 /// A C ABI type.
@@ -709,6 +746,16 @@ impl Function {
         &self.params
     }
 
+    /// Returns source-level parameter groups in declaration order.
+    pub fn parameter_groups(&self) -> &[ParameterGroup] {
+        &self.parameter_groups
+    }
+
+    /// Returns the C ABI parameter at the given position.
+    pub fn parameter(&self, index: ParameterIndex) -> &Parameter {
+        &self.params[index.position()]
+    }
+
     /// Returns the C return type.
     pub fn returns(&self) -> &Type {
         &self.returns
@@ -941,9 +988,11 @@ impl Function {
     }
 
     fn new(name: impl Into<String>, params: Vec<Parameter>, returns: Type) -> Result<Self> {
+        let parameter_groups = ParameterGroup::from_params(&params)?;
         Ok(Self {
             name: Identifier::parse(name)?,
             params,
+            parameter_groups,
             returns,
         })
     }
@@ -963,10 +1012,154 @@ impl Parameter {
 
 impl Parameter {
     fn new(name: impl Into<String>, ty: Type) -> Result<Self> {
+        Self::with_role(name, ty, ParameterRole::Value)
+    }
+
+    fn closure_call(name: &str, ty: Type) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_call"),
+            ty,
+            ParameterRole::ClosureCall(Identifier::escape(name)?),
+        )
+    }
+
+    fn closure_context(name: &str) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_context"),
+            Type::MutPointer(Box::new(Type::Void)),
+            ParameterRole::ClosureContext(Identifier::escape(name)?),
+        )
+    }
+
+    fn closure_release(name: &str) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_release"),
+            Type::FunctionPointer {
+                returns: Box::new(Type::Void),
+                params: vec![Type::MutPointer(Box::new(Type::Void))],
+            },
+            ParameterRole::ClosureRelease(Identifier::escape(name)?),
+        )
+    }
+
+    fn with_role(name: impl Into<String>, ty: Type, role: ParameterRole) -> Result<Self> {
         Ok(Self {
             name: Identifier::escape(name)?,
             ty,
+            role,
         })
+    }
+}
+
+impl ParameterIndex {
+    /// Returns the zero-based C ABI parameter position.
+    pub const fn position(self) -> usize {
+        self.index
+    }
+
+    const fn new(index: usize) -> Self {
+        Self { index }
+    }
+}
+
+impl ParameterGroup {
+    fn from_params(params: &[Parameter]) -> Result<Vec<Self>> {
+        let mut index = 0;
+        std::iter::from_fn(|| {
+            (index < params.len()).then(|| {
+                let group = Self::from_param(params, index);
+                index += group.as_ref().map_or(1, Self::width);
+                group
+            })
+        })
+        .collect()
+    }
+
+    fn from_param(params: &[Parameter], index: usize) -> Result<Self> {
+        match &params[index].role {
+            ParameterRole::Value => Ok(Self::Value(ParameterIndex::new(index))),
+            ParameterRole::ClosureCall(name) => {
+                ClosureParameter::from_params(params, index, name).map(Self::Closure)
+            }
+            ParameterRole::ClosureContext(_) | ParameterRole::ClosureRelease(_) => {
+                Err(Error::BrokenBridgeContract {
+                    bridge: C_BRIDGE_CONTRACT,
+                    invariant: "closure parameter group does not start with call parameter",
+                })
+            }
+        }
+    }
+
+    fn width(&self) -> usize {
+        match self {
+            Self::Value(_) => 1,
+            Self::Closure(_) => 3,
+        }
+    }
+}
+
+impl ClosureParameter {
+    /// Returns the source parameter name.
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    /// Returns the call function pointer parameter position.
+    pub const fn call(&self) -> ParameterIndex {
+        self.call
+    }
+
+    /// Returns the callback context parameter position.
+    pub const fn context(&self) -> ParameterIndex {
+        self.context
+    }
+
+    /// Returns the callback release function parameter position.
+    pub const fn release(&self) -> ParameterIndex {
+        self.release
+    }
+}
+
+impl ClosureParameter {
+    fn from_params(params: &[Parameter], call: usize, name: &Identifier) -> Result<Self> {
+        let context = call + 1;
+        let release = call + 2;
+        let context_role = params.get(context).map(|parameter| &parameter.role).ok_or(
+            Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "closure parameter group is missing context parameter",
+            },
+        )?;
+        let release_role = params.get(release).map(|parameter| &parameter.role).ok_or(
+            Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "closure parameter group is missing release parameter",
+            },
+        )?;
+
+        if !context_role.is_closure_context(name) || !release_role.is_closure_release(name) {
+            return Err(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "closure parameter group has mismatched context or release parameter",
+            });
+        }
+
+        Ok(Self {
+            name: name.clone(),
+            call: ParameterIndex::new(call),
+            context: ParameterIndex::new(context),
+            release: ParameterIndex::new(release),
+        })
+    }
+}
+
+impl ParameterRole {
+    fn is_closure_context(&self, expected: &Identifier) -> bool {
+        matches!(self, Self::ClosureContext(name) if name == expected)
+    }
+
+    fn is_closure_release(&self, expected: &Identifier) -> bool {
+        matches!(self, Self::ClosureRelease(name) if name == expected)
     }
 }
 
@@ -1910,8 +2103,8 @@ impl Signature {
         D::Opposite: ParamDirection<Native>,
     {
         Ok(vec![
-            Parameter::new(
-                format!("{name}_call"),
+            Parameter::closure_call(
+                name,
                 Type::FunctionPointer {
                     returns: Box::new(self.callback_return_type(returns, error)?),
                     params: std::iter::once(Type::MutPointer(Box::new(Type::Void)))
@@ -1924,17 +2117,8 @@ impl Signature {
                         .collect(),
                 },
             )?,
-            Parameter::new(
-                format!("{name}_context"),
-                Type::MutPointer(Box::new(Type::Void)),
-            )?,
-            Parameter::new(
-                format!("{name}_release"),
-                Type::FunctionPointer {
-                    returns: Box::new(Type::Void),
-                    params: vec![Type::MutPointer(Box::new(Type::Void))],
-                },
-            )?,
+            Parameter::closure_context(name)?,
+            Parameter::closure_release(name)?,
         ])
     }
 
