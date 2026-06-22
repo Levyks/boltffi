@@ -2,8 +2,9 @@ use crate::{
     bridge::{
         c::{self, ArgumentList, Identifier, TypeFragment},
         jni::{
-            CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackHandleArgument,
-            CallbackRecordArgument, JvmMethodReturn,
+            CallbackArgument, CallbackBytesArgument, CallbackCParameter,
+            CallbackCompletionArgument, CallbackHandleArgument, CallbackRecordArgument,
+            JvmMethodReturn,
         },
     },
     core::{Error, Result},
@@ -89,7 +90,11 @@ impl CallbackMethod {
 
     /// Returns the arguments passed to the static JVM callback method.
     pub fn jni_arguments(&self) -> ArgumentList {
-        ArgumentList::from_iter(self.arguments.iter().map(CallbackArgument::jni_argument))
+        ArgumentList::from_iter(
+            self.arguments
+                .iter()
+                .flat_map(CallbackArgument::jni_arguments),
+        )
     }
 
     /// Returns byte-array callback arguments.
@@ -113,6 +118,14 @@ impl CallbackMethod {
         self.arguments
             .iter()
             .filter_map(CallbackArgument::callback_handle)
+            .collect()
+    }
+
+    /// Returns async callback completion arguments.
+    pub fn completions(&self) -> Vec<CallbackCompletionArgument<'_>> {
+        self.arguments
+            .iter()
+            .filter_map(CallbackArgument::completion)
             .collect()
     }
 

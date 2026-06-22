@@ -1,6 +1,6 @@
 use crate::{
     bridge::{
-        c::{self, Expression, Identifier, TypeFragment},
+        c::{self, ArgumentList, Expression, Identifier, Literal, Statement, TypeFragment},
         jni::JniType,
     },
     core::{Error, Result},
@@ -21,6 +21,7 @@ pub struct CallbackArgument {
 pub struct CallbackCParameter {
     name: Identifier,
     ty: TypeFragment,
+    declaration: Statement,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +43,11 @@ enum CallbackArgumentKind {
         handle: Identifier,
         parameter: CallbackCParameter,
     },
+    Completion {
+        callback: CallbackCParameter,
+        context: CallbackCParameter,
+        payload: Option<TypeFragment>,
+    },
 }
 
 impl CallbackArgument {
@@ -54,6 +60,9 @@ impl CallbackArgument {
             } => vec![pointer.clone(), length.clone()],
             CallbackArgumentKind::Record { parameter, .. }
             | CallbackArgumentKind::CallbackHandle { parameter, .. } => vec![parameter.clone()],
+            CallbackArgumentKind::Completion {
+                callback, context, ..
+            } => vec![callback.clone(), context.clone()],
         }
     }
 
@@ -63,23 +72,37 @@ impl CallbackArgument {
             CallbackArgumentKind::Value { jni_type, .. } => jni_type.signature(),
             CallbackArgumentKind::Bytes { .. } | CallbackArgumentKind::Record { .. } => "[B",
             CallbackArgumentKind::CallbackHandle { .. } => "J",
+            CallbackArgumentKind::Completion { .. } => "JJ",
         }
     }
 
-    /// Returns the expression passed to the static JVM callback method.
-    pub fn jni_argument(&self) -> Expression {
+    /// Returns the expressions passed to the static JVM callback method.
+    pub fn jni_arguments(&self) -> Vec<Expression> {
         match &self.kind {
             CallbackArgumentKind::Value {
                 parameter,
                 jni_type,
-            } => Expression::cast(
+            } => vec![Expression::cast(
                 jni_type.as_type_fragment(),
                 Expression::identifier(parameter.name.clone()),
-            ),
-            CallbackArgumentKind::Bytes { name, .. } => Expression::identifier(name.clone()),
-            CallbackArgumentKind::Record { array, .. } => Expression::identifier(array.clone()),
+            )],
+            CallbackArgumentKind::Bytes { name, .. } => {
+                vec![Expression::identifier(name.clone())]
+            }
+            CallbackArgumentKind::Record { array, .. } => {
+                vec![Expression::identifier(array.clone())]
+            }
             CallbackArgumentKind::CallbackHandle { handle, .. } => {
-                Expression::identifier(handle.clone())
+                vec![Expression::identifier(handle.clone())]
+            }
+            CallbackArgumentKind::Completion {
+                callback, context, ..
+            } => {
+                let jlong = TypeFragment::new("jlong");
+                vec![
+                    Expression::cast(jlong.clone(), Expression::identifier(callback.name.clone())),
+                    Expression::cast(jlong, Expression::identifier(context.name.clone())),
+                ]
             }
         }
     }
@@ -100,6 +123,7 @@ impl CallbackArgument {
             CallbackArgumentKind::Record { .. } | CallbackArgumentKind::CallbackHandle { .. } => {
                 None
             }
+            CallbackArgumentKind::Completion { .. } => None,
         }
     }
 
@@ -108,6 +132,7 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { .. } | CallbackArgumentKind::Bytes { .. } => None,
             CallbackArgumentKind::CallbackHandle { .. } => None,
+            CallbackArgumentKind::Completion { .. } => None,
             CallbackArgumentKind::Record { array, parameter } => Some(CallbackRecordArgument {
                 array,
                 parameter: &parameter.name,
@@ -120,13 +145,47 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { .. }
             | CallbackArgumentKind::Bytes { .. }
-            | CallbackArgumentKind::Record { .. } => None,
+            | CallbackArgumentKind::Record { .. }
+            | CallbackArgumentKind::Completion { .. } => None,
             CallbackArgumentKind::CallbackHandle { handle, parameter } => {
                 Some(CallbackHandleArgument {
                     handle,
                     parameter: &parameter.name,
                 })
             }
+        }
+    }
+
+    /// Returns completion callback details for async callback methods.
+    pub fn completion(&self) -> Option<CallbackCompletionArgument<'_>> {
+        match &self.kind {
+            CallbackArgumentKind::Value { .. }
+            | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::Record { .. }
+            | CallbackArgumentKind::CallbackHandle { .. } => None,
+            CallbackArgumentKind::Completion {
+                callback,
+                context,
+                payload,
+            } => Some(CallbackCompletionArgument {
+                callback: &callback.name,
+                failure_arguments: ArgumentList::from_iter(
+                    [
+                        Expression::identifier(context.name.clone()),
+                        Expression::cast(
+                            TypeFragment::new("FfiStatus"),
+                            Expression::literal(Literal::status_failure()),
+                        ),
+                    ]
+                    .into_iter()
+                    .chain(payload.iter().map(|payload| {
+                        Expression::cast(
+                            payload.clone(),
+                            Expression::literal(Literal::compound_zero()),
+                        )
+                    })),
+                ),
+            }),
         }
     }
 
@@ -137,6 +196,9 @@ impl CallbackArgument {
         match group {
             c::ParameterGroup::Value(index) => Self::from_parameter(slot.parameter(*index)),
             c::ParameterGroup::ByteSlice(bytes) => Self::from_bytes(slot, bytes),
+            c::ParameterGroup::CallbackCompletion(completion) => {
+                Self::from_completion(slot, completion)
+            }
             c::ParameterGroup::Continuation(_) => Err(Error::UnsupportedBridge {
                 bridge: JNI_BRIDGE,
                 shape: "callback continuation parameter",
@@ -182,6 +244,46 @@ impl CallbackArgument {
             },
         })
     }
+
+    fn from_completion(
+        slot: &c::CallbackSlot,
+        completion: &c::CallbackCompletionParameter,
+    ) -> Result<Self> {
+        let callback = slot.parameter(completion.callback());
+        let payload = match callback.ty() {
+            c::Type::FunctionPointer { params, .. } => match params.as_slice() {
+                [c::Type::MutPointer(context), c::Type::Status]
+                    if matches!(context.as_ref(), c::Type::Void) =>
+                {
+                    None
+                }
+                [c::Type::MutPointer(context), c::Type::Status, payload]
+                    if matches!(context.as_ref(), c::Type::Void) =>
+                {
+                    Some(TypeFragment::anonymous(payload)?)
+                }
+                _ => {
+                    return Err(Error::BrokenBridgeContract {
+                        bridge: JNI_BRIDGE,
+                        invariant: "callback completion function pointer has unexpected parameters",
+                    });
+                }
+            },
+            _ => {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: JNI_BRIDGE,
+                    invariant: "callback completion parameter is not a function pointer",
+                });
+            }
+        };
+        Ok(Self {
+            kind: CallbackArgumentKind::Completion {
+                callback: CallbackCParameter::from_parameter(callback)?,
+                context: CallbackCParameter::from_parameter(slot.parameter(completion.context()))?,
+                payload,
+            },
+        })
+    }
 }
 
 impl CallbackCParameter {
@@ -195,10 +297,16 @@ impl CallbackCParameter {
         &self.ty
     }
 
+    /// Returns this parameter as a C declaration.
+    pub fn declaration(&self) -> &Statement {
+        &self.declaration
+    }
+
     fn from_parameter(parameter: &c::Parameter) -> Result<Self> {
         Ok(Self {
             name: Identifier::parse(parameter.name())?,
             ty: TypeFragment::anonymous(parameter.ty())?,
+            declaration: TypeFragment::declaration(parameter.ty(), parameter.name())?,
         })
     }
 }
@@ -257,6 +365,14 @@ pub struct CallbackHandleArgument<'argument> {
     parameter: &'argument Identifier,
 }
 
+/// Completion callback invoked when async JVM callback dispatch fails.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct CallbackCompletionArgument<'argument> {
+    callback: &'argument Identifier,
+    failure_arguments: ArgumentList,
+}
+
 impl CallbackHandleArgument<'_> {
     /// Returns the local JVM callback-handle token.
     pub fn handle(&self) -> &Identifier {
@@ -266,5 +382,17 @@ impl CallbackHandleArgument<'_> {
     /// Returns the C callback-handle parameter.
     pub fn parameter(&self) -> &Identifier {
         self.parameter
+    }
+}
+
+impl CallbackCompletionArgument<'_> {
+    /// Returns the C completion callback parameter.
+    pub fn callback(&self) -> &Identifier {
+        self.callback
+    }
+
+    /// Returns arguments that complete the async callback with failure.
+    pub fn failure_arguments(&self) -> &ArgumentList {
+        &self.failure_arguments
     }
 }

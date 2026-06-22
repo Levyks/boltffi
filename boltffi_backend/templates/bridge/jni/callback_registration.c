@@ -35,10 +35,13 @@ static uint64_t {{ callback.clone }}(uint64_t handle) {
 
 {%- for method in callback.methods %}
 
-static {{ method.c_return_type }} {{ method.function }}({% for parameter in method.c_parameters %}{{ parameter.c_type }} {{ parameter.name }}{% if !loop.last %}, {% endif %}{% endfor %}) {
+static {{ method.c_return_type }} {{ method.function }}({% for parameter in method.c_parameters %}{{ parameter.declaration }}{% if !loop.last %}, {% endif %}{% endfor %}) {
     JNIEnv *env = NULL;
     int attached = 0;
     if (!boltffi_jni_enter(&env, &attached)) {
+{%- for completion in method.completions %}
+        {{ completion.callback }}({{ completion.failure_arguments }});
+{%- endfor %}
 {%- if method.returns_void %}
         return;
 {%- else %}
@@ -50,6 +53,9 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
     if ({{ bytes.name }} == NULL) {
         boltffi_jni_clear_exception(env);
         boltffi_jni_exit(attached);
+{%- for completion in method.completions %}
+        {{ completion.callback }}({{ completion.failure_arguments }});
+{%- endfor %}
 {%- if method.returns_void %}
         return;
 {%- else %}
@@ -68,6 +74,9 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- endfor %}
         boltffi_jni_clear_exception(env);
         boltffi_jni_exit(attached);
+{%- for completion in method.completions %}
+        {{ completion.callback }}({{ completion.failure_arguments }});
+{%- endfor %}
 {%- if method.returns_void %}
         return;
 {%- else %}
@@ -89,6 +98,9 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- endfor %}
         boltffi_jni_clear_exception(env);
         boltffi_jni_exit(attached);
+{%- for completion in method.completions %}
+        {{ completion.callback }}({{ completion.failure_arguments }});
+{%- endfor %}
 {%- if method.returns_void %}
         return;
 {%- else %}
@@ -104,7 +116,11 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- for record in method.record_arrays %}
     (*env)->DeleteLocalRef(env, {{ record.array }});
 {%- endfor %}
-    boltffi_jni_clear_exception(env);
+    if (boltffi_jni_clear_exception(env)) {
+{%- for completion in method.completions %}
+        {{ completion.callback }}({{ completion.failure_arguments }});
+{%- endfor %}
+    }
     boltffi_jni_exit(attached);
 {%- else %}
 {%- if method.returns_byte_array %}

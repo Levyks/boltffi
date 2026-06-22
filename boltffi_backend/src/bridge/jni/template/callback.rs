@@ -1,8 +1,8 @@
 use crate::bridge::{
-    c::{ArgumentList, Expression, Identifier, Literal, TypeFragment},
+    c::{ArgumentList, Expression, Identifier, Literal, Statement, TypeFragment},
     jni::{
-        CallbackBytesArgument, CallbackCParameter, CallbackHandleArgument, CallbackMethod,
-        CallbackRecordArgument, CallbackRegistration,
+        CallbackBytesArgument, CallbackCParameter, CallbackCompletionArgument,
+        CallbackHandleArgument, CallbackMethod, CallbackRecordArgument, CallbackRegistration,
     },
 };
 
@@ -37,12 +37,12 @@ pub struct CallbackMethodView {
     pub byte_arrays: Vec<CallbackBytesArgumentView>,
     pub record_arrays: Vec<CallbackRecordArgumentView>,
     pub callback_handles: Vec<CallbackHandleArgumentView>,
+    pub completions: Vec<CallbackCompletionArgumentView>,
     pub jni_arguments: ArgumentList,
 }
 
 pub struct CallbackCParameterView {
-    pub name: Identifier,
-    pub c_type: TypeFragment,
+    pub declaration: Statement,
 }
 
 pub struct CallbackBytesArgumentView {
@@ -59,6 +59,11 @@ pub struct CallbackRecordArgumentView {
 pub struct CallbackHandleArgumentView {
     pub handle: Identifier,
     pub parameter: Identifier,
+}
+
+pub struct CallbackCompletionArgumentView {
+    pub callback: Identifier,
+    pub failure_arguments: ArgumentList,
 }
 
 impl CallbackRegistrationView {
@@ -120,6 +125,11 @@ impl CallbackMethodView {
                 .iter()
                 .map(CallbackHandleArgumentView::from_argument)
                 .collect(),
+            completions: method
+                .completions()
+                .iter()
+                .map(CallbackCompletionArgumentView::from_argument)
+                .collect(),
             jni_arguments: method.jni_arguments(),
         }
     }
@@ -128,8 +138,7 @@ impl CallbackMethodView {
 impl CallbackCParameterView {
     pub fn from_parameter(parameter: &CallbackCParameter) -> Self {
         Self {
-            name: parameter.name().clone(),
-            c_type: parameter.ty().clone(),
+            declaration: parameter.declaration().clone(),
         }
     }
 }
@@ -158,6 +167,15 @@ impl CallbackHandleArgumentView {
         Self {
             handle: argument.handle().clone(),
             parameter: argument.parameter().clone(),
+        }
+    }
+}
+
+impl CallbackCompletionArgumentView {
+    pub fn from_argument(argument: &CallbackCompletionArgument<'_>) -> Self {
+        Self {
+            callback: argument.callback().clone(),
+            failure_arguments: argument.failure_arguments().clone(),
         }
     }
 }

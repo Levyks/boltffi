@@ -11,11 +11,11 @@ mod template;
 pub use bridge::JniBridge;
 pub use contract::{
     BytesParameter, CallbackArgument, CallbackBytesArgument, CallbackCParameter,
-    CallbackHandleArgument, CallbackMethod, CallbackParameter, CallbackRecordArgument,
-    CallbackRegistration, CallbackReturn, ClosureArgument, ClosureParameter, ClosureRegistration,
-    ContinuationParameter, JniBridgeContract, JniType, JvmMethodReturn, NativeMethod,
-    NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
-    ScalarParameter, ScalarReturn,
+    CallbackCompletionArgument, CallbackHandleArgument, CallbackMethod, CallbackParameter,
+    CallbackRecordArgument, CallbackRegistration, CallbackReturn, ClosureArgument,
+    ClosureParameter, ClosureRegistration, ContinuationParameter, JniBridgeContract, JniType,
+    JvmMethodReturn, NativeMethod, NativeParameter, NativeParameterKind, NativeReturn,
+    RecordParameter, RecordValue, ScalarParameter, ScalarReturn,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -379,7 +379,7 @@ mod tests {
 
         assert!(header.contains("void (*on_name)(uint64_t, const uint8_t *, uintptr_t);"));
         assert!(source.contains(
-            "static void ___ListenerVTable_on_name(uint64_t handle, const uint8_t * name_ptr, uintptr_t name_len)"
+            "static void ___ListenerVTable_on_name(uint64_t handle, const uint8_t *name_ptr, uintptr_t name_len)"
         ));
         assert!(source.contains(
             "jbyteArray name = boltffi_jni_bytes_to_byte_array(env, name_ptr, name_len);"
@@ -555,6 +555,46 @@ mod tests {
         assert!(
             source.contains(
                 "GetStaticMethodID(env, g____ListenerVTable_class, \"point\", \"(J)[B\")"
+            )
+        );
+    }
+
+    #[test]
+    fn jni_bridge_renders_async_callback_completions() {
+        let files = files(
+            r#"
+            #[export]
+            pub trait Listener {
+                async fn load(&self, key: u32) -> String;
+            }
+            "#,
+        );
+        let header = files
+            .iter()
+            .find(|(path, _)| path == "jni/demo.h")
+            .map(|(_, contents)| contents)
+            .expect("C header file");
+        let source = files
+            .iter()
+            .find(|(path, _)| path == "jni/jni_glue.c")
+            .map(|(_, contents)| contents)
+            .expect("JNI source file");
+
+        assert!(header.contains(
+            "void (*load)(uint64_t, uint32_t, void (*)(void *, FfiStatus, FfiBuf_u8), void *);"
+        ));
+        assert!(
+            source.contains("static void ___ListenerVTable_load(uint64_t handle, uint32_t key,")
+        );
+        assert!(source.contains("void (*complete)(void *, FfiStatus, FfiBuf_u8)"));
+        assert!(source.contains("void *complete_context"));
+        assert!(source.contains("(*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_load_method, (jlong)handle, (jint)key, (jlong)complete, (jlong)complete_context);"));
+        assert!(
+            source.contains("complete(complete_context, (FfiStatus){.code = 1}, (FfiBuf_u8){0});")
+        );
+        assert!(
+            source.contains(
+                "GetStaticMethodID(env, g____ListenerVTable_class, \"load\", \"(JIJJ)V\")"
             )
         );
     }

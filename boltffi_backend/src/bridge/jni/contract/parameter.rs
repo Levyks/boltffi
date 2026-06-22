@@ -6,8 +6,10 @@ use crate::{
             ContinuationParameter, RecordParameter, ScalarParameter,
         },
     },
-    core::Result,
+    core::{Error, Result},
 };
+
+const JNI_BRIDGE: &str = "jni";
 
 /// JNI parameter accepted by one native method.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,6 +138,10 @@ impl NativeParameter {
                     kind: NativeParameterKind::Bytes(bytes),
                 })
             }
+            c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback completion parameter group cannot appear on a JNI native method",
+            }),
             c::ParameterGroup::Continuation(continuation) => {
                 ContinuationParameter::from_c_group(continuation, function).map(|continuation| {
                     Self {

@@ -99,8 +99,8 @@ impl CallbackSlot {
         let parameters = std::iter::once(Parameter::new("handle", Type::Uint64)?)
             .chain(method_parameters)
             .chain([
-                Parameter::new("complete", completion)?,
-                Parameter::new("complete_context", Type::MutPointer(Box::new(Type::Void)))?,
+                Parameter::callback_completion("complete", completion)?,
+                Parameter::callback_completion_context("complete")?,
             ])
             .collect();
         Self::new(

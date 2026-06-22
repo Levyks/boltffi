@@ -2,8 +2,8 @@ use crate::core::{Error, Result};
 
 use super::super::C_BRIDGE_CONTRACT;
 use super::{
-    ByteSliceParameter, ClosureParameter, ContinuationParameter, Parameter, ParameterIndex,
-    ParameterRole,
+    ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ContinuationParameter,
+    Parameter, ParameterIndex, ParameterRole,
 };
 
 /// Source-level parameter group represented by one or more C ABI parameters.
@@ -14,6 +14,8 @@ pub enum ParameterGroup {
     Value(ParameterIndex),
     /// One source parameter maps to a borrowed byte pointer and byte length.
     ByteSlice(ByteSliceParameter),
+    /// One async callback completion maps to callback and context parameters.
+    CallbackCompletion(CallbackCompletionParameter),
     /// One poll continuation maps to callback data and a function pointer.
     Continuation(ContinuationParameter),
     /// One closure parameter maps to call, context, and release C ABI parameters.
@@ -44,6 +46,14 @@ impl ParameterGroup {
                 bridge: C_BRIDGE_CONTRACT,
                 invariant: "byte slice parameter group does not start with pointer parameter",
             }),
+            ParameterRole::CallbackCompletionCallback(name) => {
+                CallbackCompletionParameter::from_params(params, index, name)
+                    .map(Self::CallbackCompletion)
+            }
+            ParameterRole::CallbackCompletionContext(_) => Err(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "callback completion parameter group does not start with callback parameter",
+            }),
             ParameterRole::ContinuationData(name) => {
                 ContinuationParameter::from_params(params, index, name).map(Self::Continuation)
             }
@@ -67,6 +77,7 @@ impl ParameterGroup {
         match self {
             Self::Value(_) => 1,
             Self::ByteSlice(_) => 2,
+            Self::CallbackCompletion(_) => 2,
             Self::Continuation(_) => 2,
             Self::Closure(_) => 3,
         }

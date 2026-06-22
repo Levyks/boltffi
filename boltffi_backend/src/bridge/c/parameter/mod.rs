@@ -1,4 +1,5 @@
 mod byte_slice;
+mod callback_completion;
 mod closure;
 mod continuation;
 mod group;
@@ -10,6 +11,7 @@ use boltffi_binding::ClosureSignature;
 use super::{Identifier, Type};
 
 pub use byte_slice::ByteSliceParameter;
+pub use callback_completion::CallbackCompletionParameter;
 pub use closure::ClosureParameter;
 pub use continuation::ContinuationParameter;
 pub use group::ParameterGroup;
@@ -35,6 +37,8 @@ enum ParameterRole {
     Value,
     BytePointer(Identifier),
     ByteLength(Identifier),
+    CallbackCompletionCallback(Identifier),
+    CallbackCompletionContext(Identifier),
     ContinuationData(Identifier),
     ContinuationCallback(Identifier),
     ClosureCall {
@@ -66,6 +70,24 @@ impl Parameter {
             format!("{name}_len"),
             Type::PointerWidth,
             ParameterRole::ByteLength(Identifier::escape(name)?),
+        )
+    }
+
+    /// Creates the callback function pointer in an async callback completion group.
+    pub fn callback_completion(name: &str, ty: Type) -> Result<Self> {
+        Self::with_role(
+            name,
+            ty,
+            ParameterRole::CallbackCompletionCallback(Identifier::escape(name)?),
+        )
+    }
+
+    /// Creates the context pointer in an async callback completion group.
+    pub fn callback_completion_context(name: &str) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_context"),
+            Type::MutPointer(Box::new(Type::Void)),
+            ParameterRole::CallbackCompletionContext(Identifier::escape(name)?),
         )
     }
 
@@ -156,6 +178,10 @@ impl ParameterIndex {
 impl ParameterRole {
     fn is_byte_length(&self, expected: &Identifier) -> bool {
         matches!(self, Self::ByteLength(name) if name == expected)
+    }
+
+    fn is_callback_completion_context(&self, expected: &Identifier) -> bool {
+        matches!(self, Self::CallbackCompletionContext(name) if name == expected)
     }
 
     fn is_continuation_callback(&self, expected: &Identifier) -> bool {

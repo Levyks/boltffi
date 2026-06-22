@@ -14,9 +14,9 @@ mod scalar;
 pub use bridge::JniBridgeContract;
 pub use bytes::BytesParameter;
 pub use callback::{
-    CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackHandleArgument,
-    CallbackMethod, CallbackParameter, CallbackRecordArgument, CallbackRegistration,
-    CallbackReturn,
+    CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackCompletionArgument,
+    CallbackHandleArgument, CallbackMethod, CallbackParameter, CallbackRecordArgument,
+    CallbackRegistration, CallbackReturn,
 };
 pub use closure::{ClosureArgument, ClosureParameter, ClosureRegistration};
 pub use continuation::ContinuationParameter;

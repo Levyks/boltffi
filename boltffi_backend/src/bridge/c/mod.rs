@@ -26,8 +26,8 @@ pub use function::Function;
 pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use parameter::{
-    ByteSliceParameter, ClosureParameter, ContinuationParameter, Parameter, ParameterGroup,
-    ParameterIndex,
+    ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ContinuationParameter,
+    Parameter, ParameterGroup, ParameterIndex,
 };
 pub use record::{Field, Record};
 pub use support::SupportFunctions;
@@ -396,6 +396,45 @@ mod tests {
         assert_eq!(
             function.parameter(continuation.callback()).name(),
             "callback"
+        );
+    }
+
+    #[test]
+    fn c_contract_groups_async_callback_completions() {
+        let contract = contract(
+            r#"
+            #[export]
+            pub trait Listener {
+                async fn load(&self, key: u32) -> String;
+            }
+            "#,
+        );
+        let callback = contract
+            .callbacks()
+            .iter()
+            .find(|callback| callback.vtable().name() == "___ListenerVTable")
+            .expect("callback vtable");
+        let method = callback
+            .methods()
+            .iter()
+            .find(|method| method.name().as_str() == "load")
+            .expect("async callback method");
+
+        assert!(matches!(method.returns(), Type::Void));
+        let [
+            ParameterGroup::Value(_),
+            ParameterGroup::Value(_),
+            ParameterGroup::CallbackCompletion(completion),
+        ] = method.parameter_groups()
+        else {
+            panic!("expected handle, key, and callback completion groups");
+        };
+
+        assert_eq!(completion.name(), "complete");
+        assert_eq!(method.parameter(completion.callback()).name(), "complete");
+        assert_eq!(
+            method.parameter(completion.context()).name(),
+            "complete_context"
         );
     }
 }
