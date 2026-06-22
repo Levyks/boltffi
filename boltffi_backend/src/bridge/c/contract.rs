@@ -117,8 +117,19 @@ pub struct ParameterIndex {
 pub enum ParameterGroup {
     /// One source parameter maps to one C ABI parameter.
     Value(ParameterIndex),
+    /// One source parameter maps to a borrowed byte pointer and byte length.
+    ByteSlice(ByteSliceParameter),
     /// One closure parameter maps to call, context, and release C ABI parameters.
     Closure(ClosureParameter),
+}
+
+/// C ABI parameters that carry one borrowed byte slice argument.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct ByteSliceParameter {
+    name: Identifier,
+    pointer: ParameterIndex,
+    length: ParameterIndex,
 }
 
 /// C ABI parameters that carry one closure argument.
@@ -134,6 +145,8 @@ pub struct ClosureParameter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ParameterRole {
     Value,
+    BytePointer(Identifier),
+    ByteLength(Identifier),
     ClosureCall(Identifier),
     ClosureContext(Identifier),
     ClosureRelease(Identifier),
@@ -1015,6 +1028,22 @@ impl Parameter {
         Self::with_role(name, ty, ParameterRole::Value)
     }
 
+    fn byte_pointer(name: &str) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_ptr"),
+            Type::ConstPointer(Box::new(Type::Uint8)),
+            ParameterRole::BytePointer(Identifier::escape(name)?),
+        )
+    }
+
+    fn byte_length(name: &str) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_len"),
+            Type::PointerWidth,
+            ParameterRole::ByteLength(Identifier::escape(name)?),
+        )
+    }
+
     fn closure_call(name: &str, ty: Type) -> Result<Self> {
         Self::with_role(
             format!("{name}_call"),
@@ -1078,6 +1107,13 @@ impl ParameterGroup {
     fn from_param(params: &[Parameter], index: usize) -> Result<Self> {
         match &params[index].role {
             ParameterRole::Value => Ok(Self::Value(ParameterIndex::new(index))),
+            ParameterRole::BytePointer(name) => {
+                ByteSliceParameter::from_params(params, index, name).map(Self::ByteSlice)
+            }
+            ParameterRole::ByteLength(_) => Err(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "byte slice parameter group does not start with pointer parameter",
+            }),
             ParameterRole::ClosureCall(name) => {
                 ClosureParameter::from_params(params, index, name).map(Self::Closure)
             }
@@ -1093,8 +1129,51 @@ impl ParameterGroup {
     fn width(&self) -> usize {
         match self {
             Self::Value(_) => 1,
+            Self::ByteSlice(_) => 2,
             Self::Closure(_) => 3,
         }
+    }
+}
+
+impl ByteSliceParameter {
+    /// Returns the source parameter name.
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    /// Returns the byte pointer parameter position.
+    pub const fn pointer(&self) -> ParameterIndex {
+        self.pointer
+    }
+
+    /// Returns the byte length parameter position.
+    pub const fn length(&self) -> ParameterIndex {
+        self.length
+    }
+}
+
+impl ByteSliceParameter {
+    fn from_params(params: &[Parameter], pointer: usize, name: &Identifier) -> Result<Self> {
+        let length = pointer + 1;
+        let length_role = params.get(length).map(|parameter| &parameter.role).ok_or(
+            Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "byte slice parameter group is missing length parameter",
+            },
+        )?;
+
+        if !length_role.is_byte_length(name) {
+            return Err(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "byte slice parameter group has mismatched length parameter",
+            });
+        }
+
+        Ok(Self {
+            name: name.clone(),
+            pointer: ParameterIndex::new(pointer),
+            length: ParameterIndex::new(length),
+        })
     }
 }
 
@@ -1154,6 +1233,10 @@ impl ClosureParameter {
 }
 
 impl ParameterRole {
+    fn is_byte_length(&self, expected: &Identifier) -> bool {
+        matches!(self, Self::ByteLength(name) if name == expected)
+    }
+
     fn is_closure_context(&self, expected: &Identifier) -> bool {
         matches!(self, Self::ClosureContext(name) if name == expected)
     }
@@ -1465,11 +1548,8 @@ where
         match shape {
             native::BufferShape::Slice => {
                 let mut parameters = vec![
-                    Parameter::new(
-                        format!("{}_ptr", self.name),
-                        Type::ConstPointer(Box::new(Type::Uint8)),
-                    )?,
-                    Parameter::new(format!("{}_len", self.name), Type::PointerWidth)?,
+                    Parameter::byte_pointer(&self.name)?,
+                    Parameter::byte_length(&self.name)?,
                 ];
                 if receive.needs_encoded_writeback() {
                     parameters.push(Parameter::new(
@@ -1507,11 +1587,8 @@ where
 
     fn scalar_option(&mut self, _: Primitive) -> Self::Output {
         Ok(vec![
-            Parameter::new(
-                format!("{}_ptr", self.name),
-                Type::ConstPointer(Box::new(Type::Uint8)),
-            )?,
-            Parameter::new(format!("{}_len", self.name), Type::PointerWidth)?,
+            Parameter::byte_pointer(&self.name)?,
+            Parameter::byte_length(&self.name)?,
         ])
     }
 

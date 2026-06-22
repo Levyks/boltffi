@@ -12,8 +12,8 @@ pub(crate) mod syntax;
 mod template;
 
 pub use contract::{
-    CBridgeContract, Callback, ClosureParameter, Enum, EnumVariant, Field, Function, Parameter,
-    ParameterGroup, ParameterIndex, Record, SupportFunctions, Type,
+    ByteSliceParameter, CBridgeContract, Callback, ClosureParameter, Enum, EnumVariant, Field,
+    Function, Parameter, ParameterGroup, ParameterIndex, Record, SupportFunctions, Type,
 };
 pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
@@ -243,5 +243,29 @@ mod tests {
             function.parameter(closure.release()).name(),
             "callback_release"
         );
+    }
+
+    #[test]
+    fn c_contract_groups_encoded_byte_slice_parameters() {
+        let contract = contract(
+            r#"
+            #[export]
+            pub fn greet(name: String) -> String {
+                name
+            }
+            "#,
+        );
+        let function = contract
+            .functions()
+            .iter()
+            .find(|function| function.name() == "boltffi_function_demo_greet")
+            .expect("exported function");
+        let [ParameterGroup::ByteSlice(bytes)] = function.parameter_groups() else {
+            panic!("expected one byte-slice parameter group");
+        };
+
+        assert_eq!(bytes.name(), "name");
+        assert_eq!(function.parameter(bytes.pointer()).name(), "name_ptr");
+        assert_eq!(function.parameter(bytes.length()).name(), "name_len");
     }
 }
