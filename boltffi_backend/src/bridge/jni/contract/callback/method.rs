@@ -1,7 +1,10 @@
 use crate::{
     bridge::{
         c::{self, ArgumentList, Identifier, TypeFragment},
-        jni::{CallbackArgument, CallbackBytesArgument, CallbackCParameter, JniReturn},
+        jni::{
+            CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackRecordArgument,
+            JniReturn,
+        },
     },
     core::{Error, Result},
 };
@@ -79,6 +82,14 @@ impl CallbackMethod {
         self.arguments
             .iter()
             .filter_map(CallbackArgument::bytes)
+            .collect()
+    }
+
+    /// Returns direct-record callback arguments.
+    pub fn record_arrays(&self) -> Vec<CallbackRecordArgument<'_>> {
+        self.arguments
+            .iter()
+            .filter_map(CallbackArgument::record)
             .collect()
     }
 

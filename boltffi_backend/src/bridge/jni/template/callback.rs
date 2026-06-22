@@ -1,6 +1,9 @@
 use crate::bridge::{
     c::{ArgumentList, Identifier, Literal, TypeFragment},
-    jni::{CallbackBytesArgument, CallbackCParameter, CallbackMethod, CallbackRegistration},
+    jni::{
+        CallbackBytesArgument, CallbackCParameter, CallbackMethod, CallbackRecordArgument,
+        CallbackRegistration,
+    },
 };
 
 pub struct CallbackRegistrationView {
@@ -29,6 +32,7 @@ pub struct CallbackMethodView {
     pub failure_value: String,
     pub c_parameters: Vec<CallbackCParameterView>,
     pub byte_arrays: Vec<CallbackBytesArgumentView>,
+    pub record_arrays: Vec<CallbackRecordArgumentView>,
     pub jni_arguments: ArgumentList,
 }
 
@@ -41,6 +45,11 @@ pub struct CallbackBytesArgumentView {
     pub name: Identifier,
     pub pointer: Identifier,
     pub length: Identifier,
+}
+
+pub struct CallbackRecordArgumentView {
+    pub array: Identifier,
+    pub parameter: Identifier,
 }
 
 impl CallbackRegistrationView {
@@ -87,6 +96,11 @@ impl CallbackMethodView {
                 .iter()
                 .map(CallbackBytesArgumentView::from_argument)
                 .collect(),
+            record_arrays: method
+                .record_arrays()
+                .iter()
+                .map(CallbackRecordArgumentView::from_argument)
+                .collect(),
             jni_arguments: method.jni_arguments(),
         }
     }
@@ -107,6 +121,15 @@ impl CallbackBytesArgumentView {
             name: argument.name().clone(),
             pointer: argument.pointer().clone(),
             length: argument.length().clone(),
+        }
+    }
+}
+
+impl CallbackRecordArgumentView {
+    pub fn from_argument(argument: &CallbackRecordArgument<'_>) -> Self {
+        Self {
+            array: argument.array().clone(),
+            parameter: argument.parameter().clone(),
         }
     }
 }

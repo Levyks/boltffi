@@ -63,21 +63,31 @@ impl SourceFile {
                 .iter()
                 .any(|method| !method.byte_arrays.is_empty())
         });
+        let callback_uses_record_arrays = callbacks.iter().any(|callback| {
+            callback
+                .methods
+                .iter()
+                .any(|method| !method.record_arrays.is_empty())
+        });
         Ok(SourceFileTemplate {
             c_header: Literal::string(contract.c_header().as_str()),
             class_name: Literal::string(&contract.class().as_jni_class_name()),
             free_buffer: contract.free_buffer().clone(),
             checks_status: methods.iter().any(|method| method.checks_status),
-            uses_byte_arrays: methods.iter().any(|method| {
-                method.returns_bytes
-                    || method.returns_record
-                    || !method.byte_arrays.is_empty()
-                    || !method.record_arrays.is_empty()
-            }) || callback_uses_byte_arrays,
+            uses_byte_arrays: callback_uses_byte_arrays
+                || callback_uses_record_arrays
+                || methods.iter().any(|method| {
+                    method.returns_bytes
+                        || method.returns_record
+                        || !method.byte_arrays.is_empty()
+                        || !method.record_arrays.is_empty()
+                }),
             uses_record_arrays: methods
                 .iter()
-                .any(|method| method.returns_record || !method.record_arrays.is_empty()),
+                .any(|method| method.returns_record || !method.record_arrays.is_empty())
+                || callback_uses_record_arrays,
             uses_exceptions: callback_uses_byte_arrays
+                || callback_uses_record_arrays
                 || methods.iter().any(|method| {
                     method.checks_status
                         || method.returns_bytes

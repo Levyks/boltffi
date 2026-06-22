@@ -34,6 +34,10 @@ enum CallbackArgumentKind {
         pointer: CallbackCParameter,
         length: CallbackCParameter,
     },
+    Record {
+        array: Identifier,
+        parameter: CallbackCParameter,
+    },
 }
 
 impl CallbackArgument {
@@ -44,6 +48,7 @@ impl CallbackArgument {
             CallbackArgumentKind::Bytes {
                 pointer, length, ..
             } => vec![pointer.clone(), length.clone()],
+            CallbackArgumentKind::Record { parameter, .. } => vec![parameter.clone()],
         }
     }
 
@@ -51,7 +56,7 @@ impl CallbackArgument {
     pub fn jni_signature(&self) -> &'static str {
         match &self.kind {
             CallbackArgumentKind::Value { jni_type, .. } => jni_type.signature(),
-            CallbackArgumentKind::Bytes { .. } => "[B",
+            CallbackArgumentKind::Bytes { .. } | CallbackArgumentKind::Record { .. } => "[B",
         }
     }
 
@@ -66,6 +71,7 @@ impl CallbackArgument {
                 Expression::identifier(parameter.name.clone()),
             ),
             CallbackArgumentKind::Bytes { name, .. } => Expression::identifier(name.clone()),
+            CallbackArgumentKind::Record { array, .. } => Expression::identifier(array.clone()),
         }
     }
 
@@ -81,6 +87,18 @@ impl CallbackArgument {
                 name,
                 pointer: &pointer.name,
                 length: &length.name,
+            }),
+            CallbackArgumentKind::Record { .. } => None,
+        }
+    }
+
+    /// Returns record-array setup data when this argument carries a direct record.
+    pub fn record(&self) -> Option<CallbackRecordArgument<'_>> {
+        match &self.kind {
+            CallbackArgumentKind::Value { .. } | CallbackArgumentKind::Bytes { .. } => None,
+            CallbackArgumentKind::Record { array, parameter } => Some(CallbackRecordArgument {
+                array,
+                parameter: &parameter.name,
             }),
         }
     }
@@ -104,6 +122,14 @@ impl CallbackArgument {
     }
 
     fn from_parameter(parameter: &c::Parameter) -> Result<Self> {
+        if matches!(parameter.ty(), c::Type::DirectRecord(_)) {
+            return Ok(Self {
+                kind: CallbackArgumentKind::Record {
+                    array: Identifier::parse(format!("__boltffi_{}_array", parameter.name()))?,
+                    parameter: CallbackCParameter::from_parameter(parameter)?,
+                },
+            });
+        }
         Ok(Self {
             kind: CallbackArgumentKind::Value {
                 parameter: CallbackCParameter::from_parameter(parameter)?,
@@ -165,5 +191,25 @@ impl CallbackBytesArgument<'_> {
     /// Returns the C byte length parameter.
     pub fn length(&self) -> &Identifier {
         self.length
+    }
+}
+
+/// Direct-record argument passed from Rust into a JVM callback method.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct CallbackRecordArgument<'argument> {
+    array: &'argument Identifier,
+    parameter: &'argument Identifier,
+}
+
+impl CallbackRecordArgument<'_> {
+    /// Returns the local JNI byte-array variable.
+    pub fn array(&self) -> &Identifier {
+        self.array
+    }
+
+    /// Returns the C record parameter.
+    pub fn parameter(&self) -> &Identifier {
+        self.parameter
     }
 }

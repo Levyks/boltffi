@@ -11,10 +11,10 @@ mod template;
 pub use bridge::JniBridge;
 pub use contract::{
     BytesParameter, CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackMethod,
-    CallbackParameter, CallbackRegistration, CallbackReturn, ClosureArgument, ClosureParameter,
-    ClosureRegistration, ContinuationParameter, JniBridgeContract, JniReturn, JniType,
-    NativeMethod, NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
-    ScalarParameter, ScalarReturn,
+    CallbackParameter, CallbackRecordArgument, CallbackRegistration, CallbackReturn,
+    ClosureArgument, ClosureParameter, ClosureRegistration, ContinuationParameter,
+    JniBridgeContract, JniReturn, JniType, NativeMethod, NativeParameter, NativeParameterKind,
+    NativeReturn, RecordParameter, RecordValue, ScalarParameter, ScalarReturn,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -389,6 +389,52 @@ mod tests {
         assert!(source.contains("(*env)->DeleteLocalRef(env, name);"));
         assert!(source.contains(
             "GetStaticMethodID(env, g____ListenerVTable_class, \"on_name\", \"(J[B)V\")"
+        ));
+    }
+
+    #[test]
+    fn jni_bridge_renders_callback_record_parameters() {
+        let files = files(
+            r#"
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: i32,
+                pub y: i32,
+            }
+
+            #[export]
+            pub trait Listener {
+                fn on_point(&self, point: Point);
+            }
+            "#,
+        );
+        let header = files
+            .iter()
+            .find(|(path, _)| path == "jni/demo.h")
+            .map(|(_, contents)| contents)
+            .expect("C header file");
+        let source = files
+            .iter()
+            .find(|(path, _)| path == "jni/jni_glue.c")
+            .map(|(_, contents)| contents)
+            .expect("JNI source file");
+
+        assert!(header.contains("void (*on_point)(uint64_t, ___Point);"));
+        assert!(
+            source.contains(
+                "static void ___ListenerVTable_on_point(uint64_t handle, ___Point point)"
+            )
+        );
+        assert!(source.contains(
+            "jbyteArray __boltffi_point_array = boltffi_jni_record_to_byte_array(env, &point, (uintptr_t)sizeof(point));"
+        ));
+        assert!(source.contains(
+            "(*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_on_point_method, (jlong)handle, __boltffi_point_array);"
+        ));
+        assert!(source.contains("(*env)->DeleteLocalRef(env, __boltffi_point_array);"));
+        assert!(source.contains(
+            "GetStaticMethodID(env, g____ListenerVTable_class, \"on_point\", \"(J[B)V\")"
         ));
     }
 

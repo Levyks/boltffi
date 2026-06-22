@@ -14,7 +14,7 @@ pub use bridge::JniBridgeContract;
 pub use bytes::BytesParameter;
 pub use callback::{
     CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackMethod, CallbackParameter,
-    CallbackRegistration, CallbackReturn,
+    CallbackRecordArgument, CallbackRegistration, CallbackReturn,
 };
 pub use closure::{ClosureArgument, ClosureParameter, ClosureRegistration};
 pub use continuation::ContinuationParameter;
