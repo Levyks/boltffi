@@ -4,6 +4,9 @@
 {%- if uses_byte_arrays %}
 #include <limits.h>
 {%- endif %}
+{%- if uses_callback_handles %}
+#include <stdlib.h>
+{%- endif %}
 
 #include {{ c_header }}
 
@@ -30,6 +33,10 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
     (*env)->ThrowNew(env, exception_class, message);
     (*env)->DeleteLocalRef(env, exception_class);
 }
+{%- endif %}
+
+{%- if uses_callback_handles %}
+{% include "bridge/jni/callback.c" %}
 {%- endif %}
 
 {%- if checks_status %}

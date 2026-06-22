@@ -10,9 +10,9 @@ mod template;
 
 pub use bridge::JniBridge;
 pub use contract::{
-    BytesParameter, CallbackParameter, ContinuationParameter, JniBridgeContract, JniType,
-    NativeMethod, NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
-    ScalarParameter, ScalarReturn,
+    BytesParameter, CallbackParameter, CallbackReturn, ContinuationParameter, JniBridgeContract,
+    JniType, NativeMethod, NativeParameter, NativeParameterKind, NativeReturn, RecordParameter,
+    RecordValue, ScalarParameter, ScalarReturn,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -339,5 +339,43 @@ mod tests {
         assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong listener)"));
         assert!(source.contains("FfiStatus status = boltffi_function_demo_install(boltffi_create_callback_demo_listener((uint64_t)listener));"));
         assert!(source.contains("boltffi_jni_throw_status(env, status);"));
+    }
+
+    #[test]
+    fn jni_bridge_renders_callback_handle_returns() {
+        let files = files(
+            r#"
+            #[export]
+            pub trait Listener {
+                fn on_value(&self, value: u32) -> u32;
+            }
+
+            #[export]
+            pub fn make_listener() -> Box<dyn Listener> {
+                todo!()
+            }
+            "#,
+        );
+        let header = files
+            .iter()
+            .find(|(path, _)| path == "jni/demo.h")
+            .map(|(_, contents)| contents)
+            .expect("C header file");
+        let source = files
+            .iter()
+            .find(|(path, _)| path == "jni/jni_glue.c")
+            .map(|(_, contents)| contents)
+            .expect("JNI source file");
+
+        assert!(
+            header.contains("BoltFFICallbackHandle boltffi_function_demo_make_listener(void);")
+        );
+        assert!(source.contains("static jlong boltffi_jni_callback_handle_new_owned"));
+        assert!(source.contains("JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1make_1listener(JNIEnv *env, jclass cls)"));
+        assert!(
+            source
+                .contains("BoltFFICallbackHandle result = boltffi_function_demo_make_listener();")
+        );
+        assert!(source.contains("return boltffi_jni_callback_handle_new_owned(env, result);"));
     }
 }

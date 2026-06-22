@@ -71,6 +71,11 @@ impl NativeMethod {
         matches!(&self.returns, NativeReturn::Record(_))
     }
 
+    /// Returns whether this method returns a callback handle token.
+    pub fn returns_callback(&self) -> bool {
+        self.returns.is_callback()
+    }
+
     /// Returns whether this method checks a returned `FfiStatus`.
     pub fn checks_status(&self) -> bool {
         matches!(&self.returns, NativeReturn::Status)

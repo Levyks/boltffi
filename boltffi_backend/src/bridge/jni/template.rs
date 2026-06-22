@@ -19,6 +19,7 @@ struct SourceFileTemplate {
     uses_record_arrays: bool,
     uses_exceptions: bool,
     uses_continuations: bool,
+    uses_callback_handles: bool,
     methods: Vec<NativeMethodView>,
 }
 
@@ -51,10 +52,12 @@ impl SourceFile {
                 method.checks_status
                     || method.returns_bytes
                     || method.returns_record
+                    || method.returns_callback
                     || !method.byte_arrays.is_empty()
                     || !method.record_arrays.is_empty()
             }),
             uses_continuations: methods.iter().any(|method| method.uses_continuations),
+            uses_callback_handles: methods.iter().any(|method| method.returns_callback),
             methods,
         }
         .render()?)
@@ -74,6 +77,7 @@ struct NativeMethodView {
     returns_boolean: bool,
     returns_bytes: bool,
     returns_record: bool,
+    returns_callback: bool,
     return_value: Expression,
     checks_status: bool,
     uses_continuations: bool,
@@ -114,9 +118,10 @@ impl NativeMethodView {
             returns_boolean: method.returns_boolean(),
             returns_bytes: method.returns_bytes(),
             returns_record: method.returns_record(),
+            returns_callback: method.returns_callback(),
             return_value: method
                 .returns()
-                .return_expression(Expression::identifier(Identifier::parse("result")?)),
+                .return_expression(Expression::identifier(Identifier::parse("result")?))?,
             checks_status: method.checks_status(),
             uses_continuations: method
                 .parameters()
