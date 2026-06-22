@@ -452,6 +452,37 @@ fn jni_bridge_renders_encoded_closure_return_shapes_as_byte_arrays() {
 }
 
 #[test]
+fn jni_bridge_renders_c_style_enum_closure_returns_as_scalars() {
+    let files = files(
+        r#"
+            #[repr(u8)]
+            #[data]
+            pub enum Mode {
+                Fast = 1,
+                Slow = 2,
+            }
+
+            #[export]
+            pub fn install(callback: impl Fn() -> Mode) {}
+            "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "static ___Mode boltffi_jni____closure__to_demo_mode_call(void *user_data)",
+        "GetStaticMethodID(env, g____closure__to_demo_mode_class, \"call\", \"(J)B\")",
+        "___Mode result = (___Mode)(*env)->CallStaticByteMethod(env, g____closure__to_demo_mode_class, g____closure__to_demo_mode_call_method, handle);",
+        "return result;",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}\n{source}"));
+}
+
+#[test]
 fn jni_bridge_renders_direct_vector_closure_parameters_from_contract_group() {
     let files = files(
         r#"
