@@ -4,4 +4,7 @@
 {%- endfor %}
 {%- for parameter in method.record_arrays %}
     {{ parameter.c_type }} {{ parameter.local }};
+{%- if let Some(writeback) = parameter.writeback %}
+    {{ writeback.c_type }} {{ writeback.local }};
+{%- endif %}
 {%- endfor %}

@@ -4,6 +4,7 @@ mod closure;
 mod closure_return;
 mod continuation;
 mod direct_vector;
+mod direct_writeback;
 mod group;
 
 use crate::core::Result;
@@ -18,6 +19,7 @@ pub use closure::ClosureParameter;
 pub use closure_return::ClosureReturnParameter;
 pub use continuation::ContinuationParameter;
 pub use direct_vector::{DirectVectorElementAbi, DirectVectorParameter};
+pub use direct_writeback::DirectWritebackParameter;
 pub use group::ParameterGroup;
 
 /// A C function parameter.

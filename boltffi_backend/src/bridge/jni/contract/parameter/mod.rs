@@ -62,9 +62,13 @@ impl NativeParameter {
                 ),
             ]),
             NativeParameterKind::DirectVector(parameter) => Ok(parameter.c_arguments()),
-            NativeParameterKind::Record(parameter) => {
-                Ok(vec![Expression::identifier(parameter.local().clone())])
-            }
+            NativeParameterKind::Record(parameter) => Ok(std::iter::once(Expression::identifier(
+                parameter.local().clone(),
+            ))
+            .chain(parameter.writeback().map(|writeback| {
+                Expression::address_of(Expression::identifier(writeback.local().clone()))
+            }))
+            .collect()),
             NativeParameterKind::Callback(parameter) => Ok(vec![parameter.c_argument()]),
             NativeParameterKind::Closure(parameter) => Ok(parameter.c_arguments()),
             NativeParameterKind::Continuation(parameter) => parameter.c_arguments(),

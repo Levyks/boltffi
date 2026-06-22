@@ -1,7 +1,9 @@
 use crate::{
     bridge::c::{self, Identifier, TypeFragment},
-    core::Result,
+    core::{Error, Result},
 };
+
+const JNI_BRIDGE: &str = "jni";
 
 /// Direct record value carried through JNI as a fixed-size byte array.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -39,6 +41,7 @@ pub struct RecordParameter {
     name: Identifier,
     value: RecordValue,
     local: Identifier,
+    writeback: Option<RecordWriteback>,
 }
 
 impl RecordParameter {
@@ -57,6 +60,11 @@ impl RecordParameter {
         &self.local
     }
 
+    /// Returns the mutation writeback contract when the C bridge expects one.
+    pub fn writeback(&self) -> Option<&RecordWriteback> {
+        self.writeback.as_ref()
+    }
+
     /// Creates a record parameter from one direct-record C ABI parameter.
     pub fn from_c_parameter(parameter: &c::Parameter) -> Result<Option<Self>> {
         let Some(value) = RecordValue::from_c_type(parameter.ty()) else {
@@ -67,6 +75,51 @@ impl RecordParameter {
             local: Identifier::parse(format!("__boltffi_{}_value", name.as_str()))?,
             name,
             value,
+            writeback: None,
         }))
+    }
+
+    /// Creates a record parameter from one direct-record C ABI writeback group.
+    pub fn from_c_writeback(
+        writeback: &c::DirectWritebackParameter,
+        function: &c::Function,
+    ) -> Result<Self> {
+        let input = function.parameter(writeback.input());
+        let Some(value) = RecordValue::from_c_type(input.ty()) else {
+            return Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "direct writeback input is not a direct record",
+            });
+        };
+        let name = Identifier::escape(writeback.name())?;
+        Ok(Self {
+            local: Identifier::parse(format!("__boltffi_{}_value", name.as_str()))?,
+            name,
+            value,
+            writeback: Some(RecordWriteback::from_c_parameter(
+                function.parameter(writeback.output()),
+            )?),
+        })
+    }
+}
+
+/// Mutation writeback for a direct record JNI parameter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct RecordWriteback {
+    local: Identifier,
+}
+
+impl RecordWriteback {
+    /// Returns the local C record value written back into the Java byte array.
+    pub fn local(&self) -> &Identifier {
+        &self.local
+    }
+
+    fn from_c_parameter(parameter: &c::Parameter) -> Result<Self> {
+        let output = Identifier::escape(parameter.name())?;
+        Ok(Self {
+            local: Identifier::parse(format!("__boltffi_{}", output.as_str()))?,
+        })
     }
 }

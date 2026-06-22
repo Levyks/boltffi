@@ -3,7 +3,8 @@ use crate::core::{Error, Result};
 use super::super::C_BRIDGE_CONTRACT;
 use super::{
     ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ClosureReturnParameter,
-    ContinuationParameter, DirectVectorParameter, Parameter, ParameterIndex, ParameterRole,
+    ContinuationParameter, DirectVectorParameter, DirectWritebackParameter, Parameter,
+    ParameterIndex, ParameterRole,
 };
 
 /// Source-level parameter group represented by one or more C ABI parameters.
@@ -16,6 +17,8 @@ pub enum ParameterGroup {
     ByteSlice(ByteSliceParameter),
     /// One source parameter maps to a borrowed direct-vector pointer and length.
     DirectVector(DirectVectorParameter),
+    /// One mutable direct record maps to an input value and output pointer.
+    DirectWriteback(DirectWritebackParameter),
     /// One async callback completion maps to callback and context parameters.
     CallbackCompletion(CallbackCompletionParameter),
     /// One poll continuation maps to callback data and a function pointer.
@@ -41,6 +44,10 @@ impl ParameterGroup {
     }
 
     fn from_param(params: &[Parameter], index: usize) -> Result<Self> {
+        if let Some(writeback) = DirectWritebackParameter::from_params(params, index)? {
+            return Ok(Self::DirectWriteback(writeback));
+        }
+
         match &params[index].role {
             ParameterRole::Value => Ok(Self::Value(ParameterIndex::new(index))),
             ParameterRole::BytePointer(name) => {
@@ -102,6 +109,7 @@ impl ParameterGroup {
             Self::Value(_) => 1,
             Self::ByteSlice(_) => 2,
             Self::DirectVector(_) => 2,
+            Self::DirectWriteback(_) => 2,
             Self::CallbackCompletion(_) => 2,
             Self::Continuation(_) => 2,
             Self::Closure(_) => 3,

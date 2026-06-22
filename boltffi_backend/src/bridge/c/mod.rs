@@ -28,8 +28,8 @@ pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use parameter::{
     ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ClosureReturnParameter,
-    ContinuationParameter, DirectVectorElementAbi, DirectVectorParameter, Parameter,
-    ParameterGroup, ParameterIndex,
+    ContinuationParameter, DirectVectorElementAbi, DirectVectorParameter, DirectWritebackParameter,
+    Parameter, ParameterGroup, ParameterIndex,
 };
 pub use record::{Field, Record};
 pub use stream::{DirectStreamBatch, Stream, StreamBatch};
@@ -457,6 +457,48 @@ mod tests {
         assert_eq!(name.name(), "name");
         assert_eq!(function.parameter(name.pointer()).name(), "name_ptr");
         assert_eq!(function.parameter(name.length()).name(), "name_len");
+    }
+
+    #[test]
+    fn c_contract_groups_direct_record_writeback_parameters() {
+        let contract = contract(
+            r#"
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+
+            #[data(impl)]
+            impl Point {
+                pub fn move_by(&mut self, dx: f64) {
+                    self.x += dx;
+                }
+            }
+            "#,
+        );
+        let function = contract
+            .functions()
+            .iter()
+            .find(|function| function.name() == "boltffi_method_record_demo_point_move_by")
+            .expect("mutable direct record method");
+        let [
+            ParameterGroup::DirectWriteback(receiver),
+            ParameterGroup::Value(delta),
+        ] = function.parameter_groups()
+        else {
+            panic!("expected direct-record writeback and value parameter");
+        };
+
+        assert_eq!(receiver.name(), "receiver");
+        assert_eq!(function.parameter(receiver.input()).name(), "receiver");
+        assert_eq!(function.parameter(receiver.output()).name(), "receiver_out");
+        assert_eq!(
+            function.parameter(receiver.output()).ty(),
+            &Type::MutPointer(Box::new(function.parameter(receiver.input()).ty().clone()))
+        );
+        assert_eq!(function.parameter(*delta).name(), "dx");
     }
 
     #[test]

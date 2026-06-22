@@ -46,6 +46,11 @@ impl NativeParameter {
                     kind: NativeParameterKind::DirectVector(vector),
                 })
             }
+            c::ParameterGroup::DirectWriteback(writeback) => {
+                RecordParameter::from_c_writeback(writeback, function).map(|record| Self {
+                    kind: NativeParameterKind::Record(record),
+                })
+            }
             c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "callback completion parameter group cannot appear on a JNI native method",

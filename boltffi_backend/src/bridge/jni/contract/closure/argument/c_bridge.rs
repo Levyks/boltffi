@@ -63,6 +63,10 @@ impl ClosureArgument {
                     vector,
                 )?),
             }),
+            c::ParameterGroup::DirectWriteback(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "closure call argument cannot be a direct-record writeback",
+            }),
             c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "closure call argument cannot be an async callback completion",

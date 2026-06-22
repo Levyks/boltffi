@@ -100,6 +100,44 @@ fn jni_bridge_renders_async_record_methods() {
 }
 
 #[test]
+fn jni_bridge_writes_mutable_direct_record_receivers_back() {
+    let files = files(
+        r#"
+        #[repr(C)]
+        #[data]
+        pub struct Point {
+            pub x: f64,
+            pub y: f64,
+        }
+
+        #[data(impl)]
+        impl Point {
+            pub fn move_by(&mut self, dx: f64) {
+                self.x += dx;
+            }
+        }
+        "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1demo_1point_1move_1by(JNIEnv *env, jclass cls, jbyteArray receiver, jdouble dx)",
+        "___Point __boltffi_receiver_value;",
+        "___Point __boltffi_receiver_out;",
+        "FfiStatus status = boltffi_method_record_demo_point_move_by(__boltffi_receiver_value, &__boltffi_receiver_out, dx);",
+        "if (status.code == 0) {",
+        "(*env)->SetByteArrayRegion(env, receiver, 0, (jsize)sizeof(___Point), (const jbyte *)&__boltffi_receiver_out);",
+        "boltffi_jni_throw_status(env, status);",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}\n{source}"));
+}
+
+#[test]
 fn jni_bridge_renders_enum_associated_callables() {
     let files = files(
         r#"

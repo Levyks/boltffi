@@ -21,6 +21,10 @@ impl CallbackArgument {
             c::ParameterGroup::Value(index) => Self::from_parameter(slot.parameter(*index)),
             c::ParameterGroup::ByteSlice(bytes) => Self::from_bytes(slot, bytes),
             c::ParameterGroup::DirectVector(vector) => Self::from_direct_vector(slot, vector),
+            c::ParameterGroup::DirectWriteback(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback method argument cannot be a direct-record writeback",
+            }),
             c::ParameterGroup::CallbackCompletion(completion) => {
                 Self::from_completion(slot, completion, callbacks)
             }
