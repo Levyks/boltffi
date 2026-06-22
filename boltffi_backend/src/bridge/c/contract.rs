@@ -18,7 +18,7 @@ use crate::core::{
 use super::names::Names;
 use super::{
     C_BRIDGE_LAYER, Enum, Field, Identifier, Parameter, ParameterGroup, ParameterIndex, Record,
-    Type, name,
+    SupportFunctions, Type, name,
 };
 
 /// C ABI contract produced for native bindings.
@@ -33,13 +33,6 @@ pub struct CBridgeContract {
     source_c_style_enums: BTreeMap<EnumId, Enum>,
     enums: Vec<Enum>,
     callbacks: Vec<Callback>,
-    functions: Vec<Function>,
-}
-
-/// C ABI support functions supplied by the BoltFFI runtime.
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub struct SupportFunctions {
     functions: Vec<Function>,
 }
 
@@ -328,63 +321,6 @@ impl Field {
                 params,
             },
         )
-    }
-}
-
-impl SupportFunctions {
-    /// Creates the C ABI support function set.
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            functions: vec![
-                Function::new(
-                    "boltffi_free_string",
-                    vec![Parameter::new("string", Type::String)?],
-                    Type::Void,
-                )?,
-                Function::new(
-                    "boltffi_free_buf",
-                    vec![Parameter::new("buf", Type::Buffer)?],
-                    Type::Void,
-                )?,
-                Function::new(
-                    "boltffi_buf_from_bytes",
-                    vec![
-                        Parameter::new("ptr", Type::ConstPointer(Box::new(Type::Uint8)))?,
-                        Parameter::new("len", Type::PointerWidth)?,
-                    ],
-                    Type::Buffer,
-                )?,
-                Function::new(
-                    "boltffi_last_error_message",
-                    vec![Parameter::new(
-                        "out",
-                        Type::MutPointer(Box::new(Type::String)),
-                    )?],
-                    Type::Status,
-                )?,
-                Function::new("boltffi_clear_last_error", Vec::new(), Type::Void)?,
-            ],
-        })
-    }
-
-    /// Returns C ABI support functions.
-    pub fn functions(&self) -> &[Function] {
-        &self.functions
-    }
-
-    /// Returns the C ABI support function that releases a BoltFFI buffer.
-    pub fn buffer_free(&self) -> Result<&Function> {
-        self.function("boltffi_free_buf", "missing C free buffer support symbol")
-    }
-
-    fn function(&self, name: &str, shape: &'static str) -> Result<&Function> {
-        self.functions
-            .iter()
-            .find(|function| function.name() == name)
-            .ok_or(Error::UnexpectedBindingShape {
-                layer: C_BRIDGE_LAYER,
-                shape,
-            })
     }
 }
 
@@ -711,7 +647,8 @@ impl Function {
         Signature::new(names, receiver).exported(symbol, callable)
     }
 
-    fn new(name: impl Into<String>, params: Vec<Parameter>, returns: Type) -> Result<Self> {
+    /// Creates a C function declaration.
+    pub fn new(name: impl Into<String>, params: Vec<Parameter>, returns: Type) -> Result<Self> {
         let parameter_groups = ParameterGroup::from_params(&params)?;
         Ok(Self {
             name: Identifier::parse(name)?,
