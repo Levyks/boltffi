@@ -6,6 +6,7 @@
 
 mod contract;
 mod enumeration;
+mod function;
 mod header;
 mod identifier;
 mod name;
@@ -17,8 +18,9 @@ pub(crate) mod syntax;
 mod template;
 mod ty;
 
-pub use contract::{CBridgeContract, Callback, Function};
+pub use contract::{CBridgeContract, Callback};
 pub use enumeration::{Enum, EnumVariant};
+pub use function::Function;
 pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use parameter::{

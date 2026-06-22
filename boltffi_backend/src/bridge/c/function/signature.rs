@@ -1,0 +1,1018 @@
+use boltffi_binding::{
+    CallableDecl, ClosureReturn, DirectValueType, DirectVectorElementType, Direction, ErrorDecl,
+    ExecutionDecl, ExportedCallable, HandlePresence, HandleTarget, ImportedCallable, IncomingParam,
+    IntoRust, Native, NativeSymbol, OutOfRust, OutgoingParam, ParamDecl, ParamDirection, ParamPlan,
+    ParamPlanRender, Primitive, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody,
+    TypeRef, native,
+};
+
+use crate::core::{Error, Result};
+
+use super::{Function, poll::PollHandleSymbols};
+use crate::bridge::c::{C_BRIDGE_LAYER, Parameter, Type, name, names::Names};
+
+#[derive(Clone, Debug)]
+pub struct Signature {
+    names: Names,
+    receiver: Vec<Parameter>,
+}
+
+enum DirectVectorElementAbi {
+    TypedElement(Type),
+    PackedBytes,
+}
+
+impl DirectVectorElementAbi {
+    fn new(element: &DirectVectorElementType) -> Result<Self> {
+        match element {
+            DirectVectorElementType::Primitive(primitive) => {
+                Type::primitive(primitive.primitive()).map(Self::TypedElement)
+            }
+            DirectVectorElementType::Record(_) => Ok(Self::PackedBytes),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "direct vector element",
+            }),
+        }
+    }
+}
+
+struct ValueParameter {
+    signature: Signature,
+    name: String,
+}
+
+struct ReturnParameters {
+    signature: Signature,
+}
+
+struct CallableReturnType {
+    signature: Signature,
+}
+
+struct InfallibleCallbackReturnType {
+    signature: Signature,
+}
+
+struct AsyncCallbackPayloadType {
+    signature: Signature,
+}
+
+struct FallibleAsyncCallbackSuccess;
+
+trait EncodedWritebackReceive {
+    fn needs_encoded_writeback(self) -> bool;
+}
+
+impl EncodedWritebackReceive for Receive {
+    fn needs_encoded_writeback(self) -> bool {
+        self == Receive::ByMutRef
+    }
+}
+
+impl EncodedWritebackReceive for () {
+    fn needs_encoded_writeback(self) -> bool {
+        false
+    }
+}
+
+impl CallableReturnType {
+    fn direct_slot(&self, slot: ReturnValueSlot, ty: &DirectValueType) -> Result<Type> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => self.signature.names.direct_value(ty),
+            ReturnValueSlot::OutPointer => Ok(Type::Status),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct return slot",
+            }),
+        }
+    }
+
+    fn encoded_slot(&self, slot: ReturnValueSlot, shape: native::BufferShape) -> Result<Type> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => self.signature.encoded_return(shape),
+            ReturnValueSlot::OutPointer => Ok(Type::Status),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded return slot",
+            }),
+        }
+    }
+
+    fn handle_slot(&self, slot: ReturnValueSlot, carrier: native::HandleCarrier) -> Result<Type> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Type::handle_carrier(carrier),
+            ReturnValueSlot::OutPointer => Ok(Type::Status),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle return slot",
+            }),
+        }
+    }
+
+    fn buffer(&self) -> Type {
+        Type::Buffer
+    }
+
+    fn status(&self) -> Type {
+        Type::Status
+    }
+}
+
+impl<'plan, D> ParamPlanRender<'plan, Native, D> for ValueParameter
+where
+    D: Direction,
+    D::Receive: EncodedWritebackReceive,
+{
+    type Output = Result<Vec<Parameter>>;
+
+    fn direct(&mut self, ty: &'plan DirectValueType, _: D::Receive) -> Self::Output {
+        Ok(vec![Parameter::new(
+            self.name.as_str(),
+            self.signature.names.direct_value(ty)?,
+        )?])
+    }
+
+    fn encoded(
+        &mut self,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+        receive: D::Receive,
+    ) -> Self::Output {
+        match shape {
+            native::BufferShape::Slice => {
+                let mut parameters = vec![
+                    Parameter::byte_pointer(&self.name)?,
+                    Parameter::byte_length(&self.name)?,
+                ];
+                if receive.needs_encoded_writeback() {
+                    parameters.push(Parameter::new(
+                        format!("{}_out", self.name),
+                        Type::MutPointer(Box::new(Type::Buffer)),
+                    )?);
+                }
+                Ok(parameters)
+            }
+            native::BufferShape::Buffer | native::BufferShape::BufferPointer => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "native encoded parameter shape",
+                })
+            }
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "native encoded parameter shape",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+        _: D::Receive,
+    ) -> Self::Output {
+        Ok(vec![Parameter::new(
+            self.name.as_str(),
+            Type::handle_carrier(carrier)?,
+        )?])
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(vec![
+            Parameter::byte_pointer(&self.name)?,
+            Parameter::byte_length(&self.name)?,
+        ])
+    }
+
+    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
+        self.signature.direct_vec_param(&self.name, element)
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for ReturnParameters
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Vec<Parameter>>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Vec::new())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(vec![Parameter::new(
+                "return_out",
+                Type::MutPointer(Box::new(self.signature.names.direct_value(ty)?)),
+            )?]),
+            ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct return slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => self.signature.encoded_out("return_out", shape),
+            ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded return slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(vec![Parameter::new(
+                "return_out",
+                Type::MutPointer(Box::new(Type::handle_carrier(carrier)?)),
+            )?]),
+            ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle return slot",
+            }),
+        }
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(Vec::new())
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(Vec::new())
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Ok(vec![Parameter::new(
+            "return_out",
+            Type::MutPointer(Box::new(Type::Void)),
+        )?])
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for CallableReturnType
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Type>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Type::Status)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        self.direct_slot(slot, ty)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        self.encoded_slot(slot, shape)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        self.handle_slot(slot, carrier)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(self.buffer())
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(self.buffer())
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Ok(self.status())
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for InfallibleCallbackReturnType
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Type>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(Type::Void)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        CallableReturnType {
+            signature: self.signature.clone(),
+        }
+        .direct_slot(slot, ty)
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        CallableReturnType {
+            signature: self.signature.clone(),
+        }
+        .encoded_slot(slot, shape)
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        CallableReturnType {
+            signature: self.signature.clone(),
+        }
+        .handle_slot(slot, carrier)
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(CallableReturnType {
+            signature: self.signature.clone(),
+        }
+        .buffer())
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(CallableReturnType {
+            signature: self.signature.clone(),
+        }
+        .buffer())
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Ok(CallableReturnType {
+            signature: self.signature.clone(),
+        }
+        .status())
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for AsyncCallbackPayloadType
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<Option<Type>>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(None)
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Some(self.signature.names.direct_value(ty)?)),
+            ReturnValueSlot::OutPointer => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct async callback return slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        shape: native::BufferShape,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Some(self.signature.encoded_return(shape)?)),
+            ReturnValueSlot::OutPointer => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded async callback return slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Some(Type::handle_carrier(carrier)?)),
+            ReturnValueSlot::OutPointer => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "infallible async callback out-pointer return",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle async callback return slot",
+            }),
+        }
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Ok(Some(Type::Buffer))
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Ok(Some(Type::Buffer))
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "async callback closure return",
+        })
+    }
+}
+
+impl<'plan, D> ReturnPlanRender<'plan, Native, D> for FallibleAsyncCallbackSuccess
+where
+    D: Direction,
+    D::Opposite: ParamDirection<Native>,
+{
+    type Output = Result<()>;
+
+    fn void(&mut self) -> Self::Output {
+        Ok(())
+    }
+
+    fn direct(&mut self, slot: ReturnValueSlot, _: &'plan DirectValueType) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(()),
+            ReturnValueSlot::ReturnSlot => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown direct fallible async callback success slot",
+            }),
+        }
+    }
+
+    fn encoded(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan TypeRef,
+        _: &'plan D::Codec,
+        _: native::BufferShape,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(()),
+            ReturnValueSlot::ReturnSlot => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown encoded fallible async callback success slot",
+            }),
+        }
+    }
+
+    fn handle(
+        &mut self,
+        slot: ReturnValueSlot,
+        _: &'plan HandleTarget,
+        _: native::HandleCarrier,
+        _: HandlePresence,
+    ) -> Self::Output {
+        match slot {
+            ReturnValueSlot::OutPointer => Ok(()),
+            ReturnValueSlot::ReturnSlot => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "fallible async callback success slot",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown handle fallible async callback success slot",
+            }),
+        }
+    }
+
+    fn scalar_option(&mut self, _: Primitive) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "fallible async callback success slot",
+        })
+    }
+
+    fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "fallible async callback success slot",
+        })
+    }
+
+    fn closure(&mut self, _: &'plan ClosureReturn<Native, D>) -> Self::Output {
+        Err(Error::UnsupportedCAbi {
+            shape: "async callback closure success",
+        })
+    }
+}
+
+impl Signature {
+    pub fn new(names: &Names, receiver: impl IntoIterator<Item = Parameter>) -> Self {
+        Self {
+            names: names.clone(),
+            receiver: receiver.into_iter().collect(),
+        }
+    }
+
+    pub fn exported(
+        self,
+        symbol: &NativeSymbol,
+        callable: &ExportedCallable<Native>,
+    ) -> Result<Vec<Function>> {
+        match callable.execution() {
+            ExecutionDecl::Synchronous(_) => self
+                .synchronous(symbol.name().as_str(), callable)
+                .map(|function| vec![function]),
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
+                poll,
+                complete,
+                cancel,
+                free,
+                panic_message,
+                ..
+            }) => self.async_poll_handle(
+                callable,
+                PollHandleSymbols::new(symbol, poll, complete, cancel, free, panic_message),
+            ),
+            ExecutionDecl::Asynchronous(
+                native::AsyncProtocol::NativeFuture | native::AsyncProtocol::Continuation { .. },
+            ) => Err(Error::UnsupportedCAbi {
+                shape: "native async protocol",
+            }),
+            ExecutionDecl::Asynchronous(native::AsyncProtocol::CallbackCompletion) => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "callback completion protocol on exported callable",
+                })
+            }
+            ExecutionDecl::Asynchronous(_) => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown native async protocol",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown execution declaration",
+            }),
+        }
+    }
+
+    fn synchronous(&self, name: &str, callable: &ExportedCallable<Native>) -> Result<Function> {
+        let params = self
+            .receiver
+            .clone()
+            .into_iter()
+            .chain(self.exported_params(callable.params())?)
+            .chain(self.return_params(callable.returns().plan())?)
+            .chain(self.error_params(callable.error())?)
+            .collect();
+        let returns = self.return_type(callable.returns().plan(), callable.error())?;
+        Function::new(name, params, returns)
+    }
+
+    fn async_poll_handle(
+        &self,
+        callable: &ExportedCallable<Native>,
+        symbols: PollHandleSymbols,
+    ) -> Result<Vec<Function>> {
+        let start = Function::new(
+            symbols.start.name().as_str(),
+            self.receiver
+                .clone()
+                .into_iter()
+                .chain(self.exported_params(callable.params())?)
+                .collect(),
+            Type::FutureHandle,
+        )?;
+        let complete_params = std::iter::once(Parameter::new("handle", Type::FutureHandle)?)
+            .chain([Parameter::new(
+                "out_status",
+                Type::MutPointer(Box::new(Type::Status)),
+            )?])
+            .chain(self.return_params(callable.returns().plan())?)
+            .collect();
+        Ok(vec![
+            start,
+            Function::new(
+                symbols.poll.name().as_str(),
+                vec![
+                    Parameter::new("handle", Type::FutureHandle)?,
+                    Parameter::new("callback_data", Type::Uint64)?,
+                    Parameter::new(
+                        "callback",
+                        Type::FunctionPointer {
+                            returns: Box::new(Type::Void),
+                            params: vec![Type::Uint64, Type::Int8],
+                        },
+                    )?,
+                ],
+                Type::Void,
+            )?,
+            Function::new(
+                symbols.complete.name().as_str(),
+                complete_params,
+                self.async_complete_return(callable.returns().plan(), callable.error())?,
+            )?,
+            Function::new(
+                symbols.panic_message.name().as_str(),
+                vec![Parameter::new("handle", Type::FutureHandle)?],
+                Type::Buffer,
+            )?,
+            Function::new(
+                symbols.cancel.name().as_str(),
+                vec![Parameter::new("handle", Type::FutureHandle)?],
+                Type::Void,
+            )?,
+            Function::new(
+                symbols.free.name().as_str(),
+                vec![Parameter::new("handle", Type::FutureHandle)?],
+                Type::Void,
+            )?,
+        ])
+    }
+
+    fn exported_params(&self, params: &[ParamDecl<Native, IntoRust>]) -> Result<Vec<Parameter>> {
+        params
+            .iter()
+            .map(|param| {
+                let name = name::Spelling::new(param.name()).parameter();
+                match param.payload() {
+                    IncomingParam::Value(plan) => self.value_param(&name, plan),
+                    IncomingParam::Closure(closure) => {
+                        self.incoming_closure_param(&name, closure.invoke())
+                    }
+                }
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(Vec::into_iter)
+            .map(|parameters| parameters.flatten().collect())
+    }
+
+    pub fn imported_params(
+        &self,
+        params: &[ParamDecl<Native, OutOfRust>],
+    ) -> Result<Vec<Parameter>> {
+        params
+            .iter()
+            .map(|param| {
+                let name = name::Spelling::new(param.name()).parameter();
+                match param.payload() {
+                    OutgoingParam::Value(plan) => self.value_param(&name, plan),
+                    OutgoingParam::Closure(closure) => {
+                        self.outgoing_closure_param(&name, closure.invoke())
+                    }
+                }
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(Vec::into_iter)
+            .map(|parameters| parameters.flatten().collect())
+    }
+
+    fn value_param<D>(&self, name: &str, plan: &ParamPlan<Native, D>) -> Result<Vec<Parameter>>
+    where
+        D: Direction,
+        D::Receive: EncodedWritebackReceive,
+    {
+        plan.render_with(&mut ValueParameter {
+            signature: self.clone(),
+            name: name.to_owned(),
+        })
+    }
+
+    fn direct_vec_param(
+        &self,
+        name: &str,
+        element: &DirectVectorElementType,
+    ) -> Result<Vec<Parameter>> {
+        match DirectVectorElementAbi::new(element)? {
+            DirectVectorElementAbi::TypedElement(element) => Ok(vec![
+                Parameter::new(format!("{name}_ptr"), Type::ConstPointer(Box::new(element)))?,
+                Parameter::new(format!("{name}_len"), Type::PointerWidth)?,
+            ]),
+            DirectVectorElementAbi::PackedBytes => Ok(vec![
+                Parameter::new(
+                    format!("{name}_ptr"),
+                    Type::ConstPointer(Box::new(Type::Uint8)),
+                )?,
+                Parameter::new(format!("{name}_byte_len"), Type::PointerWidth)?,
+            ]),
+        }
+    }
+
+    fn incoming_closure_param(
+        &self,
+        name: &str,
+        invoke: &ImportedCallable<Native>,
+    ) -> Result<Vec<Parameter>> {
+        self.closure_param(
+            name,
+            self.imported_params(invoke.params())?,
+            invoke.returns().plan(),
+            invoke.error(),
+        )
+    }
+
+    fn outgoing_closure_param(
+        &self,
+        name: &str,
+        invoke: &CallableDecl<Native, RustBody>,
+    ) -> Result<Vec<Parameter>> {
+        self.closure_param(
+            name,
+            self.exported_params(invoke.params())?,
+            invoke.returns().plan(),
+            invoke.error(),
+        )
+    }
+
+    fn closure_param<D>(
+        &self,
+        name: &str,
+        params: Vec<Parameter>,
+        returns: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Vec<Parameter>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        Ok(vec![
+            Parameter::closure_call(
+                name,
+                Type::FunctionPointer {
+                    returns: Box::new(self.callback_return_type(returns, error)?),
+                    params: std::iter::once(Type::MutPointer(Box::new(Type::Void)))
+                        .chain(params.into_iter().map(|parameter| parameter.ty().clone()))
+                        .chain(
+                            self.callback_return_params(returns)?
+                                .into_iter()
+                                .map(|parameter| parameter.ty().clone()),
+                        )
+                        .collect(),
+                },
+            )?,
+            Parameter::closure_context(name)?,
+            Parameter::closure_release(name)?,
+        ])
+    }
+
+    fn return_params<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Vec<Parameter>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        plan.render_with(&mut ReturnParameters {
+            signature: self.clone(),
+        })
+    }
+
+    fn error_params<D>(&self, error: &ErrorDecl<Native, D>) -> Result<Vec<Parameter>>
+    where
+        D: Direction,
+    {
+        match error {
+            ErrorDecl::StatusViaOutPointer { .. } => Ok(vec![Parameter::new(
+                "error_out",
+                Type::MutPointer(Box::new(Type::Status)),
+            )?]),
+            ErrorDecl::EncodedViaOutPointer { shape, .. } => self.encoded_out("error_out", *shape),
+            ErrorDecl::None(_)
+            | ErrorDecl::StatusViaReturnSlot { .. }
+            | ErrorDecl::EncodedViaReturnSlot { .. } => Ok(Vec::new()),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown error declaration",
+            }),
+        }
+    }
+
+    fn return_type<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Type>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match error {
+            ErrorDecl::StatusViaReturnSlot { repr } => Type::primitive(repr.primitive()),
+            ErrorDecl::EncodedViaReturnSlot { shape, .. } => self.encoded_return(*shape),
+            ErrorDecl::None(_)
+            | ErrorDecl::StatusViaOutPointer { .. }
+            | ErrorDecl::EncodedViaOutPointer { .. } => self.return_slot_type(plan),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown error declaration",
+            }),
+        }
+    }
+
+    fn return_slot_type<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Type>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        plan.render_with(&mut CallableReturnType {
+            signature: self.clone(),
+        })
+    }
+
+    fn async_complete_return<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Type>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match error {
+            ErrorDecl::EncodedViaReturnSlot { shape, .. } => self.encoded_return(*shape),
+            ErrorDecl::None(_) => plan.render_with(&mut InfallibleCallbackReturnType {
+                signature: self.clone(),
+            }),
+            ErrorDecl::StatusViaReturnSlot { .. }
+            | ErrorDecl::StatusViaOutPointer { .. }
+            | ErrorDecl::EncodedViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
+                shape: "async error channel",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown async error channel",
+            }),
+        }
+    }
+
+    pub fn encoded_return(&self, shape: native::BufferShape) -> Result<Type> {
+        match shape {
+            native::BufferShape::Buffer => Ok(Type::Buffer),
+            native::BufferShape::Slice | native::BufferShape::BufferPointer => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "native encoded return shape",
+                })
+            }
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown native encoded return shape",
+            }),
+        }
+    }
+
+    fn encoded_out(&self, name: &str, shape: native::BufferShape) -> Result<Vec<Parameter>> {
+        match shape {
+            native::BufferShape::Buffer => Ok(vec![Parameter::new(
+                name,
+                Type::MutPointer(Box::new(Type::Buffer)),
+            )?]),
+            native::BufferShape::Slice | native::BufferShape::BufferPointer => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "native encoded out-pointer shape",
+                })
+            }
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown native encoded out-pointer shape",
+            }),
+        }
+    }
+
+    pub fn callback_return_params<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Vec<Parameter>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        self.return_params(plan)
+    }
+
+    pub fn callback_return_type<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Type>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match error {
+            ErrorDecl::None(_) => plan.render_with(&mut InfallibleCallbackReturnType {
+                signature: self.clone(),
+            }),
+            _ => self.return_type(plan, error),
+        }
+    }
+
+    pub fn async_completion<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Type>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        let result = self.async_callback_payload_type(plan, error)?;
+        Ok(Type::FunctionPointer {
+            returns: Box::new(Type::Void),
+            params: std::iter::once(Type::MutPointer(Box::new(Type::Void)))
+                .chain([Type::Status])
+                .chain(result)
+                .collect(),
+        })
+    }
+
+    fn async_callback_payload_type<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Option<Type>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        match error {
+            ErrorDecl::None(_) => self.infallible_async_callback_payload_type(plan),
+            ErrorDecl::EncodedViaReturnSlot { shape, .. } => {
+                self.encoded_return(*shape)?;
+                self.validate_fallible_async_callback_success(plan)?;
+                Ok(Some(Type::Buffer))
+            }
+            ErrorDecl::StatusViaReturnSlot { .. }
+            | ErrorDecl::StatusViaOutPointer { .. }
+            | ErrorDecl::EncodedViaOutPointer { .. } => Err(Error::UnsupportedCAbi {
+                shape: "async callback error channel",
+            }),
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown async callback error channel",
+            }),
+        }
+    }
+
+    fn infallible_async_callback_payload_type<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+    ) -> Result<Option<Type>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        plan.render_with(&mut AsyncCallbackPayloadType {
+            signature: self.clone(),
+        })
+    }
+
+    fn validate_fallible_async_callback_success<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+    ) -> Result<()>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+    {
+        plan.render_with(&mut FallibleAsyncCallbackSuccess)
+    }
+}
