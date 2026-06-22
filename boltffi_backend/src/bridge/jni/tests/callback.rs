@@ -688,7 +688,7 @@ fn jni_bridge_renders_callback_handle_returns() {
 
             #[export]
             pub fn make_listener() -> Box<dyn Listener> {
-                todo!()
+                loop {}
             }
             "#,
     );
@@ -763,12 +763,12 @@ fn jni_bridge_renders_nullable_callback_handle_returns() {
 
             #[export]
             pub fn optional_boxed_listener() -> Option<Box<dyn Listener>> {
-                todo!()
+                None
             }
 
             #[export]
             pub fn optional_shared_listener() -> Option<Arc<dyn Listener>> {
-                todo!()
+                None
             }
             "#,
     );

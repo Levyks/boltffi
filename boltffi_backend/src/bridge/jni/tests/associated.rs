@@ -19,7 +19,7 @@ fn jni_bridge_renders_record_associated_callables() {
         #[data(impl)]
         impl Point {
             pub fn origin() -> Self {
-                todo!()
+                Self { x: 0.0, y: 0.0 }
             }
 
             pub fn distance(&self, other: Point) -> f64 {
@@ -151,7 +151,7 @@ fn jni_bridge_renders_enum_associated_callables() {
         #[data(impl)]
         impl Mode {
             pub fn default() -> Self {
-                todo!()
+                Self::Fast
             }
 
             pub fn code(&self) -> u8 {

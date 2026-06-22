@@ -20,12 +20,12 @@ fn jni_bridge_renders_stream_protocol_functions() {
         impl Engine {
             #[ffi_stream(item = Point, mode = "batch")]
             pub fn points(&self) -> Arc<EventSubscription<Point>> {
-                todo!()
+                loop {}
             }
 
             #[ffi_stream(item = String)]
             pub fn names(&self) -> Arc<EventSubscription<String>> {
-                todo!()
+                loop {}
             }
         }
         "#,
