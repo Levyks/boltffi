@@ -2095,8 +2095,8 @@ package_name = "OverlayKit"
     }
 
     #[test]
-    fn marks_python_as_experimental_target() {
-        assert!(Experimental::is_target_experimental(Target::Python));
+    fn does_not_mark_python_as_experimental_target() {
+        assert!(!Experimental::is_target_experimental(Target::Python));
     }
 
     #[test]
@@ -2198,27 +2198,9 @@ library_name = "configured-library"
     }
 
     #[test]
-    fn python_should_process_requires_opt_in() {
+    fn python_should_process_without_opt_in() {
         let config = parse_config(
             r#"
-[package]
-name = "mylib"
-
-[targets.python]
-enabled = true
-"#,
-        );
-
-        assert!(!config.should_process(Target::Python, false));
-        assert!(config.should_process(Target::Python, true));
-    }
-
-    #[test]
-    fn python_should_process_accepts_config_opt_in() {
-        let config = parse_config(
-            r#"
-experimental = ["python"]
-
 [package]
 name = "mylib"
 
@@ -2228,6 +2210,7 @@ enabled = true
         );
 
         assert!(config.should_process(Target::Python, false));
+        assert!(config.should_process(Target::Python, true));
     }
 
     #[test]

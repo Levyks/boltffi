@@ -54,6 +54,11 @@ function multiply(x: number, y: number): number
 
 const sum = add(5, 3)
 const product = multiply(2.5, 4.0)`}
+  python={`def add(a: int, b: int) -> int: ...
+def multiply(x: float, y: float) -> float: ...
+
+sum_value = add(5, 3)
+product = multiply(2.5, 4.0)`}
 />
 
 ## Parameters
@@ -98,6 +103,11 @@ function charCount(s: string): number
 
 const msg = greet("World")
 const len = charCount("hello")`}
+  python={`def greet(name: str) -> str: ...
+def char_count(s: str) -> int: ...
+
+msg = greet("World")
+length = char_count("hello")`}
 />
 
 Use `&str` for string parameters (you're borrowing) and `String` for return values (you're transferring ownership).
@@ -208,6 +218,25 @@ const d = distance(
     { x: 3, y: 4 },
     Unit.Meters
 )`}
+  python={`from dataclasses import dataclass
+from enum import IntEnum
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+class Unit(IntEnum):
+    METERS = 0
+    FEET = 1
+
+def distance(a: Point, b: Point, unit: Unit) -> float: ...
+
+d = distance(
+    Point(0, 0),
+    Point(3, 4),
+    Unit.METERS
+)`}
 />
 
 ### Slices
@@ -255,6 +284,11 @@ function average(values: number[]): number
 
 const total = sum([1, 2, 3, 4, 5])
 const avg = average([1.0, 2.0, 3.0])`}
+  python={`def sum(values: list[int]) -> int: ...
+def average(values: list[float]) -> float: ...
+
+total = sum([1, 2, 3, 4, 5])
+avg = average([1.0, 2.0, 3.0])`}
 />
 
 ### Optional
@@ -339,6 +373,18 @@ function setTimeout(
 
 const formal = greetUser("Smith", "Dr.")
 const casual = greetUser("John", null)`}
+  python={`def greet_user(
+    name: str,
+    title: str | None
+) -> str: ...
+
+def set_timeout(
+    ms: int,
+    callback_id: int | None
+) -> None: ...
+
+formal = greet_user("Smith", "Dr.")
+casual = greet_user("John", None)`}
 />
 
 ### Classes
@@ -384,6 +430,13 @@ MyLib.LogMessage(logger, "started");`}
 
 const logger = Logger.new("app")
 logMessage(logger, "started")`}
+  python={`def log_message(
+    logger: Logger,
+    message: str
+) -> None: ...
+
+logger = Logger("app")
+log_message(logger, "started")`}
 />
 
 ### Callback traits
@@ -500,6 +553,22 @@ runTask({
         console.log(result)
     }
 })`}
+  python={`class EventListener:
+    def on_start(self) -> None: ...
+    def on_progress(self, percent: float) -> None: ...
+    def on_complete(self, result: str) -> None: ...
+
+def run_task(listener: EventListener) -> None: ...
+
+class MyListener(EventListener):
+    def on_start(self) -> None:
+        print("started")
+    def on_progress(self, percent: float) -> None:
+        print(f"{percent * 100}%")
+    def on_complete(self, result: str) -> None:
+        print(result)
+
+run_task(MyListener())`}
 />
 
 ## Return types
@@ -564,6 +633,14 @@ if (user !== null) {
 }
 
 const pos = firstPositive([-1, -2, 3])`}
+  python={`def find_user(id: int) -> User | None: ...
+def first_positive(values: list[int]) -> int | None: ...
+
+user = find_user(42)
+if user is not None:
+    print(user.name)
+
+pos = first_positive([-1, -2, 3])`}
 />
 
 ### Result
@@ -680,6 +757,24 @@ try {
         }
     }
 }`}
+  python={`from enum import IntEnum
+
+class ParseError(IntEnum):
+    INVALID_FORMAT = 0
+    OUT_OF_RANGE = 1
+
+class ParseErrorException(RuntimeError):
+    error: ParseError
+
+def parse_port(s: str) -> int: ...
+
+try:
+    port = parse_port("8080")
+except ParseErrorException as error:
+    if error.error == ParseError.INVALID_FORMAT:
+        print("bad format")
+    elif error.error == ParseError.OUT_OF_RANGE:
+        print("too large")`}
 />
 
 Use `Option` when absence is expected. Use `Result` when absence is an error.
@@ -726,6 +821,11 @@ function filterPositive(values: number[]): number[]
 
 const nums = range(0, 10)
 const pos = filterPositive([-1, 2, -3, 4])`}
+  python={`def range(start: int, end: int) -> list[int]: ...
+def filter_positive(values: list[int]) -> list[int]: ...
+
+nums = range(0, 10)
+pos = filter_positive([-1, 2, -3, 4])`}
 />
 
 ## Async functions
@@ -789,6 +889,11 @@ async function loadConfig(): Promise<Config>
 
 const data = await fetchData("https://api.example.com")
 const config = await loadConfig()`}
+  python={`async def fetch_data(url: str) -> str: ...
+async def load_config() -> Config: ...
+
+data = await fetch_data("https://api.example.com")
+config = await load_config()`}
 />
 
 BoltFFI has no built-in executor. You choose your Rust async runtime (Tokio, async-std, smol, etc.), and BoltFFI bridges the async boundary between Rust and the target language. See [Async](/docs/async) for more.
@@ -889,6 +994,26 @@ let sum = 0
 foreachRange(1, 5, (v) => { sum += v })
 
 const doubled = mapValues([1, 2, 3], (v) => v * 2)`}
+  python={`from collections.abc import Callable
+
+def foreach_range(
+    start: int,
+    end: int,
+    callback: Callable[[int], None]
+) -> None: ...
+
+def map_values(
+    values: list[int],
+    transform: Callable[[int], int]
+) -> list[int]: ...
+
+total = 0
+def add_value(value: int) -> None:
+    global total
+    total += value
+
+foreach_range(1, 5, add_value)
+doubled = map_values([1, 2, 3], lambda value: value * 2)`}
 />
 
 Each closure call crosses the FFI boundary. If you're calling the closure many times in a tight loop, consider restructuring to reduce crossings.

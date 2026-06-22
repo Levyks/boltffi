@@ -31,14 +31,6 @@ fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    if !config.should_process(Target::Python, options.experimental) {
-        return Err(CliError::CommandFailed {
-            command: "python is experimental, use --experimental flag or add \"python\" to [experimental]"
-                .to_string(),
-            status: None,
-        });
-    }
-
     let cargo_args = config
         .cargo_args_for_command("generate")
         .into_iter()

@@ -100,6 +100,15 @@ counter.increment()
 counter.increment()
 console.log(counter.get())  // 2
 counter.dispose()`}
+  python={`class Counter:
+    def __init__(self) -> None: ...
+    def increment(self) -> None: ...
+    def get(self) -> int: ...
+
+counter = Counter()
+counter.increment()
+counter.increment()
+print(counter.get())  # 2`}
 />
 
 ## Constructors
@@ -147,6 +156,10 @@ using Counter c = new Counter();`}
 }
 
 const c = Counter.new()`}
+  python={`class Counter:
+    def __init__(self) -> None: ...
+
+c = Counter()`}
 />
 
 ### Named constructors with parameters
@@ -231,6 +244,22 @@ using Database db3 = Database.WithOptions(
 const db1 = Database.new()
 const db2 = Database.open("data.db")
 const db3 = Database.withOptions("data.db", true)`}
+  python={`class Database:
+    def __init__(self) -> None: ...
+
+    @classmethod
+    def open(cls, path: str) -> "Database": ...
+
+    @classmethod
+    def with_options(
+        cls,
+        path: str,
+        read_only: bool
+    ) -> "Database": ...
+
+db1 = Database()
+db2 = Database.open("data.db")
+db3 = Database.with_options("data.db", True)`}
 />
 
 ### Factory methods (no parameters)
@@ -295,6 +324,16 @@ using Config cfg = Config.Production();`}
 }
 
 const cfg = Config.production()`}
+  python={`class Config:
+    def __init__(self) -> None: ...
+
+    @classmethod
+    def production(cls) -> "Config": ...
+
+    @classmethod
+    def development(cls) -> "Config": ...
+
+cfg = Config.production()`}
 />
 
 ### Fallible constructors
@@ -384,6 +423,24 @@ try {
         console.log("file not found")
     }
 }`}
+  python={`from enum import IntEnum
+
+class DbError(IntEnum):
+    NOT_FOUND = 0
+    PERMISSION_DENIED = 1
+
+class DbErrorException(RuntimeError):
+    error: DbError
+
+class Database:
+    @classmethod
+    def open(cls, path: str) -> "Database": ...
+
+try:
+    db = Database.open("data.db")
+except DbErrorException as error:
+    if error.error == DbError.NOT_FOUND:
+        print("file not found")`}
 />
 
 ## Methods
@@ -504,6 +561,28 @@ try {
 } catch (e) {
     console.log(e)
 }`}
+  python={`from enum import IntEnum
+
+class Account:
+    def __init__(self) -> None: ...
+    def balance(self) -> int: ...
+    def deposit(self, amount: int) -> None: ...
+    def withdraw(self, amount: int) -> None: ...
+
+class AccountError(IntEnum):
+    INSUFFICIENT_FUNDS = 0
+
+class AccountErrorException(RuntimeError):
+    error: AccountError
+
+acc = Account()
+acc.deposit(100)
+print(acc.balance())
+
+try:
+    acc.withdraw(50)
+except AccountErrorException as error:
+    print(error)`}
 />
 
 ### &self vs &mut self
@@ -610,6 +689,14 @@ uint t = Config.DefaultTimeout();`}
 }
 
 const t = Config.defaultTimeout()`}
+  python={`class Config:
+    @staticmethod
+    def default_timeout() -> int: ...
+
+    @staticmethod
+    def max_connections() -> int: ...
+
+t = Config.default_timeout()`}
 />
 
 ### Async methods
@@ -699,6 +786,13 @@ string data = await client.Get(
 
 const client = HttpClient.new()
 const data = await client.get("https://api.example.com")`}
+  python={`class HttpClient:
+    def __init__(self) -> None: ...
+    async def get(self, url: str) -> str: ...
+    async def post(self, url: str, body: str) -> str: ...
+
+client = HttpClient()
+data = await client.get("https://api.example.com")`}
 />
 
 ### Methods that take or return classes
@@ -773,6 +867,17 @@ declare class User {
 const user = User.new("alice")
 const session = Session.new(user)
 const u = session.user()`}
+  python={`class Session:
+    def __init__(self, user: User) -> None: ...
+    def user(self) -> User: ...
+
+class User:
+    def __init__(self, name: str) -> None: ...
+    def id(self) -> int: ...
+
+user = User("alice")
+session = Session(user)
+u = session.user()`}
 />
 
 ## Skipping methods
@@ -831,6 +936,11 @@ Console.WriteLine(obj.Exported()); // 84`}
 
 const obj = MyClass.new()
 console.log(obj.exported()) // 84`}
+  python={`class MyClass:
+    def exported(self) -> int: ...
+
+obj = MyClass()
+print(obj.exported())  # 84`}
 />
 
 ## Thread safety
@@ -919,6 +1029,20 @@ const counter = SafeCounter.new()
 await Promise.all(
     Array(100).fill(0).map(() => counter.increment())
 )`}
+  python={`class SafeCounter:
+    def __init__(self) -> None: ...
+    def increment(self) -> None: ...
+    def get(self) -> int: ...
+
+counter = SafeCounter()
+threads = [
+    threading.Thread(target=counter.increment)
+    for _ in range(100)
+]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()`}
 />
 
 ## Single-threaded mode

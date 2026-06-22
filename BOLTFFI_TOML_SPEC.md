@@ -39,7 +39,6 @@ experimental = ["typescript.async_streams"]
 
 Experimental targets:
 - `dart`
-- `python`
 - `kotlin_multiplatform`
 
 Experimental features:
@@ -372,6 +371,32 @@ Controls npm package generation in `boltffi pack wasm`.
   - Default: `{package.license}`
 - `repository` (string, optional): Package repository URL.
   - Default: `{package.repository}`
+
+## Python
+
+### `[targets.python]` (optional)
+
+- `enabled` (bool), whether Python generation and packaging are active.
+  - Default, `false`
+- `output` (path), Python artifact root directory.
+  - Default, `dist/python`
+  - `boltffi generate python` writes the Python package sources, type stubs, `py.typed`, the generated CPython bridge source, `pyproject.toml`, and `setup.py` under this directory.
+  - `boltffi pack python` stages the host Rust shared library into the package directory and writes wheels under `[targets.python.wheel].output`.
+- `module_name` (string, optional), Python import package name.
+  - Default, Cargo artifact name normalized as a Python module identifier.
+  - Validation, must be a valid Python identifier and must not be a Python keyword.
+
+### `[targets.python.wheel]` (optional)
+
+- `output` (path, optional), directory where `boltffi pack python` writes `.whl` files.
+  - Default, `{targets.python.output}/wheelhouse`
+  - Validation, must not be the same as `targets.python.output`, contain it, or sit inside the generated Python package directory.
+- `interpreters` (array of strings, optional), Python interpreter commands or paths used to build the wheel matrix.
+  - Default, first available `python3` or `python` on the host.
+  - Validation, must be non-empty when provided, must not contain empty values, and duplicate entries are rejected after trimming.
+  - Each interpreter must have pip support and must resolve to Python 3.10 or newer.
+
+`boltffi pack python --python <interpreter>` overrides `[targets.python.wheel].interpreters` for that command. Python packaging targets the current host interpreter ABI and rejects explicit Cargo target selection because the wheel tag and compiled CPython extension must match the selected host interpreter.
 
 ## C#
 

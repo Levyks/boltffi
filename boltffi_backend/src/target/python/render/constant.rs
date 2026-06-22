@@ -66,18 +66,19 @@ impl ConstantStub {
         Ok(Self {
             python_name: Name::new(constant.name()).function()?,
             annotation: TypeHint::from_type_ref(ty, package)?.into_annotation(),
-            expression: ConstantExpression::new(value, package)?.into_expression(),
+            expression: DefaultExpression::new(value, package)?.into_expression(),
             uses_wire_helpers: false,
         })
     }
 }
 
-struct ConstantExpression {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefaultExpression {
     expression: Expression,
 }
 
-impl ConstantExpression {
-    fn new(value: &DefaultValue, package: &Package) -> Result<Self> {
+impl DefaultExpression {
+    pub fn new(value: &DefaultValue, package: &Package) -> Result<Self> {
         Ok(Self {
             expression: match value {
                 DefaultValue::Bool(value) => Expression::literal(Literal::bool(*value)),
@@ -99,7 +100,7 @@ impl ConstantExpression {
         })
     }
 
-    fn into_expression(self) -> Expression {
+    pub fn into_expression(self) -> Expression {
         self.expression
     }
 }

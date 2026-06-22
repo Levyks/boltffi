@@ -1,6 +1,6 @@
 ---
 title: "Errors"
-description: "Map Rust Result<T, E> into native error handling in Swift, Kotlin, Java, C#, and TypeScript with BoltFFI using string errors and structured error types."
+description: "Map Rust Result<T, E> into native error handling in Swift, Kotlin, Java, C#, TypeScript, and Python with BoltFFI using string errors and structured error types."
 ---
 
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
@@ -99,6 +99,12 @@ try {
         console.log(e.message)
     }
 }`}
+  python={`def parse_int(s: str) -> int: ...
+
+try:
+    n = parse_int("42")
+except RuntimeError as error:
+    print(error)`}
 />
 
 ## Struct Errors
@@ -221,6 +227,22 @@ try {
         console.log(\`\${e.error.line}:\${e.error.column}: \${e.error.message}\`)
     }
 }`}
+  python={`@dataclass(frozen=True, slots=True)
+class ParseError:
+    line: int
+    column: int
+    message: str
+
+class ParseErrorException(RuntimeError):
+    error: ParseError
+
+def parse_config(input: str) -> Config: ...
+
+try:
+    config = parse_config(src)
+except ParseErrorException as error:
+    details = error.error
+    print(f"{details.line}:{details.column}: {details.message}")`}
 />
 
 ## Enum Errors
@@ -371,6 +393,28 @@ try {
         }
     }
 }`}
+  python={`from enum import IntEnum
+
+class AuthError(IntEnum):
+    INVALID_CREDENTIALS = 0
+    SESSION_EXPIRED = 1
+    ACCOUNT_LOCKED = 2
+
+class AuthErrorException(RuntimeError):
+    error: AuthError
+
+def login(user: str, pass_: str) -> Session: ...
+
+try:
+    session = login(u, p)
+except AuthErrorException as error:
+    match error.error:
+        case AuthError.INVALID_CREDENTIALS:
+            print("Wrong username or password")
+        case AuthError.SESSION_EXPIRED:
+            print("Please log in again")
+        case AuthError.ACCOUNT_LOCKED:
+            print("Account is locked")`}
 />
 
 ### Enums with Payloads
@@ -531,6 +575,36 @@ try {
         }
     }
 }`}
+  python={`class ApiError:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class ApiErrorNetwork(ApiError):
+    message: str
+
+@dataclass(frozen=True, slots=True)
+class ApiErrorNotFound(ApiError):
+    pass
+
+@dataclass(frozen=True, slots=True)
+class ApiErrorRateLimited(ApiError):
+    retry_after: int
+
+class ApiErrorException(RuntimeError):
+    error: ApiError
+
+def fetch_user(id: int) -> User: ...
+
+try:
+    user = fetch_user(42)
+except ApiErrorException as error:
+    details = error.error
+    if isinstance(details, ApiErrorNetwork):
+        print(f"Network error: {details.message}")
+    elif isinstance(details, ApiErrorNotFound):
+        print("User not found")
+    elif isinstance(details, ApiErrorRateLimited):
+        print(f"Try again in {details.retry_after}s")`}
 />
 
 ## Async Errors
@@ -596,4 +670,17 @@ try {
         handle(e)
     }
 }`}
+  python={`class FetchError:
+    pass
+
+class FetchErrorException(RuntimeError):
+    error: FetchError
+
+async def fetch_data(url: str) -> bytes: ...
+
+try:
+    data = await fetch_data(endpoint)
+    process(data)
+except FetchErrorException as error:
+    handle(error)`}
 />

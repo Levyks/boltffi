@@ -57,6 +57,10 @@ jobs:
         with:
           node-version: '24'
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
       - uses: Aandreba/setup-binaryen@v1.0.0
         with:
           token: ${{ github.token }}
@@ -77,6 +81,9 @@ jobs:
       - name: Run WASM benchmarks
         run: ./benchmarks/harnesses/wasm-bench/run-bench.sh
 
+      - name: Run Python benchmarks
+        run: ./benchmarks/harnesses/python-bench/run-bench.sh
+
       - name: Run C# benchmarks
         run: ./benchmarks/harnesses/dotnet-bench/run-bench.sh
 
@@ -87,6 +94,7 @@ jobs:
           cp benchmarks/harnesses/kotlin-jvm-bench/build/results/jmh/benchmark_run.json benchmark-artifacts/kotlin-jvm-jmh_benchmark_run.json
           cp benchmarks/harnesses/java-jvm-bench/build/results/jmh/benchmark_run.json benchmark-artifacts/java-jvm-jmh_benchmark_run.json
           cp benchmarks/harnesses/wasm-bench/build/results/benchmarkjs/benchmark_run.json benchmark-artifacts/wasm-node-benchmarkjs_benchmark_run.json
+          cp benchmarks/harnesses/python-bench/build/results/pyperf/benchmark_run.json benchmark-artifacts/python-pyperf_benchmark_run.json
           cp benchmarks/harnesses/dotnet-bench/build/results/dotnet/benchmark_run.json benchmark-artifacts/csharp-dotnet-benchmarkdotnet_benchmark_run.json
 
       - uses: actions/upload-artifact@v7

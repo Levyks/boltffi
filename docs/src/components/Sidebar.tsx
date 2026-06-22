@@ -157,6 +157,7 @@ const sections: Section[] = [
       { id: "java-packaging", label: "Java" },
       { id: "c-sharp-generation", label: "C#" },
       { id: "wasm-packaging", label: "WASM" },
+      { id: "python-packaging", label: "Python" },
     ]
   },
   { 
@@ -171,6 +172,7 @@ const sections: Section[] = [
       { id: "java-configuration", label: "Java" },
       { id: "c-sharp-configuration", label: "C#" },
       { id: "wasm-configuration", label: "WASM" },
+      { id: "python-configuration", label: "Python" },
     ]
   },
   { 

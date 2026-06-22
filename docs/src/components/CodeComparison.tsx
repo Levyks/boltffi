@@ -8,6 +8,7 @@ import "prismjs/components/prism-kotlin";
 import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-java";
 import "prismjs/components/prism-csharp";
+import "prismjs/components/prism-python";
 
 interface CodeComparisonProps {
   rust: string;
@@ -16,6 +17,7 @@ interface CodeComparisonProps {
   java?: string;
   csharp?: string;
   typescript?: string;
+  python?: string;
   title?: string;
 }
 
@@ -25,13 +27,13 @@ function highlight(code: string, lang: string): string {
   return code;
 }
 
-const CodeComparison = ({ rust, swift, kotlin, java, csharp, typescript, title }: CodeComparisonProps) => {
-  const [activeLang, setActiveLang] = useState<"Swift" | "Kotlin" | "Java" | "C#" | "TypeScript">("Swift");
+const CodeComparison = ({ rust, swift, kotlin, java, csharp, typescript, python, title }: CodeComparisonProps) => {
+  const [activeLang, setActiveLang] = useState<"Swift" | "Kotlin" | "Java" | "C#" | "TypeScript" | "Python">("Swift");
   const [copiedSide, setCopiedSide] = useState<"left" | "right" | null>(null);
 
   const bindings: Record<string, string> = { Swift: swift, Kotlin: kotlin };
   const langMap: Record<string, string> = { Swift: "swift", Kotlin: "kotlin" };
-  const availableLangs: ("Swift" | "Kotlin" | "Java" | "C#" | "TypeScript")[] = ["Swift", "Kotlin"];
+  const availableLangs: ("Swift" | "Kotlin" | "Java" | "C#" | "TypeScript" | "Python")[] = ["Swift", "Kotlin"];
 
   if (java) {
     bindings.Java = java;
@@ -51,10 +53,16 @@ const CodeComparison = ({ rust, swift, kotlin, java, csharp, typescript, title }
     availableLangs.push("TypeScript");
   }
 
+  if (python) {
+    bindings.Python = python;
+    langMap.Python = "python";
+    availableLangs.push("Python");
+  }
+
   const rustHighlighted = useMemo(() => highlight(rust, "rust"), [rust]);
   const bindingHighlighted = useMemo(
     () => highlight(bindings[activeLang], langMap[activeLang]),
-    [activeLang, swift, kotlin, java, csharp, typescript]
+    [activeLang, swift, kotlin, java, csharp, typescript, python]
   );
 
   const handleCopy = (code: string, side: "left" | "right") => {

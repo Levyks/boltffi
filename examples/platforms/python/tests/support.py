@@ -31,9 +31,31 @@ class DemoTestCase(DemoCaseMixin, unittest.TestCase):
             call()
         self.assertEqual(error.exception.args, (expected,))
 
+    def assert_typed_error_value(
+        self,
+        exception_type: type[RuntimeError],
+        expected: object,
+        call,
+    ) -> None:
+        with self.assertRaises(exception_type) as error:
+            call()
+        self.assertEqual(error.exception.args, (expected,))
+        self.assertEqual(error.exception.error, expected)
+
 
 class AsyncDemoTestCase(DemoCaseMixin, unittest.IsolatedAsyncioTestCase):
     async def assert_runtime_error_value(self, expected: object, call) -> None:
         with self.assertRaises(RuntimeError) as error:
             await call()
         self.assertEqual(error.exception.args, (expected,))
+
+    async def assert_typed_error_value(
+        self,
+        exception_type: type[RuntimeError],
+        expected: object,
+        call,
+    ) -> None:
+        with self.assertRaises(exception_type) as error:
+            await call()
+        self.assertEqual(error.exception.args, (expected,))
+        self.assertEqual(error.exception.error, expected)

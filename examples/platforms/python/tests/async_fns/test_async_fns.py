@@ -33,12 +33,14 @@ class AsyncFunctionTests(AsyncDemoTestCase):
         self.demo_case("case:async_fns.results.try_compute.should_return_doubled_value")
         self.assertEqual(await demo.try_compute_async(4), 8)
         self.demo_case("case:async_fns.results.try_compute.should_return_overflow_for_negative_value")
-        await self.assert_runtime_error_value(
+        await self.assert_typed_error_value(
+            demo.ComputeErrorException,
             demo.ComputeErrorOverflow(-1, 0),
             lambda: demo.try_compute_async(-1),
         )
         self.demo_case("case:async_fns.results.try_compute.should_return_invalid_input_for_zero")
-        await self.assert_runtime_error_value(
+        await self.assert_typed_error_value(
+            demo.ComputeErrorException,
             demo.ComputeErrorInvalidInput(-999),
             lambda: demo.try_compute_async(0),
         )

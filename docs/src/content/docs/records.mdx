@@ -143,6 +143,25 @@ const Rect = {
 const r: Rect = { x: 0, y: 0, width: 100, height: 100 }
 const p: Point = { x: 50, y: 50 }
 const inside = Rect.contains(r, p)`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+@dataclass
+class Rect:
+    x: float
+    y: float
+    width: float
+    height: float
+
+    def contains(self, point: Point) -> bool: ...
+
+r = Rect(0, 0, 100, 100)
+p = Point(50, 50)
+inside = r.contains(p)`}
 />
 
 ### Structs with strings or collections
@@ -260,6 +279,23 @@ interface SearchResult {
 function searchUsers(query: string): SearchResult
 
 const result = searchUsers("alice")`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+
+@dataclass
+class SearchResult:
+    query: str
+    matches: list[User]
+    total_count: int
+
+def search_users(query: str) -> SearchResult: ...
+
+result = search_users("alice")`}
 />
 
 ### Nested structs
@@ -400,6 +436,25 @@ const addr: Address = {
 }
 const co: Company = { name: "Acme", address: addr, employeeCount: 50 }
 const summary = companySummary(co)`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class Address:
+    street: str
+    city: str
+    zip: str
+
+@dataclass
+class Company:
+    name: str
+    address: Address
+    employee_count: int
+
+def company_summary(c: Company) -> str: ...
+
+addr = Address("123 Main", "Seattle", "98101")
+co = Company("Acme", addr, 50)
+summary = company_summary(co)`}
 />
 
 ### Optional fields
@@ -507,6 +562,24 @@ const p: Profile = {
     followerCount: 1000n
 }
 const label = displayLabel(p)`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class Profile:
+    username: str
+    display_name: str | None
+    bio: str | None
+    follower_count: int
+
+def display_label(p: Profile) -> str: ...
+
+p = Profile(
+    "alice",
+    "Alice Smith",
+    None,
+    1000
+)
+label = display_label(p)`}
 />
 
 ## Default values
@@ -581,6 +654,16 @@ Config cfg = new Config("myapp");`}
 }
 
 const cfg: Config = { name: "myapp", retries: 3, enabled: true, host: "localhost" }`}
+  python={`from dataclasses import dataclass
+
+@dataclass(frozen=True, slots=True)
+class Config:
+    name: str
+    retries: int = 3
+    enabled: bool = True
+    host: str = "localhost"
+
+cfg = Config("myapp")`}
 />
 
 ### Supported default values
@@ -676,6 +759,17 @@ string label = MyLib.StatusLabel(Status.Active);`}
 function statusLabel(s: Status): string
 
 const label = statusLabel(Status.Active)`}
+  python={`from enum import IntEnum
+
+class Status(IntEnum):
+    PENDING = 0
+    ACTIVE = 1
+    COMPLETED = 2
+    FAILED = 3
+
+def status_label(s: Status) -> str: ...
+
+label = status_label(Status.ACTIVE)`}
 />
 
 ### Enums with associated data
@@ -793,6 +887,29 @@ function describeState(s: LoadState): string
 
 const s: LoadState = { tag: "Loading", progress: 0.5 }
 const desc = describeState(s)`}
+  python={`from dataclasses import dataclass
+
+class LoadState: ...
+
+class LoadStateIdle(LoadState): ...
+
+@dataclass
+class LoadStateLoading(LoadState):
+    progress: float
+
+@dataclass
+class LoadStateLoaded(LoadState):
+    data: str
+
+@dataclass
+class LoadStateError(LoadState):
+    message: str
+    code: int
+
+def describe_state(s: LoadState) -> str: ...
+
+state = LoadStateLoading(0.5)
+desc = describe_state(state)`}
 />
 
 ## Methods and constructors
@@ -936,6 +1053,26 @@ const Point = {
 const p = Point.origin()
 const q = Point.fromPolar(2.0, Math.PI / 4)
 const u = Point.tryUnit(3.0, 4.0)`}
+  python={`from dataclasses import dataclass
+import math
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    @classmethod
+    def new(cls, x: float, y: float) -> "Point": ...
+    @classmethod
+    def origin(cls) -> "Point": ...
+    @classmethod
+    def from_polar(cls, r: float, theta: float) -> "Point": ...
+    @classmethod
+    def try_unit(cls, x: float, y: float) -> "Point": ...
+
+p = Point.origin()
+q = Point.from_polar(2.0, math.pi / 4)
+u = Point.try_unit(3.0, 4.0)`}
 />
 
 ### Instance methods
@@ -999,6 +1136,19 @@ Point sum = p.add(q);`}
 const p: Point = { x: 3, y: 4 }
 const d = Point.distance(p)       // 5.0
 const sum = Point.add(p, q)`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    def distance(self) -> float: ...
+    def add(self, other: "Point") -> "Point": ...
+
+p = Point(3.0, 4.0)
+d = p.distance()       # 5.0
+sum_value = p.add(q)`}
 />
 
 ### Mutating methods
@@ -1044,6 +1194,18 @@ p = p.scale(3.0);
 let p: Point = { x: 1, y: 2 }
 p = Point.scale(p, 3.0)
 // p is now { x: 3, y: 6 }`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    def scale(self, factor: float) -> "Point": ...
+
+p = Point(1.0, 2.0)
+p = p.scale(3.0)
+# p is now Point(3.0, 6.0)`}
 />
 
 ### Static methods
@@ -1080,6 +1242,17 @@ int dims = Point.dimensions(); // 2`}
 }
 
 const dims = Point.dimensions() // 2`}
+  python={`from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    @staticmethod
+    def dimensions() -> int: ...
+
+dims = Point.dimensions()  # 2`}
 />
 
 ### Enum methods
@@ -1169,4 +1342,19 @@ namespace Direction {
 
 const d = Direction.opposite(Direction.North)
 const e = Direction.fromDegrees(90)`}
+  python={`from enum import IntEnum
+
+class Direction(IntEnum):
+    NORTH = 0
+    EAST = 1
+    SOUTH = 2
+    WEST = 3
+
+    def opposite(self) -> "Direction": ...
+
+    @classmethod
+    def from_degrees(cls, deg: float) -> "Direction": ...
+
+d = Direction.NORTH.opposite()
+e = Direction.from_degrees(90)`}
 />

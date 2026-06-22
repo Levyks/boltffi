@@ -75,6 +75,21 @@ let sum = 0
 foreachItem([1, 2, 3], (value) => {
     sum += value
 })`}
+  python={`from collections.abc import Callable
+
+ForeachCallback = Callable[[int], None]
+
+def foreach_item(
+    items: list[int],
+    callback: ForeachCallback
+) -> None: ...
+
+total = 0
+def add_value(value: int) -> None:
+    global total
+    total += value
+
+foreach_item([1, 2, 3], add_value)`}
 />
 
 ### Return Values
@@ -127,6 +142,12 @@ function transform(
 ): number[]
 
 const doubled = transform([1, 2, 3], (v) => v * 2)`}
+  python={`def transform(
+    items: Sequence[int],
+    f: Callable[..., object]
+) -> list[int]: ...
+
+doubled = transform([1, 2, 3], lambda value: value * 2)`}
 />
 
 ## Traits
@@ -269,6 +290,19 @@ download("https://example.com", {
         console.log(\`Error: \${error}\`)
     }
 })`}
+  python={`def download(url: str, handler: object) -> None: ...
+
+class MyHandler:
+    def on_progress(self, percent: float) -> None:
+        print(f"Progress: {percent}%")
+
+    def on_complete(self, result: str) -> None:
+        print(f"Done: {result}")
+
+    def on_error(self, error: str) -> None:
+        print(f"Error: {error}")
+
+download("https://example.com", MyHandler())`}
 />
 
 ### Ownership
@@ -318,6 +352,12 @@ function sharedUse(handler: ProgressHandler): void
 
 singleUse(handler)
 sharedUse(handler)`}
+  python={`def single_use(handler: object) -> None: ...
+def shared_use(handler: object) -> None: ...
+
+handler = MyHandler()
+single_use(handler)
+shared_use(handler)`}
 />
 
 ### Async Methods
@@ -419,6 +459,13 @@ const result = await process({
         return \`value for \${key}\`
     }
 })`}
+  python={`async def process(provider: object) -> str: ...
+
+class MyProvider:
+    def fetch(self, key: str) -> str:
+        return f"value for {key}"
+
+result = await process(MyProvider())`}
 />
 
 ### Storing Traits
@@ -491,6 +538,16 @@ const engine = Engine.new({
 })
 engine.doWork()
 engine.dispose()`}
+  python={`class Engine:
+    def __init__(self, logger: object) -> None: ...
+    def do_work(self) -> None: ...
+
+class MyLogger:
+    def log(self, message: str) -> None:
+        print(message)
+
+engine = Engine(MyLogger())
+engine.do_work()`}
 />
 
 ### Thread Safety

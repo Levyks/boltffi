@@ -1,6 +1,6 @@
 ---
 title: "Types"
-description: "Reference how Rust types map to Swift, Kotlin, Java, C#, and TypeScript in BoltFFI, including supported primitives, collections, and performance notes."
+description: "Reference how Rust types map to Swift, Kotlin, Java, C#, TypeScript, and Python in BoltFFI, including supported primitives, collections, and performance notes."
 ---
 
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
@@ -127,6 +127,13 @@ function byteAt(data: Uint8Array, index: number): number
 const sum = add(5, 3)
 const ts = timestampMs()
 const b = byteAt(new Uint8Array([0x48, 0x69]), 0)`}
+  python={`def add(a: int, b: int) -> int: ...
+def timestamp_ms() -> int: ...
+def byte_at(data: bytes, index: int) -> int: ...
+
+sum_value = add(5, 3)
+ts = timestamp_ms()
+b = byte_at(bytes([0x48, 0x69]), 0)`}
 />
 
 For floating point, `f64` is the default choice. It matches what most languages use for their default float type, and the extra precision rarely hurts. Use `f32` when you're interfacing with graphics APIs, audio processing, or other domains where single precision is the standard.
@@ -167,6 +174,11 @@ function lerp(a: number, b: number, t: number): number
 
 const area = circleArea(5.0)
 const mid = lerp(0.0, 10.0, 0.5)`}
+  python={`def circle_area(radius: float) -> float: ...
+def lerp(a: float, b: float, t: float) -> float: ...
+
+area = circle_area(5.0)
+mid = lerp(0.0, 10.0, 0.5)`}
 />
 
 ## Strings
@@ -231,6 +243,13 @@ function firstWord(s: string): string
 const msg = greet("World")
 const ha = repeat("ha", 3)  // "hahaha"
 const word = firstWord("hello world")`}
+  python={`def greet(name: str) -> str: ...
+def repeat(s: str, n: int) -> str: ...
+def first_word(s: str) -> str: ...
+
+msg = greet("World")
+ha = repeat("ha", 3)  # "hahaha"
+word = first_word("hello world")`}
 />
 
 If string handling is your bottleneck, rethink the API. Instead of calling a function once per string in a loop, pass a batch of strings and process them all in one call. Or do the string-heavy work entirely on the Rust side and only return the final result.
@@ -324,6 +343,12 @@ function parseInt(s: string): number | null
 const user = findUser(42n)  // "alice"
 const num = parseInt("123") // 123
 const bad = parseInt("abc") // null`}
+  python={`def find_user(id: int) -> str | None: ...
+def parse_int(s: str) -> int | None: ...
+
+user = find_user(42)      # "alice"
+num = parse_int("123")    # 123
+bad = parse_int("abc")    # None`}
 />
 
 ## Result and errors
@@ -432,6 +457,22 @@ try {
         console.log("other error")
     }
 }`}
+  python={`from enum import IntEnum
+
+class ParseError(IntEnum):
+    EMPTY = 0
+    INVALID_FORMAT = 1
+    OUT_OF_RANGE = 2
+
+class ParseErrorException(RuntimeError):
+    error: ParseError
+
+def parse_port(s: str) -> int: ...
+
+try:
+    port = parse_port("8080")
+except ParseErrorException as error:
+    print(error.error)`}
 />
 
 ## Collections
@@ -500,6 +541,13 @@ function filterPositive(values: number[]): number[]
 const total = sum([1, 2, 3, 4, 5])
 const nums = range(0, 10)
 const pos = filterPositive([-1, 2, -3, 4])`}
+  python={`def sum(values: list[int]) -> int: ...
+def range(start: int, end: int) -> list[int]: ...
+def filter_positive(values: list[int]) -> list[int]: ...
+
+total = sum([1, 2, 3, 4, 5])
+nums = range(0, 10)
+pos = filter_positive([-1, 2, -3, 4])`}
 />
 
 ### Nested collections
@@ -556,6 +604,11 @@ int[][] t = MyLib.Transpose(m);
 const m = [[1, 2, 3], [4, 5, 6]]
 const t = transpose(m)
 // [[1, 4], [2, 5], [3, 6]]`}
+  python={`def transpose(matrix: list[list[int]]) -> list[list[int]]: ...
+
+m = [[1, 2, 3], [4, 5, 6]]
+t = transpose(m)
+# [[1, 4], [2, 5], [3, 6]]`}
 />
 
 ## Callbacks
@@ -612,7 +665,7 @@ BoltFFI recognizes certain standard library and common crate types and maps them
 
 ### Duration
 
-`std::time::Duration` represents a span of time. BoltFFI encodes it as seconds plus nanoseconds (12 bytes total). Swift uses `TimeInterval` (a `Double` of seconds), Kotlin and Java use `java.time.Duration`, C# uses a `long`, and TypeScript uses a `{ secs: bigint, nanos: number }` object.
+`std::time::Duration` represents a span of time. BoltFFI encodes it as seconds plus nanoseconds (12 bytes total). Swift uses `TimeInterval` (a `Double` of seconds), Kotlin and Java use `java.time.Duration`, C# uses a `long`, TypeScript uses a `{ secs: bigint, nanos: number }` object, and Python uses seconds as a `float`.
 
 <CodeComparison
   title=""
@@ -652,11 +705,16 @@ function doubleDuration(d: Duration): Duration
 
 const half = sleepDuration()  // { secs: 0n, nanos: 500000000 }
 const full = doubleDuration(half)`}
+  python={`def sleep_duration() -> float: ...
+def double_duration(d: float) -> float: ...
+
+half = sleep_duration()  # 0.5
+full = double_duration(half)`}
 />
 
 ### SystemTime
 
-`std::time::SystemTime` represents a point in time. BoltFFI encodes it as seconds since Unix epoch plus nanoseconds (12 bytes). Swift uses `Date`, Kotlin and Java use `Instant`, C# uses a `long`, and TypeScript uses `Date`. Negative values represent times before 1970.
+`std::time::SystemTime` represents a point in time. BoltFFI encodes it as seconds since Unix epoch plus nanoseconds (12 bytes). Swift uses `Date`, Kotlin and Java use `Instant`, C# uses a `long`, TypeScript uses `Date`, and Python uses Unix seconds as a `float`. Negative values represent times before 1970.
 
 <CodeComparison
   title=""
@@ -696,11 +754,16 @@ function epoch(): Date
 
 const current = now()
 const unix = epoch()  // 1970-01-01T00:00:00.000Z`}
+  python={`def now() -> float: ...
+def epoch() -> float: ...
+
+current = now()
+unix = epoch()  # 0.0`}
 />
 
 ### UUID
 
-`uuid::Uuid` from the [uuid](https://crates.io/crates/uuid) crate maps to native UUID types in Swift, Kotlin, and Java. C# and TypeScript receive it as a string since those bindings do not use a generated UUID wrapper.
+`uuid::Uuid` from the [uuid](https://crates.io/crates/uuid) crate maps to native UUID types in Swift, Kotlin, Java, and Python. C# and TypeScript receive it as a string since those bindings do not use a generated UUID wrapper.
 
 <CodeComparison
   title=""
@@ -740,6 +803,11 @@ function parseId(s: string): string | null
 
 const id = newId()  // "550e8400-e29b-41d4-a716-446655440000"
 const parsed = parseId("550e8400-e29b-41d4-a716-446655440000")`}
+  python={`def new_id() -> uuid.UUID: ...
+def parse_id(s: str) -> uuid.UUID | None: ...
+
+id = new_id()
+parsed = parse_id("550e8400-e29b-41d4-a716-446655440000")`}
 />
 
 ### URL
@@ -784,6 +852,11 @@ function withPath(base: string, path: string): string
 
 const base = baseUrl()  // "https://example.com/"
 const full = withPath(base, "/api/v1")`}
+  python={`def base_url() -> str: ...
+def with_path(base: str, path: str) -> str: ...
+
+base = base_url()  # "https://example.com/"
+full = with_path(base, "/api/v1")`}
 />
 
 ### Bytes
@@ -828,4 +901,9 @@ function hash(data: Uint8Array): Uint8Array
 
 const compressed = compress(originalData)
 const digest = hash(message)`}
+  python={`def compress(data: bytes) -> bytes: ...
+def hash(data: bytes) -> bytes: ...
+
+compressed = compress(original_data)
+digest = hash(message)`}
 />

@@ -54,7 +54,6 @@ pub struct PackJavaOptions {
 
 pub struct PackPythonOptions {
     pub execution: PackExecutionOptions,
-    pub experimental: bool,
     pub python_interpreters: Vec<String>,
 }
 
