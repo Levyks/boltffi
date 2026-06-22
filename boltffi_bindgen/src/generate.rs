@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use boltffi_backend::core::{CoverageMode, bridge, host};
+use boltffi_backend::target::kmp::KmpHost;
 use boltffi_backend::target::python::PythonCExtHost;
 use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
@@ -91,9 +92,9 @@ impl Generation {
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python => self.render_python(),
+            Target::KotlinMultiplatform => self.render_kmp(),
             Target::Swift
             | Target::Kotlin
-            | Target::KotlinMultiplatform
             | Target::Java
             | Target::TypeScript
             | Target::Header
@@ -118,6 +119,12 @@ impl Generation {
             .python_host()?
             .into_target(&bindings)
             .map_err(GenerationError::Render)?;
+        self.render_backend(&target, &bindings)
+    }
+
+    fn render_kmp(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Native>()?;
+        let target = KmpHost::new().into_target();
         self.render_backend(&target, &bindings)
     }
 
