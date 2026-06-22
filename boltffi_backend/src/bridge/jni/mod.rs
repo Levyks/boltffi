@@ -10,9 +10,10 @@ mod template;
 
 pub use bridge::JniBridge;
 pub use contract::{
-    BytesParameter, CallbackParameter, CallbackReturn, ContinuationParameter, JniBridgeContract,
-    JniType, NativeMethod, NativeParameter, NativeParameterKind, NativeReturn, RecordParameter,
-    RecordValue, ScalarParameter, ScalarReturn,
+    BytesParameter, CallbackArgument, CallbackMethod, CallbackParameter, CallbackRegistration,
+    CallbackReturn, ContinuationParameter, JniBridgeContract, JniType, NativeMethod,
+    NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
+    ScalarParameter, ScalarReturn,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -339,6 +340,18 @@ mod tests {
         assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong listener)"));
         assert!(source.contains("FfiStatus status = boltffi_function_demo_install(boltffi_create_callback_demo_listener((uint64_t)listener));"));
         assert!(source.contains("boltffi_jni_throw_status(env, status);"));
+        assert!(source.contains("static jclass g____ListenerVTable_class = NULL;"));
+        assert!(source.contains(
+            "static uint32_t ___ListenerVTable_on_value(uint64_t handle, uint32_t arg0)"
+        ));
+        assert!(source.contains("FindClass(env, \"com/boltffi/demo/ListenerCallbacks\")"));
+        assert!(source.contains(
+            "GetStaticMethodID(env, g____ListenerVTable_class, \"on_value\", \"(JI)I\")"
+        ));
+        assert!(
+            source
+                .contains("boltffi_register_callback_demo_listener(&g____ListenerVTable_vtable);")
+        );
     }
 
     #[test]

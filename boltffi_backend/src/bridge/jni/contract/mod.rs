@@ -11,7 +11,9 @@ mod scalar;
 
 pub use bridge::JniBridgeContract;
 pub use bytes::BytesParameter;
-pub use callback::{CallbackParameter, CallbackReturn};
+pub use callback::{
+    CallbackArgument, CallbackMethod, CallbackParameter, CallbackRegistration, CallbackReturn,
+};
 pub use continuation::ContinuationParameter;
 pub use jni_type::JniType;
 pub use method::NativeMethod;

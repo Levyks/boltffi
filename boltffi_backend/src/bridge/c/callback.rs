@@ -1,5 +1,5 @@
 use boltffi_binding::{
-    CallbackDecl, CallbackId, ExecutionDecl, ImportedMethodDecl, Native, VTableSlot,
+    CallbackDecl, CallbackId, CanonicalName, ExecutionDecl, ImportedMethodDecl, Native, VTableSlot,
 };
 
 use crate::core::Result;
@@ -13,6 +13,7 @@ use super::{
 #[non_exhaustive]
 pub struct Callback {
     id: CallbackId,
+    name: CanonicalName,
     vtable: Record,
     methods: Vec<CallbackSlot>,
     register: Function,
@@ -32,6 +33,11 @@ impl Callback {
     /// Returns the source callback trait id.
     pub const fn id(&self) -> CallbackId {
         self.id
+    }
+
+    /// Returns the canonical callback trait name.
+    pub fn name(&self) -> &CanonicalName {
+        &self.name
     }
 
     /// Returns the callback vtable record.
@@ -101,6 +107,7 @@ impl Callback {
         )?;
         Ok(Self {
             id: callback.id(),
+            name: callback.name().clone(),
             vtable,
             methods,
             register,

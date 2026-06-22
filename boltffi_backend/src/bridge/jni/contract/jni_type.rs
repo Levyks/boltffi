@@ -44,6 +44,42 @@ impl JniType {
         matches!(self, Self::Boolean)
     }
 
+    /// Returns the JNI type descriptor used in method signatures.
+    pub fn signature(self) -> &'static str {
+        match self {
+            Self::Boolean => "Z",
+            Self::Byte => "B",
+            Self::Short => "S",
+            Self::Int => "I",
+            Self::Long => "J",
+            Self::Float => "F",
+            Self::Double => "D",
+        }
+    }
+
+    /// Returns the `CallStatic*Method` suffix for this JNI scalar type.
+    pub fn call_method_suffix(self) -> &'static str {
+        match self {
+            Self::Boolean => "Boolean",
+            Self::Byte => "Byte",
+            Self::Short => "Short",
+            Self::Int => "Int",
+            Self::Long => "Long",
+            Self::Float => "Float",
+            Self::Double => "Double",
+        }
+    }
+
+    /// Returns the C expression used when callback dispatch fails.
+    pub fn failure_value(self) -> &'static str {
+        match self {
+            Self::Boolean => "false",
+            Self::Byte | Self::Short | Self::Int | Self::Long => "0",
+            Self::Float => "0.0f",
+            Self::Double => "0.0",
+        }
+    }
+
     /// Creates the JNI scalar type for a scalar C ABI type.
     pub fn from_c_type(ty: &c::Type) -> Result<Self> {
         match ty {

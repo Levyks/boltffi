@@ -1,5 +1,7 @@
 use std::fmt;
 
+use boltffi_binding::CanonicalName;
+
 use crate::core::{Error, Result};
 
 use crate::bridge::c::Identifier;
@@ -61,6 +63,14 @@ impl JvmClassPath {
             .map(JvmNameSegment::as_str)
             .collect::<Vec<_>>()
             .join("/")
+    }
+
+    /// Creates the generated callback bridge class in the same JVM package.
+    pub fn callback_class(&self, callback: &CanonicalName) -> Result<Self> {
+        Ok(Self {
+            package: self.package.clone(),
+            class: JvmNameSegment::callback_class(callback)?,
+        })
     }
 
     /// Returns the class path as the prefix used by a JNI exported symbol.
@@ -130,6 +140,24 @@ impl JvmNameSegment {
 
     fn class(name: impl Into<String>) -> Result<Self> {
         Self::parse(name.into(), |name| Error::InvalidJvmClassName { name })
+    }
+
+    fn callback_class(callback: &CanonicalName) -> Result<Self> {
+        Self::class(format!("{}Callbacks", Self::canonical_class(callback)))
+    }
+
+    fn canonical_class(name: &CanonicalName) -> String {
+        name.parts()
+            .iter()
+            .map(|part| Self::capitalized(part.as_str()))
+            .collect()
+    }
+
+    fn capitalized(segment: &str) -> String {
+        let mut characters = segment.chars();
+        characters.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(characters).collect()
+        })
     }
 
     fn parse(name: String, error: impl FnOnce(String) -> Error) -> Result<Self> {

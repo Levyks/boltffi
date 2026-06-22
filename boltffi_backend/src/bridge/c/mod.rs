@@ -19,7 +19,7 @@ pub(crate) mod syntax;
 mod template;
 mod ty;
 
-pub use callback::Callback;
+pub use callback::{Callback, CallbackSlot};
 pub use contract::CBridgeContract;
 pub use enumeration::{Enum, EnumVariant};
 pub use function::Function;

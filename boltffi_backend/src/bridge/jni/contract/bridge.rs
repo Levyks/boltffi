@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::NativeMethod;
+use super::{CallbackRegistration, NativeMethod};
 
 /// Contract produced by the JNI bridge layer.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,6 +21,7 @@ pub struct JniBridgeContract {
     source_path: FilePath,
     c_header: HeaderInclude,
     free_buffer: Identifier,
+    callbacks: Vec<CallbackRegistration>,
     methods: Vec<NativeMethod>,
 }
 
@@ -38,6 +39,11 @@ impl JniBridgeContract {
                 .stable(BridgeCapability::Jni),
             c_header: HeaderInclude::from_files(&source_path, c_bridge.header_path())?,
             free_buffer: Identifier::parse(c_bridge.support().buffer_free()?.name())?,
+            callbacks: c_bridge
+                .callbacks()
+                .iter()
+                .map(|callback| CallbackRegistration::from_c_callback(&class, callback))
+                .collect::<Result<Vec<_>>>()?,
             methods: c_bridge
                 .functions()
                 .iter()
@@ -66,6 +72,11 @@ impl JniBridgeContract {
     /// Returns the C support function that releases owned BoltFFI byte buffers.
     pub fn free_buffer(&self) -> &Identifier {
         &self.free_buffer
+    }
+
+    /// Returns generated callback registrations.
+    pub fn callbacks(&self) -> &[CallbackRegistration] {
+        &self.callbacks
     }
 
     /// Returns generated native methods.
