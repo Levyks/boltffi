@@ -190,4 +190,56 @@ mod tests {
         assert!(source.contains("JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1mode(JNIEnv *env, jclass cls, jbyte mode)"));
         assert!(source.contains("jbyte result = boltffi_function_demo_echo_mode(mode);"));
     }
+
+    #[test]
+    fn jni_bridge_renders_class_handles_and_methods() {
+        let files = files(
+            r#"
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: i32,
+                pub y: i32,
+            }
+
+            pub struct Engine;
+
+            #[export(single_threaded)]
+            impl Engine {
+                pub fn new(seed: u64) -> Self {
+                    Self
+                }
+
+                pub fn version() -> u32 {
+                    1
+                }
+
+                pub fn score(&self, point: Point) -> u32 {
+                    point.x as u32
+                }
+
+                pub fn advance(&mut self, delta: u32) {}
+            }
+            "#,
+        );
+        let source = files
+            .iter()
+            .find(|(path, _)| path == "jni/jni_glue.c")
+            .map(|(_, contents)| contents)
+            .expect("JNI source file");
+
+        assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1release_1class_1demo_1engine(JNIEnv *env, jclass cls, jlong handle)"));
+        assert!(source.contains("boltffi_release_class_demo_engine(handle);"));
+        assert!(source.contains("JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1class_1demo_1engine_1new(JNIEnv *env, jclass cls, jlong seed)"));
+        assert!(source.contains("jlong result = boltffi_init_class_demo_engine_new(seed);"));
+        assert!(source.contains("JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1version(JNIEnv *env, jclass cls)"));
+        assert!(source.contains("JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1score(JNIEnv *env, jclass cls, jlong receiver, jbyteArray point)"));
+        assert!(source.contains(
+            "jint result = boltffi_method_class_demo_engine_score(receiver, __boltffi_point_value);"
+        ));
+        assert!(source.contains("JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1advance(JNIEnv *env, jclass cls, jlong receiver, jint delta)"));
+        assert!(source.contains(
+            "FfiStatus status = boltffi_method_class_demo_engine_advance(receiver, delta);"
+        ));
+    }
 }
