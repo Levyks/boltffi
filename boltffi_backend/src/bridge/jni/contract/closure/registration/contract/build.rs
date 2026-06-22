@@ -3,15 +3,13 @@ use boltffi_binding::ClosureSignature;
 use crate::{
     bridge::{
         c,
-        jni::{
-            CallbackClosureHandle, ClosureArgument, ClosureRegistration, JvmClassPath,
-            JvmMethodReturn,
-        },
+        jni::{CallbackClosureHandle, ClosureArgument, JvmClassPath, JvmMethodReturn},
     },
     core::{Error, Result},
 };
 
-use super::super::names::ClosureNames;
+use super::super::super::names::ClosureNames;
+use super::ClosureRegistration;
 use super::index::ClosureRegistrationIndex;
 
 impl ClosureRegistration {

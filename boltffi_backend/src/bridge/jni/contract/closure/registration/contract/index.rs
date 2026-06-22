@@ -3,13 +3,11 @@ use std::collections::BTreeMap;
 use boltffi_binding::ClosureSignature;
 
 use crate::{
-    bridge::{
-        c,
-        jni::{ClosureRegistration, JvmClassPath},
-    },
+    bridge::{c, jni::JvmClassPath},
     core::Result,
 };
 
+use super::ClosureRegistration;
 use super::build::ClosureRegistrationConstructor;
 
 #[derive(Default)]
