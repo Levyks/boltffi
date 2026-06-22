@@ -220,7 +220,12 @@ impl CallbackHandleMethod {
             (None, None) => CallbackHandleMethodCall::Synchronous(NativeReturn::from_c_type(
                 function.returns(),
             )?),
-            (Some(_), Some(_)) => unreachable!(),
+            (Some(_), Some(_)) => {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: JNI_BRIDGE,
+                    invariant: "callback handle method has completion and closure return groups",
+                });
+            }
         };
         Ok(Self {
             symbol: JniSymbolName::native_method(class, function.name())?,
