@@ -4,6 +4,7 @@
 //! contract is still typed Rust data, so host renderers can inspect the C ABI
 //! without parsing header text.
 
+mod callback;
 mod contract;
 mod enumeration;
 mod function;
@@ -18,7 +19,8 @@ pub(crate) mod syntax;
 mod template;
 mod ty;
 
-pub use contract::{CBridgeContract, Callback};
+pub use callback::Callback;
+pub use contract::CBridgeContract;
 pub use enumeration::{Enum, EnumVariant};
 pub use function::Function;
 pub use header::{CBridge, HeaderInclude};
