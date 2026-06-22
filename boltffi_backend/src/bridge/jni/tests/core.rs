@@ -249,6 +249,47 @@ fn jni_bridge_renders_class_handles_and_methods() {
 }
 
 #[test]
+fn jni_bridge_renders_async_class_methods() {
+    let files = files(
+        r#"
+            pub struct Engine;
+
+            #[export(single_threaded)]
+            impl Engine {
+                pub fn new() -> Self {
+                    Self
+                }
+
+                pub async fn compute(&self, value: u32) -> u32 {
+                    value
+                }
+            }
+            "#,
+    );
+    let source = files
+        .iter()
+        .find(|(path, _)| path == "jni/jni_glue.c")
+        .map(|(_, contents)| contents)
+        .expect("JNI source file");
+
+    [
+        "JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1compute(JNIEnv *env, jclass cls, jlong receiver, jint value)",
+        "RustFutureHandle result = boltffi_method_class_demo_engine_compute(receiver, value);",
+        "return (jlong)result;",
+        "JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1class_1demo_1engine_1compute_1poll(JNIEnv *env, jclass cls, jlong handle, jlong callback_data)",
+        "boltffi_async_method_class_demo_engine_compute_poll((RustFutureHandle)handle, callback_data, boltffi_jni_continuation_callback);",
+        "JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1class_1demo_1engine_1compute_1complete(JNIEnv *env, jclass cls, jlong handle, jlong out_status)",
+        "uint32_t result = boltffi_async_method_class_demo_engine_compute_complete((RustFutureHandle)handle, (FfiStatus *)out_status);",
+        "JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1class_1demo_1engine_1compute_1cancel(JNIEnv *env, jclass cls, jlong handle)",
+        "boltffi_async_method_class_demo_engine_compute_cancel((RustFutureHandle)handle);",
+        "JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1class_1demo_1engine_1compute_1free(JNIEnv *env, jclass cls, jlong handle)",
+        "boltffi_async_method_class_demo_engine_compute_free((RustFutureHandle)handle);",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(source.contains(expected), "{expected}\n{source}"));
+}
+
+#[test]
 fn jni_bridge_casts_async_handles_and_callbacks_to_c_abi_types() {
     let files = files(
         r#"
