@@ -5,7 +5,7 @@ use boltffi_binding::ClosureSignature;
 use crate::{
     bridge::{
         c::{self, Identifier, TypeFragment},
-        jni::{ClosureArgument, JvmClassPath, JvmMethodReturn},
+        jni::{CallbackClosureHandle, ClosureArgument, JvmClassPath, JvmMethodReturn},
     },
     core::{Error, Result},
 };
@@ -25,28 +25,69 @@ pub struct ClosureRegistration {
     unload: Identifier,
     call: Identifier,
     release: Identifier,
+    callback_handle: Option<CallbackClosureHandle>,
     returns: JvmMethodReturn,
     arguments: Vec<ClosureArgument>,
 }
 
 impl ClosureRegistration {
-    /// Builds unique closure trampoline registrations from C functions.
-    pub fn from_functions(class: &JvmClassPath, functions: &[c::Function]) -> Result<Vec<Self>> {
-        functions
+    /// Builds unique closure registrations from C functions and callback slots.
+    pub fn from_c_bridge(
+        class: &JvmClassPath,
+        functions: &[c::Function],
+        callbacks: &[c::Callback],
+    ) -> Result<Vec<Self>> {
+        let registrations: BTreeMap<ClosureSignature, Self> =
+            functions
+                .iter()
+                .try_fold(BTreeMap::new(), |registrations, function| {
+                    function.parameter_groups().iter().try_fold(
+                        registrations,
+                        |mut registrations, group| {
+                            if let c::ParameterGroup::Closure(closure) = group {
+                                match registrations.entry(closure.signature().clone()) {
+                                    Entry::Vacant(entry) => {
+                                        entry.insert(Self::from_c_group(
+                                            class,
+                                            function.parameter(closure.call()).ty(),
+                                            closure,
+                                            false,
+                                        )?);
+                                    }
+                                    Entry::Occupied(_) => {}
+                                }
+                            }
+                            Ok::<_, Error>(registrations)
+                        },
+                    )
+                })?;
+
+        callbacks
             .iter()
-            .try_fold(BTreeMap::new(), |registrations, function| {
-                function.parameter_groups().iter().try_fold(
+            .flat_map(|callback| callback.methods().iter())
+            .try_fold(registrations, |registrations, slot| {
+                slot.parameter_groups().iter().try_fold(
                     registrations,
                     |mut registrations, group| {
                         if let c::ParameterGroup::Closure(closure) = group {
                             match registrations.entry(closure.signature().clone()) {
                                 Entry::Vacant(entry) => {
-                                    entry.insert(Self::from_c_group(class, function, closure)?);
+                                    entry.insert(Self::from_c_group(
+                                        class,
+                                        slot.parameter(closure.call()).ty(),
+                                        closure,
+                                        true,
+                                    )?);
                                 }
-                                Entry::Occupied(_) => {}
+                                Entry::Occupied(mut entry) => {
+                                    entry.get_mut().add_callback_handle(
+                                        class,
+                                        slot.parameter(closure.call()).ty(),
+                                    )?;
+                                }
                             }
                         }
-                        Ok(registrations)
+                        Ok::<_, Error>(registrations)
                     },
                 )
             })
@@ -99,9 +140,19 @@ impl ClosureRegistration {
         &self.release
     }
 
+    /// Returns the Rust-owned closure handle contract for callback arguments.
+    pub fn callback_handle(&self) -> Option<&CallbackClosureHandle> {
+        self.callback_handle.as_ref()
+    }
+
     /// Returns the C return type for the closure invoke function.
     pub fn c_return_type(&self) -> &TypeFragment {
         self.returns.c_type()
+    }
+
+    /// Returns the JNI return type for the native closure-call export.
+    pub fn callback_return_type(&self) -> TypeFragment {
+        self.returns.jni_type()
     }
 
     /// Returns whether the closure invoke function returns no value.
@@ -147,6 +198,11 @@ impl ClosureRegistration {
         self.returns.failure_value()
     }
 
+    /// Returns the JNI value returned when a Rust-owned closure call fails.
+    pub fn callback_failure_value(&self) -> Option<c::Expression> {
+        self.returns.jni_failure_value()
+    }
+
     /// Returns generated C closure arguments.
     pub fn arguments(&self) -> &[ClosureArgument] {
         &self.arguments
@@ -154,11 +210,11 @@ impl ClosureRegistration {
 
     fn from_c_group(
         class: &JvmClassPath,
-        function: &c::Function,
+        call_type: &c::Type,
         closure: &c::ClosureParameter,
+        callback_argument: bool,
     ) -> Result<Self> {
-        let c::Type::FunctionPointer { returns, params } = function.parameter(closure.call()).ty()
-        else {
+        let c::Type::FunctionPointer { returns, params } = call_type else {
             return Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "closure call parameter is not a function pointer",
@@ -184,6 +240,9 @@ impl ClosureRegistration {
             unload: Identifier::parse(format!("boltffi_jni_unload_{stem}"))?,
             call: Identifier::parse(format!("boltffi_jni_{stem}_call"))?,
             release: Identifier::parse(format!("boltffi_jni_{stem}_release"))?,
+            callback_handle: callback_argument
+                .then(|| CallbackClosureHandle::new(class, closure.signature(), call_type))
+                .transpose()?,
             returns: JvmMethodReturn::from_c_type(returns)?,
             arguments: params
                 .iter()
@@ -192,5 +251,16 @@ impl ClosureRegistration {
                 .map(ClosureArgument::from_c_type)
                 .collect::<Result<Vec<_>>>()?,
         })
+    }
+
+    fn add_callback_handle(&mut self, class: &JvmClassPath, call_type: &c::Type) -> Result<()> {
+        if self.callback_handle.is_none() {
+            self.callback_handle = Some(CallbackClosureHandle::new(
+                class,
+                &self.signature,
+                call_type,
+            )?);
+        }
+        Ok(())
     }
 }

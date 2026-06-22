@@ -64,6 +64,15 @@ impl JvmMethodReturn {
         }
     }
 
+    /// Returns the JNI C return type.
+    pub fn jni_type(&self) -> TypeFragment {
+        match self {
+            Self::Void { c_type } => c_type.clone(),
+            Self::Value { jni_type, .. } => jni_type.as_type_fragment(),
+            Self::Bytes { .. } | Self::Record { .. } => TypeFragment::new("jbyteArray"),
+        }
+    }
+
     /// Returns the JNI method descriptor return segment.
     pub fn signature(&self) -> &'static str {
         match self {
@@ -111,6 +120,17 @@ impl JvmMethodReturn {
                 c_type.clone(),
                 Expression::literal(Literal::compound_zero()),
             )),
+        }
+    }
+
+    /// Returns the JNI expression used when dispatch fails.
+    pub fn jni_failure_value(&self) -> Option<Expression> {
+        match self {
+            Self::Void { .. } => None,
+            Self::Value { jni_type, .. } => Some(Expression::literal(jni_type.failure_value())),
+            Self::Bytes { .. } | Self::Record { .. } => {
+                Some(Expression::literal(Literal::null_pointer()))
+            }
         }
     }
 }

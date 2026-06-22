@@ -2,8 +2,9 @@ use crate::{
     bridge::{
         c::{self, ArgumentList, Expression, Identifier, Literal, TypeFragment},
         jni::{
-            CallbackBytesArgument, CallbackCParameter, CallbackCompletionArgument,
-            CallbackHandleArgument, CallbackRecordArgument, JniType,
+            CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
+            CallbackCompletionArgument, CallbackHandleArgument, CallbackRecordArgument,
+            ClosureRegistration, JniType,
         },
     },
     core::{Error, Result},
@@ -37,6 +38,14 @@ enum CallbackArgumentKind {
         handle: Identifier,
         parameter: CallbackCParameter,
     },
+    Closure {
+        handle: Identifier,
+        call: CallbackCParameter,
+        context: CallbackCParameter,
+        release: CallbackCParameter,
+        handle_new: Identifier,
+        handle_release: Identifier,
+    },
     Completion {
         callback: CallbackCParameter,
         context: CallbackCParameter,
@@ -54,6 +63,12 @@ impl CallbackArgument {
             } => vec![pointer.clone(), length.clone()],
             CallbackArgumentKind::Record { parameter, .. }
             | CallbackArgumentKind::CallbackHandle { parameter, .. } => vec![parameter.clone()],
+            CallbackArgumentKind::Closure {
+                call,
+                context,
+                release,
+                ..
+            } => vec![call.clone(), context.clone(), release.clone()],
             CallbackArgumentKind::Completion {
                 callback, context, ..
             } => vec![callback.clone(), context.clone()],
@@ -65,7 +80,9 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { jni_type, .. } => jni_type.signature(),
             CallbackArgumentKind::Bytes { .. } | CallbackArgumentKind::Record { .. } => "[B",
-            CallbackArgumentKind::CallbackHandle { .. } => "J",
+            CallbackArgumentKind::CallbackHandle { .. } | CallbackArgumentKind::Closure { .. } => {
+                "J"
+            }
             CallbackArgumentKind::Completion { .. } => "JJ",
         }
     }
@@ -87,6 +104,9 @@ impl CallbackArgument {
                 vec![Expression::identifier(array.clone())]
             }
             CallbackArgumentKind::CallbackHandle { handle, .. } => {
+                vec![Expression::identifier(handle.clone())]
+            }
+            CallbackArgumentKind::Closure { handle, .. } => {
                 vec![Expression::identifier(handle.clone())]
             }
             CallbackArgumentKind::Completion {
@@ -120,6 +140,7 @@ impl CallbackArgument {
             CallbackArgumentKind::Record { .. } | CallbackArgumentKind::CallbackHandle { .. } => {
                 None
             }
+            CallbackArgumentKind::Closure { .. } => None,
             CallbackArgumentKind::Completion { .. } => None,
         }
     }
@@ -129,6 +150,7 @@ impl CallbackArgument {
         match &self.kind {
             CallbackArgumentKind::Value { .. } | CallbackArgumentKind::Bytes { .. } => None,
             CallbackArgumentKind::CallbackHandle { .. } => None,
+            CallbackArgumentKind::Closure { .. } => None,
             CallbackArgumentKind::Completion { .. } => None,
             CallbackArgumentKind::Record { array, parameter } => {
                 Some(CallbackRecordArgument::new(array, parameter.name()))
@@ -142,10 +164,37 @@ impl CallbackArgument {
             CallbackArgumentKind::Value { .. }
             | CallbackArgumentKind::Bytes { .. }
             | CallbackArgumentKind::Record { .. }
+            | CallbackArgumentKind::Closure { .. }
             | CallbackArgumentKind::Completion { .. } => None,
             CallbackArgumentKind::CallbackHandle { handle, parameter } => {
                 Some(CallbackHandleArgument::new(handle, parameter.name()))
             }
+        }
+    }
+
+    /// Returns closure-handle setup data when this argument carries a Rust-owned closure.
+    pub fn closure_handle(&self) -> Option<CallbackClosureArgument<'_>> {
+        match &self.kind {
+            CallbackArgumentKind::Value { .. }
+            | CallbackArgumentKind::Bytes { .. }
+            | CallbackArgumentKind::Record { .. }
+            | CallbackArgumentKind::CallbackHandle { .. }
+            | CallbackArgumentKind::Completion { .. } => None,
+            CallbackArgumentKind::Closure {
+                handle,
+                call,
+                context,
+                release,
+                handle_new,
+                handle_release,
+            } => Some(CallbackClosureArgument::new(
+                handle,
+                call.name(),
+                context.name(),
+                release.name(),
+                handle_new,
+                handle_release,
+            )),
         }
     }
 
@@ -156,6 +205,7 @@ impl CallbackArgument {
             | CallbackArgumentKind::Bytes { .. }
             | CallbackArgumentKind::Record { .. }
             | CallbackArgumentKind::CallbackHandle { .. } => None,
+            CallbackArgumentKind::Closure { .. } => None,
             CallbackArgumentKind::Completion {
                 callback,
                 context,
@@ -185,6 +235,7 @@ impl CallbackArgument {
     pub(in crate::bridge::jni::contract::callback) fn from_group(
         slot: &c::CallbackSlot,
         group: &c::ParameterGroup,
+        closures: &[ClosureRegistration],
     ) -> Result<Self> {
         match group {
             c::ParameterGroup::Value(index) => Self::from_parameter(slot.parameter(*index)),
@@ -192,13 +243,10 @@ impl CallbackArgument {
             c::ParameterGroup::CallbackCompletion(completion) => {
                 Self::from_completion(slot, completion)
             }
+            c::ParameterGroup::Closure(closure) => Self::from_closure(slot, closure, closures),
             c::ParameterGroup::Continuation(_) => Err(Error::UnsupportedBridge {
                 bridge: JNI_BRIDGE,
                 shape: "callback continuation parameter",
-            }),
-            c::ParameterGroup::Closure(_) => Err(Error::UnsupportedBridge {
-                bridge: JNI_BRIDGE,
-                shape: "callback closure parameter",
             }),
         }
     }
@@ -274,6 +322,37 @@ impl CallbackArgument {
                 callback: CallbackCParameter::from_parameter(callback)?,
                 context: CallbackCParameter::from_parameter(slot.parameter(completion.context()))?,
                 payload,
+            },
+        })
+    }
+
+    fn from_closure(
+        slot: &c::CallbackSlot,
+        closure: &c::ClosureParameter,
+        registrations: &[ClosureRegistration],
+    ) -> Result<Self> {
+        let registration = registrations
+            .iter()
+            .find(|registration| registration.signature() == closure.signature())
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback closure parameter has no JNI closure registration",
+            })?;
+        let handle = registration
+            .callback_handle()
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback closure parameter has no JNI closure handle",
+            })?;
+
+        Ok(Self {
+            kind: CallbackArgumentKind::Closure {
+                handle: Identifier::parse(format!("__boltffi_{}_handle", closure.name()))?,
+                call: CallbackCParameter::from_parameter(slot.parameter(closure.call()))?,
+                context: CallbackCParameter::from_parameter(slot.parameter(closure.context()))?,
+                release: CallbackCParameter::from_parameter(slot.parameter(closure.release()))?,
+                handle_new: handle.new_function().clone(),
+                handle_release: handle.release_function().clone(),
             },
         })
     }

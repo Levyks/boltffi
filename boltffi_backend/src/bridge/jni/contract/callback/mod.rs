@@ -1,6 +1,7 @@
 mod argument;
 mod bytes;
 mod c_parameter;
+mod closure;
 mod completion;
 mod handle;
 mod method;
@@ -12,6 +13,7 @@ mod return_value;
 pub use argument::CallbackArgument;
 pub use bytes::CallbackBytesArgument;
 pub use c_parameter::CallbackCParameter;
+pub use closure::CallbackClosureArgument;
 pub use completion::CallbackCompletionArgument;
 pub use handle::CallbackHandleArgument;
 pub use method::CallbackMethod;

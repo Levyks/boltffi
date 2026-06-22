@@ -4,7 +4,7 @@
 {%- if uses_byte_arrays %}
 #include <limits.h>
 {%- endif %}
-{%- if uses_callback_handles || uses_byte_arrays %}
+{%- if uses_callback_handles || uses_closure_handles || uses_byte_arrays %}
 #include <stdlib.h>
 {%- endif %}
 
@@ -43,12 +43,16 @@ static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message)
 {% include "bridge/jni/callback.c" %}
 {%- endif %}
 
-{%- if callbacks.len() > 0 %}
-{% include "bridge/jni/callback_registration.c" %}
+{%- if closure_handles.len() > 0 %}
+{% include "bridge/jni/closure_callback_handle.c" %}
 {%- endif %}
 
 {%- if closures.len() > 0 %}
 {% include "bridge/jni/closure_registration.c" %}
+{%- endif %}
+
+{%- if callbacks.len() > 0 %}
+{% include "bridge/jni/callback_registration.c" %}
 {%- endif %}
 
 {%- if uses_lifecycle %}

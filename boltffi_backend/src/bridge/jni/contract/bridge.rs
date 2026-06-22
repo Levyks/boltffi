@@ -33,12 +33,13 @@ impl JniBridgeContract {
         source_path: FilePath,
         c_bridge: &c::CBridgeContract,
     ) -> Result<Self> {
+        let closures =
+            ClosureRegistration::from_c_bridge(&class, c_bridge.functions(), c_bridge.callbacks())?;
         let callbacks = c_bridge
             .callbacks()
             .iter()
-            .map(|callback| CallbackRegistration::from_c_callback(&class, callback))
+            .map(|callback| CallbackRegistration::from_c_callback(&class, callback, &closures))
             .collect::<Result<Vec<_>>>()?;
-        let closures = ClosureRegistration::from_functions(&class, c_bridge.functions())?;
         Ok(Self {
             capabilities: c_bridge
                 .capabilities()

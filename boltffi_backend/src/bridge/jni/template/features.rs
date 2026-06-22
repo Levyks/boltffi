@@ -1,5 +1,7 @@
 use super::{
-    callback::CallbackRegistrationView, closure::ClosureRegistrationView, method::NativeMethodView,
+    callback::CallbackRegistrationView,
+    closure::{CallbackClosureHandleView, ClosureRegistrationView},
+    method::NativeMethodView,
 };
 
 pub struct SourceFeatures {
@@ -10,6 +12,7 @@ pub struct SourceFeatures {
     pub uses_lifecycle: bool,
     pub uses_continuations: bool,
     pub uses_callback_handles: bool,
+    pub uses_closure_handles: bool,
 }
 
 impl SourceFeatures {
@@ -17,10 +20,12 @@ impl SourceFeatures {
         methods: &[NativeMethodView],
         callbacks: &[CallbackRegistrationView],
         closures: &[ClosureRegistrationView],
+        closure_handles: &[CallbackClosureHandleView],
     ) -> Self {
         let callback_byte_arrays = Self::callback_byte_arrays(callbacks);
         let callback_record_arrays = Self::callback_record_arrays(callbacks);
         let callback_handles = Self::callback_handles(callbacks);
+        let uses_closure_handles = !closure_handles.is_empty();
         let byte_array_returns = Self::byte_array_returns(callbacks, closures);
         let record_returns = Self::record_returns(callbacks, closures);
         let method_byte_arrays = methods.iter().any(|method| {
@@ -53,12 +58,14 @@ impl SourceFeatures {
             uses_exceptions: callback_byte_arrays
                 || callback_record_arrays
                 || callback_handles
+                || uses_closure_handles
                 || byte_array_returns
                 || method_exceptions,
             uses_continuations,
             uses_lifecycle: uses_continuations || !callbacks.is_empty() || !closures.is_empty(),
             uses_callback_handles: callback_handles
                 || methods.iter().any(|method| method.returns_callback),
+            uses_closure_handles,
         }
     }
 

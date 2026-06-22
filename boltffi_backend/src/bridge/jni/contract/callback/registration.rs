@@ -1,7 +1,7 @@
 use crate::{
     bridge::{
         c::{self, Identifier},
-        jni::{CallbackMethod, JvmClassPath},
+        jni::{CallbackMethod, ClosureRegistration, JvmClassPath},
     },
     core::Result,
 };
@@ -26,7 +26,11 @@ pub struct CallbackRegistration {
 
 impl CallbackRegistration {
     /// Creates JNI callback registration from one C callback contract.
-    pub fn from_c_callback(class: &JvmClassPath, callback: &c::Callback) -> Result<Self> {
+    pub fn from_c_callback(
+        class: &JvmClassPath,
+        callback: &c::Callback,
+        closures: &[ClosureRegistration],
+    ) -> Result<Self> {
         let stem = callback.vtable().name();
         Ok(Self {
             class: class.callback_class(callback.name())?,
@@ -43,7 +47,7 @@ impl CallbackRegistration {
             methods: callback
                 .methods()
                 .iter()
-                .map(|slot| CallbackMethod::from_slot(stem, slot))
+                .map(|slot| CallbackMethod::from_slot(stem, slot, closures))
                 .collect::<Result<Vec<_>>>()?,
         })
     }

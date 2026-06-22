@@ -2,9 +2,9 @@ use crate::{
     bridge::{
         c::{self, ArgumentList, Identifier, TypeFragment},
         jni::{
-            CallbackArgument, CallbackBytesArgument, CallbackCParameter,
+            CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
             CallbackCompletionArgument, CallbackHandleArgument, CallbackRecordArgument,
-            JvmMethodReturn,
+            ClosureRegistration, JvmMethodReturn,
         },
     },
     core::{Error, Result},
@@ -121,6 +121,14 @@ impl CallbackMethod {
             .collect()
     }
 
+    /// Returns closure-handle callback arguments.
+    pub fn closure_handles(&self) -> Vec<CallbackClosureArgument<'_>> {
+        self.arguments
+            .iter()
+            .filter_map(CallbackArgument::closure_handle)
+            .collect()
+    }
+
     /// Returns async callback completion arguments.
     pub fn completions(&self) -> Vec<CallbackCompletionArgument<'_>> {
         self.arguments
@@ -132,6 +140,7 @@ impl CallbackMethod {
     pub(in crate::bridge::jni::contract::callback) fn from_slot(
         stem: &str,
         slot: &c::CallbackSlot,
+        closures: &[ClosureRegistration],
     ) -> Result<Self> {
         let Some(c::Type::Uint64) = slot.parameters().first().map(c::Parameter::ty) else {
             return Err(Error::BrokenBridgeContract {
@@ -143,7 +152,7 @@ impl CallbackMethod {
         let arguments = slot
             .parameter_groups()
             .iter()
-            .map(|group| CallbackArgument::from_group(slot, group))
+            .map(|group| CallbackArgument::from_group(slot, group, closures))
             .collect::<Result<Vec<_>>>()?;
         let signature = format!(
             "({}){}",

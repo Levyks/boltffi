@@ -6,7 +6,7 @@ mod features;
 mod method;
 
 use self::callback::CallbackRegistrationView;
-use self::closure::ClosureRegistrationView;
+use self::closure::{CallbackClosureHandleView, ClosureRegistrationView};
 use self::features::SourceFeatures;
 use self::method::NativeMethodView;
 
@@ -31,9 +31,11 @@ struct SourceFileTemplate {
     uses_lifecycle: bool,
     uses_continuations: bool,
     uses_callback_handles: bool,
+    uses_closure_handles: bool,
     callback_clone_symbol: Identifier,
     callback_release_symbol: Identifier,
     callbacks: Vec<CallbackRegistrationView>,
+    closure_handles: Vec<CallbackClosureHandleView>,
     closures: Vec<ClosureRegistrationView>,
     methods: Vec<NativeMethodView>,
 }
@@ -59,7 +61,13 @@ impl SourceFile {
             .iter()
             .map(ClosureRegistrationView::from_registration)
             .collect();
-        let features = SourceFeatures::from_views(&methods, &callbacks, &closures);
+        let closure_handles: Vec<_> = contract
+            .closures()
+            .iter()
+            .filter_map(CallbackClosureHandleView::from_registration)
+            .collect();
+        let features =
+            SourceFeatures::from_views(&methods, &callbacks, &closures, &closure_handles);
         Ok(SourceFileTemplate {
             c_header: Literal::string(contract.c_header().as_str()),
             class_name: Literal::string(&contract.class().as_jni_class_name()),
@@ -71,6 +79,7 @@ impl SourceFile {
             uses_lifecycle: features.uses_lifecycle,
             uses_continuations: features.uses_continuations,
             uses_callback_handles: features.uses_callback_handles,
+            uses_closure_handles: features.uses_closure_handles,
             callback_clone_symbol: JniSymbolName::native_method(
                 contract.class(),
                 "boltffi_callback_handle_clone",
@@ -84,6 +93,7 @@ impl SourceFile {
             .as_identifier()
             .clone(),
             callbacks,
+            closure_handles,
             closures,
             methods,
         }

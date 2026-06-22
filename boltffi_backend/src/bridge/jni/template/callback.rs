@@ -1,8 +1,9 @@
 use crate::bridge::{
     c::{ArgumentList, Expression, Identifier, Literal, Statement, TypeFragment},
     jni::{
-        CallbackBytesArgument, CallbackCParameter, CallbackCompletionArgument,
-        CallbackHandleArgument, CallbackMethod, CallbackRecordArgument, CallbackRegistration,
+        CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
+        CallbackCompletionArgument, CallbackHandleArgument, CallbackMethod, CallbackRecordArgument,
+        CallbackRegistration,
     },
 };
 
@@ -37,6 +38,7 @@ pub struct CallbackMethodView {
     pub byte_arrays: Vec<CallbackBytesArgumentView>,
     pub record_arrays: Vec<CallbackRecordArgumentView>,
     pub callback_handles: Vec<CallbackHandleArgumentView>,
+    pub closure_handles: Vec<CallbackClosureArgumentView>,
     pub completions: Vec<CallbackCompletionArgumentView>,
     pub jni_arguments: ArgumentList,
 }
@@ -59,6 +61,15 @@ pub struct CallbackRecordArgumentView {
 pub struct CallbackHandleArgumentView {
     pub handle: Identifier,
     pub parameter: Identifier,
+}
+
+pub struct CallbackClosureArgumentView {
+    pub handle: Identifier,
+    pub call: Identifier,
+    pub context: Identifier,
+    pub release: Identifier,
+    pub handle_new: Identifier,
+    pub handle_release: Identifier,
 }
 
 pub struct CallbackCompletionArgumentView {
@@ -125,6 +136,11 @@ impl CallbackMethodView {
                 .iter()
                 .map(CallbackHandleArgumentView::from_argument)
                 .collect(),
+            closure_handles: method
+                .closure_handles()
+                .iter()
+                .map(CallbackClosureArgumentView::from_argument)
+                .collect(),
             completions: method
                 .completions()
                 .iter()
@@ -167,6 +183,19 @@ impl CallbackHandleArgumentView {
         Self {
             handle: argument.handle().clone(),
             parameter: argument.parameter().clone(),
+        }
+    }
+}
+
+impl CallbackClosureArgumentView {
+    pub fn from_argument(argument: &CallbackClosureArgument<'_>) -> Self {
+        Self {
+            handle: argument.handle().clone(),
+            call: argument.call().clone(),
+            context: argument.context().clone(),
+            release: argument.release().clone(),
+            handle_new: argument.handle_new().clone(),
+            handle_release: argument.handle_release().clone(),
         }
     }
 }

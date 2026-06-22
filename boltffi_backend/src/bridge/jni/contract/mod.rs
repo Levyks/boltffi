@@ -14,11 +14,11 @@ mod scalar;
 pub use bridge::JniBridgeContract;
 pub use bytes::BytesParameter;
 pub use callback::{
-    CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackCompletionArgument,
-    CallbackHandleArgument, CallbackMethod, CallbackParameter, CallbackRecordArgument,
-    CallbackRegistration, CallbackReturn,
+    CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
+    CallbackCompletionArgument, CallbackHandleArgument, CallbackMethod, CallbackParameter,
+    CallbackRecordArgument, CallbackRegistration, CallbackReturn,
 };
-pub use closure::{ClosureArgument, ClosureParameter, ClosureRegistration};
+pub use closure::{CallbackClosureHandle, ClosureArgument, ClosureParameter, ClosureRegistration};
 pub use continuation::ContinuationParameter;
 pub use jni_type::JniType;
 pub use jvm_method::JvmMethodReturn;

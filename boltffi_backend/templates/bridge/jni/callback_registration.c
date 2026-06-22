@@ -66,6 +66,9 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- for callback_handle in method.callback_handles %}
     jlong {{ callback_handle.handle }} = 0;
 {%- endfor %}
+{%- for closure_handle in method.closure_handles %}
+    jlong {{ closure_handle.handle }} = 0;
+{%- endfor %}
 {%- for record in method.record_arrays %}
     jbyteArray {{ record.array }} = boltffi_jni_record_to_byte_array(env, &{{ record.parameter }}, (uintptr_t)sizeof({{ record.parameter }}));
     if ({{ record.array }} == NULL) {
@@ -95,6 +98,33 @@ static {{ method.c_return_type }} {{ method.function }}({% for parameter in meth
 {%- endfor %}
 {%- for handle in method.callback_handles %}
         boltffi_jni_callback_handle_release(boltffi_jni_callback_handle_ref({{ handle.handle }}));
+{%- endfor %}
+        boltffi_jni_clear_exception(env);
+        boltffi_jni_exit(attached);
+{%- for completion in method.completions %}
+        {{ completion.callback }}({{ completion.failure_arguments }});
+{%- endfor %}
+{%- if method.returns_void %}
+        return;
+{%- else %}
+        return {{ method.failure_value }};
+{%- endif %}
+    }
+{%- endfor %}
+{%- for closure_handle in method.closure_handles %}
+    {{ closure_handle.handle }} = {{ closure_handle.handle_new }}(env, {{ closure_handle.call }}, (void *){{ closure_handle.context }}, {{ closure_handle.release }});
+    if ((*env)->ExceptionCheck(env)) {
+{%- for bytes in method.byte_arrays %}
+        (*env)->DeleteLocalRef(env, {{ bytes.name }});
+{%- endfor %}
+{%- for record in method.record_arrays %}
+        (*env)->DeleteLocalRef(env, {{ record.array }});
+{%- endfor %}
+{%- for handle in method.callback_handles %}
+        boltffi_jni_callback_handle_release(boltffi_jni_callback_handle_ref({{ handle.handle }}));
+{%- endfor %}
+{%- for handle in method.closure_handles %}
+        {{ handle.handle_release }}({{ handle.handle }});
 {%- endfor %}
         boltffi_jni_clear_exception(env);
         boltffi_jni_exit(attached);

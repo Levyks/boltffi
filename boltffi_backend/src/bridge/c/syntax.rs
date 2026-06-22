@@ -137,6 +137,10 @@ impl Literal {
         Self("{0}".to_owned())
     }
 
+    pub(crate) fn null_pointer() -> Self {
+        Self("NULL".to_owned())
+    }
+
     pub(crate) fn status_failure() -> Self {
         Self("{.code = 1}".to_owned())
     }

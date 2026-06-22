@@ -11,11 +11,12 @@ mod template;
 pub use bridge::JniBridge;
 pub use contract::{
     BytesParameter, CallbackArgument, CallbackBytesArgument, CallbackCParameter,
-    CallbackCompletionArgument, CallbackHandleArgument, CallbackMethod, CallbackParameter,
-    CallbackRecordArgument, CallbackRegistration, CallbackReturn, ClosureArgument,
-    ClosureParameter, ClosureRegistration, ContinuationParameter, JniBridgeContract, JniType,
-    JvmMethodReturn, NativeMethod, NativeParameter, NativeParameterKind, NativeReturn,
-    RecordParameter, RecordValue, ScalarParameter, ScalarReturn,
+    CallbackClosureArgument, CallbackClosureHandle, CallbackCompletionArgument,
+    CallbackHandleArgument, CallbackMethod, CallbackParameter, CallbackRecordArgument,
+    CallbackRegistration, CallbackReturn, ClosureArgument, ClosureParameter, ClosureRegistration,
+    ContinuationParameter, JniBridgeContract, JniType, JvmMethodReturn, NativeMethod,
+    NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
+    ScalarParameter, ScalarReturn,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -479,6 +480,37 @@ mod tests {
         assert!(source.contains(
             "GetStaticMethodID(env, g____ListenerVTable_class, \"on_point\", \"(J[B)V\")"
         ));
+    }
+
+    #[test]
+    fn jni_bridge_renders_callback_closure_parameters() {
+        let files = files(
+            r#"
+            #[export]
+            pub trait Listener {
+                fn install(&self, callback: impl Fn(u32) -> u32);
+            }
+            "#,
+        );
+        let source = files
+            .iter()
+            .find(|(path, _)| path == "jni/jni_glue.c")
+            .map(|(_, contents)| contents)
+            .expect("JNI source file");
+
+        assert!(source.contains("typedef struct"));
+        assert!(source.contains("uint32_t (*call)(void *, uint32_t);"));
+        assert!(source.contains("static jlong boltffi_jni____closure__u32_to_u32_handle_new(JNIEnv *env, uint32_t (*call)(void *, uint32_t), void *context, void (*release)(void *))"));
+        assert!(source.contains("jlong __boltffi_callback_handle = 0;"));
+        assert!(source.contains("__boltffi_callback_handle = boltffi_jni____closure__u32_to_u32_handle_new(env, callback_call, (void *)callback_context, callback_release);"));
+        assert!(source.contains("(*env)->CallStaticVoidMethod(env, g____ListenerVTable_class, g____ListenerVTable_install_method, (jlong)handle, __boltffi_callback_handle);"));
+        assert!(source.contains("closure->call(closure->context, (uint32_t)arg0);"));
+        assert!(source.contains("return (jint)result;"));
+        assert!(
+            source.contains(
+                "GetStaticMethodID(env, g____ListenerVTable_class, \"install\", \"(JJ)V\")"
+            )
+        );
     }
 
     #[test]
