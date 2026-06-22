@@ -152,6 +152,15 @@ pub enum Type {
     CallbackHandle,
     /// A generated named C type.
     Named(Identifier),
+    /// A generated direct record typedef passed by value.
+    DirectRecord(Identifier),
+    /// A generated C-style enum typedef passed by value.
+    CStyleEnum {
+        /// Generated enum typedef name.
+        name: Identifier,
+        /// Integer representation used by the typedef.
+        repr: Box<Type>,
+    },
     /// Pointer to const data.
     ConstPointer(Box<Type>),
     /// Pointer to mutable data.
@@ -169,6 +178,7 @@ pub enum Type {
 struct Names {
     direct_records: BTreeMap<RecordId, Identifier>,
     enums: BTreeMap<EnumId, Identifier>,
+    c_style_enum_reprs: BTreeMap<EnumId, Type>,
     classes: BTreeMap<ClassId, Identifier>,
     class_handles: BTreeMap<ClassId, native::HandleCarrier>,
     callbacks: BTreeMap<CallbackId, Identifier>,
@@ -725,7 +735,7 @@ impl Function {
             RecordDecl::Direct(record) => (
                 record.initializers(),
                 record.methods(),
-                ReceiverAbi::direct("receiver", Type::Named(names.record(record.id())?))?,
+                ReceiverAbi::direct("receiver", Type::DirectRecord(names.record(record.id())?))?,
             ),
             RecordDecl::Encoded(record) => (
                 record.initializers(),
@@ -749,7 +759,10 @@ impl Function {
                 enumeration.methods(),
                 ReceiverAbi::direct(
                     "receiver",
-                    Type::Named(names.enumeration(enumeration.id())?),
+                    Type::CStyleEnum {
+                        name: names.enumeration(enumeration.id())?,
+                        repr: Box::new(Type::primitive(enumeration.repr().primitive())?),
+                    },
                 )?,
             ),
             EnumDecl::Data(enumeration) => (
@@ -1020,6 +1033,22 @@ impl Names {
             }
             DeclarationRef::Record(RecordDecl::Encoded(_)) => {}
             DeclarationRef::Record(_) => {}
+            DeclarationRef::Enum(EnumDecl::CStyle(enumeration)) => {
+                self.enums.insert(
+                    enumeration.id(),
+                    Identifier::parse(name::Spelling::new(enumeration.name()).typedef())?,
+                );
+                self.c_style_enum_reprs.insert(
+                    enumeration.id(),
+                    Type::primitive(enumeration.repr().primitive())?,
+                );
+            }
+            DeclarationRef::Enum(EnumDecl::Data(enumeration)) => {
+                self.enums.insert(
+                    enumeration.id(),
+                    Identifier::parse(name::Spelling::new(enumeration.name()).typedef())?,
+                );
+            }
             DeclarationRef::Enum(enumeration) => {
                 self.enums.insert(
                     enumeration.id(),
@@ -1094,13 +1123,26 @@ impl Names {
     fn direct_value(&self, ty: &DirectValueType) -> Result<Type> {
         match ty {
             DirectValueType::Primitive(primitive) => Type::primitive(*primitive),
-            DirectValueType::Record(record) => self.record(*record).map(Type::Named),
-            DirectValueType::Enum(enumeration) => self.enumeration(*enumeration).map(Type::Named),
+            DirectValueType::Record(record) => self.record(*record).map(Type::DirectRecord),
+            DirectValueType::Enum(enumeration) => Ok(Type::CStyleEnum {
+                name: self.enumeration(*enumeration)?,
+                repr: Box::new(self.c_style_enum_repr(*enumeration)?),
+            }),
             _ => Err(Error::UnexpectedBindingShape {
                 layer: C_BRIDGE_LAYER,
                 shape: "direct value type",
             }),
         }
+    }
+
+    fn c_style_enum_repr(&self, id: EnumId) -> Result<Type> {
+        self.c_style_enum_reprs
+            .get(&id)
+            .cloned()
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "missing C-style enum representation",
+            })
     }
 }
 
