@@ -1,11 +1,14 @@
-//! Final source view for one generated `Java_*` method.
+//! Source view for one generated `Java_*` native method.
 //!
-//! The native method contract is still domain-shaped: parameters know their
+//! The native method contract is shaped for correctness: parameters know their
 //! kind, returns know their ABI behavior, and records know their writeback
-//! rules. The Askama template needs one flat C method body. This module performs
-//! that last projection by collecting parameter declarations, borrowed arrays,
-//! direct-record locals, C bridge arguments, status checks, and return fields in
-//! the order the generated source prints them.
+//! rules. The final C template needs one ordered method body with declarations,
+//! borrowed-array setup, direct-record locals, C bridge arguments, status checks,
+//! cleanup, and the return expression.
+//!
+//! This module performs that final projection. It does not reinterpret the C
+//! bridge contract or inspect binding IR. It gathers the source-ready views that
+//! the Askama method template prints.
 
 use crate::{
     bridge::{
@@ -20,6 +23,7 @@ use crate::{
     core::Result,
 };
 
+/// Template input for a generated JNI native method body.
 pub struct NativeMethodView {
     pub symbol: Identifier,
     pub c_function: Identifier,
@@ -55,7 +59,7 @@ impl NativeMethodView {
                 .parameters()
                 .iter()
                 .flat_map(Self::borrowed_array)
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             record_arrays: method
                 .parameters()
                 .iter()
@@ -86,10 +90,10 @@ impl NativeMethodView {
         })
     }
 
-    fn borrowed_array(parameter: &NativeParameter) -> Option<BorrowedArrayParameterView> {
+    fn borrowed_array(parameter: &NativeParameter) -> Option<Result<BorrowedArrayParameterView>> {
         parameter
             .bytes()
-            .map(BorrowedArrayParameterView::from_bytes)
+            .map(|parameter| Ok(BorrowedArrayParameterView::from_bytes(parameter)))
             .or_else(|| {
                 parameter
                     .direct_vector()

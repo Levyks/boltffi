@@ -1,19 +1,31 @@
-//! Direct-vector parameters for JNI native methods.
+//! Direct-vector parameters passed from Java into Rust through JNI.
 //!
-//! Direct vectors are Java primitive arrays whose contents can be passed to the
-//! C bridge as pointer plus length. The contract records the JNI array type,
-//! local pinned pointer, byte length, and C pointer cast needed by the generated
-//! method body.
+//! The lower C bridge exposes direct vectors as pointer plus element count. JNI
+//! cannot pass that shape directly, so the Java side receives a primitive array
+//! and the generated native method borrows or copies its storage before calling
+//! the C bridge.
+//!
+//! This module records that whole JNI contract once: the Java array parameter,
+//! the local pointer and length variables, the C pointer cast, and the optional
+//! stack-copy path used for small primitive arrays. Templates consume this
+//! prepared contract. They do not decide which vectors are primitive, which ones
+//! are packed record bytes, or which JNI array function should be called.
 
 use crate::{
     bridge::{
-        c::{self, Expression, Identifier, TypeFragment},
+        c::{self, DirectVectorElementAbi, Expression, Identifier, TypeFragment},
         jni::JniType,
     },
     core::Result,
 };
 
-/// Direct-vector JNI parameter expanded to pointer and length C bridge arguments.
+const DIRECT_VECTOR_STACK_COPY_MAX_LEN: usize = 8;
+
+/// A Java primitive-array parameter expanded to C pointer and length arguments.
+///
+/// The value represents one direct-vector parameter after the C bridge has
+/// already grouped the ABI pieces. It keeps the Java parameter name beside the
+/// exact local variables that must be passed into the C bridge call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct DirectVectorParameter {
@@ -22,6 +34,20 @@ pub struct DirectVectorParameter {
     length: Identifier,
     pointer_type: TypeFragment,
     jni_type: JniType,
+    stack_copy: Option<DirectVectorStackCopy>,
+}
+
+/// Stack storage policy for a small primitive direct-vector parameter.
+///
+/// JNI primitive arrays can be copied into caller-owned stack storage with
+/// `Get*ArrayRegion`. That avoids pinning or heap allocation for the common
+/// small-array case while leaving the normal `Get*ArrayElements` path available
+/// for larger arrays.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct DirectVectorStackCopy {
+    max_len: usize,
+    region_getter: &'static str,
 }
 
 impl DirectVectorParameter {
@@ -65,6 +91,11 @@ impl DirectVectorParameter {
         self.jni_type.array_elements_releaser()
     }
 
+    /// Returns the stack-copy path for small primitive arrays.
+    pub fn stack_copy(&self) -> Option<&DirectVectorStackCopy> {
+        self.stack_copy.as_ref()
+    }
+
     /// Returns C bridge call arguments produced from this Java array.
     pub fn c_arguments(&self) -> Vec<Expression> {
         vec![
@@ -82,12 +113,34 @@ impl DirectVectorParameter {
     /// Creates a direct-vector JNI parameter from a C direct-vector parameter group.
     pub fn from_c_group(vector: &c::DirectVectorParameter, function: &c::Function) -> Result<Self> {
         let pointer = function.parameter(vector.pointer());
+        let jni_type = JniType::from_direct_vector_element(vector.element())?;
         Ok(Self {
             pointer: Identifier::parse(format!("__boltffi_{}_ptr", vector.name()))?,
             length: Identifier::parse(format!("__boltffi_{}_len", vector.name()))?,
             pointer_type: TypeFragment::anonymous(pointer.ty())?,
-            jni_type: JniType::from_direct_vector_element(vector.element())?,
+            stack_copy: matches!(vector.element(), DirectVectorElementAbi::Typed(_))
+                .then(|| DirectVectorStackCopy::new(DIRECT_VECTOR_STACK_COPY_MAX_LEN, jni_type)),
+            jni_type,
             name: Identifier::escape(vector.name())?,
         })
+    }
+}
+
+impl DirectVectorStackCopy {
+    /// Returns the largest Java array length copied through the stack buffer.
+    pub fn max_len(&self) -> usize {
+        self.max_len
+    }
+
+    /// Returns the `Get*ArrayRegion` JNI function table member.
+    pub fn region_getter(&self) -> &'static str {
+        self.region_getter
+    }
+
+    fn new(max_len: usize, jni_type: JniType) -> Self {
+        Self {
+            max_len,
+            region_getter: jni_type.array_region_getter(),
+        }
     }
 }

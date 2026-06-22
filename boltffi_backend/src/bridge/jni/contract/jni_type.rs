@@ -1,9 +1,14 @@
-//! JNI scalar type vocabulary.
+//! JNI primitive type vocabulary.
 //!
-//! Scalar values use JNI primitive aliases in native signatures, C primitive
-//! names in bridge calls, and array functions for direct vectors. This module
-//! keeps those related spellings behind one scalar type instead of scattering
-//! tables through templates.
+//! One primitive value has several spellings in generated JNI glue: the native
+//! C alias such as `jint`, the array type such as `jintArray`, the JVM method
+//! descriptor such as `I`, and the function-table members used to borrow,
+//! release, allocate, or copy arrays.
+//!
+//! This module keeps those spellings behind one enum. Contract builders ask the
+//! enum for the spelling they need, which keeps templates from carrying their
+//! own primitive tables and prevents one call path from drifting away from
+//! another.
 
 use crate::{
     bridge::c::{self, DirectVectorElementAbi, Literal, Type, TypeFragment},
@@ -12,7 +17,7 @@ use crate::{
 
 const JNI_BRIDGE: &str = "jni";
 
-/// JNI scalar type used in a native method signature.
+/// A JNI primitive type and its related source, descriptor, and array spellings.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum JniType {
@@ -69,6 +74,19 @@ impl JniType {
             Self::Long => "GetLongArrayElements",
             Self::Float => "GetFloatArrayElements",
             Self::Double => "GetDoubleArrayElements",
+        }
+    }
+
+    /// Returns the `Get*ArrayRegion` JNI function table member.
+    pub fn array_region_getter(self) -> &'static str {
+        match self {
+            Self::Boolean => "GetBooleanArrayRegion",
+            Self::Byte => "GetByteArrayRegion",
+            Self::Short => "GetShortArrayRegion",
+            Self::Int => "GetIntArrayRegion",
+            Self::Long => "GetLongArrayRegion",
+            Self::Float => "GetFloatArrayRegion",
+            Self::Double => "GetDoubleArrayRegion",
         }
     }
 
@@ -267,6 +285,7 @@ mod tests {
                 "Z",
                 "[Z",
                 "GetBooleanArrayElements",
+                "GetBooleanArrayRegion",
                 "ReleaseBooleanArrayElements",
                 "NewBooleanArray",
                 "SetBooleanArrayRegion",
@@ -279,6 +298,7 @@ mod tests {
                 "B",
                 "[B",
                 "GetByteArrayElements",
+                "GetByteArrayRegion",
                 "ReleaseByteArrayElements",
                 "NewByteArray",
                 "SetByteArrayRegion",
@@ -291,6 +311,7 @@ mod tests {
                 "S",
                 "[S",
                 "GetShortArrayElements",
+                "GetShortArrayRegion",
                 "ReleaseShortArrayElements",
                 "NewShortArray",
                 "SetShortArrayRegion",
@@ -303,6 +324,7 @@ mod tests {
                 "I",
                 "[I",
                 "GetIntArrayElements",
+                "GetIntArrayRegion",
                 "ReleaseIntArrayElements",
                 "NewIntArray",
                 "SetIntArrayRegion",
@@ -315,6 +337,7 @@ mod tests {
                 "J",
                 "[J",
                 "GetLongArrayElements",
+                "GetLongArrayRegion",
                 "ReleaseLongArrayElements",
                 "NewLongArray",
                 "SetLongArrayRegion",
@@ -327,6 +350,7 @@ mod tests {
                 "F",
                 "[F",
                 "GetFloatArrayElements",
+                "GetFloatArrayRegion",
                 "ReleaseFloatArrayElements",
                 "NewFloatArray",
                 "SetFloatArrayRegion",
@@ -339,6 +363,7 @@ mod tests {
                 "D",
                 "[D",
                 "GetDoubleArrayElements",
+                "GetDoubleArrayRegion",
                 "ReleaseDoubleArrayElements",
                 "NewDoubleArray",
                 "SetDoubleArrayRegion",
@@ -354,6 +379,7 @@ mod tests {
                 signature,
                 array_signature,
                 getter,
+                region_getter,
                 releaser,
                 new_array,
                 set_array_region,
@@ -364,6 +390,7 @@ mod tests {
                 assert_eq!(jni_type.signature(), signature);
                 assert_eq!(jni_type.array_signature(), array_signature);
                 assert_eq!(jni_type.array_elements_getter(), getter);
+                assert_eq!(jni_type.array_region_getter(), region_getter);
                 assert_eq!(jni_type.array_elements_releaser(), releaser);
                 assert_eq!(jni_type.new_array(), new_array);
                 assert_eq!(jni_type.set_array_region(), set_array_region);

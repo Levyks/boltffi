@@ -48,7 +48,7 @@ pub use closure::{
     ClosureDirectVectorArgument, ClosureHandleArgument, ClosureParameter, ClosureRegistration,
 };
 pub use continuation::ContinuationParameter;
-pub use direct_vector::DirectVectorParameter;
+pub use direct_vector::{DirectVectorParameter, DirectVectorStackCopy};
 pub use jni_type::JniType;
 pub use jvm::JvmMethodReturn;
 pub use method::NativeMethod;
