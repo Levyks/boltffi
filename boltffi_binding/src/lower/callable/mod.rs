@@ -61,9 +61,9 @@ use boltffi_ast::{
 };
 
 use crate::{
-    ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, DirectVectorElementType,
-    Direction, ExecutionDecl, ExportedCallable, ForeignBody, HandlePresence, ImportedCallable,
-    IntoRust, OutOfRust, Primitive, Receive, RustBody,
+    ClosureForm, ClosureParameter, ClosureRegistration, ClosureReturn, ClosureSignature,
+    DirectVectorElementType, Direction, ExecutionDecl, ExportedCallable, ForeignBody,
+    HandlePresence, ImportedCallable, IntoRust, OutOfRust, Primitive, Receive, RustBody,
 };
 
 use super::{
@@ -279,6 +279,7 @@ fn lower_closure_param_into_rust<S: SurfaceLower>(
     let parts = lower_closure_into_rust_parts(index, ids, allocator, closure)?;
     Ok(ClosureParameter::new(
         parts.form,
+        parts.signature,
         parts.presence,
         parts.registration,
         parts.invoke,
@@ -294,6 +295,7 @@ fn lower_closure_return_into_rust<S: SurfaceLower>(
     let parts = lower_closure_into_rust_parts(index, ids, allocator, closure)?;
     Ok(ClosureReturn::new(
         parts.form,
+        parts.signature,
         parts.presence,
         parts.registration,
         parts.invoke,
@@ -302,6 +304,7 @@ fn lower_closure_return_into_rust<S: SurfaceLower>(
 
 struct ClosureIntoRustParts<S: crate::Surface> {
     form: ClosureForm,
+    signature: ClosureSignature,
     presence: HandlePresence,
     registration: ClosureRegistration<S, IntoRust>,
     invoke: ImportedCallable<S>,
@@ -328,6 +331,7 @@ fn lower_closure_into_rust_parts<S: SurfaceLower>(
     );
     Ok(ClosureIntoRustParts {
         form: closure.form,
+        signature: ClosureSignature::from_fn_signature(closure.signature),
         presence: closure.presence,
         registration,
         invoke,
@@ -353,6 +357,7 @@ fn lower_closure_param_out_of_rust<S: SurfaceLower>(
     let parts = lower_closure_out_of_rust_parts(index, ids, allocator, closure)?;
     Ok(ClosureParameter::new(
         parts.form,
+        parts.signature,
         parts.presence,
         parts.registration,
         parts.invoke,
@@ -368,6 +373,7 @@ fn lower_closure_return_out_of_rust<S: SurfaceLower>(
     let parts = lower_closure_out_of_rust_parts(index, ids, allocator, closure)?;
     Ok(ClosureReturn::new(
         parts.form,
+        parts.signature,
         parts.presence,
         parts.registration,
         parts.invoke,
@@ -376,6 +382,7 @@ fn lower_closure_return_out_of_rust<S: SurfaceLower>(
 
 struct ClosureOutOfRustParts<S: crate::Surface> {
     form: ClosureForm,
+    signature: ClosureSignature,
     presence: HandlePresence,
     registration: ClosureRegistration<S, OutOfRust>,
     invoke: ExportedCallable<S>,
@@ -402,6 +409,7 @@ fn lower_closure_out_of_rust_parts<S: SurfaceLower>(
     let registration = ClosureRegistration::<S, OutOfRust>::new(shape, receive);
     Ok(ClosureOutOfRustParts {
         form: closure.form,
+        signature: ClosureSignature::from_fn_signature(closure.signature),
         presence: closure.presence,
         registration,
         invoke,

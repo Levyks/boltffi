@@ -1,9 +1,9 @@
 use boltffi_binding::{
-    CallableDecl, ClosureReturn, DirectValueType, DirectVectorElementType, Direction, ErrorDecl,
-    ExecutionDecl, ExportedCallable, HandlePresence, HandleTarget, ImportedCallable, IncomingParam,
-    IntoRust, Native, NativeSymbol, OutOfRust, OutgoingParam, ParamDecl, ParamDirection, ParamPlan,
-    ParamPlanRender, Primitive, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody,
-    TypeRef, native,
+    ClosureParameter as BindingClosureParameter, ClosureReturn, ClosureSignature, DirectValueType,
+    DirectVectorElementType, Direction, ErrorDecl, ExecutionDecl, ExportedCallable, HandlePresence,
+    HandleTarget, IncomingParam, IntoRust, Native, NativeSymbol, OutOfRust, OutgoingParam,
+    ParamDecl, ParamDirection, ParamPlan, ParamPlanRender, Primitive, Receive, ReturnPlan,
+    ReturnPlanRender, ReturnValueSlot, TypeRef, native,
 };
 
 use crate::core::{Error, Result};
@@ -678,9 +678,7 @@ impl Signature {
                 let name = name::Spelling::new(param.name()).parameter();
                 match param.payload() {
                     IncomingParam::Value(plan) => self.value_param(&name, plan),
-                    IncomingParam::Closure(closure) => {
-                        self.incoming_closure_param(&name, closure.invoke())
-                    }
+                    IncomingParam::Closure(closure) => self.incoming_closure_param(&name, closure),
                 }
             })
             .collect::<Result<Vec<_>>>()
@@ -698,9 +696,7 @@ impl Signature {
                 let name = name::Spelling::new(param.name()).parameter();
                 match param.payload() {
                     OutgoingParam::Value(plan) => self.value_param(&name, plan),
-                    OutgoingParam::Closure(closure) => {
-                        self.outgoing_closure_param(&name, closure.invoke())
-                    }
+                    OutgoingParam::Closure(closure) => self.outgoing_closure_param(&name, closure),
                 }
             })
             .collect::<Result<Vec<_>>>()
@@ -742,10 +738,12 @@ impl Signature {
     fn incoming_closure_param(
         &self,
         name: &str,
-        invoke: &ImportedCallable<Native>,
+        closure: &BindingClosureParameter<Native, IntoRust>,
     ) -> Result<Vec<Parameter>> {
+        let invoke = closure.invoke();
         self.closure_param(
             name,
+            closure.signature(),
             self.imported_params(invoke.params())?,
             invoke.returns().plan(),
             invoke.error(),
@@ -755,10 +753,12 @@ impl Signature {
     fn outgoing_closure_param(
         &self,
         name: &str,
-        invoke: &CallableDecl<Native, RustBody>,
+        closure: &BindingClosureParameter<Native, OutOfRust>,
     ) -> Result<Vec<Parameter>> {
+        let invoke = closure.invoke();
         self.closure_param(
             name,
+            closure.signature(),
             self.exported_params(invoke.params())?,
             invoke.returns().plan(),
             invoke.error(),
@@ -768,6 +768,7 @@ impl Signature {
     fn closure_param<D>(
         &self,
         name: &str,
+        signature: &ClosureSignature,
         params: Vec<Parameter>,
         returns: &ReturnPlan<Native, D>,
         error: &ErrorDecl<Native, D>,
@@ -779,6 +780,7 @@ impl Signature {
         Ok(vec![
             Parameter::closure_call(
                 name,
+                signature,
                 Type::FunctionPointer {
                     returns: Box::new(self.callback_return_type(returns, error)?),
                     params: std::iter::once(Type::MutPointer(Box::new(Type::Void)))

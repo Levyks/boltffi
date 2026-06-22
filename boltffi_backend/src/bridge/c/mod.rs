@@ -252,6 +252,7 @@ mod tests {
         };
 
         assert_eq!(closure.name(), "callback");
+        assert_eq!(closure.signature().as_str(), "U32ToU32");
         assert_eq!(function.parameter(closure.call()).name(), "callback_call");
         assert_eq!(
             function.parameter(closure.context()).name(),

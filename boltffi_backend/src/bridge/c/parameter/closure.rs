@@ -1,5 +1,7 @@
 use crate::core::{Error, Result};
 
+use boltffi_binding::ClosureSignature;
+
 use super::super::{C_BRIDGE_CONTRACT, Identifier};
 use super::{Parameter, ParameterIndex};
 
@@ -8,6 +10,7 @@ use super::{Parameter, ParameterIndex};
 #[non_exhaustive]
 pub struct ClosureParameter {
     name: Identifier,
+    signature: ClosureSignature,
     call: ParameterIndex,
     context: ParameterIndex,
     release: ParameterIndex,
@@ -17,6 +20,11 @@ impl ClosureParameter {
     /// Returns the source parameter name.
     pub fn name(&self) -> &str {
         self.name.as_str()
+    }
+
+    /// Returns the closure invocation signature.
+    pub fn signature(&self) -> &ClosureSignature {
+        &self.signature
     }
 
     /// Returns the call function pointer parameter position.
@@ -38,6 +46,7 @@ impl ClosureParameter {
         params: &[Parameter],
         call: usize,
         name: &Identifier,
+        signature: &ClosureSignature,
     ) -> Result<Self> {
         let context = call + 1;
         let release = call + 2;
@@ -63,6 +72,7 @@ impl ClosureParameter {
 
         Ok(Self {
             name: name.clone(),
+            signature: signature.clone(),
             call: ParameterIndex::new(call),
             context: ParameterIndex::new(context),
             release: ParameterIndex::new(release),

@@ -8,9 +8,9 @@ use boltffi_ast::FnTraitKind;
 
 use crate::{
     AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, CallableScope,
-    CanonicalName, ClosureRegistrationIntrospect, DirectValueType, DirectVectorElementType,
-    Direction, ElementMeta, ForeignBody, HandlePresence, HandleTarget, IntegerRepr, IntoRust,
-    NativeSymbol, OutOfRust, Primitive, RustBody, Surface, TypeRef,
+    CanonicalName, ClosureRegistrationIntrospect, ClosureSignature, DirectValueType,
+    DirectVectorElementType, Direction, ElementMeta, ForeignBody, HandlePresence, HandleTarget,
+    IntegerRepr, IntoRust, NativeSymbol, OutOfRust, Primitive, RustBody, Surface, TypeRef,
 };
 
 /// One call shape ready to be turned into target code.
@@ -394,18 +394,24 @@ where
 {
     pub(crate) fn new(
         form: ClosureForm,
+        signature: ClosureSignature,
         presence: HandlePresence,
         registration: ClosureRegistration<S, D>,
         invoke: CallableDecl<S, D::InvokeScope>,
     ) -> Self {
         Self {
-            crossing: ClosureCrossing::new(form, presence, registration, invoke),
+            crossing: ClosureCrossing::new(form, signature, presence, registration, invoke),
         }
     }
 
     /// Returns the source spelling.
     pub fn form(&self) -> ClosureForm {
         self.crossing.form()
+    }
+
+    /// Returns the closure invocation signature.
+    pub fn signature(&self) -> &ClosureSignature {
+        self.crossing.signature()
     }
 
     /// Returns whether the closure crossing may be absent.
@@ -447,18 +453,24 @@ where
 {
     pub(crate) fn new(
         form: ClosureForm,
+        signature: ClosureSignature,
         presence: HandlePresence,
         registration: ClosureRegistration<S, D>,
         invoke: CallableDecl<S, D::InvokeScope>,
     ) -> Self {
         Self {
-            crossing: ClosureCrossing::new(form, presence, registration, invoke),
+            crossing: ClosureCrossing::new(form, signature, presence, registration, invoke),
         }
     }
 
     /// Returns the source spelling.
     pub fn form(&self) -> ClosureForm {
         self.crossing.form()
+    }
+
+    /// Returns the closure invocation signature.
+    pub fn signature(&self) -> &ClosureSignature {
+        self.crossing.signature()
     }
 
     /// Returns whether the closure crossing may be absent.
@@ -491,6 +503,7 @@ where
     D::Opposite: ParamDirection<S>,
 {
     form: ClosureForm,
+    signature: ClosureSignature,
     presence: HandlePresence,
     registration: ClosureRegistration<S, D>,
     invoke: Box<CallableDecl<S, D::InvokeScope>>,
@@ -502,12 +515,14 @@ where
 {
     fn new(
         form: ClosureForm,
+        signature: ClosureSignature,
         presence: HandlePresence,
         registration: ClosureRegistration<S, D>,
         invoke: CallableDecl<S, D::InvokeScope>,
     ) -> Self {
         Self {
             form,
+            signature,
             presence,
             registration,
             invoke: Box::new(invoke),
@@ -516,6 +531,10 @@ where
 
     pub fn form(&self) -> ClosureForm {
         self.form
+    }
+
+    pub fn signature(&self) -> &ClosureSignature {
+        &self.signature
     }
 
     pub fn presence(&self) -> HandlePresence {

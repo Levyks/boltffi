@@ -73,6 +73,7 @@
 #![allow(dead_code)]
 
 mod callable;
+mod closure;
 mod codec;
 mod contract;
 mod custom;
@@ -96,6 +97,7 @@ pub use callable::{
     OutgoingParam, ParamDecl, ParamDirection, ParamPlan, ParamPlanRender, Receive, ReturnDecl,
     ReturnPlan, ReturnPlanRender, ReturnValueSlot,
 };
+pub use closure::ClosureSignature;
 pub use codec::{CodecNode, CodecPlan, CodecRead, CodecWrite, ReadPlan, WritePlan};
 pub use contract::{
     BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,

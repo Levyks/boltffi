@@ -5,6 +5,8 @@ mod group;
 
 use crate::core::Result;
 
+use boltffi_binding::ClosureSignature;
+
 use super::{Identifier, Type};
 
 pub use byte_slice::ByteSliceParameter;
@@ -35,7 +37,10 @@ enum ParameterRole {
     ByteLength(Identifier),
     ContinuationData(Identifier),
     ContinuationCallback(Identifier),
-    ClosureCall(Identifier),
+    ClosureCall {
+        name: Identifier,
+        signature: ClosureSignature,
+    },
     ClosureContext(Identifier),
     ClosureRelease(Identifier),
 }
@@ -86,11 +91,14 @@ impl Parameter {
     }
 
     /// Creates the call function pointer in a closure C ABI parameter group.
-    pub fn closure_call(name: &str, ty: Type) -> Result<Self> {
+    pub fn closure_call(name: &str, signature: &ClosureSignature, ty: Type) -> Result<Self> {
         Self::with_role(
             format!("{name}_call"),
             ty,
-            ParameterRole::ClosureCall(Identifier::escape(name)?),
+            ParameterRole::ClosureCall {
+                name: Identifier::escape(name)?,
+                signature: signature.clone(),
+            },
         )
     }
 
