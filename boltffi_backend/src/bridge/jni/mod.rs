@@ -11,7 +11,7 @@ mod template;
 pub use bridge::JniBridge;
 pub use contract::{
     BytesParameter, JniBridgeContract, JniType, NativeMethod, NativeParameter, NativeParameterKind,
-    NativeReturn, ScalarParameter,
+    NativeReturn, RecordParameter, RecordValue, ScalarParameter,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};
 
@@ -132,5 +132,62 @@ mod tests {
             contract.methods()[0].symbol().to_string(),
             "Java_com_boltffi_demo_Native_boltffi_1function_1demo_1add"
         );
+    }
+
+    #[test]
+    fn jni_bridge_renders_direct_records_and_c_style_enums() {
+        let files = files(
+            r#"
+            #[repr(C)]
+            #[data]
+            pub struct Point {
+                pub x: i32,
+                pub y: i32,
+            }
+
+            #[repr(u8)]
+            #[data]
+            pub enum Mode {
+                Fast = 1,
+                Slow = 2,
+            }
+
+            #[export]
+            pub fn echo_point(point: Point) -> Point {
+                point
+            }
+
+            #[export]
+            pub fn echo_mode(mode: Mode) -> Mode {
+                mode
+            }
+            "#,
+        );
+        let header = files
+            .iter()
+            .find(|(path, _)| path == "jni/demo.h")
+            .map(|(_, contents)| contents)
+            .expect("C header file");
+        let source = files
+            .iter()
+            .find(|(path, _)| path == "jni/jni_glue.c")
+            .map(|(_, contents)| contents)
+            .expect("JNI source file");
+
+        assert!(header.contains("___Point boltffi_function_demo_echo_point(___Point point);"));
+        assert!(header.contains("___Mode boltffi_function_demo_echo_mode(___Mode mode);"));
+        assert!(source.contains("static bool boltffi_jni_read_record"));
+        assert!(source.contains("static jbyteArray boltffi_jni_record_to_byte_array"));
+        assert!(source.contains("JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1point(JNIEnv *env, jclass cls, jbyteArray point)"));
+        assert!(source.contains("___Point __boltffi_point_value;"));
+        assert!(source.contains("boltffi_jni_read_record(env, point, (uintptr_t)sizeof(___Point), &__boltffi_point_value)"));
+        assert!(source.contains(
+            "___Point result = boltffi_function_demo_echo_point(__boltffi_point_value);"
+        ));
+        assert!(source.contains(
+            "return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));"
+        ));
+        assert!(source.contains("JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1mode(JNIEnv *env, jclass cls, jbyte mode)"));
+        assert!(source.contains("jbyte result = boltffi_function_demo_echo_mode(mode);"));
     }
 }

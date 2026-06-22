@@ -64,6 +64,39 @@ static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer
 }
 {%- endif %}
 
+{%- if uses_record_arrays %}
+static bool boltffi_jni_read_record(JNIEnv *env, jbyteArray array, uintptr_t expected_len, void *output) {
+    if (array == NULL) {
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array argument was null");
+        return false;
+    }
+    jsize len = (*env)->GetArrayLength(env, array);
+    if ((uintptr_t)len != expected_len) {
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array length did not match the C record size");
+        return false;
+    }
+    (*env)->GetByteArrayRegion(env, array, 0, len, (jbyte *)output);
+    return !(*env)->ExceptionCheck(env);
+}
+
+static jbyteArray boltffi_jni_record_to_byte_array(JNIEnv *env, const void *record, uintptr_t len) {
+    if (len > (uintptr_t)INT32_MAX) {
+        boltffi_jni_throw_runtime(env, "BoltFFI record too large for Java byte array");
+        return NULL;
+    }
+    jbyteArray array = (*env)->NewByteArray(env, (jsize)len);
+    if (array == NULL) {
+        return NULL;
+    }
+    (*env)->SetByteArrayRegion(env, array, 0, (jsize)len, (const jbyte *)record);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->DeleteLocalRef(env, array);
+        return NULL;
+    }
+    return array;
+}
+{%- endif %}
+
 {%- for method in methods %}
 
 JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jclass cls{% for parameter in method.parameters %}, {{ parameter.ty }} {{ parameter.name }}{% endfor %}) {
@@ -71,6 +104,9 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
 {%- for parameter in method.byte_arrays %}
     jbyte *{{ parameter.pointer }} = NULL;
     jsize {{ parameter.length }} = 0;
+{%- endfor %}
+{%- for parameter in method.record_arrays %}
+    {{ parameter.c_type }} {{ parameter.local }};
 {%- endfor %}
 {%- for parameter in method.byte_arrays %}
     if ({{ parameter.name }} == NULL) {
@@ -82,7 +118,7 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
 {%- endfor %}
 {%- if method.returns_void || method.checks_status %}
         return;
-{%- else if method.returns_bytes %}
+{%- else if method.returns_bytes || method.returns_record %}
         return NULL;
 {%- else if method.returns_boolean %}
         return JNI_FALSE;
@@ -100,7 +136,25 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
 {%- endfor %}
 {%- if method.returns_void || method.checks_status %}
         return;
-{%- else if method.returns_bytes %}
+{%- else if method.returns_bytes || method.returns_record %}
+        return NULL;
+{%- else if method.returns_boolean %}
+        return JNI_FALSE;
+{%- else %}
+        return 0;
+{%- endif %}
+    }
+{%- endfor %}
+{%- for parameter in method.record_arrays %}
+    if (!boltffi_jni_read_record(env, {{ parameter.name }}, (uintptr_t)sizeof({{ parameter.c_type }}), &{{ parameter.local }})) {
+{%- for cleanup in method.byte_arrays %}
+        if ({{ cleanup.pointer }} != NULL) {
+            (*env)->ReleaseByteArrayElements(env, {{ cleanup.name }}, {{ cleanup.pointer }}, JNI_ABORT);
+        }
+{%- endfor %}
+{%- if method.returns_void || method.checks_status %}
+        return;
+{%- else if method.returns_bytes || method.returns_record %}
         return NULL;
 {%- else if method.returns_boolean %}
         return JNI_FALSE;
@@ -137,6 +191,8 @@ JNIEXPORT {{ method.return_type }} JNICALL {{ method.symbol }}(JNIEnv *env, jcla
     return (jboolean)result;
 {%- else if method.returns_bytes %}
     return boltffi_jni_buffer_to_byte_array(env, result);
+{%- else if method.returns_record %}
+    return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));
 {%- else %}
     return result;
 {%- endif %}

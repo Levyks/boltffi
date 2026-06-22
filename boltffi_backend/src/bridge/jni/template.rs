@@ -3,7 +3,7 @@ use askama::Template as AskamaTemplate;
 use crate::{
     bridge::{
         c::{ArgumentList, Identifier, Literal, TypeFragment},
-        jni::{BytesParameter, JniBridgeContract, NativeMethod, NativeParameter},
+        jni::{BytesParameter, JniBridgeContract, NativeMethod, NativeParameter, RecordParameter},
     },
     core::Result,
 };
@@ -15,6 +15,7 @@ struct SourceFileTemplate {
     free_buffer: Identifier,
     checks_status: bool,
     uses_byte_arrays: bool,
+    uses_record_arrays: bool,
     uses_exceptions: bool,
     methods: Vec<NativeMethodView>,
 }
@@ -34,11 +35,21 @@ impl SourceFile {
             c_header: Literal::string(contract.c_header().as_str()),
             free_buffer: contract.free_buffer().clone(),
             checks_status: methods.iter().any(|method| method.checks_status),
-            uses_byte_arrays: methods
+            uses_byte_arrays: methods.iter().any(|method| {
+                method.returns_bytes
+                    || method.returns_record
+                    || !method.byte_arrays.is_empty()
+                    || !method.record_arrays.is_empty()
+            }),
+            uses_record_arrays: methods
                 .iter()
-                .any(|method| method.returns_bytes || !method.byte_arrays.is_empty()),
+                .any(|method| method.returns_record || !method.record_arrays.is_empty()),
             uses_exceptions: methods.iter().any(|method| {
-                method.checks_status || method.returns_bytes || !method.byte_arrays.is_empty()
+                method.checks_status
+                    || method.returns_bytes
+                    || method.returns_record
+                    || !method.byte_arrays.is_empty()
+                    || !method.record_arrays.is_empty()
             }),
             methods,
         }
@@ -53,10 +64,12 @@ struct NativeMethodView {
     c_result_type: TypeFragment,
     parameters: Vec<NativeParameterView>,
     byte_arrays: Vec<ByteArrayParameterView>,
+    record_arrays: Vec<RecordParameterView>,
     arguments: ArgumentList,
     returns_void: bool,
     returns_boolean: bool,
     returns_bytes: bool,
+    returns_record: bool,
     checks_status: bool,
 }
 
@@ -77,6 +90,11 @@ impl NativeMethodView {
                 .iter()
                 .filter_map(|parameter| parameter.bytes().map(ByteArrayParameterView::from_bytes))
                 .collect(),
+            record_arrays: method
+                .parameters()
+                .iter()
+                .filter_map(|parameter| parameter.record().map(RecordParameterView::from_record))
+                .collect(),
             arguments: ArgumentList::from_iter(
                 method
                     .parameters()
@@ -86,6 +104,7 @@ impl NativeMethodView {
             returns_void: method.returns_void(),
             returns_boolean: method.returns_boolean(),
             returns_bytes: method.returns_bytes(),
+            returns_record: method.returns_record(),
             checks_status: method.checks_status(),
         })
     }
@@ -118,6 +137,23 @@ impl ByteArrayParameterView {
             name: parameter.name().clone(),
             pointer: parameter.pointer().clone(),
             length: parameter.length().clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RecordParameterView {
+    name: Identifier,
+    c_type: Identifier,
+    local: Identifier,
+}
+
+impl RecordParameterView {
+    fn from_record(parameter: &RecordParameter) -> Self {
+        Self {
+            name: parameter.name().clone(),
+            c_type: parameter.c_type().clone(),
+            local: parameter.local().clone(),
         }
     }
 }

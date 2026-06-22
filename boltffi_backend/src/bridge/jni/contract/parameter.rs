@@ -1,7 +1,7 @@
 use crate::{
     bridge::{
         c::{self, Expression, Identifier, TypeFragment},
-        jni::{BytesParameter, JniType},
+        jni::{BytesParameter, JniType, RecordParameter},
     },
     core::Result,
 };
@@ -19,6 +19,7 @@ impl NativeParameter {
         match &self.kind {
             NativeParameterKind::Scalar(parameter) => parameter.name(),
             NativeParameterKind::Bytes(parameter) => parameter.name(),
+            NativeParameterKind::Record(parameter) => parameter.name(),
         }
     }
 
@@ -27,6 +28,7 @@ impl NativeParameter {
         match &self.kind {
             NativeParameterKind::Scalar(parameter) => parameter.ty().as_type_fragment(),
             NativeParameterKind::Bytes(_) => TypeFragment::new("jbyteArray"),
+            NativeParameterKind::Record(_) => TypeFragment::new("jbyteArray"),
         }
     }
 
@@ -46,14 +48,25 @@ impl NativeParameter {
                     Expression::identifier(parameter.length().clone()),
                 ),
             ],
+            NativeParameterKind::Record(parameter) => {
+                vec![Expression::identifier(parameter.local().clone())]
+            }
         }
     }
 
     /// Returns byte-array parameter details when this parameter carries bytes.
     pub fn bytes(&self) -> Option<&BytesParameter> {
         match &self.kind {
-            NativeParameterKind::Scalar(_) => None,
+            NativeParameterKind::Scalar(_) | NativeParameterKind::Record(_) => None,
             NativeParameterKind::Bytes(parameter) => Some(parameter),
+        }
+    }
+
+    /// Returns direct-record parameter details when this parameter carries a record.
+    pub fn record(&self) -> Option<&RecordParameter> {
+        match &self.kind {
+            NativeParameterKind::Scalar(_) | NativeParameterKind::Bytes(_) => None,
+            NativeParameterKind::Record(parameter) => Some(parameter),
         }
     }
 
@@ -72,9 +85,16 @@ impl NativeParameter {
                     }
                     Ok(None) => {
                         index += 1;
-                        ScalarParameter::from_c_parameter(parameter).map(|scalar| Self {
-                            kind: NativeParameterKind::Scalar(scalar),
-                        })
+                        match RecordParameter::from_c_parameter(parameter)? {
+                            Some(record) => Ok(Self {
+                                kind: NativeParameterKind::Record(record),
+                            }),
+                            None => {
+                                ScalarParameter::from_c_parameter(parameter).map(|scalar| Self {
+                                    kind: NativeParameterKind::Scalar(scalar),
+                                })
+                            }
+                        }
                     }
                     Err(error) => {
                         index = parameters.len();
@@ -95,6 +115,8 @@ pub enum NativeParameterKind {
     Scalar(ScalarParameter),
     /// A `jbyteArray` expanded to pointer and length C bridge arguments.
     Bytes(BytesParameter),
+    /// A `jbyteArray` copied into one direct C record value.
+    Record(RecordParameter),
 }
 
 /// Scalar JNI parameter mapped to one scalar C bridge argument.

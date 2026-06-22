@@ -38,8 +38,8 @@ impl NativeMethod {
     }
 
     /// Returns the JNI return type.
-    pub fn returns(&self) -> NativeReturn {
-        self.returns
+    pub fn returns(&self) -> &NativeReturn {
+        &self.returns
     }
 
     /// Returns parameters after `JNIEnv*` and `jclass`.
@@ -49,21 +49,26 @@ impl NativeMethod {
 
     /// Returns whether this method returns no value.
     pub fn returns_void(&self) -> bool {
-        matches!(self.returns, NativeReturn::Void)
+        matches!(&self.returns, NativeReturn::Void)
     }
 
     /// Returns whether this method needs an explicit `jboolean` cast.
     pub fn returns_boolean(&self) -> bool {
-        matches!(self.returns, NativeReturn::Value(JniType::Boolean))
+        matches!(&self.returns, NativeReturn::Value(JniType::Boolean))
     }
 
     /// Returns whether this method returns an owned byte buffer.
     pub fn returns_bytes(&self) -> bool {
-        matches!(self.returns, NativeReturn::Bytes)
+        matches!(&self.returns, NativeReturn::Bytes)
+    }
+
+    /// Returns whether this method returns a direct record byte array.
+    pub fn returns_record(&self) -> bool {
+        matches!(&self.returns, NativeReturn::Record(_))
     }
 
     /// Returns whether this method checks a returned `FfiStatus`.
     pub fn checks_status(&self) -> bool {
-        matches!(self.returns, NativeReturn::Status)
+        matches!(&self.returns, NativeReturn::Status)
     }
 }
