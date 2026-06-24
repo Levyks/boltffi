@@ -1,9 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     ClassId, ClosureReturn, DirectValueType, DirectVectorElementType, Direction, EnumId,
-    ExecutionDecl, ExportedCallable, FunctionDecl, HandlePresence, HandleTarget, IncomingParam,
-    IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl, ParamPlan, ParamPlanRender, Primitive,
-    RecordId, ReturnPlanRender, ReturnValueSlot, Surface, TypeRef,
+    ErrorChannel, ErrorPlacement, ExecutionDecl, ExportedCallable, FunctionDecl, HandlePresence,
+    HandleTarget, IncomingParam, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl, ParamPlan,
+    ParamPlanRender, Primitive, RecordId, ReturnPlanRender, ReturnValueSlot, Surface, TypeRef,
 };
 
 use crate::{
@@ -167,7 +167,7 @@ impl ExportedCall {
         let function_return = callable
             .returns()
             .plan()
-            .render_with(&mut FunctionReturnPlan::new(context))?;
+            .render_with(&mut FunctionReturnPlan::new(context, callable))?;
         let native_arguments = native_prefix
             .into_iter()
             .chain(
@@ -401,11 +401,41 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
 
 struct FunctionReturnPlan<'context> {
     context: &'context RenderContext<'context, Native>,
+    fallible_success_out: bool,
 }
 
 impl<'context> FunctionReturnPlan<'context> {
-    fn new(context: &'context RenderContext<'context, Native>) -> Self {
-        Self { context }
+    fn new(
+        context: &'context RenderContext<'context, Native>,
+        callable: &ExportedCallable<Native>,
+    ) -> Self {
+        let error_channel = callable.error().channel();
+        Self {
+            context,
+            fallible_success_out: matches!(
+                error_channel,
+                ErrorChannel::Status
+                    | ErrorChannel::Encoded {
+                        placement: ErrorPlacement::ReturnSlot,
+                        ..
+                    }
+            ),
+        }
+    }
+
+    fn require_supported_slot(&self, slot: ReturnValueSlot, shape: &'static str) -> Result<()> {
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(()),
+            ReturnValueSlot::OutPointer if self.fallible_success_out => Ok(()),
+            ReturnValueSlot::OutPointer => Err(Error::UnsupportedTarget {
+                target: KOTLIN_TARGET,
+                shape,
+            }),
+            _ => Err(Error::UnsupportedTarget {
+                target: KOTLIN_TARGET,
+                shape: "unknown function return slot",
+            }),
+        }
     }
 }
 
@@ -417,20 +447,20 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_
     }
 
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
+        self.require_supported_slot(slot, "out-pointer function return")?;
         match (slot, ty) {
-            (ReturnValueSlot::ReturnSlot, DirectValueType::Primitive(primitive)) => {
-                FunctionReturn::direct(*primitive)
-            }
-            (ReturnValueSlot::ReturnSlot, DirectValueType::Record(record)) => {
-                FunctionReturn::direct_record(*record, self.context)
-            }
-            (ReturnValueSlot::ReturnSlot, DirectValueType::Enum(enumeration)) => {
-                FunctionReturn::direct_enum(*enumeration, self.context)
-            }
-            (ReturnValueSlot::OutPointer, _) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "out-pointer function return",
-            }),
+            (
+                ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
+                DirectValueType::Primitive(primitive),
+            ) => FunctionReturn::direct(*primitive),
+            (
+                ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
+                DirectValueType::Record(record),
+            ) => FunctionReturn::direct_record(*record, self.context),
+            (
+                ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
+                DirectValueType::Enum(enumeration),
+            ) => FunctionReturn::direct_enum(*enumeration, self.context),
             _ => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
                 shape: "unknown direct function return",
@@ -445,12 +475,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_
         codec: &'plan <OutOfRust as Direction>::Codec,
         _shape: <Native as Surface>::BufferShape,
     ) -> Self::Output {
+        self.require_supported_slot(slot, "out-pointer encoded function return")?;
         match slot {
-            ReturnValueSlot::ReturnSlot => FunctionReturn::encoded(ty, codec.clone(), self.context),
-            ReturnValueSlot::OutPointer => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "out-pointer encoded function return",
-            }),
+            ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer => {
+                FunctionReturn::encoded(ty, codec.clone(), self.context)
+            }
             _ => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
                 shape: "unknown encoded function return",
@@ -465,14 +494,12 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_
         _carrier: <Native as Surface>::HandleCarrier,
         presence: HandlePresence,
     ) -> Self::Output {
+        self.require_supported_slot(slot, "out-pointer handle function return")?;
         match (slot, target) {
-            (ReturnValueSlot::ReturnSlot, HandleTarget::Class(class)) => {
-                FunctionReturn::class_handle(*class, presence, self.context)
-            }
-            (ReturnValueSlot::OutPointer, _) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "out-pointer handle function return",
-            }),
+            (
+                ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
+                HandleTarget::Class(class),
+            ) => FunctionReturn::class_handle(*class, presence, self.context),
             (_, HandleTarget::Callback(_) | HandleTarget::Stream(_)) => {
                 Err(Error::UnsupportedTarget {
                     target: KOTLIN_TARGET,

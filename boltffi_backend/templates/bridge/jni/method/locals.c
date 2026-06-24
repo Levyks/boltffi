@@ -12,3 +12,6 @@
     {{ writeback.c_type }} {{ writeback.local }};
 {%- endif %}
 {%- endfor %}
+{%- if let Some(success_out) = method.success_out %}
+    {{ success_out.c_type() }} {{ success_out.local() }} = ({{ success_out.c_type() }}){0};
+{%- endif %}

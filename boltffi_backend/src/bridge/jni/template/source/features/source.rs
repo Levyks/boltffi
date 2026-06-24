@@ -24,6 +24,7 @@ use super::{
 pub struct SourceFeatures {
     pub uses_limits: bool,
     pub checks_status: bool,
+    pub checks_error_buffer: bool,
     pub uses_byte_arrays: bool,
     pub uses_record_arrays: bool,
     pub uses_exceptions: bool,
@@ -67,6 +68,7 @@ impl SourceFeatures {
                 || callbacks.uses_direct_vectors
                 || closures.uses_direct_vectors,
             checks_status: methods.checks_status || callbacks.checks_status,
+            checks_error_buffer: methods.checks_error_buffer || callbacks.checks_error_buffer,
             uses_byte_arrays,
             uses_record_arrays,
             uses_exceptions: callbacks.uses_byte_arrays
@@ -74,6 +76,7 @@ impl SourceFeatures {
                 || callbacks.uses_record_arrays
                 || callbacks.uses_handles
                 || callbacks.has_handle_methods
+                || callbacks.checks_error_buffer
                 || uses_closure_handles
                 || closures.uses_byte_arrays
                 || closures.uses_direct_vectors

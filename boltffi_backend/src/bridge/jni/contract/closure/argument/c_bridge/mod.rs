@@ -66,6 +66,10 @@ impl ClosureArgument {
                 bridge: JNI_BRIDGE,
                 invariant: "closure call argument cannot be a direct-record writeback",
             }),
+            c::ParameterGroup::SuccessOut(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "closure call argument cannot be a return out-pointer",
+            }),
             c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "closure call argument cannot be an async callback completion",

@@ -36,6 +36,11 @@ fn jni_bridge_renders_encoded_functions_as_byte_arrays() {
 }
 
 #[test]
+fn jni_bridge_renders_fallible_returns_as_encoded_error_checked_values() {
+    insta::assert_snapshot!(rendered_fixture("exports/fallible_returns"));
+}
+
+#[test]
 fn jni_bridge_renders_string_functions_as_byte_arrays() {
     insta::assert_snapshot!(rendered_fixture("exports/string_functions"));
 }

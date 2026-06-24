@@ -16,6 +16,10 @@
 {% include "bridge/jni/source/status.c" %}
 {%- endif %}
 
+{%- if checks_error_buffer %}
+{% include "bridge/jni/source/error_buffer.c" %}
+{%- endif %}
+
 {%- if uses_byte_arrays %}
 {% include "bridge/jni/source/byte_arrays.c" %}
 {%- endif %}

@@ -11,11 +11,13 @@
 
 use crate::{
     bridge::{
-        c,
+        c::{self, ArgumentList},
         jni::{ClosureRegistration, JniSymbolName, JvmClassPath, NativeParameter, NativeReturn},
     },
-    core::Result,
+    core::{Error, Result},
 };
+
+const JNI_BRIDGE: &str = "jni";
 
 /// Native method exported to the JVM by a generated JNI source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,7 +39,7 @@ impl NativeMethod {
     ) -> Result<Self> {
         Ok(Self {
             symbol: JniSymbolName::native_method(class, function.name())?,
-            returns: NativeReturn::from_c_type(function.returns())?,
+            returns: NativeReturn::from_c_function(function)?,
             parameters: NativeParameter::from_c_function(function, callbacks, closures)?,
             c_function: function.clone(),
         })
@@ -70,17 +72,17 @@ impl NativeMethod {
 
     /// Returns whether this method needs an explicit `jboolean` cast.
     pub fn returns_boolean(&self) -> bool {
-        matches!(&self.returns, NativeReturn::Value(scalar) if scalar.jni_type().is_boolean())
+        self.returns.is_boolean()
     }
 
     /// Returns whether this method returns an owned byte buffer.
     pub fn returns_bytes(&self) -> bool {
-        matches!(&self.returns, NativeReturn::Bytes)
+        self.returns.is_bytes()
     }
 
     /// Returns whether this method returns a direct record byte array.
     pub fn returns_record(&self) -> bool {
-        matches!(&self.returns, NativeReturn::Record(_))
+        self.returns.is_record()
     }
 
     /// Returns whether this method returns a callback handle token.
@@ -90,6 +92,51 @@ impl NativeMethod {
 
     /// Returns whether this method checks a returned `FfiStatus`.
     pub fn checks_status(&self) -> bool {
-        matches!(&self.returns, NativeReturn::Status)
+        matches!(
+            &self.returns,
+            NativeReturn::Status | NativeReturn::StatusValue(_)
+        )
+    }
+
+    /// Returns whether this method checks an encoded error buffer.
+    pub fn checks_error_buffer(&self) -> bool {
+        self.returns.checks_error_buffer()
+    }
+
+    /// Returns the success value written through `return_out`.
+    pub fn success_out(&self) -> Option<&crate::bridge::jni::SuccessOutReturn> {
+        self.returns.success_out()
+    }
+
+    /// Returns the C bridge arguments passed by this native method.
+    pub fn arguments(&self) -> Result<ArgumentList> {
+        let mut parameters = self.parameters.iter();
+        self.c_function
+            .parameter_groups()
+            .iter()
+            .map(|group| match group {
+                c::ParameterGroup::SuccessOut(_) => {
+                    self.success_out().map(|value| vec![value.argument()]).ok_or(
+                        Error::BrokenBridgeContract {
+                            bridge: JNI_BRIDGE,
+                            invariant: "success out-pointer has no matching JNI return value",
+                        },
+                    )
+                }
+                c::ParameterGroup::CallbackCompletion(_)
+                | c::ParameterGroup::ClosureReturn(_) => Err(Error::BrokenBridgeContract {
+                    bridge: JNI_BRIDGE,
+                    invariant: "non-native parameter group cannot appear on a JNI native method",
+                }),
+                _ => parameters
+                    .next()
+                    .ok_or(Error::BrokenBridgeContract {
+                        bridge: JNI_BRIDGE,
+                        invariant: "JNI native method is missing a parameter for a C group",
+                    })
+                    .and_then(NativeParameter::c_arguments),
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(|arguments| ArgumentList::from_iter(arguments.into_iter().flatten()))
     }
 }

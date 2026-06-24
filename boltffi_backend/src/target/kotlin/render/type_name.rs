@@ -70,6 +70,8 @@ impl KotlinType {
             NativeReturn::Value(scalar) => Self::jni(scalar.jni_type()),
             NativeReturn::Bytes | NativeReturn::Record(_) => Ok(TypeName::byte_array(true)),
             NativeReturn::Callback(_) => Ok(TypeName::long()),
+            NativeReturn::StatusValue(value) => Self::native_return(value.value()),
+            NativeReturn::EncodedErrorValue(value) => Self::native_return(value.success().value()),
         }
     }
 

@@ -131,23 +131,17 @@ impl CallbackHandleMethod {
 
     /// Returns whether this method needs an explicit `jboolean` cast.
     pub fn returns_boolean(&self) -> bool {
-        matches!(&self.call, CallbackHandleMethodCall::Synchronous(NativeReturn::Value(scalar)) if scalar.jni_type().is_boolean())
+        matches!(&self.call, CallbackHandleMethodCall::Synchronous(returns) if returns.is_boolean())
     }
 
     /// Returns whether this method returns an owned byte buffer.
     pub fn returns_bytes(&self) -> bool {
-        matches!(
-            &self.call,
-            CallbackHandleMethodCall::Synchronous(NativeReturn::Bytes)
-        )
+        matches!(&self.call, CallbackHandleMethodCall::Synchronous(returns) if returns.is_bytes())
     }
 
     /// Returns whether this method returns a direct record byte array.
     pub fn returns_record(&self) -> bool {
-        matches!(
-            &self.call,
-            CallbackHandleMethodCall::Synchronous(NativeReturn::Record(_))
-        )
+        matches!(&self.call, CallbackHandleMethodCall::Synchronous(returns) if returns.is_record())
     }
 
     /// Returns whether this method returns a callback handle token.
@@ -164,8 +158,27 @@ impl CallbackHandleMethod {
     pub fn checks_status(&self) -> bool {
         matches!(
             &self.call,
-            CallbackHandleMethodCall::Synchronous(NativeReturn::Status)
+            CallbackHandleMethodCall::Synchronous(
+                NativeReturn::Status | NativeReturn::StatusValue(_)
+            )
         )
+    }
+
+    /// Returns whether this method checks an encoded error buffer.
+    pub fn checks_error_buffer(&self) -> bool {
+        matches!(
+            &self.call,
+            CallbackHandleMethodCall::Synchronous(NativeReturn::EncodedErrorValue(_))
+        )
+    }
+
+    /// Returns the success value written through `return_out`.
+    pub fn success_out(&self) -> Option<&crate::bridge::jni::SuccessOutReturn> {
+        match &self.call {
+            CallbackHandleMethodCall::Synchronous(returns) => returns.success_out(),
+            CallbackHandleMethodCall::Asynchronous(_)
+            | CallbackHandleMethodCall::ClosureReturn(_) => None,
+        }
     }
 
     /// Returns the async completion contract when the vtable slot completes later.

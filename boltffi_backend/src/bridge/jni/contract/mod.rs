@@ -56,6 +56,6 @@ pub use jvm::JvmMethodReturn;
 pub use method::NativeMethod;
 pub use parameter::{NativeParameter, NativeParameterKind};
 pub use record::{RecordParameter, RecordValue};
-pub use return_value::NativeReturn;
+pub use return_value::{EncodedErrorReturn, NativeReturn, SuccessOutReturn};
 pub use scalar::{ScalarParameter, ScalarReturn};
 pub use stream::{DirectStreamBatchMethod, StreamProtocolMethods};

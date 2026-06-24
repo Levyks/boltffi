@@ -39,6 +39,10 @@ impl CallbackArgument {
                 bridge: JNI_BRIDGE,
                 invariant: "callback method argument cannot be a direct-record writeback",
             }),
+            c::ParameterGroup::SuccessOut(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback method argument cannot be a return out-pointer",
+            }),
             c::ParameterGroup::CallbackCompletion(completion) => {
                 completion::from_group(slot, completion, callbacks)
             }

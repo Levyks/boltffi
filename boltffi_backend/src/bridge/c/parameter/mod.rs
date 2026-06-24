@@ -48,6 +48,7 @@ enum ParameterRole {
         element: DirectVectorElementAbi,
     },
     DirectVectorLength(Identifier),
+    SuccessOut,
     CallbackCompletionCallback(Identifier),
     CallbackCompletionContext(Identifier),
     ContinuationData(Identifier),
@@ -110,6 +111,11 @@ impl Parameter {
             Type::PointerWidth,
             ParameterRole::DirectVectorLength(Identifier::escape(name)?),
         )
+    }
+
+    /// Creates caller-owned storage for a fallible success value.
+    pub fn success_out(name: &str, ty: Type) -> Result<Self> {
+        Self::with_role(name, ty, ParameterRole::SuccessOut)
     }
 
     /// Creates the callback function pointer in an async callback completion group.

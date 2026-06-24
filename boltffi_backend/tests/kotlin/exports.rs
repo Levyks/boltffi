@@ -31,6 +31,11 @@ fn kotlin_target_renders_data_enums_through_codec_methods() {
 }
 
 #[test]
+fn kotlin_target_renders_fallible_returns_as_throwing_functions() {
+    insta::assert_snapshot!(rendered_fixture("exports/fallible_returns"));
+}
+
+#[test]
 fn kotlin_target_encodes_nullable_primitives_as_compact_wire() {
     insta::assert_snapshot!(rendered_fixture("exports/nullable_primitive_functions"));
 }
