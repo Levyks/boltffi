@@ -13,9 +13,10 @@ use super::{GenerateOptions, GenerateTarget};
 pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<()> {
     match &options.target {
         GenerateTarget::Python => generate_python(config, options),
+        GenerateTarget::Kotlin => generate_kotlin(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
-                "--ir is only available for python, not {}",
+                "--ir is only available for python and kotlin, not {}",
                 target_label(other)
             ),
             status: None,
@@ -31,19 +32,7 @@ fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let cargo_args = config
-        .cargo_args_for_command("generate")
-        .into_iter()
-        .chain(options.cargo_args.iter().cloned())
-        .collect::<Vec<_>>();
-    let cargo = Cargo::current(&cargo_args)?;
-    let metadata = cargo.metadata()?;
-    let cargo_manifest_path = cargo.manifest_path()?;
-    let package_selector =
-        cargo.effective_package_selector(config, &metadata, &cargo_manifest_path);
-    let package = metadata.find_package(&cargo_manifest_path, package_selector.as_deref())?;
-    let library_target =
-        package.resolve_library_target(&config.crate_artifact_name(), &cargo_manifest_path)?;
+    let selected = SelectedCrate::resolve(config, options)?;
     let output_directory = options
         .output
         .clone()
@@ -52,10 +41,38 @@ fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
     write_python(
         config,
         output_directory,
-        package.manifest_path.clone(),
-        library_target.name.clone(),
-        cargo.probe_command_arguments(),
+        selected.manifest_path,
+        selected.artifact_name,
+        selected.cargo_args,
     )
+}
+
+fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
+    if !config.is_enabled(Target::Kotlin) {
+        return Err(CliError::CommandFailed {
+            command: "targets.android.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
+    let selected = SelectedCrate::resolve(config, options)?;
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.android_kotlin_output());
+
+    Generation::new(selected.manifest_path)
+        .cargo_args(selected.cargo_args)
+        .coverage_mode(CoverageMode::Partial)
+        .kotlin_package(config.android_kotlin_package())
+        .kotlin_file(config.android_kotlin_module_name())
+        .render(Target::Kotlin)
+        .and_then(|output| {
+            print_coverage("kotlin", &output);
+            Generation::write_output(output, &output_directory)
+        })
+        .map(drop)
+        .map_err(|error| generation_error("kotlin", error))
 }
 
 pub fn run_python_generation(
@@ -99,20 +116,49 @@ fn write_python(
         .python_native_library(artifact_name)
         .render(Target::Python)
         .and_then(|output| {
-            print_coverage(&output);
+            print_coverage("python", &output);
             Generation::write_output(output, &output_directory)
         })
         .map(drop)
-        .map_err(generation_error)
+        .map_err(|error| generation_error("python", error))
 }
 
-fn print_coverage(output: &GeneratedOutput) {
+struct SelectedCrate {
+    manifest_path: PathBuf,
+    artifact_name: String,
+    cargo_args: Vec<String>,
+}
+
+impl SelectedCrate {
+    fn resolve(config: &Config, options: &GenerateOptions) -> Result<Self> {
+        let cargo_args = config
+            .cargo_args_for_command("generate")
+            .into_iter()
+            .chain(options.cargo_args.iter().cloned())
+            .collect::<Vec<_>>();
+        let cargo = Cargo::current(&cargo_args)?;
+        let metadata = cargo.metadata()?;
+        let cargo_manifest_path = cargo.manifest_path()?;
+        let package_selector =
+            cargo.effective_package_selector(config, &metadata, &cargo_manifest_path);
+        let package = metadata.find_package(&cargo_manifest_path, package_selector.as_deref())?;
+        let library_target =
+            package.resolve_library_target(&config.crate_artifact_name(), &cargo_manifest_path)?;
+        Ok(Self {
+            manifest_path: package.manifest_path.clone(),
+            artifact_name: library_target.name.clone(),
+            cargo_args: cargo.probe_command_arguments(),
+        })
+    }
+}
+
+fn print_coverage(target: &str, output: &GeneratedOutput) {
     let unsupported = output.coverage().unsupported();
     if unsupported.is_empty() {
         return;
     }
 
-    eprintln!("python generation skipped unsupported declarations");
+    eprintln!("{target} generation skipped unsupported declarations");
     eprintln!("{:<12} {:<48} reason", "kind", "name");
     unsupported.iter().for_each(|item| {
         eprintln!(
@@ -124,9 +170,9 @@ fn print_coverage(output: &GeneratedOutput) {
     });
 }
 
-fn generation_error(error: GenerationError) -> CliError {
+fn generation_error(target: &str, error: GenerationError) -> CliError {
     CliError::CommandFailed {
-        command: format!("generate python: {error}"),
+        command: format!("generate {target}: {error}"),
         status: None,
     }
 }

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use boltffi_backend::core::{CoverageMode, bridge, host};
-use boltffi_backend::target::python::PythonCExtHost;
+use boltffi_backend::target::{kotlin::KotlinHost, python::PythonCExtHost};
 use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
 use thiserror::Error;
@@ -28,6 +28,8 @@ pub struct Generation {
     python_distribution_name: Option<String>,
     python_package_version: Option<String>,
     python_native_library: Option<String>,
+    kotlin_package: Option<String>,
+    kotlin_file: Option<String>,
 }
 
 impl Generation {
@@ -42,6 +44,8 @@ impl Generation {
             python_distribution_name: None,
             python_package_version: None,
             python_native_library: None,
+            kotlin_package: None,
+            kotlin_file: None,
         }
     }
 
@@ -87,12 +91,24 @@ impl Generation {
         self
     }
 
+    /// Sets the generated Kotlin package name.
+    pub fn kotlin_package(mut self, package: impl Into<String>) -> Self {
+        self.kotlin_package = Some(package.into());
+        self
+    }
+
+    /// Sets the generated Kotlin owner file name.
+    pub fn kotlin_file(mut self, file: impl Into<String>) -> Self {
+        self.kotlin_file = Some(file.into());
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python => self.render_python(),
+            Target::Kotlin => self.render_kotlin(),
             Target::Swift
-            | Target::Kotlin
             | Target::KotlinMultiplatform
             | Target::Java
             | Target::TypeScript
@@ -117,6 +133,19 @@ impl Generation {
         let target = self
             .python_host()?
             .into_target(&bindings)
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, &bindings)
+    }
+
+    fn render_kotlin(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Native>()?;
+        let package = self
+            .kotlin_package
+            .as_deref()
+            .unwrap_or("com.example.boltffi");
+        let file = self.kotlin_file.as_deref().unwrap_or("BoltFfi");
+        let target = KotlinHost::new(package, file)
+            .and_then(KotlinHost::into_target)
             .map_err(GenerationError::Render)?;
         self.render_backend(&target, &bindings)
     }
