@@ -98,11 +98,11 @@ impl NativeFunctionParameter {
 
 pub struct NativeCall {
     function: Identifier,
-    arguments: Vec<Identifier>,
+    arguments: Vec<Expression>,
 }
 
 impl NativeCall {
-    pub fn new(function: Identifier, arguments: Vec<Identifier>) -> Self {
+    pub fn new(function: Identifier, arguments: Vec<Expression>) -> Self {
         Self {
             function,
             arguments,
@@ -113,11 +113,7 @@ impl NativeCall {
         Expression::call(
             "Native",
             self.function.clone(),
-            self.arguments
-                .iter()
-                .cloned()
-                .map(Expression::identifier)
-                .collect::<ArgumentList>(),
+            self.arguments.iter().cloned().collect::<ArgumentList>(),
         )
     }
 }

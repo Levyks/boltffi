@@ -45,3 +45,38 @@ fn kotlin_target_renders_primitive_function_stack() {
     assert!(kotlin.contains("fun add(left: Int, right: Int): Int"));
     assert!(kotlin.contains("return Native.boltffi_function_demo_add(left, right)"));
 }
+
+#[test]
+fn kotlin_target_preserves_unsigned_public_api_and_native_carriers() {
+    let bindings = bindings(
+        r#"
+        #[export]
+        pub fn widen(byte: u8, short: u16, word: u32, wide: u64) -> u32 {
+            byte as u32 + short as u32 + word + wide as u32
+        }
+        "#,
+    );
+    let target = KotlinHost::new("com.boltffi.demo", "Demo")
+        .expect("Kotlin host")
+        .into_target()
+        .expect("Kotlin target");
+    let output = target.render(&bindings).expect("Kotlin target renders");
+    let kotlin = file(&output, "com/boltffi/demo/Demo.kt");
+
+    assert!(
+        kotlin.contains(
+            "@JvmStatic external fun boltffi_function_demo_widen(byte: Byte, short_: Short, word: Int, wide: Long): Int"
+        ),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin.contains("fun widen(byte: UByte, short: UShort, word: UInt, wide: ULong): UInt"),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin.contains(
+            "return Native.boltffi_function_demo_widen(byte.toByte(), short.toShort(), word.toInt(), wide.toLong()).toUInt()"
+        ),
+        "{kotlin}"
+    );
+}

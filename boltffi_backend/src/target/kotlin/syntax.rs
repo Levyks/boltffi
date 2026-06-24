@@ -180,16 +180,32 @@ impl TypeName {
         Self::new("Byte")
     }
 
+    pub fn ubyte() -> Self {
+        Self::new("UByte")
+    }
+
     pub fn short() -> Self {
         Self::new("Short")
+    }
+
+    pub fn ushort() -> Self {
+        Self::new("UShort")
     }
 
     pub fn int() -> Self {
         Self::new("Int")
     }
 
+    pub fn uint() -> Self {
+        Self::new("UInt")
+    }
+
     pub fn long() -> Self {
         Self::new("Long")
+    }
+
+    pub fn ulong() -> Self {
+        Self::new("ULong")
     }
 
     pub fn float() -> Self {
@@ -223,6 +239,10 @@ impl Expression {
 
     pub fn call(receiver: impl fmt::Display, method: Identifier, arguments: ArgumentList) -> Self {
         Self(format!("{receiver}.{method}({arguments})"))
+    }
+
+    pub fn convert(self, method: Identifier) -> Self {
+        Self(format!("{self}.{method}()"))
     }
 }
 
