@@ -216,3 +216,109 @@ fn kotlin_target_decodes_string_and_bytes_returns_through_wire_reader() {
         "{kotlin}"
     );
 }
+
+#[test]
+fn kotlin_target_renders_direct_records_and_function_bridges() {
+    let bindings = bindings(
+        r#"
+        #[repr(C)]
+        #[data]
+        pub struct Point {
+            pub x: f64,
+            pub y: f64,
+        }
+
+        #[repr(u8)]
+        #[data]
+        pub enum Mode {
+            Fast = 1,
+            Slow = 2,
+        }
+
+        #[export]
+        pub fn origin() -> Point {
+            Point { x: 0.0, y: 0.0 }
+        }
+
+        #[export]
+        pub fn magnitude(point: Point) -> f64 {
+            point.x.hypot(point.y)
+        }
+
+        #[export]
+        pub fn echo_mode(mode: Mode) -> Mode {
+            mode
+        }
+        "#,
+    );
+    let target = KotlinHost::new("com.boltffi.demo", "Demo")
+        .expect("Kotlin host")
+        .into_target()
+        .expect("Kotlin target");
+    let output = target.render(&bindings).expect("Kotlin target renders");
+    let kotlin = file(&output, "com/boltffi/demo/Demo.kt");
+
+    assert!(kotlin.contains("data class Point("), "{kotlin}");
+    assert!(kotlin.contains("val x: Double,"), "{kotlin}");
+    assert!(kotlin.contains("val y: Double"), "{kotlin}");
+    assert!(
+        kotlin.contains(".allocate(16)")
+            && kotlin.contains(".order(java.nio.ByteOrder.nativeOrder())"),
+        "{kotlin}"
+    );
+    assert!(kotlin.contains("buffer.putDouble(0, x)"), "{kotlin}");
+    assert!(kotlin.contains("buffer.putDouble(8, y)"), "{kotlin}");
+    assert!(kotlin.contains("buffer.getDouble(0)"), "{kotlin}");
+    assert!(kotlin.contains("buffer.getDouble(8)"), "{kotlin}");
+
+    assert!(
+        kotlin.contains("@JvmStatic external fun boltffi_function_demo_origin(): ByteArray?"),
+        "{kotlin}"
+    );
+    assert!(kotlin.contains("fun origin(): Point"), "{kotlin}");
+    assert!(
+        kotlin.contains("return Point.fromByteArray(__boltffi_result)"),
+        "{kotlin}"
+    );
+
+    assert!(
+        kotlin.contains(
+            "@JvmStatic external fun boltffi_function_demo_magnitude(point: ByteArray): Double"
+        ),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin.contains("fun magnitude(point: Point): Double"),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin.contains("return Native.boltffi_function_demo_magnitude(point.toByteArray())"),
+        "{kotlin}"
+    );
+
+    assert!(
+        kotlin.contains("enum class Mode(val value: UByte)"),
+        "{kotlin}"
+    );
+    assert!(kotlin.contains("Fast(1.toUByte()),"), "{kotlin}");
+    assert!(kotlin.contains("Slow(2.toUByte());"), "{kotlin}");
+    assert!(
+        kotlin.contains("fun fromValue(value: UByte): Mode"),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin
+            .contains("@JvmStatic external fun boltffi_function_demo_echo_mode(mode: Byte): Byte"),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin.contains("fun echoMode(mode: Mode): Mode"),
+        "{kotlin}"
+    );
+    assert!(
+        kotlin.contains(
+            "return Mode.fromValue(Native.boltffi_function_demo_echo_mode(mode.value.toByte()).toUByte())"
+        ),
+        "{kotlin}"
+    );
+}

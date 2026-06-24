@@ -6,7 +6,7 @@ use boltffi_binding::{CanonicalName, NamePart};
 use crate::{
     bridge::jni::JvmClassPath,
     core::{Error, Result},
-    target::kotlin::syntax::Identifier,
+    target::kotlin::syntax::{Identifier, TypeName},
 };
 
 /// A Kotlin package name backed by the JVM package grammar.
@@ -96,6 +96,14 @@ impl Name {
         Identifier::escape(self.lower_camel())
     }
 
+    pub fn type_name(&self) -> TypeName {
+        TypeName::new(self.upper_camel())
+    }
+
+    pub fn variant(&self) -> Result<Identifier> {
+        Identifier::escape(self.upper_camel())
+    }
+
     pub fn generated(&self, suffix: &str) -> Result<Identifier> {
         Identifier::parse(format!("__boltffi_{}_{}", self.lower_camel(), suffix))
     }
@@ -116,5 +124,12 @@ impl Name {
         characters.next().map_or_else(String::new, |first| {
             first.to_uppercase().chain(characters).collect()
         })
+    }
+
+    fn upper_camel(&self) -> String {
+        self.parts
+            .iter()
+            .map(|part| Self::capitalized(part.as_str()))
+            .collect()
     }
 }

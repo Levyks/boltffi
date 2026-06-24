@@ -1,13 +1,16 @@
 use boltffi_binding::{
-    BuiltinType, CallbackId, ClassId, CustomTypeId, DirectValueType, Direction, EnumId,
-    HandlePresence, HandleTarget, IntoRust, Native, ParamPlanRender, Primitive, RecordId, TypeRef,
-    TypeRefRender,
+    BuiltinType, CallbackId, ClassId, CustomTypeId, DirectValueType, DirectVectorElementType,
+    Direction, EnumId, HandlePresence, HandleTarget, IntoRust, Native, ParamPlanRender, Primitive,
+    RecordId, Surface, TypeRef, TypeRefRender,
 };
 
 use crate::{
     bridge::jni::{DirectVectorParameter, JniType, NativeParameterKind, NativeReturn},
-    core::{Error, Result},
-    target::kotlin::{render::primitive::KotlinPrimitive, syntax::TypeName},
+    core::{Error, RenderContext, Result},
+    target::kotlin::{
+        render::{enumeration::Enumeration, primitive::KotlinPrimitive, record::Record},
+        syntax::TypeName,
+    },
 };
 
 const KOTLIN_TARGET: &str = "kotlin";
@@ -65,8 +68,8 @@ impl KotlinType {
         }
     }
 
-    pub fn type_ref(ty: &TypeRef) -> Result<TypeName> {
-        ty.render_with(&mut KotlinTypeRef)
+    pub fn type_ref(ty: &TypeRef, context: &RenderContext<Native>) -> Result<TypeName> {
+        ty.render_with(&mut KotlinTypeRef::new(context))
     }
 
     fn direct_vector(parameter: &DirectVectorParameter) -> Result<TypeName> {
@@ -74,9 +77,17 @@ impl KotlinType {
     }
 }
 
-pub struct KotlinTypeRef;
+pub struct KotlinTypeRef<'context> {
+    context: &'context RenderContext<'context, Native>,
+}
 
-impl TypeRefRender for KotlinTypeRef {
+impl<'context> KotlinTypeRef<'context> {
+    pub fn new(context: &'context RenderContext<Native>) -> Self {
+        Self { context }
+    }
+}
+
+impl TypeRefRender for KotlinTypeRef<'_> {
     type Output = Result<TypeName>;
 
     fn primitive(&mut self, primitive: Primitive) -> Self::Output {
@@ -91,18 +102,12 @@ impl TypeRefRender for KotlinTypeRef {
         Ok(TypeName::byte_array(false))
     }
 
-    fn record(&mut self, _id: RecordId) -> Self::Output {
-        Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
-            shape: "record type",
-        })
+    fn record(&mut self, id: RecordId) -> Self::Output {
+        Record::type_name_from_id(id, self.context)
     }
 
-    fn enumeration(&mut self, _id: EnumId) -> Self::Output {
-        Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
-            shape: "enum type",
-        })
+    fn enumeration(&mut self, id: EnumId) -> Self::Output {
+        Enumeration::type_name_from_id(id, self.context)
     }
 
     fn class(&mut self, _id: ClassId) -> Self::Output {
@@ -163,9 +168,17 @@ impl TypeRefRender for KotlinTypeRef {
     }
 }
 
-pub struct ParameterType;
+pub struct ParameterType<'context> {
+    context: &'context RenderContext<'context, Native>,
+}
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType {
+impl<'context> ParameterType<'context> {
+    pub fn new(context: &'context RenderContext<'context, Native>) -> Self {
+        Self { context }
+    }
+}
+
+impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType<'_> {
     type Output = Result<TypeName>;
 
     fn direct(
@@ -175,14 +188,10 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType {
     ) -> Self::Output {
         match ty {
             DirectValueType::Primitive(primitive) => KotlinType::primitive(*primitive),
-            DirectValueType::Record(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "direct record function parameter",
-            }),
-            DirectValueType::Enum(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "direct enum function parameter",
-            }),
+            DirectValueType::Record(record) => Record::type_name_from_id(*record, self.context),
+            DirectValueType::Enum(enumeration) => {
+                Enumeration::type_name_from_id(*enumeration, self.context)
+            }
             _ => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
                 shape: "unknown direct function parameter",
@@ -194,16 +203,16 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType {
         &mut self,
         ty: &'plan TypeRef,
         _codec: &'plan <IntoRust as Direction>::Codec,
-        _shape: <Native as boltffi_binding::Surface>::BufferShape,
+        _shape: <Native as Surface>::BufferShape,
         _receive: <IntoRust as Direction>::Receive,
     ) -> Self::Output {
-        KotlinType::type_ref(ty)
+        KotlinType::type_ref(ty, self.context)
     }
 
     fn handle(
         &mut self,
         _target: &'plan HandleTarget,
-        _carrier: <Native as boltffi_binding::Surface>::HandleCarrier,
+        _carrier: <Native as Surface>::HandleCarrier,
         _presence: HandlePresence,
         _receive: <IntoRust as Direction>::Receive,
     ) -> Self::Output {
@@ -220,10 +229,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType {
         })
     }
 
-    fn direct_vector(
-        &mut self,
-        _element: &'plan boltffi_binding::DirectVectorElementType,
-    ) -> Self::Output {
+    fn direct_vector(&mut self, _element: &'plan DirectVectorElementType) -> Self::Output {
         Err(Error::UnsupportedTarget {
             target: KOTLIN_TARGET,
             shape: "direct-vector function parameter",

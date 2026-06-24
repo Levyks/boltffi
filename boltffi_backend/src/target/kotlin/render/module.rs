@@ -16,6 +16,8 @@ struct ModuleTemplate {
     package: KotlinPackage,
     runtime: String,
     native_functions: Vec<NativeFunction>,
+    records: Vec<String>,
+    enumerations: Vec<String>,
     functions: Vec<String>,
 }
 
@@ -45,11 +47,15 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
     pub fn render(self) -> Result<GeneratedOutput> {
         let diagnostics = self.diagnostics();
         let native_functions = self.native_functions()?;
+        let records = self.records();
+        let enumerations = self.enumerations();
         let functions = self.functions();
         let contents = ModuleTemplate {
             package: self.host.package().clone(),
             runtime: RuntimeTemplate.render()?,
             native_functions,
+            records,
+            enumerations,
             functions,
         }
         .render()?;
@@ -77,14 +83,32 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
     }
 
     fn functions(&self) -> Vec<String> {
+        self.primary_chunks(|declaration| {
+            matches!(declaration.declaration(), DeclarationRef::Function(_))
+        })
+    }
+
+    fn records(&self) -> Vec<String> {
+        self.primary_chunks(|declaration| {
+            matches!(declaration.declaration(), DeclarationRef::Record(_))
+        })
+    }
+
+    fn enumerations(&self) -> Vec<String> {
+        self.primary_chunks(|declaration| {
+            matches!(declaration.declaration(), DeclarationRef::Enum(_))
+        })
+    }
+
+    fn primary_chunks(
+        &self,
+        include: impl Fn(&RenderedDeclaration<'decl, Native>) -> bool,
+    ) -> Vec<String> {
         self.declarations
             .iter()
             .filter_map(|declaration| {
-                let DeclarationRef::Function(_) = declaration.declaration() else {
-                    return None;
-                };
                 let chunk = declaration.emitted().primary_chunk();
-                (!chunk.is_empty()).then(|| chunk.as_str().to_owned())
+                (include(declaration) && !chunk.is_empty()).then(|| chunk.as_str().to_owned())
             })
             .collect()
     }

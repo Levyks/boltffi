@@ -92,7 +92,10 @@ impl host::HostBackend for KotlinHost {
     }
 
     fn binding_capabilities(&self) -> HostCapabilities {
-        HostCapabilities::new().stable(BindingCapability::Functions)
+        HostCapabilities::new()
+            .stable(BindingCapability::Records)
+            .stable(BindingCapability::Enums)
+            .stable(BindingCapability::Functions)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -101,24 +104,20 @@ impl host::HostBackend for KotlinHost {
 
     fn record(
         &self,
-        _decl: &RecordDecl<Self::Surface>,
+        decl: &RecordDecl<Self::Surface>,
         _bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(Emitted::diagnostic(crate::core::Diagnostic::new(
-            "kotlin target skipped record declaration",
-        )))
+        render::Record::from_declaration(decl)?.render()
     }
 
     fn enumeration(
         &self,
-        _decl: &EnumDecl<Self::Surface>,
+        decl: &EnumDecl<Self::Surface>,
         _bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(Emitted::diagnostic(crate::core::Diagnostic::new(
-            "kotlin target skipped enum declaration",
-        )))
+        render::Enumeration::from_declaration(decl)?.render()
     }
 
     fn function(

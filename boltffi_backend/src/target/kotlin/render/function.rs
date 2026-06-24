@@ -1,8 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    DirectValueType, Direction, ExecutionDecl, FunctionDecl, HandlePresence, HandleTarget,
-    IncomingParam, IntoRust, Native, OutOfRust, ParamPlan, ParamPlanRender, Primitive,
-    ReturnPlanRender, ReturnValueSlot, TypeRef,
+    ClosureReturn, DirectValueType, DirectVectorElementType, Direction, EnumId, ExecutionDecl,
+    FunctionDecl, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native, OutOfRust,
+    ParamDecl, ParamPlan, ParamPlanRender, Primitive, RecordId, ReturnPlanRender, ReturnValueSlot,
+    Surface, TypeRef,
 };
 
 use crate::{
@@ -11,8 +12,10 @@ use crate::{
         codec::{EncodedWrite, Reader, WireBuffer},
         name_style::Name,
         render::{
+            enumeration::Enumeration,
             native::NativeCall,
             primitive::KotlinPrimitive,
+            record::Record,
             type_name::{KotlinType, ParameterType},
         },
         syntax::{ArgumentList, Expression, Identifier, Literal, Statement, TypeName},
@@ -60,13 +63,15 @@ struct FunctionReturn {
 enum ReturnConversion {
     Void,
     Direct(Primitive),
+    DirectRecord(TypeName),
+    DirectEnum { ty: TypeName, repr: Primitive },
     Encoded(<OutOfRust as Direction>::Codec),
 }
 
 impl Function {
     pub fn from_declaration(
         decl: &FunctionDecl<Native>,
-        _context: &RenderContext<Native>,
+        context: &RenderContext<Native>,
     ) -> Result<Self> {
         if !matches!(decl.callable().execution(), ExecutionDecl::Synchronous(_)) {
             return Err(Error::UnsupportedTarget {
@@ -79,13 +84,13 @@ impl Function {
             .callable()
             .params()
             .iter()
-            .map(Parameter::from_declaration)
+            .map(|parameter| Parameter::from_declaration(parameter, context))
             .collect::<Result<Vec<_>>>()?;
         let function_return = decl
             .callable()
             .returns()
             .plan()
-            .render_with(&mut FunctionReturnPlan)?;
+            .render_with(&mut FunctionReturnPlan::new(context))?;
         let call = NativeCall::new(
             Identifier::escape(decl.symbol().name().as_str())?,
             parameters
@@ -149,7 +154,8 @@ impl Function {
 
 impl Parameter {
     pub fn from_declaration(
-        parameter: &boltffi_binding::ParamDecl<Native, boltffi_binding::IntoRust>,
+        parameter: &ParamDecl<Native, IntoRust>,
+        context: &RenderContext<Native>,
     ) -> Result<Self> {
         let IncomingParam::Value(plan) = parameter.payload() else {
             return Err(Error::UnsupportedTarget {
@@ -159,11 +165,11 @@ impl Parameter {
         };
         let source_name = Name::new(parameter.name());
         let name = source_name.parameter()?;
-        let native_argument = Self::native_argument_for(source_name, name.clone(), plan)?;
+        let native_argument = Self::native_argument_for(source_name, name.clone(), plan, context)?;
         Ok(Self {
             native_argument: native_argument.expression,
             name,
-            ty: Self::type_name(plan)?,
+            ty: Self::type_name(plan, context)?,
             setup: native_argument.setup,
             cleanup: native_argument.cleanup,
         })
@@ -189,8 +195,11 @@ impl Parameter {
         &self.cleanup
     }
 
-    fn type_name(plan: &ParamPlan<Native, boltffi_binding::IntoRust>) -> Result<TypeName> {
-        plan.render_with(&mut ParameterType)
+    fn type_name(
+        plan: &ParamPlan<Native, IntoRust>,
+        context: &RenderContext<Native>,
+    ) -> Result<TypeName> {
+        plan.render_with(&mut ParameterType::new(context))
     }
 }
 
@@ -198,15 +207,21 @@ impl Parameter {
     fn native_argument_for(
         source_name: Name,
         name: Identifier,
-        plan: &ParamPlan<Native, boltffi_binding::IntoRust>,
+        plan: &ParamPlan<Native, IntoRust>,
+        context: &RenderContext<Native>,
     ) -> Result<NativeArgument> {
-        plan.render_with(&mut NativeArgumentRender { source_name, name })
+        plan.render_with(&mut NativeArgumentRender {
+            source_name,
+            name,
+            context,
+        })
     }
 }
 
-struct NativeArgumentRender {
+struct NativeArgumentRender<'context> {
     source_name: Name,
     name: Identifier,
+    context: &'context RenderContext<'context, Native>,
 }
 
 impl NativeArgument {
@@ -228,7 +243,7 @@ impl NativeArgument {
     }
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
+impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_> {
     type Output = Result<NativeArgument>;
 
     fn direct(
@@ -241,14 +256,13 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
             DirectValueType::Primitive(primitive) => KotlinPrimitive::new(*primitive)
                 .native_argument(value)
                 .map(NativeArgument::direct),
-            DirectValueType::Record(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "direct record function parameter",
-            }),
-            DirectValueType::Enum(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "direct enum function parameter",
-            }),
+            DirectValueType::Record(_) => {
+                Record::encode_expression(value).map(NativeArgument::direct)
+            }
+            DirectValueType::Enum(enumeration) => {
+                Enumeration::native_argument(*enumeration, value, self.context)
+                    .map(NativeArgument::direct)
+            }
             _ => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
                 shape: "unknown direct function parameter",
@@ -260,7 +274,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
         &mut self,
         _ty: &'plan TypeRef,
         codec: &'plan <IntoRust as Direction>::Codec,
-        _shape: <Native as boltffi_binding::Surface>::BufferShape,
+        _shape: <Native as Surface>::BufferShape,
         _receive: <IntoRust as Direction>::Receive,
     ) -> Self::Output {
         WireBuffer::new(&self.source_name)
@@ -271,7 +285,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
     fn handle(
         &mut self,
         _target: &'plan HandleTarget,
-        _carrier: <Native as boltffi_binding::Surface>::HandleCarrier,
+        _carrier: <Native as Surface>::HandleCarrier,
         _presence: HandlePresence,
         _receive: <IntoRust as Direction>::Receive,
     ) -> Self::Output {
@@ -288,10 +302,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
         })
     }
 
-    fn direct_vector(
-        &mut self,
-        _element: &'plan boltffi_binding::DirectVectorElementType,
-    ) -> Self::Output {
+    fn direct_vector(&mut self, _element: &'plan DirectVectorElementType) -> Self::Output {
         Err(Error::UnsupportedTarget {
             target: KOTLIN_TARGET,
             shape: "direct-vector function parameter",
@@ -299,9 +310,17 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
     }
 }
 
-struct FunctionReturnPlan;
+struct FunctionReturnPlan<'context> {
+    context: &'context RenderContext<'context, Native>,
+}
 
-impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan {
+impl<'context> FunctionReturnPlan<'context> {
+    fn new(context: &'context RenderContext<'context, Native>) -> Self {
+        Self { context }
+    }
+}
+
+impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_> {
     type Output = Result<FunctionReturn>;
 
     fn void(&mut self) -> Self::Output {
@@ -313,17 +332,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan {
             (ReturnValueSlot::ReturnSlot, DirectValueType::Primitive(primitive)) => {
                 FunctionReturn::direct(*primitive)
             }
-            (ReturnValueSlot::ReturnSlot, DirectValueType::Record(_)) => {
-                Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
-                    shape: "direct record function return",
-                })
+            (ReturnValueSlot::ReturnSlot, DirectValueType::Record(record)) => {
+                FunctionReturn::direct_record(*record, self.context)
             }
-            (ReturnValueSlot::ReturnSlot, DirectValueType::Enum(_)) => {
-                Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
-                    shape: "direct enum function return",
-                })
+            (ReturnValueSlot::ReturnSlot, DirectValueType::Enum(enumeration)) => {
+                FunctionReturn::direct_enum(*enumeration, self.context)
             }
             (ReturnValueSlot::OutPointer, _) => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
@@ -341,10 +354,10 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan {
         slot: ReturnValueSlot,
         ty: &'plan TypeRef,
         codec: &'plan <OutOfRust as Direction>::Codec,
-        _shape: <Native as boltffi_binding::Surface>::BufferShape,
+        _shape: <Native as Surface>::BufferShape,
     ) -> Self::Output {
         match slot {
-            ReturnValueSlot::ReturnSlot => FunctionReturn::encoded(ty, codec.clone()),
+            ReturnValueSlot::ReturnSlot => FunctionReturn::encoded(ty, codec.clone(), self.context),
             ReturnValueSlot::OutPointer => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
                 shape: "out-pointer encoded function return",
@@ -360,7 +373,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan {
         &mut self,
         _slot: ReturnValueSlot,
         _target: &'plan HandleTarget,
-        _carrier: <Native as boltffi_binding::Surface>::HandleCarrier,
+        _carrier: <Native as Surface>::HandleCarrier,
         _presence: HandlePresence,
     ) -> Self::Output {
         Err(Error::UnsupportedTarget {
@@ -376,20 +389,14 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan {
         })
     }
 
-    fn direct_vector(
-        &mut self,
-        _element: &'plan boltffi_binding::DirectVectorElementType,
-    ) -> Self::Output {
+    fn direct_vector(&mut self, _element: &'plan DirectVectorElementType) -> Self::Output {
         Err(Error::UnsupportedTarget {
             target: KOTLIN_TARGET,
             shape: "direct-vector function return",
         })
     }
 
-    fn closure(
-        &mut self,
-        _closure: &'plan boltffi_binding::ClosureReturn<Native, OutOfRust>,
-    ) -> Self::Output {
+    fn closure(&mut self, _closure: &'plan ClosureReturn<Native, OutOfRust>) -> Self::Output {
         Err(Error::UnsupportedTarget {
             target: KOTLIN_TARGET,
             shape: "closure function return",
@@ -413,9 +420,33 @@ impl FunctionReturn {
         })
     }
 
-    fn encoded(ty: &TypeRef, codec: <OutOfRust as Direction>::Codec) -> Result<Self> {
+    fn direct_record(record: RecordId, context: &RenderContext<Native>) -> Result<Self> {
+        let ty = Record::type_name_from_id(record, context)?;
         Ok(Self {
-            ty: Some(KotlinType::type_ref(ty)?),
+            ty: Some(ty.clone()),
+            conversion: ReturnConversion::DirectRecord(ty),
+        })
+    }
+
+    fn direct_enum(enumeration: EnumId, context: &RenderContext<Native>) -> Result<Self> {
+        let enumeration = Enumeration::from_id(enumeration, context)?;
+        let ty = enumeration.name().clone();
+        Ok(Self {
+            ty: Some(ty.clone()),
+            conversion: ReturnConversion::DirectEnum {
+                ty,
+                repr: enumeration.repr(),
+            },
+        })
+    }
+
+    fn encoded(
+        ty: &TypeRef,
+        codec: <OutOfRust as Direction>::Codec,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        Ok(Self {
+            ty: Some(KotlinType::type_ref(ty, context)?),
             conversion: ReturnConversion::Encoded(codec),
         })
     }
@@ -428,6 +459,27 @@ impl FunctionReturn {
                     .public_return(call)
                     .map(Statement::return_value)?,
             ]),
+            ReturnConversion::DirectRecord(record) => {
+                let result = Identifier::parse("__boltffi_result")?;
+                let payload = call.or_else(Expression::throw_illegal_state(Literal::string(
+                    "null buffer returned",
+                )));
+                Ok(vec![
+                    Statement::value(result.clone(), payload),
+                    Statement::return_value(Record::decode_expression(
+                        record.clone(),
+                        Expression::identifier(result),
+                    )?),
+                ])
+            }
+            ReturnConversion::DirectEnum { ty, repr } => {
+                let value = KotlinPrimitive::new(*repr).public_return(call)?;
+                Ok(vec![Statement::return_value(Expression::call(
+                    ty.clone(),
+                    Identifier::parse("fromValue")?,
+                    [value].into_iter().collect::<ArgumentList>(),
+                ))])
+            }
             ReturnConversion::Encoded(codec) => {
                 let result = Identifier::parse("__boltffi_result")?;
                 let reader = Identifier::parse("__boltffi_reader")?;

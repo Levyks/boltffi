@@ -76,7 +76,6 @@ impl LanguageSyntax for Syntax {
         "receiver",
         "set",
         "setparam",
-        "value",
         "where",
         "actual",
         "abstract",
@@ -249,8 +248,8 @@ impl Expression {
         Self(identifier.to_string())
     }
 
-    pub fn integer(value: u64) -> Self {
-        Self(value.to_string())
+    pub fn integer(value: impl Into<i128>) -> Self {
+        Self(value.into().to_string())
     }
 
     pub fn call(receiver: impl fmt::Display, method: Identifier, arguments: ArgumentList) -> Self {
@@ -267,6 +266,14 @@ impl Expression {
 
     pub fn add(self, other: Self) -> Self {
         Self(format!("{self} + {other}"))
+    }
+
+    pub fn not_equal(self, other: Self) -> Self {
+        Self(format!("{self} != {other}"))
+    }
+
+    pub fn conditional(condition: Self, then_value: Self, else_value: Self) -> Self {
+        Self(format!("if ({condition}) {then_value} else {else_value}"))
     }
 
     pub fn or_else(self, fallback: Self) -> Self {
