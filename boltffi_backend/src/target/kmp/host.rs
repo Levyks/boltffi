@@ -10,7 +10,8 @@ use crate::core::{
 };
 
 use super::{
-    KmpBridge, KmpBridgeContract, KmpPlatform, KmpSupportMode, Syntax,
+    KmpBridge, KmpBridgeContract, KmpEmissionOptions, KmpEmitter, KmpPlatform, KmpSupportMode,
+    Syntax,
     lower::{KmpLowerer, KmpLoweringOptions, admission::KmpAdmission},
 };
 
@@ -24,6 +25,10 @@ use super::{
 #[non_exhaustive]
 pub struct KmpHost {
     selected_platforms: Vec<KmpPlatform>,
+    support_mode: KmpSupportMode,
+    package_name: String,
+    module_name: String,
+    min_sdk: u32,
 }
 
 impl KmpHost {
@@ -31,12 +36,40 @@ impl KmpHost {
     pub fn new() -> Self {
         Self {
             selected_platforms: KmpPlatform::default_selected(),
+            support_mode: KmpSupportMode::Strict,
+            package_name: "com.example.boltffi".to_string(),
+            module_name: "BoltFFI".to_string(),
+            min_sdk: 24,
         }
     }
 
     /// Selects the KMP platform matrix checked by admission.
     pub fn selected_platforms(mut self, platforms: impl Into<Vec<KmpPlatform>>) -> Self {
         self.selected_platforms = platforms.into();
+        self
+    }
+
+    /// Sets the support mode recorded by emitted KMP support metadata.
+    pub fn support_mode(mut self, support_mode: KmpSupportMode) -> Self {
+        self.support_mode = support_mode;
+        self
+    }
+
+    /// Sets the Kotlin package used for common and platform source sets.
+    pub fn package_name(mut self, package_name: impl Into<String>) -> Self {
+        self.package_name = package_name.into();
+        self
+    }
+
+    /// Sets the generated Kotlin module/source class name.
+    pub fn module_name(mut self, module_name: impl Into<String>) -> Self {
+        self.module_name = module_name.into();
+        self
+    }
+
+    /// Sets the Android minSdk written into generated Gradle output.
+    pub fn min_sdk(mut self, min_sdk: u32) -> Self {
+        self.min_sdk = min_sdk;
         self
     }
 
@@ -212,20 +245,31 @@ impl host::HostBackend for KmpHost {
         _context: &RenderContext<Self::Surface>,
         declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
-        KmpLowerer::new(
+        let diagnostics = declarations
+            .iter()
+            .flat_map(|declaration| declaration.emitted().diagnostics().iter().cloned())
+            .collect::<Vec<_>>();
+        let support_mode = if diagnostics.is_empty() {
+            self.support_mode
+        } else {
+            KmpSupportMode::PreviewPruneUnsupported
+        };
+        let module = KmpLowerer::new(
             KmpLoweringOptions::new()
                 .selected_platforms(self.selected_platforms.clone())
-                .support_mode(KmpSupportMode::PreviewPruneUnsupported),
+                .support_mode(support_mode),
         )
         .lower(bindings)
         .map_err(|error| error.into_backend_error())?;
-        Ok(GeneratedOutput::new(
-            Vec::new(),
-            declarations
-                .iter()
-                .flat_map(|declaration| declaration.emitted().diagnostics().iter().cloned())
-                .collect(),
+        let emitted = KmpEmitter::new(KmpEmissionOptions::new(
+            self.package_name.clone(),
+            self.module_name.clone(),
+            self.min_sdk,
         ))
+        .emit(&module)?;
+        let (files, mut emitted_diagnostics, _coverage) = emitted.into_parts();
+        emitted_diagnostics.extend(diagnostics);
+        Ok(GeneratedOutput::new(files, emitted_diagnostics))
     }
 }
 
@@ -238,7 +282,7 @@ mod tests {
 
     use crate::{
         Error,
-        target::kmp::{KmpHost, KmpPlatform},
+        target::kmp::{KMP_SUPPORT_REPORT_FILE, KmpHost, KmpPlatform},
     };
 
     fn bindings(source: &str) -> Bindings<Native> {
@@ -250,21 +294,44 @@ mod tests {
         lower::<Native>(&source).expect("source should lower")
     }
 
+    fn output_paths(output: &crate::GeneratedOutput) -> Vec<String> {
+        output
+            .files()
+            .iter()
+            .map(|file| file.path().as_path().display().to_string())
+            .collect()
+    }
+
+    fn expected_default_file_list() -> Vec<&'static str> {
+        vec![
+            "settings.gradle.kts",
+            "build.gradle.kts",
+            "src/commonMain/kotlin/com/example/boltffi/BoltFFI.kt",
+            KMP_SUPPORT_REPORT_FILE,
+            "src/jvmMain/kotlin/com/example/boltffi/BoltFFIJvmActual.kt",
+            "src/androidMain/kotlin/com/example/boltffi/BoltFFIAndroidActual.kt",
+            "src/jvmMain/kotlin/com/example/boltffi/jvm/BoltFFI.kt",
+            "src/androidMain/kotlin/com/example/boltffi/jvm/BoltFFI.kt",
+            "src/jvmMain/c/jni_glue.c",
+            "src/androidMain/c/jni_glue.c",
+        ]
+    }
+
     #[test]
-    fn kmp_target_renders_empty_surface_without_files() {
+    fn kmp_target_renders_empty_surface_file_list() {
         let output = KmpHost::new()
             .into_target()
             .render(&bindings(""))
-            .expect("empty KMP IR skeleton should render");
+            .expect("empty KMP IR plan should render project files");
 
-        assert!(output.files().is_empty());
+        assert_eq!(output_paths(&output), expected_default_file_list());
         assert!(output.diagnostics().is_empty());
         assert!(output.coverage().is_complete());
     }
 
     #[test]
-    fn kmp_target_renders_admitted_sync_function_without_files() {
-        let output = KmpHost::new()
+    fn kmp_target_rejects_admitted_sync_function_until_body_emission_is_ported() {
+        let error = KmpHost::new()
             .into_target()
             .render(&bindings(
                 r#"
@@ -274,11 +341,41 @@ mod tests {
                 }
                 "#,
             ))
-            .expect("KMP IR plan should admit sync primitive functions for JVM and Android");
+            .expect_err("KMP IR files cannot claim admitted APIs until bodies are emitted");
 
-        assert!(output.files().is_empty());
-        assert!(output.diagnostics().is_empty());
-        assert!(output.coverage().is_complete());
+        assert!(matches!(
+            error,
+            Error::UnsupportedTarget {
+                target: "kotlin_multiplatform",
+                shape: "KMP declaration body emission"
+            }
+        ));
+    }
+
+    #[test]
+    fn kmp_target_uses_configured_output_identity_in_files_and_metadata() {
+        let output = KmpHost::new()
+            .package_name("com.acme.demo")
+            .module_name("Demo")
+            .min_sdk(26)
+            .into_target()
+            .render(&bindings(""))
+            .expect("empty KMP IR plan should render project files");
+        let paths = output_paths(&output);
+        let report = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path() == std::path::Path::new(KMP_SUPPORT_REPORT_FILE))
+            .expect("support report");
+        let json: serde_json::Value =
+            serde_json::from_str(report.contents()).expect("valid support metadata");
+
+        assert!(paths.contains(&"src/commonMain/kotlin/com/acme/demo/Demo.kt".to_string()));
+        assert!(paths.contains(&"src/jvmMain/kotlin/com/acme/demo/DemoJvmActual.kt".to_string()));
+        assert_eq!(json["package_name"], "com.acme.demo");
+        assert_eq!(json["module_name"], "Demo");
+        assert_eq!(json["min_sdk"], 26);
+        assert_eq!(json["mode"], "strict");
     }
 
     #[test]
@@ -353,6 +450,23 @@ mod tests {
     }
 
     #[test]
+    fn kmp_target_rejects_non_default_platform_matrix_until_emission_is_parameterized() {
+        let error = KmpHost::new()
+            .selected_platforms(vec![KmpPlatform::Jvm])
+            .into_target()
+            .render(&bindings(""))
+            .expect_err("empty JVM-only KMP plans must not emit JVM+Android files");
+
+        match error {
+            Error::UnsupportedTarget {
+                target: "kotlin_multiplatform",
+                shape: "non-default KMP platform emission",
+            } => {}
+            other => panic!("unexpected KMP IR skeleton error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn kmp_target_rejects_api_using_custom_type_with_unsupported_representation() {
         let error = KmpHost::new()
             .into_target()
@@ -407,7 +521,7 @@ mod tests {
             .expect("partial KMP IR skeleton should report unsupported APIs");
         let unsupported = output.coverage().unsupported();
 
-        assert!(output.files().is_empty());
+        assert_eq!(output_paths(&output), expected_default_file_list());
         assert_eq!(output.diagnostics().len(), 2);
         assert!(
             output
@@ -438,14 +552,10 @@ mod tests {
             .into_target()
             .render_partial(&bindings(
                 r#"
-                #[repr(C)]
-                #[data]
-                pub struct Point {
-                    pub x: i32,
-                }
+                pub struct Engine;
 
-                #[data(impl)]
-                impl Point {
+                #[export(single_threaded)]
+                impl Engine {
                     pub async fn load(&self) -> i32 {
                         1
                     }
@@ -460,18 +570,18 @@ mod tests {
         let unsupported = output.coverage().unsupported();
         let diagnostics = output.diagnostics();
 
-        assert!(output.files().is_empty());
-        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(output_paths(&output), expected_default_file_list());
+        assert_eq!(diagnostics.len(), 3);
         assert!(
             diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message().contains("record method point::load"))
+                .any(|diagnostic| diagnostic.message().contains("class method engine::load"))
         );
         assert!(
             diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message().contains("record method point::save"))
+                .any(|diagnostic| diagnostic.message().contains("class method engine::save"))
         );
-        assert_eq!(unsupported.len(), 2);
+        assert_eq!(unsupported.len(), 3);
     }
 }

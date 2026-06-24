@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use boltffi_backend::core::{CoverageMode, bridge, host};
 use boltffi_backend::target::{
-    kmp::KmpHost,
+    kmp::{KmpHost, KmpSupportMode},
     kotlin::{KotlinApiStyle, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost},
     python::PythonCExtHost,
     swift::SwiftHost,
@@ -47,6 +47,10 @@ pub struct Generation {
     swift_ffi_module: Option<String>,
     swift_file: Option<String>,
     swift_c_header: Option<PathBuf>,
+    kmp_package_name: Option<String>,
+    kmp_module_name: Option<String>,
+    kmp_min_sdk: Option<u32>,
+    kmp_support_mode: KmpSupportMode,
 }
 
 impl Generation {
@@ -75,6 +79,10 @@ impl Generation {
             swift_ffi_module: None,
             swift_file: None,
             swift_c_header: None,
+            kmp_package_name: None,
+            kmp_module_name: None,
+            kmp_min_sdk: None,
+            kmp_support_mode: KmpSupportMode::Strict,
         }
     }
 
@@ -210,6 +218,30 @@ impl Generation {
         self
     }
 
+    /// Sets the generated Kotlin Multiplatform package name.
+    pub fn kmp_package_name(mut self, package_name: impl Into<String>) -> Self {
+        self.kmp_package_name = Some(package_name.into());
+        self
+    }
+
+    /// Sets the generated Kotlin Multiplatform module/source class name.
+    pub fn kmp_module_name(mut self, module_name: impl Into<String>) -> Self {
+        self.kmp_module_name = Some(module_name.into());
+        self
+    }
+
+    /// Sets the Android minSdk written into generated KMP Gradle output.
+    pub fn kmp_min_sdk(mut self, min_sdk: u32) -> Self {
+        self.kmp_min_sdk = Some(min_sdk);
+        self
+    }
+
+    /// Sets the KMP support mode recorded in generated support metadata.
+    pub fn kmp_support_mode(mut self, support_mode: KmpSupportMode) -> Self {
+        self.kmp_support_mode = support_mode;
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
@@ -295,7 +327,7 @@ impl Generation {
 
     fn render_kmp(&self) -> Result<GeneratedOutput, GenerationError> {
         let bindings = self.bindings::<Native>()?;
-        let target = KmpHost::new().into_target();
+        let target = self.kmp_host().into_target();
         self.render_backend(&target, &bindings)
     }
 
@@ -359,6 +391,21 @@ impl Generation {
             .swift_c_header
             .iter()
             .fold(host, |host, header| host.c_header(header.clone())))
+    }
+
+    fn kmp_host(&self) -> KmpHost {
+        let host = KmpHost::new().support_mode(self.kmp_support_mode);
+        let host = self
+            .kmp_package_name
+            .iter()
+            .fold(host, |host, package| host.package_name(package.clone()));
+        let host = self
+            .kmp_module_name
+            .iter()
+            .fold(host, |host, module| host.module_name(module.clone()));
+        self.kmp_min_sdk
+            .iter()
+            .fold(host, |host, min_sdk| host.min_sdk(*min_sdk))
     }
 
     /// Writes generated output to a directory.

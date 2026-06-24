@@ -6,12 +6,14 @@
 //! milestones move behavior into this crate.
 
 mod bridge;
+pub mod emit;
 mod host;
 pub mod lower;
 pub mod plan;
 mod syntax;
 
 pub use bridge::{KmpBridge, KmpBridgeContract};
+pub use emit::{KMP_SUPPORT_REPORT_FILE, KmpEmissionOptions, KmpEmitter};
 pub use host::KmpHost;
 pub use lower::{KmpLowerError, KmpLowerer, KmpLoweringOptions};
 pub use plan::{

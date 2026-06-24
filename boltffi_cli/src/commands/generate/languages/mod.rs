@@ -8,4 +8,5 @@ pub use csharp::CSharpGenerator;
 pub use dart::DartGenerator;
 pub use java::JavaGenerator;
 pub use kmp::KMPGenerator;
+pub(crate) use kmp::remove_stale_kmp_generated_paths;
 pub use typescript::TypeScriptGenerator;
