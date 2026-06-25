@@ -6,45 +6,83 @@ use boltffi_binding::{
 use crate::{
     core::{Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
+        name_style::KotlinPackage,
         primitive::KotlinPrimitive,
         render::{Enumeration, Record},
-        syntax::{ArgumentList, Expression, Identifier},
+        syntax::{ArgumentList, Expression, Identifier, TypeName},
     },
 };
 
 pub struct Reader<'context> {
     reader: Identifier,
     context: &'context RenderContext<'context, Native>,
+    record_package: Option<KotlinPackage>,
+}
+
+pub struct ReadExpression {
+    expression: Expression,
+    primitive: Option<Primitive>,
 }
 
 impl<'context> Reader<'context> {
     pub fn new(reader: Identifier, context: &'context RenderContext<'context, Native>) -> Self {
-        Self { reader, context }
+        Self {
+            reader,
+            context,
+            record_package: None,
+        }
     }
 
-    fn call(&self, method: impl Into<String>) -> Result<Expression> {
-        Ok(Expression::call(
+    pub fn record_package(mut self, package: &KotlinPackage) -> Self {
+        self.record_package = Some(package.clone());
+        self
+    }
+
+    fn call(&self, method: impl Into<String>) -> Result<ReadExpression> {
+        Ok(ReadExpression::new(Expression::call(
             Expression::identifier(self.reader.clone()),
             Identifier::parse(method)?,
             ArgumentList::default(),
-        ))
+        )))
     }
 
-    fn unsupported(shape: &'static str) -> Result<Expression> {
+    fn unsupported(shape: &'static str) -> Result<ReadExpression> {
         Err(Error::UnsupportedTarget {
-            target: "kotlin",
+            target: KotlinHost::TARGET,
             shape,
         })
     }
 }
 
+impl ReadExpression {
+    pub fn into_expression(self) -> Expression {
+        self.expression
+    }
+
+    fn new(expression: Expression) -> Self {
+        Self {
+            expression,
+            primitive: None,
+        }
+    }
+
+    fn primitive(primitive: Primitive, expression: Expression) -> Self {
+        Self {
+            expression,
+            primitive: Some(primitive),
+        }
+    }
+}
+
 impl CodecRead for Reader<'_> {
-    type Expr = Result<Expression>;
+    type Expr = Result<ReadExpression>;
 
     fn primitive(&mut self, primitive: Primitive) -> Self::Expr {
         KotlinPrimitive::new(primitive)
             .wire_method_suffix()
             .and_then(|suffix| self.call(format!("read{suffix}")))
+            .map(|expression| ReadExpression::primitive(primitive, expression.expression))
     }
 
     fn string(&mut self) -> Self::Expr {
@@ -61,34 +99,40 @@ impl CodecRead for Reader<'_> {
 
     fn encoded_record(&mut self, id: RecordId) -> Self::Expr {
         Record::type_name_from_id(id, self.context).and_then(|record| {
-            Ok(Expression::call(
+            let record = self
+                .record_package
+                .as_ref()
+                .map_or(record.clone(), |package| {
+                    TypeName::qualified(package, record)
+                });
+            Ok(ReadExpression::new(Expression::call(
                 record,
                 Identifier::parse("fromReader")?,
                 [Expression::identifier(self.reader.clone())]
                     .into_iter()
                     .collect::<ArgumentList>(),
-            ))
+            )))
         })
     }
 
     fn c_style_enum(&mut self, id: EnumId) -> Self::Expr {
         Enumeration::from_id(id, self.context).and_then(|enumeration| {
             KotlinPrimitive::new(enumeration.repr()?)
-                .wire_method_suffix()
+                .native_wire_method_suffix()
                 .and_then(|suffix| {
                     self.call(format!("read{suffix}")).and_then(|value| {
-                        Ok(Expression::call(
+                        Ok(ReadExpression::new(Expression::call(
                             enumeration.name().clone(),
                             Identifier::parse("fromValue")?,
-                            [value].into_iter().collect::<ArgumentList>(),
-                        ))
+                            [value.expression].into_iter().collect::<ArgumentList>(),
+                        )))
                     })
                 })
         })
     }
 
     fn data_enum(&mut self, id: EnumId) -> Self::Expr {
-        Enumeration::read_expression(id, self.reader.clone(), self.context)
+        Enumeration::read_expression(id, self.reader.clone(), self.context).map(ReadExpression::new)
     }
 
     fn class_handle(&mut self, _id: ClassId) -> Self::Expr {
@@ -100,7 +144,7 @@ impl CodecRead for Reader<'_> {
     }
 
     fn custom(&mut self, _id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
-        representation
+        representation.map(|representation| ReadExpression::new(representation.expression))
     }
 
     fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
@@ -114,29 +158,35 @@ impl CodecRead for Reader<'_> {
     }
 
     fn optional(&mut self, inner: Self::Expr) -> Self::Expr {
-        Ok(Expression::call(
+        Ok(ReadExpression::new(Expression::call(
             Expression::identifier(self.reader.clone()),
             Identifier::parse("readOptionalValue")?,
             [Expression::lambda_expression(
                 vec![self.reader.clone()],
-                inner?,
+                inner?.expression,
             )]
             .into_iter()
             .collect::<ArgumentList>(),
-        ))
+        )))
     }
 
     fn sequence(&mut self, _len: &Op<ElementCount>, element: Self::Expr) -> Self::Expr {
-        Ok(Expression::call(
-            Expression::identifier(self.reader.clone()),
-            Identifier::parse("readSequence")?,
-            [Expression::lambda_expression(
-                vec![self.reader.clone()],
-                element?,
-            )]
-            .into_iter()
-            .collect::<ArgumentList>(),
-        ))
+        let element = element?;
+        match element.primitive {
+            Some(primitive) => KotlinPrimitive::new(primitive)
+                .wire_array_method_suffix()
+                .and_then(|suffix| self.call(format!("read{suffix}Array"))),
+            None => Ok(ReadExpression::new(Expression::call(
+                Expression::identifier(self.reader.clone()),
+                Identifier::parse("readSequence")?,
+                [Expression::lambda_expression(
+                    vec![self.reader.clone()],
+                    element.expression,
+                )]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            ))),
+        }
     }
 
     fn tuple(&mut self, _elements: Vec<Self::Expr>) -> Self::Expr {
@@ -144,16 +194,16 @@ impl CodecRead for Reader<'_> {
     }
 
     fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
-        Ok(Expression::call(
+        Ok(ReadExpression::new(Expression::call(
             Expression::identifier(self.reader.clone()),
             Identifier::parse("readResult")?,
             [
-                Expression::lambda_expression(vec![self.reader.clone()], ok?),
-                Expression::lambda_expression(vec![self.reader.clone()], err?),
+                Expression::lambda_expression(vec![self.reader.clone()], ok?.expression),
+                Expression::lambda_expression(vec![self.reader.clone()], err?.expression),
             ]
             .into_iter()
             .collect::<ArgumentList>(),
-        ))
+        )))
     }
 
     fn map(&mut self, _kind: MapKind, _key: Self::Expr, _value: Self::Expr) -> Self::Expr {

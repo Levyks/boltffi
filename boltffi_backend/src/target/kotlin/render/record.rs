@@ -2,22 +2,25 @@ use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     CanonicalName, DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl,
     ExportedMethodDecl, FieldKey, InitializerDecl, Native, NativeSymbol, Receive, RecordDecl,
-    RecordId,
+    RecordId, TypeRef,
 };
 
 use crate::{
     bridge::jni::JniBridgeContract,
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         codec::Sizer,
         name_style::Name,
         primitive::KotlinPrimitive,
-        render::{field::EncodedField, function::ExportedCall},
+        render::{
+            default_value::DefaultExpression,
+            field::EncodedField,
+            function::{EncodedReceiverMutation, ExportedCall},
+        },
         syntax::{ArgumentList, Expression, Identifier, Statement, TypeName},
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/record.kt", escape = "none")]
@@ -29,6 +32,7 @@ struct RecordTemplate {
 pub struct Record {
     name: TypeName,
     body: RecordBody,
+    error: bool,
     fields: Vec<Field>,
     initializers: Vec<ExportedCall>,
     static_methods: Vec<ExportedCall>,
@@ -55,6 +59,7 @@ pub struct Field {
     read_from_base: Option<Expression>,
     write: Statement,
     size: Option<Expression>,
+    default: Option<Expression>,
 }
 
 impl Record {
@@ -63,11 +68,28 @@ impl Record {
         bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
+        Self::from_declaration_with_error(declaration, bridge, context, false)
+    }
+
+    pub fn from_declaration_as_error(
+        declaration: &RecordDecl<Native>,
+        bridge: &JniBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        Self::from_declaration_with_error(declaration, bridge, context, true)
+    }
+
+    pub fn from_declaration_with_error(
+        declaration: &RecordDecl<Native>,
+        bridge: &JniBridgeContract,
+        context: &RenderContext<Native>,
+        error: bool,
+    ) -> Result<Self> {
         match declaration {
-            RecordDecl::Direct(record) => Self::from_direct(record, bridge, context),
-            RecordDecl::Encoded(record) => Self::from_encoded(record, bridge, context),
+            RecordDecl::Direct(record) => Self::from_direct(record, bridge, context, error),
+            RecordDecl::Encoded(record) => Self::from_encoded(record, bridge, context, error),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown record declaration",
             }),
         }
@@ -77,7 +99,7 @@ impl Record {
         context
             .record(id)
             .ok_or(Error::BrokenBridgeContract {
-                bridge: KOTLIN_TARGET,
+                bridge: KotlinHost::TARGET,
                 invariant: "record type was not found in render context",
             })
             .and_then(|record| Self::shape_from_declaration(record, context))
@@ -107,6 +129,17 @@ impl Record {
 
     pub fn encoded(&self) -> bool {
         matches!(self.body, RecordBody::Encoded { .. })
+    }
+
+    pub fn error(&self) -> bool {
+        self.error
+    }
+
+    pub fn error_message(&self) -> Option<&Identifier> {
+        self.fields
+            .iter()
+            .find(|field| field.is_string_message())
+            .map(|field| field.name())
     }
 
     pub fn fields(&self) -> &[Field] {
@@ -140,7 +173,7 @@ impl Record {
         context
             .record(id)
             .ok_or(Error::BrokenBridgeContract {
-                bridge: KOTLIN_TARGET,
+                bridge: KotlinHost::TARGET,
                 invariant: "record type was not found in render context",
             })
             .map(Self::name_from_declaration)
@@ -166,6 +199,7 @@ impl Record {
         record: &DirectRecordDecl<Native>,
         bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
+        error: bool,
     ) -> Result<Self> {
         let buffer = Identifier::parse("buffer")?;
         Ok(Self {
@@ -173,6 +207,7 @@ impl Record {
             body: RecordBody::Direct {
                 size: record.layout().size().get(),
             },
+            error,
             fields: record
                 .fields()
                 .iter()
@@ -193,6 +228,7 @@ impl Record {
         record: &EncodedRecordDecl<Native>,
         bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
+        error: bool,
     ) -> Result<Self> {
         let reader = Identifier::parse("reader")?;
         let writer = Identifier::parse("writer")?;
@@ -207,11 +243,13 @@ impl Record {
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
+            .map(|size| size.into_expression())
             .reduce(Expression::add)
             .unwrap_or_else(|| Expression::integer(0));
         Ok(Self {
             name: Name::new(record.name()).type_name(),
             body: RecordBody::Encoded { size },
+            error,
             fields: record
                 .fields()
                 .iter()
@@ -236,7 +274,7 @@ impl Record {
             RecordDecl::Direct(record) => Self::shape_from_direct(record),
             RecordDecl::Encoded(record) => Self::shape_from_encoded(record, context),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown record declaration",
             }),
         }
@@ -249,6 +287,7 @@ impl Record {
             body: RecordBody::Direct {
                 size: record.layout().size().get(),
             },
+            error: false,
             fields: record
                 .fields()
                 .iter()
@@ -277,11 +316,13 @@ impl Record {
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
+            .map(|size| size.into_expression())
             .reduce(Expression::add)
             .unwrap_or_else(|| Expression::integer(0));
         Ok(Self {
             name: Name::new(record.name()).type_name(),
             body: RecordBody::Encoded { size },
+            error: false,
             fields: record
                 .fields()
                 .iter()
@@ -329,12 +370,12 @@ impl Record {
             .map(
                 |method| match (method.callable().receiver(), receiver.clone()) {
                     (Some(Receive::ByMutRef), Some(receiver)) => {
-                        ExportedCall::new_byte_array_receiver_writeback(
+                        ExportedCall::new_encoded_receiver_mutation(
                             Name::new(method.name()).function()?,
                             method.target(),
                             method.callable(),
                             vec![receiver.argument],
-                            receiver.writeback,
+                            EncodedReceiverMutation::new(receiver.writeback),
                             bridge,
                             context,
                         )
@@ -356,7 +397,7 @@ impl Record {
                         context,
                     ),
                     _ => Err(Error::UnsupportedTarget {
-                        target: KOTLIN_TARGET,
+                        target: KotlinHost::TARGET,
                         shape: "record method receiver",
                     }),
                 },
@@ -381,6 +422,10 @@ impl Field {
         &self.name
     }
 
+    pub fn is_string_message(&self) -> bool {
+        self.name.to_string() == "message" && self.ty.to_string() == "String"
+    }
+
     pub fn ty(&self) -> &TypeName {
         &self.ty
     }
@@ -399,6 +444,10 @@ impl Field {
         &self.write
     }
 
+    pub fn default(&self) -> Option<&Expression> {
+        self.default.as_ref()
+    }
+
     fn from_direct(
         field: &DirectFieldDecl,
         record: &DirectRecordDecl<Native>,
@@ -409,7 +458,7 @@ impl Field {
             .layout()
             .field(field.key())
             .ok_or(Error::BrokenBridgeContract {
-                bridge: KOTLIN_TARGET,
+                bridge: KotlinHost::TARGET,
                 invariant: "direct record field layout was not found",
             })?
             .offset()
@@ -420,6 +469,11 @@ impl Field {
             _ => Expression::identifier(base).add(Expression::integer(offset)),
         };
         let primitive = field.ty().primitive();
+        let default = field
+            .meta()
+            .default()
+            .map(|value| DefaultExpression::render(&TypeRef::Primitive(primitive), value))
+            .transpose()?;
         Ok(Self {
             ty: KotlinPrimitive::new(primitive).api_type()?,
             read: KotlinPrimitive::new(primitive).buffer_read(buffer, offset)?,
@@ -430,6 +484,7 @@ impl Field {
                 Expression::identifier(name.clone()),
             )?,
             size: None,
+            default,
             name,
         })
     }
@@ -442,6 +497,11 @@ impl Field {
         current: Expression,
     ) -> Result<Self> {
         let name = Self::identifier(field.key())?;
+        let default = field
+            .meta()
+            .default()
+            .map(|value| DefaultExpression::render(field.ty(), value))
+            .transpose()?;
         let field = EncodedField::from_declaration(field, context, reader, writer, current)?;
         Ok(Self {
             ty: field.ty().clone(),
@@ -449,6 +509,7 @@ impl Field {
             read_from_base: None,
             write: field.write().clone(),
             size: Some(field.size().clone()),
+            default,
             name,
         })
     }
@@ -458,7 +519,7 @@ impl Field {
             FieldKey::Named(name) => Name::new(name).parameter(),
             FieldKey::Position(position) => Identifier::parse(format!("field{position}")),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown direct record field key",
             }),
         }

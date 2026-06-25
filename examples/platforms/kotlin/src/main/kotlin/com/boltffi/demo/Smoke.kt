@@ -39,15 +39,15 @@ fun main() {
     )
     requireThat(toggled == Status.INACTIVE, "mapStatus callback failed")
 
-    requireThat(Direction.cardinal() == Direction.NORTH, "Direction.cardinal failed")
+    requireThat(directionToDegrees(Direction.NORTH) == 0, "directionToDegrees failed")
     requireThat(oppositeDirection(Direction.NORTH) == Direction.SOUTH, "oppositeDirection failed")
 
-    val origin = Point.origin()
+    val origin = makePoint(0.0, 0.0)
     requireThat(origin == Point(0.0, 0.0), "Point.origin failed")
 
     runBlocking {
         withTimeout(5_000) {
-            EventBus().use { bus ->
+            EventBus.new().use { bus ->
                 val points = async {
                     bus.subscribePoints().take(2).toList()
                 }

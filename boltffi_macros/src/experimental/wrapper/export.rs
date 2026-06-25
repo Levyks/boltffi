@@ -45,7 +45,7 @@ enum RustCallTarget {
         method: syn::Ident,
     },
     ClassMethod {
-        class: syn::Ident,
+        class: TokenStream,
         handle: syn::Ident,
         receiver: ClassReceiverBinding,
         receive: Receive,
@@ -221,7 +221,7 @@ impl RustCall {
     }
 
     pub fn class_method(
-        class: syn::Ident,
+        class: TokenStream,
         handle: syn::Ident,
         receiver: ClassReceiverBinding,
         receive: Receive,
@@ -293,7 +293,7 @@ impl RustCall {
 
     fn class_method_expression(
         receive: Receive,
-        class: &syn::Ident,
+        class: &TokenStream,
         handle: &syn::Ident,
         receiver: &ClassReceiverBinding,
         method: &syn::Ident,
@@ -310,7 +310,7 @@ impl RustCall {
 
     fn class_method_awaited_expression(
         receive: Receive,
-        class: &syn::Ident,
+        class: &TokenStream,
         handle: &syn::Ident,
         receiver: &ClassReceiverBinding,
         method: &syn::Ident,
@@ -327,7 +327,7 @@ impl RustCall {
 }
 
 impl ClassReceiverBinding {
-    fn access(&self, receive: Receive, class: &syn::Ident, receiver: &syn::Ident) -> TokenStream {
+    fn access(&self, receive: Receive, class: &TokenStream, receiver: &syn::Ident) -> TokenStream {
         match (self, receive) {
             (Self::Raw(handle), Receive::ByRef) => quote! {
                 let #receiver: &#class = unsafe {

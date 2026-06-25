@@ -27,17 +27,17 @@ private object BoltFfiAsync {
 }
 
 internal fun boltffiLaunchCallback(block: suspend () -> Unit) {
-    kotlinx.coroutines.launch(boltffiCallbackScope) {
+    boltffiCallbackScope.launch {
         block()
     }
 }
 
-internal suspend inline fun <T> boltffiCallAsync(
-    crossinline createFuture: () -> Long,
-    crossinline poll: (Long, Long) -> Unit,
-    crossinline complete: (Long) -> T,
-    crossinline free: (Long) -> Unit,
-    crossinline cancel: (Long) -> Unit,
+internal suspend fun <T> boltffiCallAsync(
+    createFuture: () -> Long,
+    poll: (Long, Long) -> Unit,
+    complete: (Long) -> T,
+    free: (Long) -> Unit,
+    cancel: (Long) -> Unit,
 ): T {
     val rustFuture = createFuture()
     try {

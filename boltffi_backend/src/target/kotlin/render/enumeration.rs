@@ -9,15 +9,17 @@ use crate::{
     bridge::jni::JniBridgeContract,
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         name_style::KotlinPackage,
         name_style::Name,
         primitive::KotlinPrimitive,
-        render::{field::EncodedField, function::ExportedCall},
+        render::{
+            field::EncodedField,
+            function::{EncodedReceiverMutation, ExportedCall},
+        },
         syntax::{ArgumentList, Expression, Identifier, Literal, Statement, TypeName},
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/enumeration.kt", escape = "none")]
@@ -28,6 +30,7 @@ struct EnumerationTemplate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Enumeration {
     name: TypeName,
+    error: bool,
     body: Body,
     initializers: Vec<ExportedCall>,
     static_methods: Vec<ExportedCall>,
@@ -74,10 +77,10 @@ impl Enumeration {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         match declaration {
-            EnumDecl::CStyle(enumeration) => Self::from_c_style(enumeration, None, context),
-            EnumDecl::Data(enumeration) => Self::from_data(enumeration, None, context, None),
+            EnumDecl::CStyle(enumeration) => Self::from_c_style(enumeration, None, context, false),
+            EnumDecl::Data(enumeration) => Self::from_data(enumeration, None, context, None, false),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown enum declaration",
             }),
         }
@@ -89,13 +92,34 @@ impl Enumeration {
         context: &RenderContext<Native>,
         package: Option<&KotlinPackage>,
     ) -> Result<Self> {
+        Self::from_declaration_with_package_and_error(declaration, bridge, context, package, false)
+    }
+
+    pub fn from_declaration_as_error(
+        declaration: &EnumDecl<Native>,
+        bridge: &JniBridgeContract,
+        context: &RenderContext<Native>,
+        package: Option<&KotlinPackage>,
+    ) -> Result<Self> {
+        Self::from_declaration_with_package_and_error(declaration, bridge, context, package, true)
+    }
+
+    pub fn from_declaration_with_package_and_error(
+        declaration: &EnumDecl<Native>,
+        bridge: &JniBridgeContract,
+        context: &RenderContext<Native>,
+        package: Option<&KotlinPackage>,
+        error: bool,
+    ) -> Result<Self> {
         match declaration {
-            EnumDecl::CStyle(enumeration) => Self::from_c_style(enumeration, Some(bridge), context),
+            EnumDecl::CStyle(enumeration) => {
+                Self::from_c_style(enumeration, Some(bridge), context, error)
+            }
             EnumDecl::Data(enumeration) => {
-                Self::from_data(enumeration, Some(bridge), context, package)
+                Self::from_data(enumeration, Some(bridge), context, package, error)
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown enum declaration",
             }),
         }
@@ -105,7 +129,7 @@ impl Enumeration {
         context
             .enumeration(id)
             .ok_or(Error::BrokenBridgeContract {
-                bridge: KOTLIN_TARGET,
+                bridge: KotlinHost::TARGET,
                 invariant: "enum type was not found in render context",
             })
             .and_then(|enumeration| Self::from_declaration(enumeration, context))
@@ -125,6 +149,10 @@ impl Enumeration {
         matches!(&self.body, Body::CStyle { .. })
     }
 
+    pub fn error(&self) -> bool {
+        self.error
+    }
+
     pub fn data(&self) -> bool {
         matches!(&self.body, Body::Data { .. })
     }
@@ -140,7 +168,7 @@ impl Enumeration {
         match &self.body {
             Body::CStyle { repr, .. } => Ok(*repr),
             Body::Data { .. } => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "data enum has no direct repr",
             }),
         }
@@ -241,6 +269,7 @@ impl Enumeration {
         enumeration: &CStyleEnumDecl<Native>,
         bridge: Option<&JniBridgeContract>,
         context: &RenderContext<Native>,
+        error: bool,
     ) -> Result<Self> {
         let primitive = enumeration.repr().primitive();
         let name = Name::new(enumeration.name()).type_name();
@@ -253,13 +282,14 @@ impl Enumeration {
         };
         Ok(Self {
             name,
+            error,
             body: Body::CStyle {
-                value_type: KotlinPrimitive::new(primitive).api_type()?,
+                value_type: KotlinPrimitive::new(primitive).native_type()?,
                 repr: primitive,
                 variants: enumeration
                     .variants()
                     .iter()
-                    .map(|variant| CStyleVariant::from_c_style(variant, enumeration))
+                    .map(|variant| CStyleVariant::from_c_style(variant, enumeration, error))
                     .collect::<Result<Vec<_>>>()?,
             },
             initializers: Self::initializer_calls(
@@ -284,6 +314,7 @@ impl Enumeration {
         bridge: Option<&JniBridgeContract>,
         context: &RenderContext<Native>,
         package: Option<&KotlinPackage>,
+        error: bool,
     ) -> Result<Self> {
         let name = Name::new(enumeration.name()).type_name();
         let receiver = Receiver {
@@ -292,6 +323,7 @@ impl Enumeration {
         };
         Ok(Self {
             name,
+            error,
             body: Body::Data {
                 variants: enumeration
                     .variants()
@@ -374,44 +406,55 @@ impl Enumeration {
                     .filter(|method| method.callable().receiver().is_some() == receiver.is_some())
                     .map(
                         |method| match (method.callable().receiver(), receiver.clone()) {
-                        (Some(Receive::ByMutRef), Some(receiver)) => receiver
-                            .writeback
-                            .ok_or(Error::UnsupportedTarget {
-                                target: KOTLIN_TARGET,
-                                shape: "mutable c-style enum receiver",
-                            })
-                            .and_then(|writeback| {
-                                match package {
-                                    Some(package) => {
-                                        ExportedCall::new_byte_array_receiver_writeback_with_record_package(
-                                            Name::new(method.name()).function()?,
-                                            method.target(),
-                                            method.callable(),
-                                            vec![receiver.argument],
-                                            writeback,
-                                            package,
-                                            bridge,
-                                            context,
-                                        )
-                                    }
-                                    None => ExportedCall::new_byte_array_receiver_writeback(
+                            (Some(Receive::ByMutRef), Some(receiver)) => receiver
+                                .writeback
+                                .ok_or(Error::UnsupportedTarget {
+                                    target: KotlinHost::TARGET,
+                                    shape: "mutable c-style enum receiver",
+                                })
+                                .and_then(|writeback| {
+                                    let mutation = match package {
+                                        Some(package) => EncodedReceiverMutation::new(writeback)
+                                            .with_record_package(package),
+                                        None => EncodedReceiverMutation::new(writeback),
+                                    };
+                                    ExportedCall::new_encoded_receiver_mutation(
                                         Name::new(method.name()).function()?,
                                         method.target(),
                                         method.callable(),
                                         vec![receiver.argument],
-                                        writeback,
+                                        mutation,
+                                        bridge,
+                                        context,
+                                    )
+                                }),
+                            (Some(Receive::ByRef | Receive::ByValue), Some(receiver)) => {
+                                match package {
+                                    Some(package) => ExportedCall::new_with_record_package(
+                                        Name::new(method.name()).function()?,
+                                        method.target(),
+                                        method.callable(),
+                                        vec![receiver.argument],
+                                        package,
+                                        bridge,
+                                        context,
+                                    ),
+                                    None => ExportedCall::new(
+                                        Name::new(method.name()).function()?,
+                                        method.target(),
+                                        method.callable(),
+                                        vec![receiver.argument],
                                         bridge,
                                         context,
                                     ),
                                 }
-                            }),
-                        (Some(Receive::ByRef | Receive::ByValue), Some(receiver)) => {
-                            match package {
+                            }
+                            (None, None) => match package {
                                 Some(package) => ExportedCall::new_with_record_package(
                                     Name::new(method.name()).function()?,
                                     method.target(),
                                     method.callable(),
-                                    vec![receiver.argument],
+                                    Vec::new(),
                                     package,
                                     bridge,
                                     context,
@@ -420,33 +463,13 @@ impl Enumeration {
                                     Name::new(method.name()).function()?,
                                     method.target(),
                                     method.callable(),
-                                    vec![receiver.argument],
+                                    Vec::new(),
                                     bridge,
                                     context,
                                 ),
-                            }
-                        }
-                        (None, None) => match package {
-                            Some(package) => ExportedCall::new_with_record_package(
-                                Name::new(method.name()).function()?,
-                                method.target(),
-                                method.callable(),
-                                Vec::new(),
-                                package,
-                                bridge,
-                                context,
-                            ),
-                            None => ExportedCall::new(
-                                Name::new(method.name()).function()?,
-                                method.target(),
-                                method.callable(),
-                                Vec::new(),
-                                bridge,
-                                context,
-                            ),
-                        },
+                            },
                             _ => Err(Error::UnsupportedTarget {
-                                target: KOTLIN_TARGET,
+                                target: KotlinHost::TARGET,
                                 shape: "enum method receiver",
                             }),
                         },
@@ -475,11 +498,15 @@ impl CStyleVariant {
     fn from_c_style(
         variant: &CStyleVariantDecl,
         enumeration: &CStyleEnumDecl<Native>,
+        error: bool,
     ) -> Result<Self> {
         Ok(Self {
-            name: Name::new(variant.name()).enum_entry()?,
+            name: match error {
+                true => Name::new(variant.name()).variant()?,
+                false => Name::new(variant.name()).enum_entry()?,
+            },
             value: KotlinPrimitive::new(enumeration.repr().primitive())
-                .integer_literal(variant.discriminant())?,
+                .native_integer_literal(variant.discriminant())?,
         })
     }
 }
@@ -572,7 +599,7 @@ impl DataVariant {
                 })
                 .collect(),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown data enum payload",
             }),
         }

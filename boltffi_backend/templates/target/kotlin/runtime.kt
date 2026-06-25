@@ -2,6 +2,10 @@ private object Utf8Codec {
     fun maxBytes(value: String): Int = value.length * 3
 }
 
+class FfiException(message: String) : RuntimeException(message)
+
+internal class BoltFfiErrorBufferException(val bytes: ByteArray) : RuntimeException("BoltFFI call failed")
+
 private object DirectVectorCodec {
     fun readBooleanArray(bytes: ByteArray): BooleanArray =
         BooleanArray(bytes.size) { index -> bytes[index] != 0.toByte() }
@@ -176,6 +180,78 @@ internal class WireReader(private val bytes: ByteArray) {
         return value
     }
 
+    fun readBooleanArray(): BooleanArray {
+        val length = readU32().toInt()
+        return BooleanArray(length) { readBool() }
+    }
+
+    fun readByteArray(): ByteArray = readBytes()
+
+    fun readShortArray(): ShortArray {
+        val length = readU32().toInt()
+        val byteCount = length * 2
+        val values = ShortArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readIntArray(): IntArray {
+        val length = readU32().toInt()
+        val byteCount = length * 4
+        val values = IntArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asIntBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readLongArray(): LongArray {
+        val length = readU32().toInt()
+        val byteCount = length * 8
+        val values = LongArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asLongBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readFloatArray(): FloatArray {
+        val length = readU32().toInt()
+        val byteCount = length * 4
+        val values = FloatArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asFloatBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readDoubleArray(): DoubleArray {
+        val length = readU32().toInt()
+        val byteCount = length * 8
+        val values = DoubleArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asDoubleBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
     fun <T> readOptionalValue(read: (WireReader) -> T): T? = readOptional(read)
 
     fun <T> readSequence(read: (WireReader) -> T): List<T> {
@@ -322,6 +398,63 @@ internal class WireWriter(initialCapacity: Int) {
     fun writeBytes(value: ByteArray) {
         writeU32(value.size.toUInt())
         writeBytesRaw(value)
+    }
+
+    fun writeBooleanArray(values: BooleanArray) {
+        writeU32(values.size.toUInt())
+        values.forEach { writeBool(it) }
+    }
+
+    fun writeByteArray(values: ByteArray) = writeBytes(values)
+
+    fun writeShortArray(values: ShortArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 2
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asShortBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeIntArray(values: IntArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 4
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asIntBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeLongArray(values: LongArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 8
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asLongBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeFloatArray(values: FloatArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 4
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asFloatBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeDoubleArray(values: DoubleArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 8
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asDoubleBuffer().put(values)
+        position += byteCount
     }
 
     fun <T> writeOptionalValue(value: T?, write: (WireWriter, T) -> Unit) {

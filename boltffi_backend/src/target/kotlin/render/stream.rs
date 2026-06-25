@@ -7,6 +7,7 @@ use boltffi_binding::{
 use crate::{
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         codec::Reader,
         name_style::Name,
         primitive::KotlinPrimitive,
@@ -14,8 +15,6 @@ use crate::{
         syntax::{ArgumentList, Expression, Identifier, Statement, TypeName},
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/stream.kt", escape = "none")]
@@ -168,7 +167,7 @@ impl Delivery {
             },
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
+                    target: KotlinHost::TARGET,
                     shape: "unknown stream mode",
                 });
             }
@@ -204,7 +203,7 @@ impl StreamItemRenderer<'_> {
             }
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
+                    target: KotlinHost::TARGET,
                     shape: "unknown direct stream primitive",
                 });
             }
@@ -316,7 +315,9 @@ impl StreamItemRenderer<'_> {
     fn encoded_items(&self, read: &ReadPlan) -> Result<Expression> {
         let reader = Identifier::parse("reader")?;
         let count = Identifier::parse("count")?;
-        let item = read.render_with(&mut Reader::new(reader, self.context))?;
+        let item = read
+            .render_with(&mut Reader::new(reader, self.context))?
+            .into_expression();
         Ok(Expression::list(Expression::identifier(count), item))
     }
 }
@@ -342,7 +343,7 @@ impl<'plan> StreamItemPlanRender<'plan, Native> for StreamItemRenderer<'_> {
                 items: self.direct_enum_items(*enumeration)?,
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown direct stream item",
             }),
         }
@@ -361,7 +362,7 @@ impl<'plan> StreamItemPlanRender<'plan, Native> for StreamItemRenderer<'_> {
                 items: self.encoded_items(read)?,
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "encoded stream item shape",
             }),
         }

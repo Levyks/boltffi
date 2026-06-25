@@ -1,4 +1,3 @@
-mod operation;
 mod read;
 mod scalar_option;
 mod size;

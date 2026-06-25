@@ -13,7 +13,7 @@
 
 use crate::{
     bridge::{
-        c::{self, Expression, Identifier, TypeFragment},
+        c::{self, Expression, Identifier, ReturnChannel, TypeFragment},
         jni::{BytesWriteback, CallbackReturn, RecordValue, ScalarReturn},
     },
     core::{Error, Result},
@@ -41,6 +41,8 @@ pub enum NativeReturn {
     StatusWriteback(BytesWriteback),
     /// The C function returns `FfiStatus` and writes the success value to `return_out`.
     StatusValue(SuccessOutReturn),
+    /// The C function returns an encoded error buffer and has no success value.
+    EncodedError,
     /// The C function returns an encoded error buffer and writes success to `return_out`.
     EncodedErrorValue(EncodedErrorReturn),
 }
@@ -49,7 +51,7 @@ impl NativeReturn {
     /// Returns the JNI method return type as C syntax.
     pub fn jni_type(&self) -> TypeFragment {
         match self {
-            Self::Void | Self::Status => TypeFragment::new("void"),
+            Self::Void | Self::Status | Self::EncodedError => TypeFragment::new("void"),
             Self::StatusWriteback(_) => TypeFragment::new("jbyteArray"),
             Self::Value(scalar) => scalar.jni_type().as_type_fragment(),
             Self::Callback(callback) => callback.jni_type(),
@@ -65,7 +67,7 @@ impl NativeReturn {
             Self::Void => Ok(TypeFragment::new("void")),
             Self::Status | Self::StatusWriteback(_) => TypeFragment::anonymous(&c::Type::Status),
             Self::Value(scalar) => scalar.c_result_type(),
-            Self::Bytes => TypeFragment::anonymous(&c::Type::Buffer),
+            Self::Bytes | Self::EncodedError => TypeFragment::anonymous(&c::Type::Buffer),
             Self::Record(record) => Ok(record.c_type_fragment()),
             Self::Callback(callback) => callback.c_result_type(),
             Self::StatusValue(_) => TypeFragment::anonymous(&c::Type::Status),
@@ -81,7 +83,9 @@ impl NativeReturn {
             Self::StatusWriteback(writeback) => {
                 Ok(Expression::identifier(writeback.local().clone()))
             }
-            Self::Void | Self::Bytes | Self::Record(_) | Self::Status => Ok(value),
+            Self::Void | Self::Bytes | Self::Record(_) | Self::Status | Self::EncodedError => {
+                Ok(value)
+            }
             Self::StatusValue(value) => value.return_expression(),
             Self::EncodedErrorValue(value) => value.return_expression(),
         }
@@ -95,7 +99,8 @@ impl NativeReturn {
             | Self::Bytes
             | Self::Callback(_)
             | Self::Status
-            | Self::StatusWriteback(_) => None,
+            | Self::StatusWriteback(_)
+            | Self::EncodedError => None,
             Self::Record(record) => Some(record),
             Self::StatusValue(value) => value.record(),
             Self::EncodedErrorValue(value) => value.record(),
@@ -108,9 +113,12 @@ impl NativeReturn {
             Self::Bytes | Self::StatusWriteback(_) => true,
             Self::StatusValue(value) => value.is_bytes(),
             Self::EncodedErrorValue(value) => value.is_bytes(),
-            Self::Void | Self::Value(_) | Self::Record(_) | Self::Callback(_) | Self::Status => {
-                false
-            }
+            Self::Void
+            | Self::Value(_)
+            | Self::Record(_)
+            | Self::Callback(_)
+            | Self::Status
+            | Self::EncodedError => false,
         }
     }
 
@@ -130,6 +138,7 @@ impl NativeReturn {
             | Self::Record(_)
             | Self::Callback(_)
             | Self::Status
+            | Self::EncodedError
             | Self::StatusWriteback(_) => false,
         }
     }
@@ -145,6 +154,7 @@ impl NativeReturn {
             | Self::Bytes
             | Self::Record(_)
             | Self::Status
+            | Self::EncodedError
             | Self::StatusWriteback(_) => false,
         }
     }
@@ -158,7 +168,8 @@ impl NativeReturn {
             | Self::Record(_)
             | Self::Callback(_)
             | Self::Status
-            | Self::StatusWriteback(_) => None,
+            | Self::StatusWriteback(_)
+            | Self::EncodedError => None,
             Self::StatusValue(value) => Some(value),
             Self::EncodedErrorValue(value) => Some(value.success()),
         }
@@ -166,7 +177,7 @@ impl NativeReturn {
 
     /// Returns whether the C return slot carries an encoded error buffer.
     pub fn checks_error_buffer(&self) -> bool {
-        matches!(self, Self::EncodedErrorValue(_))
+        matches!(self, Self::EncodedError | Self::EncodedErrorValue(_))
     }
 
     /// Creates the JNI return behavior for a C ABI return type.
@@ -267,7 +278,14 @@ impl NativeReturn {
         }
 
         if return_out.is_empty() {
-            return Ok(status);
+            return match (function.return_channel(), status) {
+                (ReturnChannel::EncodedError, Self::Bytes) => Ok(Self::EncodedError),
+                (ReturnChannel::EncodedError, _) => Err(Error::BrokenBridgeContract {
+                    bridge: JNI_BRIDGE,
+                    invariant: "encoded error return must use FfiBuf",
+                }),
+                (ReturnChannel::Value, status) => Ok(status),
+            };
         }
 
         if return_out.len() != 1 {
@@ -285,12 +303,18 @@ impl NativeReturn {
                     invariant: "success out-pointer must be the only hidden return parameter",
                 })?;
 
-        match status {
-            Self::Status => Ok(Self::StatusValue(success)),
-            Self::Bytes => Ok(Self::EncodedErrorValue(EncodedErrorReturn::new(success))),
-            _ => Err(Error::BrokenBridgeContract {
+        match (function.return_channel(), status) {
+            (ReturnChannel::Value, Self::Status) => Ok(Self::StatusValue(success)),
+            (ReturnChannel::EncodedError, Self::Bytes) => {
+                Ok(Self::EncodedErrorValue(EncodedErrorReturn::new(success)))
+            }
+            (ReturnChannel::Value, _) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
-                invariant: "success out-pointer must pair with FfiStatus or FfiBuf error return",
+                invariant: "success out-pointer must pair with FfiStatus",
+            }),
+            (ReturnChannel::EncodedError, _) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "encoded error return with success out-pointer must use FfiBuf",
             }),
         }
     }

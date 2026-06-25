@@ -25,8 +25,29 @@ use crate::{
     },
 };
 
-pub use name_style::{KotlinFile, KotlinPackage};
+pub use name_style::{KotlinFile, KotlinLibrary, KotlinPackage};
 use syntax::Syntax;
+
+/// Desktop native-library loading policy for the generated Kotlin module.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum KotlinDesktopLoader {
+    /// Load bundled native resources first, then fall back to the system loader.
+    #[default]
+    Bundled,
+    /// Load the desktop fallback library through `System.loadLibrary`.
+    System,
+    /// Do not emit a desktop native-library load path.
+    None,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct NativeLibraries {
+    android: KotlinLibrary,
+    desktop_jni: KotlinLibrary,
+    desktop_fallback: KotlinLibrary,
+    desktop_loader: KotlinDesktopLoader,
+}
 
 /// Kotlin host renderer for a generated JNI owner class.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -36,9 +57,12 @@ pub struct KotlinHost {
     file: KotlinFile,
     c_header: PathBuf,
     jni_source: PathBuf,
+    native_libraries: NativeLibraries,
 }
 
 impl KotlinHost {
+    const TARGET: &'static str = "kotlin";
+
     /// Creates a Kotlin host renderer.
     pub fn new(package: impl Into<String>, file: impl Into<String>) -> Result<Self> {
         Ok(Self {
@@ -46,6 +70,7 @@ impl KotlinHost {
             file: KotlinFile::parse(file)?,
             c_header: PathBuf::from("jni/boltffi.h"),
             jni_source: PathBuf::from("jni/jni_glue.c"),
+            native_libraries: NativeLibraries::default()?,
         })
     }
 
@@ -58,6 +83,30 @@ impl KotlinHost {
     /// Selects the generated JNI source path.
     pub fn jni_source(mut self, path: impl Into<PathBuf>) -> Self {
         self.jni_source = path.into();
+        self
+    }
+
+    /// Selects the Android native library load name.
+    pub fn android_library(mut self, library: impl Into<String>) -> Result<Self> {
+        self.native_libraries.android = KotlinLibrary::parse(library)?;
+        Ok(self)
+    }
+
+    /// Selects the desktop JNI wrapper library load name.
+    pub fn desktop_jni_library(mut self, library: impl Into<String>) -> Result<Self> {
+        self.native_libraries.desktop_jni = KotlinLibrary::parse(library)?;
+        Ok(self)
+    }
+
+    /// Selects the desktop fallback library load name.
+    pub fn desktop_fallback_library(mut self, library: impl Into<String>) -> Result<Self> {
+        self.native_libraries.desktop_fallback = KotlinLibrary::parse(library)?;
+        Ok(self)
+    }
+
+    /// Selects the desktop native-library loading policy.
+    pub fn desktop_loader(mut self, loader: KotlinDesktopLoader) -> Self {
+        self.native_libraries.desktop_loader = loader;
         self
     }
 
@@ -81,6 +130,41 @@ impl KotlinHost {
     pub fn file(&self) -> &KotlinFile {
         &self.file
     }
+
+    fn native_libraries(&self) -> &NativeLibraries {
+        &self.native_libraries
+    }
+}
+
+impl NativeLibraries {
+    fn default() -> Result<Self> {
+        Ok(Self {
+            android: KotlinLibrary::parse("boltffi")?,
+            desktop_jni: KotlinLibrary::parse("boltffi_jni")?,
+            desktop_fallback: KotlinLibrary::parse("boltffi")?,
+            desktop_loader: KotlinDesktopLoader::default(),
+        })
+    }
+
+    fn android(&self) -> &KotlinLibrary {
+        &self.android
+    }
+
+    fn desktop_jni(&self) -> &KotlinLibrary {
+        &self.desktop_jni
+    }
+
+    fn desktop_fallback(&self) -> &KotlinLibrary {
+        &self.desktop_fallback
+    }
+
+    fn bundled_desktop_loader(&self) -> bool {
+        matches!(self.desktop_loader, KotlinDesktopLoader::Bundled)
+    }
+
+    fn system_desktop_loader(&self) -> bool {
+        matches!(self.desktop_loader, KotlinDesktopLoader::System)
+    }
 }
 
 impl host::HostBackend for KotlinHost {
@@ -89,7 +173,7 @@ impl host::HostBackend for KotlinHost {
     type Syntax = Syntax;
 
     fn name(&self) -> &'static str {
-        "kotlin"
+        Self::TARGET
     }
 
     fn binding_capabilities(&self) -> HostCapabilities {
@@ -179,11 +263,11 @@ impl host::HostBackend for KotlinHost {
 
     fn custom_type(
         &self,
-        _decl: &CustomTypeDecl,
+        decl: &CustomTypeDecl,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(Emitted::primary(""))
+        render::CustomType::from_declaration(decl, context)?.render()
     }
 
     fn assemble<'decl>(

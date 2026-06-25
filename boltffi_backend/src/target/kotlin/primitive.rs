@@ -2,7 +2,10 @@ use boltffi_binding::{IntegerValue, Primitive};
 
 use crate::{
     core::{Error, Result},
-    target::kotlin::syntax::{ArgumentList, Expression, Identifier, Statement, TypeName},
+    target::kotlin::{
+        KotlinHost,
+        syntax::{ArgumentList, Expression, Identifier, Statement, TypeName},
+    },
 };
 
 pub struct KotlinPrimitive {
@@ -29,7 +32,7 @@ impl KotlinPrimitive {
             Primitive::F64 => TypeName::double(),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown primitive type",
                 });
             }
@@ -49,29 +52,29 @@ impl KotlinPrimitive {
             Primitive::F64 => TypeName::double(),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown native primitive type",
                 });
             }
         })
     }
 
-    pub fn array_type(self) -> Result<TypeName> {
+    pub fn direct_vector_type(self) -> Result<TypeName> {
         Ok(match self.primitive {
             Primitive::Bool => TypeName::new("BooleanArray"),
             Primitive::I8 => TypeName::new("ByteArray"),
-            Primitive::U8 => TypeName::new("UByteArray"),
+            Primitive::U8 => TypeName::new("ByteArray"),
             Primitive::I16 => TypeName::new("ShortArray"),
-            Primitive::U16 => TypeName::new("UShortArray"),
+            Primitive::U16 => TypeName::new("ShortArray"),
             Primitive::I32 => TypeName::new("IntArray"),
-            Primitive::U32 => TypeName::new("UIntArray"),
+            Primitive::U32 => TypeName::new("IntArray"),
             Primitive::I64 | Primitive::ISize => TypeName::new("LongArray"),
-            Primitive::U64 | Primitive::USize => TypeName::new("ULongArray"),
+            Primitive::U64 | Primitive::USize => TypeName::new("LongArray"),
             Primitive::F32 => TypeName::new("FloatArray"),
             Primitive::F64 => TypeName::new("DoubleArray"),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown direct-vector primitive",
                 });
             }
@@ -107,7 +110,7 @@ impl KotlinPrimitive {
             | Primitive::USize
             | Primitive::F64 => Ok(8),
             _ => Err(Error::UnsupportedTarget {
-                target: "kotlin",
+                target: KotlinHost::TARGET,
                 shape: "unknown primitive wire size",
             }),
         }
@@ -127,26 +130,92 @@ impl KotlinPrimitive {
             Primitive::F32 => Ok("F32"),
             Primitive::F64 => Ok("F64"),
             _ => Err(Error::UnsupportedTarget {
-                target: "kotlin",
+                target: KotlinHost::TARGET,
                 shape: "unknown primitive wire method",
             }),
         }
     }
 
+    pub fn native_wire_method_suffix(self) -> Result<&'static str> {
+        match self.primitive {
+            Primitive::Bool => Ok("Bool"),
+            Primitive::I8 | Primitive::U8 => Ok("I8"),
+            Primitive::I16 | Primitive::U16 => Ok("I16"),
+            Primitive::I32 | Primitive::U32 => Ok("I32"),
+            Primitive::I64 | Primitive::U64 | Primitive::ISize | Primitive::USize => Ok("I64"),
+            Primitive::F32 => Ok("F32"),
+            Primitive::F64 => Ok("F64"),
+            _ => Err(Error::UnsupportedTarget {
+                target: KotlinHost::TARGET,
+                shape: "unknown primitive native wire method",
+            }),
+        }
+    }
+
+    pub fn wire_array_method_suffix(self) -> Result<&'static str> {
+        match self.primitive {
+            Primitive::Bool => Ok("Boolean"),
+            Primitive::I8 | Primitive::U8 => Ok("Byte"),
+            Primitive::I16 | Primitive::U16 => Ok("Short"),
+            Primitive::I32 | Primitive::U32 => Ok("Int"),
+            Primitive::I64 | Primitive::U64 | Primitive::ISize | Primitive::USize => Ok("Long"),
+            Primitive::F32 => Ok("Float"),
+            Primitive::F64 => Ok("Double"),
+            _ => Err(Error::UnsupportedTarget {
+                target: KotlinHost::TARGET,
+                shape: "unknown primitive array method",
+            }),
+        }
+    }
+
     pub fn integer_literal(self, value: IntegerValue) -> Result<Expression> {
-        let value = Expression::integer(value.get());
+        let signed = value.get();
+        let value = Expression::integer(signed);
+        let converted = match signed < 0 {
+            true => value.clone().parenthesized(),
+            false => value.clone(),
+        };
         Ok(match self.primitive {
-            Primitive::I8 => value.convert(Identifier::parse("toByte")?),
-            Primitive::U8 => value.convert(Identifier::parse("toUByte")?),
-            Primitive::I16 => value.convert(Identifier::parse("toShort")?),
-            Primitive::U16 => value.convert(Identifier::parse("toUShort")?),
-            Primitive::U32 => value.convert(Identifier::parse("toUInt")?),
-            Primitive::U64 | Primitive::USize => value.convert(Identifier::parse("toULong")?),
+            Primitive::I8 => converted.convert(Identifier::parse("toByte")?),
+            Primitive::U8 => converted.convert(Identifier::parse("toUByte")?),
+            Primitive::I16 => converted.convert(Identifier::parse("toShort")?),
+            Primitive::U16 => converted.convert(Identifier::parse("toUShort")?),
+            Primitive::U32 => converted.convert(Identifier::parse("toUInt")?),
+            Primitive::U64 | Primitive::USize => converted.convert(Identifier::parse("toULong")?),
             Primitive::I32 | Primitive::I64 | Primitive::ISize => value,
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown primitive literal",
+                });
+            }
+        })
+    }
+
+    pub fn native_integer_literal(self, value: IntegerValue) -> Result<Expression> {
+        let signed = value.get();
+        let expression = Expression::integer(signed);
+        let converted = match signed < 0 {
+            true => expression.clone().parenthesized(),
+            false => expression.clone(),
+        };
+        Ok(match self.primitive {
+            Primitive::I8 | Primitive::U8 => converted.convert(Identifier::parse("toByte")?),
+            Primitive::I16 | Primitive::U16 => converted.convert(Identifier::parse("toShort")?),
+            Primitive::I32 => expression,
+            Primitive::U32 if i32::try_from(signed).is_ok() => expression,
+            Primitive::U32 => Expression::long(signed).convert(Identifier::parse("toInt")?),
+            Primitive::I64 | Primitive::ISize => Expression::long(signed),
+            Primitive::U64 | Primitive::USize if i64::try_from(signed).is_ok() => {
+                Expression::long(signed)
+            }
+            Primitive::U64 | Primitive::USize => {
+                Expression::unsigned_long(signed as u128).convert(Identifier::parse("toLong")?)
+            }
+            _ => {
+                return Err(Error::UnsupportedTarget {
+                    target: KotlinHost::TARGET,
+                    shape: "unknown native primitive literal",
                 });
             }
         })
@@ -175,7 +244,7 @@ impl KotlinPrimitive {
             Primitive::F32 => Self::buffer_call(buffer, "getFloat", [offset]),
             Primitive::F64 => Self::buffer_call(buffer, "getDouble", [offset]),
             _ => Err(Error::UnsupportedTarget {
-                target: "kotlin",
+                target: KotlinHost::TARGET,
                 shape: "unknown direct record field read",
             }),
         }
@@ -209,7 +278,7 @@ impl KotlinPrimitive {
             Primitive::F64 => ("putDouble", value),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown direct record field write",
                 });
             }
@@ -239,7 +308,7 @@ impl KotlinPrimitive {
             | Primitive::F64 => None,
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown primitive conversion",
                 });
             }

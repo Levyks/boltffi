@@ -1,21 +1,18 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ConstantDecl, ConstantValueDecl, DefaultValue, ExportedCallable, FloatValue, Native,
-    NativeSymbol, Primitive, TypeRef,
+    ConstantDecl, ConstantValueDecl, DefaultValue, ExportedCallable, Native, NativeSymbol, TypeRef,
 };
 
 use crate::{
     bridge::jni::JniBridgeContract,
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         name_style::Name,
-        primitive::KotlinPrimitive,
-        render::{function::ExportedCall, type_name::KotlinType},
-        syntax::{Expression, Identifier, Literal, TypeName},
+        render::{default_value::DefaultExpression, function::ExportedCall, type_name::KotlinType},
+        syntax::{Expression, Identifier, TypeName},
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/constant.kt", escape = "none")]
@@ -58,7 +55,7 @@ impl Constant {
                 )?),
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown constant value",
             }),
         }
@@ -98,13 +95,13 @@ impl Constant {
         )?;
         if call.async_call().is_some() {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "async constant accessor",
             });
         }
         if call.returns().is_none() {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "constant accessor without return",
             });
         }
@@ -122,7 +119,7 @@ impl Inline {
         Ok(Self {
             name: Name::new(declaration.name()).function()?,
             ty: KotlinType::type_ref(ty, context)?,
-            value: Self::render_value(ty, value)?,
+            value: DefaultExpression::render(ty, value)?,
         })
     }
 
@@ -136,45 +133,5 @@ impl Inline {
 
     pub fn value(&self) -> &Expression {
         &self.value
-    }
-
-    fn render_value(ty: &TypeRef, value: &DefaultValue) -> Result<Expression> {
-        match value {
-            DefaultValue::Bool(value) => Ok(Expression::bool(*value)),
-            DefaultValue::Integer(value) => match ty {
-                TypeRef::Primitive(primitive) => {
-                    KotlinPrimitive::new(*primitive).integer_literal(*value)
-                }
-                _ => Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
-                    shape: "integer constant type",
-                }),
-            },
-            DefaultValue::Float(value) => Self::float(*value, ty),
-            DefaultValue::String(value) => Ok(Expression::literal(Literal::string(value))),
-            DefaultValue::EnumVariant {
-                enum_name,
-                variant_name,
-            } => Ok(Expression::property(
-                Name::new(enum_name).type_name(),
-                Name::new(variant_name).variant()?,
-            )),
-            DefaultValue::Null => Ok(Expression::null()),
-            _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "unknown constant literal",
-            }),
-        }
-    }
-
-    fn float(value: FloatValue, ty: &TypeRef) -> Result<Expression> {
-        match ty {
-            TypeRef::Primitive(Primitive::F32) => Ok(Expression::float(value.to_f64(), true)),
-            TypeRef::Primitive(Primitive::F64) => Ok(Expression::float(value.to_f64(), false)),
-            _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "float constant type",
-            }),
-        }
     }
 }

@@ -18,11 +18,12 @@ use crate::experimental::{
 pub struct Renderer<'expansion, 'lowered, S: RenderSurface> {
     pair: DeclarationPair<'lowered, ClassDef, ClassDecl<S>>,
     expansion: &'expansion Expansion<'lowered, S>,
+    rust_type: Option<TokenStream>,
 }
 
 struct ClassOwner<'lowered, C> {
     source: &'lowered ClassDef,
-    class: Ident,
+    class: TokenStream,
     handle_type: Ident,
     handle: C,
 }
@@ -42,7 +43,16 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
         pair: DeclarationPair<'lowered, ClassDef, ClassDecl<S>>,
         expansion: &'expansion Expansion<'lowered, S>,
     ) -> Self {
-        Self { pair, expansion }
+        Self {
+            pair,
+            expansion,
+            rust_type: None,
+        }
+    }
+
+    pub fn with_rust_type(mut self, rust_type: TokenStream) -> Self {
+        self.rust_type = Some(rust_type);
+        self
     }
 
     pub fn render(self) -> Result<TokenStream, Error>
@@ -70,17 +80,18 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
         let binding = self.pair.binding();
         let class = names::SourceSpelling::new(&source.name)
             .ident("source class name is not a Rust identifier")?;
+        let class_type = self.rust_type.clone().unwrap_or_else(|| quote! { #class });
         let class_names = names::Class::new(&class);
         let handle_type = class_names.handle();
         let retained_handle_type = class_names.retained_handle();
         let operations = ClassHandleOperations::new(binding, self.expansion);
-        let handle = self.handle(&class, &handle_type, &retained_handle_type, operations);
-        let thread_safety = self.thread_safety(binding, &class);
+        let handle = self.handle(&class_type, &handle_type, &retained_handle_type, operations);
+        let thread_safety = self.thread_safety(binding, &class, &class_type);
         let release = self.release(binding.release(), binding.handle(), &handle_type)?;
         let exports = associated_fn::Renderer::new(
             ClassOwner {
                 source,
-                class,
+                class: class_type,
                 handle_type,
                 handle: binding.handle(),
             },
@@ -100,7 +111,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
 
     fn handle(
         &self,
-        class: &Ident,
+        class: &TokenStream,
         handle_type: &Ident,
         retained_handle_type: &Ident,
         operations: ClassHandleOperations,
@@ -272,7 +283,12 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
         }
     }
 
-    fn thread_safety(&self, binding: &ClassDecl<S>, class: &Ident) -> TokenStream {
+    fn thread_safety(
+        &self,
+        binding: &ClassDecl<S>,
+        class: &Ident,
+        class_type: &TokenStream,
+    ) -> TokenStream {
         if binding.thread_safety() == ClassThreadSafety::UnsafeSingleThreaded {
             return TokenStream::new();
         }
@@ -288,7 +304,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
                 trait BoltFFIThreadSafe: Send + Sync {}
                 impl<T: Send + Sync> BoltFFIThreadSafe for T {}
                 fn _assert<T: BoltFFIThreadSafe>() {}
-                fn _check() { _assert::<#class>(); }
+                fn _check() { _assert::<#class_type>(); }
             };
         }
     }

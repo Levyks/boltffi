@@ -34,6 +34,7 @@ use crate::{
 struct SourceFileTemplate {
     c_header: Literal,
     class_name: Literal,
+    error_buffer_exception_class: Literal,
     free_buffer: Identifier,
     uses_limits: bool,
     checks_status: bool,
@@ -127,6 +128,12 @@ impl SourceFile {
         let rendered = SourceFileTemplate {
             c_header: Literal::string(contract.c_header().as_str()),
             class_name: Literal::string(&contract.class().as_jni_class_name()),
+            error_buffer_exception_class: Literal::string(
+                &contract
+                    .class()
+                    .sibling_class("BoltFfiErrorBufferException")?
+                    .as_jni_class_name(),
+            ),
             free_buffer: contract.free_buffer().clone(),
             uses_limits: features.uses_limits,
             checks_status: features.checks_status,

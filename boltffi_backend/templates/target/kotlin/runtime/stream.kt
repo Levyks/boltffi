@@ -31,7 +31,7 @@ internal class BoltFfiStreamContext(
             finalizeIfIdle()
             return
         }
-        kotlinx.coroutines.launch(scope) {
+        scope.launch {
             val pollResult = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
                 poll(subscription, boltffiContinuationMap.insert(continuation))
             }

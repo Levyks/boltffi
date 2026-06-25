@@ -27,6 +27,9 @@ class DemoValueTypesTest {
         val instant = Instant.ofEpochMilli(1_701_234_567_890L)
         demoCase("case:builtins.system_time.should_roundtrip_value")
         assertEquals(instant, echoSystemTime(instant))
+        demoCase("case:builtins.system_time.should_roundtrip_pre_epoch_value")
+        val preEpoch = Instant.ofEpochSecond(-1, 500_000_000)
+        assertEquals(preEpoch, echoSystemTime(preEpoch))
         demoCase("case:builtins.system_time.should_convert_to_epoch_milliseconds")
         assertEquals(1_701_234_567_890uL, systemTimeToMillis(instant))
         demoCase("case:builtins.system_time.should_construct_from_epoch_milliseconds")
@@ -632,6 +635,10 @@ class DemoValueTypesTest {
         assertIs<Shape.Rectangle>(Shape.square(3.0))
         demoCase("case:enums.data_enum.shape.try_circle.should_return_circle_for_positive_radius")
         assertIs<Shape.Circle>(Shape.tryCircle(2.0))
+        demoCase("case:enums.data_enum.shape.maybe_circle.should_return_some_for_positive_radius")
+        assertIs<Shape.Circle>(Shape.maybeCircle(2.0))
+        demoCase("case:enums.data_enum.shape.maybe_circle.should_return_none_for_non_positive_radius")
+        assertNull(Shape.maybeCircle(-1.0))
 
         demoCase("case:enums.data_enum.shape.should_reject_non_positive_circle_radius")
         assertMessageContains(assertFailsWith<FfiException> { Shape.tryCircle(-1.0) }, "radius must be positive")
@@ -941,5 +948,16 @@ class DemoValueTypesTest {
         assertEquals("borrowed:3:standard:none:https://default", ServiceConfig.fromBorrowedName("borrowed").describe())
         demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config")
         assertEquals("stringref:3:standard:none:https://default", ServiceConfig.fromStringRefName("stringref").describe())
+        demoCase("case:records.default_values.service_config.try_with_retries.should_return_config")
+        assertEquals("generated:5:standard:none:https://default", ServiceConfig.tryWithRetries(5).describe())
+        demoCase("case:records.default_values.service_config.try_with_retries.should_reject_negative_retries")
+        assertMessageContains(
+            assertFailsWith<FfiException> { ServiceConfig.tryWithRetries(-1) },
+            "retries must be non-negative",
+        )
+        demoCase("case:records.default_values.service_config.maybe_with_retries.should_return_some")
+        assertEquals("generated:5:standard:none:https://default", ServiceConfig.maybeWithRetries(5)?.describe())
+        demoCase("case:records.default_values.service_config.maybe_with_retries.should_return_none")
+        assertNull(ServiceConfig.maybeWithRetries(-1))
     }
 }

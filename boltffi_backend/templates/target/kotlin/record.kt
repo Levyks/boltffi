@@ -1,5 +1,5 @@
 {%- if record.empty() %}
-object {{ record.name() }} {
+object {{ record.name() }}{% if record.error() %} : Exception(){% endif %} {
 {%- if record.encoded() %}
     internal fun wireSize(): Int = 0
 
@@ -107,9 +107,9 @@ object {{ record.name() }} {
 {%- else if record.encoded() %}
 data class {{ record.name() }}(
 {%- for field in record.fields() %}
-    val {{ field.name() }}: {{ field.ty() }}{% if !loop.last %},{% endif %}
+    {% if record.error() && field.is_string_message() %}override {% endif %}val {{ field.name() }}: {{ field.ty() }}{% if let Some(default) = field.default() %} = {{ default }}{% endif %}{% if !loop.last %},{% endif %}
 {%- endfor %}
-) {
+){% if record.error() %} : Exception({% if let Some(message) = record.error_message() %}{{ message }}{% endif %}){% endif %} {
     internal fun wireSize(): Int {
 {%- if let Some(wire_size) = record.wire_size() %}
         return {{ wire_size }}
@@ -253,9 +253,9 @@ data class {{ record.name() }}(
 {%- else %}
 data class {{ record.name() }}(
 {%- for field in record.fields() %}
-    val {{ field.name() }}: {{ field.ty() }}{% if !loop.last %},{% endif %}
+    {% if record.error() && field.is_string_message() %}override {% endif %}val {{ field.name() }}: {{ field.ty() }}{% if let Some(default) = field.default() %} = {{ default }}{% endif %}{% if !loop.last %},{% endif %}
 {%- endfor %}
-) {
+){% if record.error() %} : Exception({% if let Some(message) = record.error_message() %}{{ message }}{% endif %}){% endif %} {
     internal fun toByteArray(): ByteArray {
         val buffer = java.nio.ByteBuffer
             .allocate(STRUCT_SIZE)

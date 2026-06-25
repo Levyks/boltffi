@@ -76,7 +76,9 @@ impl SourceFeatures {
             uses_limits: uses_byte_arrays
                 || uses_record_arrays
                 || callbacks.uses_direct_vectors
-                || closures.uses_direct_vectors,
+                || closures.uses_direct_vectors
+                || methods.checks_error_buffer
+                || callbacks.checks_error_buffer,
             checks_status: methods.checks_status || callbacks.checks_status,
             checks_error_buffer: methods.checks_error_buffer || callbacks.checks_error_buffer,
             uses_byte_arrays,

@@ -3,6 +3,7 @@ use boltffi_binding::{BinderId, FieldKey, ValueRef, ValueRoot};
 use crate::{
     core::{Error, Result},
     target::kotlin::{
+        KotlinHost,
         name_style::Name,
         syntax::{Expression, Identifier},
     },
@@ -39,7 +40,7 @@ impl ValueExpression {
             ValueRoot::Binder(binder) => Expression::identifier(Self::binder(*binder)?),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: "kotlin",
+                    target: KotlinHost::TARGET,
                     shape: "unknown codec value root",
                 });
             }
@@ -55,7 +56,7 @@ impl ValueExpression {
             FieldKey::Position(position) => Identifier::parse(format!("field{position}"))
                 .map(|field| Expression::property(expression, field)),
             _ => Err(Error::UnsupportedTarget {
-                target: "kotlin",
+                target: KotlinHost::TARGET,
                 shape: "unknown codec value field",
             }),
         }

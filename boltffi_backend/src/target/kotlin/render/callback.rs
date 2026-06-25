@@ -15,6 +15,7 @@ use crate::{
     },
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         codec::{Reader, ScalarOption, WireBuffer},
         name_style::Name,
         primitive::KotlinPrimitive,
@@ -25,8 +26,6 @@ use crate::{
         syntax::{ArgumentList, Expression, Identifier, Literal, Statement, TypeName},
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/callback.kt", escape = "none")]
@@ -164,7 +163,7 @@ enum HandleReturnConversion {
     Void,
     Direct(Primitive),
     DirectRecord(TypeName),
-    DirectEnum { ty: TypeName, repr: Primitive },
+    DirectEnum(TypeName),
     DirectVector(DirectVector),
     Encoded(ReadPlan),
     ClassHandle(ClassHandle),
@@ -352,7 +351,7 @@ impl Method {
             ExecutionDecl::Asynchronous(_) => true,
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
+                    target: KotlinHost::TARGET,
                     shape: "unknown callback method execution",
                 });
             }
@@ -384,16 +383,7 @@ impl Method {
                 .map(|parameter| parameter.call_argument.clone())
                 .collect::<ArgumentList>(),
         );
-        let public_return = match &fallible {
-            Some(fallible) => Some(TypeName::result(
-                return_value
-                    .public_ty
-                    .clone()
-                    .unwrap_or_else(TypeName::unit),
-                KotlinType::type_ref(fallible.error_ty, context)?,
-            )),
-            None => return_value.public_ty.clone(),
-        };
+        let public_return = return_value.public_ty.clone();
         let jvm_parameters = fallible
             .as_ref()
             .map(FallibleReturn::parameter)
@@ -410,9 +400,11 @@ impl Method {
             .collect();
         let call_return = match (&fallible, &async_completion) {
             (_, Some(_)) => Vec::new(),
-            (Some(fallible), None) => {
-                return_value.fallible_statements(interface_call.clone(), fallible, context)?
-            }
+            (Some(fallible), None) => return_value.throwing_fallible_statements(
+                interface_call.clone(),
+                fallible,
+                context,
+            )?,
             (None, None) => return_value.statements(interface_call.clone(), context)?,
         };
         let async_body = async_completion
@@ -466,7 +458,7 @@ impl AsyncMethodBody {
         Ok(Self {
             statements: match fallible {
                 Some(fallible) => return_value
-                    .completion_fallible_statements(call, fallible, completion, context)?,
+                    .throwing_completion_fallible_statements(call, fallible, completion, context)?,
                 None => return_value.completion_success_statements(call, completion, context)?,
             },
             failure: completion.failure_statement(),
@@ -585,11 +577,11 @@ impl<'error> FallibleReturn<'error> {
                 error_codec: codec,
             })),
             ErrorChannel::Encoded { .. } | ErrorChannel::Status => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method error return",
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown callback method error return",
             }),
         }
@@ -647,13 +639,13 @@ impl HandleMethod {
         let callable = source.callable();
         if !matches!(callable.error().channel(), ErrorChannel::None) {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method error return",
             });
         }
         if !matches!(callable.execution(), ExecutionDecl::Synchronous(_)) {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "async callback method",
             });
         }
@@ -724,7 +716,7 @@ impl CallbackHandle {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let callback = context.callback(id).ok_or(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "callback handle without declaration",
         })?;
         let ty = Name::new(callback.name()).type_name();
@@ -741,7 +733,7 @@ impl CallbackHandle {
             HandlePresence::Required => Ok(self.ty.clone()),
             HandlePresence::Nullable => Ok(self.ty.clone().nullable()),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown callback handle presence",
             }),
         }
@@ -771,7 +763,7 @@ impl CallbackHandle {
             ),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
+                    target: KotlinHost::TARGET,
                     shape: "unknown callback handle presence",
                 });
             }
@@ -792,7 +784,7 @@ impl CallbackHandle {
             ),
             _ => {
                 return Err(Error::UnsupportedTarget {
-                    target: KOTLIN_TARGET,
+                    target: KotlinHost::TARGET,
                     shape: "unknown callback handle presence",
                 });
             }
@@ -842,7 +834,7 @@ impl MethodParameter {
     ) -> Result<Self> {
         let OutgoingParam::Value(plan) = parameter.payload() else {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method closure parameter",
             });
         };
@@ -863,7 +855,7 @@ impl HandleParameter {
     ) -> Result<Self> {
         let OutgoingParam::Value(plan) = parameter.payload() else {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method closure parameter",
             });
         };
@@ -923,7 +915,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for HandleParameterRender<
                 })
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method direct parameter",
             }),
         }
@@ -987,11 +979,11 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for HandleParameterRender<
                 })
             }
             HandleTarget::Stream(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method stream parameter",
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown callback handle method handle parameter",
             }),
         }
@@ -1018,7 +1010,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for HandleParameterRender<
                 name: self.name.clone(),
                 ty: vector.ty().clone(),
             },
-            native_argument: vector.carrier_expression(Expression::identifier(self.name.clone())),
+            native_argument: Expression::identifier(self.name.clone()),
             setup: Vec::new(),
             cleanup: Vec::new(),
         })
@@ -1052,8 +1044,6 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ParameterRender<'_> {
             DirectValueType::Enum(enumeration) => {
                 let enumeration = Enumeration::from_id(*enumeration, self.context)?;
                 let repr = enumeration.repr()?;
-                let value = KotlinPrimitive::new(repr)
-                    .public_return(Expression::identifier(self.name.clone()))?;
                 Ok(MethodParameter {
                     public: Parameter {
                         name: self.name.clone(),
@@ -1067,7 +1057,9 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ParameterRender<'_> {
                     call_argument: Expression::call(
                         enumeration.name().clone(),
                         Identifier::parse("fromValue")?,
-                        [value].into_iter().collect::<ArgumentList>(),
+                        [Expression::identifier(self.name.clone())]
+                            .into_iter()
+                            .collect::<ArgumentList>(),
                     ),
                 })
             }
@@ -1090,7 +1082,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ParameterRender<'_> {
                 })
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method direct parameter",
             }),
         }
@@ -1105,7 +1097,9 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ParameterRender<'_> {
     ) -> Self::Output {
         let reader = self.source_name.generated("reader")?;
         let value = self.source_name.generated("value")?;
-        let expression = codec.render_with(&mut Reader::new(reader.clone(), self.context))?;
+        let expression = codec
+            .render_with(&mut Reader::new(reader.clone(), self.context))?
+            .into_expression();
         Ok(MethodParameter {
             public: Parameter {
                 name: self.name.clone(),
@@ -1139,7 +1133,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for ParameterRender<'_> {
         _receive: <OutOfRust as Direction>::Receive,
     ) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "callback method handle parameter",
         })
     }
@@ -1230,7 +1224,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
                 DirectValueType::Enum(enumeration),
             ) => Self::direct_enum(*enumeration, self.context),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method direct return",
             }),
         }
@@ -1280,11 +1274,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
                 })
             }
             HandleTarget::Stream(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method stream return",
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown callback method handle return",
             }),
         }
@@ -1312,7 +1306,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
 
     fn closure(&mut self, _closure: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "callback method closure return",
         })
     }
@@ -1331,7 +1325,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         if !matches!(slot, ReturnValueSlot::ReturnSlot) {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method out-pointer return",
             });
         }
@@ -1352,14 +1346,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
                 let ty = enumeration.name().clone();
                 Ok(HandleReturn {
                     ty: Some(ty.clone()),
-                    conversion: HandleReturnConversion::DirectEnum {
-                        ty,
-                        repr: enumeration.repr()?,
-                    },
+                    conversion: HandleReturnConversion::DirectEnum(ty),
                 })
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method direct return",
             }),
         }
@@ -1374,7 +1365,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
     ) -> Self::Output {
         if !matches!(slot, ReturnValueSlot::ReturnSlot) {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method out-pointer encoded return",
             });
         }
@@ -1393,7 +1384,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
     ) -> Self::Output {
         if !matches!(slot, ReturnValueSlot::ReturnSlot) {
             return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method out-pointer handle return",
             });
         }
@@ -1413,11 +1404,11 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
                 })
             }
             HandleTarget::Stream(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback handle method stream return",
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown callback handle method handle return",
             }),
         }
@@ -1440,7 +1431,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
 
     fn closure(&mut self, _closure: &'plan ClosureReturn<Native, IntoRust>) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "callback handle method closure return",
         })
     }
@@ -1452,11 +1443,11 @@ impl ReturnRender<'_> {
             ReturnValueSlot::ReturnSlot => Ok(()),
             ReturnValueSlot::OutPointer if self.fallible_success_out => Ok(()),
             ReturnValueSlot::OutPointer => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape,
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown callback method return slot",
             }),
         }
@@ -1474,28 +1465,21 @@ impl ReturnRender<'_> {
 }
 
 impl ReturnValue {
-    fn fallible_statements(
+    fn throwing_fallible_statements(
         &self,
         call: Expression,
         fallible: &FallibleReturn,
         context: &RenderContext<Native>,
     ) -> Result<Vec<Statement>> {
-        let result = fallible.source_name.generated("result")?;
-        let success = fallible.source_name.generated("success")?;
         let error = fallible.source_name.generated("error")?;
-        Ok(vec![
-            Statement::value(result.clone(), call),
-            Statement::return_value(Expression::identifier(result).result_fold(
-                success.clone(),
-                self.fallible_success_expression(
-                    Expression::identifier(success),
-                    fallible,
-                    context,
-                )?,
-                error.clone(),
-                fallible.error_expression(Expression::identifier(error), context)?,
-            )),
-        ])
+        Ok(vec![Statement::return_value(
+            self.fallible_success_expression(call, fallible, context)?
+                .try_catch(
+                    error.clone(),
+                    fallible.error_type(context)?,
+                    fallible.error_expression(Expression::identifier(error), context)?,
+                ),
+        )])
     }
 
     fn completion_success_statements(
@@ -1533,33 +1517,26 @@ impl ReturnValue {
         }
     }
 
-    fn completion_fallible_statements(
+    fn throwing_completion_fallible_statements(
         &self,
         call: Expression,
         fallible: &FallibleReturn,
         completion: &AsyncCompletion,
         context: &RenderContext<Native>,
     ) -> Result<Vec<Statement>> {
-        let result = fallible.source_name.generated("result")?;
-        let success = fallible.source_name.generated("success")?;
         let error = fallible.source_name.generated("error")?;
-        Ok(vec![
-            Statement::value(result.clone(), call),
-            Statement::expression(Expression::identifier(result).result_fold(
-                success.clone(),
-                self.completion_success_expression(
-                    Expression::identifier(success),
-                    completion,
-                    context,
-                )?,
-                error.clone(),
-                fallible.completion_error_expression(
-                    Expression::identifier(error),
-                    completion,
-                    context,
-                )?,
-            )),
-        ])
+        Ok(vec![Statement::expression(
+            self.completion_success_expression(call, completion, context)?
+                .try_catch(
+                    error.clone(),
+                    fallible.error_type(context)?,
+                    fallible.completion_error_expression(
+                        Expression::identifier(error),
+                        completion,
+                        context,
+                    )?,
+                ),
+        )])
     }
 
     fn statements(
@@ -1630,7 +1607,7 @@ impl ReturnValue {
                 .map(Statement::return_value)
                 .map(|statement| vec![statement]),
             ReturnConversion::Direct(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "callback method direct return",
             }),
         }
@@ -1756,7 +1733,7 @@ impl ReturnValue {
                 Ok((Vec::new(), handle.parameter_argument(value)?, Vec::new()))
             }
             ReturnConversion::Void | ReturnConversion::Direct(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "fallible callback method success return",
             }),
         }
@@ -1773,6 +1750,10 @@ impl ReturnValue {
 }
 
 impl FallibleReturn<'_> {
+    fn error_type(&self, context: &RenderContext<Native>) -> Result<TypeName> {
+        KotlinType::type_ref(self.error_ty, context)
+    }
+
     fn error_expression(
         &self,
         value: Expression,
@@ -1856,12 +1837,11 @@ impl HandleReturn {
                     )?),
                 ])
             }
-            HandleReturnConversion::DirectEnum { ty, repr } => {
-                let value = KotlinPrimitive::new(*repr).public_return(call)?;
+            HandleReturnConversion::DirectEnum(ty) => {
                 Ok(vec![Statement::expression(Expression::call(
                     ty.clone(),
                     Identifier::parse("fromValue")?,
-                    [value].into_iter().collect::<ArgumentList>(),
+                    [call].into_iter().collect::<ArgumentList>(),
                 ))])
             }
             HandleReturnConversion::DirectVector(vector) => vector.value_statements(call),
@@ -1871,7 +1851,9 @@ impl HandleReturn {
                 let payload = call.or_else(Expression::throw_illegal_state(Literal::string(
                     "null buffer returned",
                 )));
-                let value = codec.render_with(&mut Reader::new(reader.clone(), context))?;
+                let value = codec
+                    .render_with(&mut Reader::new(reader.clone(), context))?
+                    .into_expression();
                 Ok(vec![
                     Statement::value(result.clone(), payload),
                     Statement::value(

@@ -2,7 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use boltffi_backend::core::{CoverageMode, bridge, host};
-use boltffi_backend::target::{kotlin::KotlinHost, python::PythonCExtHost};
+use boltffi_backend::target::{
+    kotlin::{KotlinDesktopLoader, KotlinHost},
+    python::PythonCExtHost,
+};
 use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
 use thiserror::Error;
@@ -30,6 +33,10 @@ pub struct Generation {
     python_native_library: Option<String>,
     kotlin_package: Option<String>,
     kotlin_file: Option<String>,
+    kotlin_android_library: Option<String>,
+    kotlin_desktop_jni_library: Option<String>,
+    kotlin_desktop_fallback_library: Option<String>,
+    kotlin_desktop_loader: KotlinDesktopLoader,
 }
 
 impl Generation {
@@ -46,6 +53,10 @@ impl Generation {
             python_native_library: None,
             kotlin_package: None,
             kotlin_file: None,
+            kotlin_android_library: None,
+            kotlin_desktop_jni_library: None,
+            kotlin_desktop_fallback_library: None,
+            kotlin_desktop_loader: KotlinDesktopLoader::default(),
         }
     }
 
@@ -103,6 +114,30 @@ impl Generation {
         self
     }
 
+    /// Sets the Android native library load name used by Kotlin.
+    pub fn kotlin_android_library(mut self, library: impl Into<String>) -> Self {
+        self.kotlin_android_library = Some(library.into());
+        self
+    }
+
+    /// Sets the desktop JNI wrapper library load name used by Kotlin.
+    pub fn kotlin_desktop_jni_library(mut self, library: impl Into<String>) -> Self {
+        self.kotlin_desktop_jni_library = Some(library.into());
+        self
+    }
+
+    /// Sets the desktop fallback native library load name used by Kotlin.
+    pub fn kotlin_desktop_fallback_library(mut self, library: impl Into<String>) -> Self {
+        self.kotlin_desktop_fallback_library = Some(library.into());
+        self
+    }
+
+    /// Sets how the generated Kotlin module loads desktop native libraries.
+    pub fn kotlin_desktop_loader(mut self, loader: KotlinDesktopLoader) -> Self {
+        self.kotlin_desktop_loader = loader;
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
@@ -144,10 +179,35 @@ impl Generation {
             .as_deref()
             .unwrap_or("com.example.boltffi");
         let file = self.kotlin_file.as_deref().unwrap_or("BoltFfi");
-        let target = KotlinHost::new(package, file)
-            .and_then(KotlinHost::into_target)
+        let target = self
+            .kotlin_host(package, file)?
+            .into_target()
             .map_err(GenerationError::Render)?;
         self.render_backend(&target, &bindings)
+    }
+
+    fn kotlin_host(&self, package: &str, file: &str) -> Result<KotlinHost, GenerationError> {
+        let host = KotlinHost::new(package, file)
+            .map_err(GenerationError::Render)?
+            .desktop_loader(self.kotlin_desktop_loader);
+        let host = self
+            .kotlin_android_library
+            .iter()
+            .try_fold(host, |host, library| host.android_library(library.clone()))
+            .map_err(GenerationError::Render)?;
+        let host = self
+            .kotlin_desktop_jni_library
+            .iter()
+            .try_fold(host, |host, library| {
+                host.desktop_jni_library(library.clone())
+            })
+            .map_err(GenerationError::Render)?;
+        self.kotlin_desktop_fallback_library
+            .iter()
+            .try_fold(host, |host, library| {
+                host.desktop_fallback_library(library.clone())
+            })
+            .map_err(GenerationError::Render)
     }
 
     fn render_backend<H, S>(

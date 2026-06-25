@@ -81,6 +81,14 @@ impl JvmClassPath {
         })
     }
 
+    /// Creates a class in the same JVM package.
+    pub fn sibling_class(&self, class: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            package: self.package.clone(),
+            class: JvmNameSegment::class(class)?,
+        })
+    }
+
     /// Returns the class path as the prefix used by a JNI exported symbol.
     pub fn jni_prefix(&self) -> String {
         self.package

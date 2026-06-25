@@ -25,7 +25,7 @@
         finish = { close() }
     )
     context.start()
-    kotlinx.coroutines.channels.awaitClose { context.requestTermination() }
+    awaitClose { context.requestTermination() }
 }
 {%- endif %}
 {%- if let Some(subscription) = stream.batch_subscription() %}

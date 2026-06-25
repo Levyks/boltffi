@@ -8,7 +8,7 @@ use boltffi_binding::{
 
 use crate::core::{Error, Result};
 
-use super::{Function, poll::PollHandleSymbols};
+use super::{Function, ReturnChannel, poll::PollHandleSymbols};
 use crate::bridge::c::{
     C_BRIDGE_LAYER, DirectVectorElementAbi, Parameter, Type, name, names::Names,
 };
@@ -634,7 +634,7 @@ impl Signature {
             .chain(self.error_params(callable.error())?)
             .collect();
         let returns = self.return_type(callable.returns().plan(), callable.error())?;
-        Function::new(name, params, returns)
+        Function::with_return_channel(name, params, returns, self.return_channel(callable.error()))
     }
 
     fn async_poll_handle(
@@ -666,10 +666,11 @@ impl Signature {
                 ],
                 Type::Void,
             )?,
-            Function::new(
+            Function::with_return_channel(
                 symbols.complete.name().as_str(),
                 complete_params,
                 self.async_complete_return(callable.returns().plan(), callable.error())?,
+                self.return_channel(callable.error()),
             )?,
             Function::new(
                 symbols.panic_message.name().as_str(),
@@ -911,6 +912,16 @@ impl Signature {
                 layer: C_BRIDGE_LAYER,
                 shape: "unknown error declaration",
             }),
+        }
+    }
+
+    fn return_channel<D>(&self, error: &ErrorDecl<Native, D>) -> ReturnChannel
+    where
+        D: Direction,
+    {
+        match error {
+            ErrorDecl::EncodedViaReturnSlot { .. } => ReturnChannel::EncodedError,
+            _ => ReturnChannel::Value,
         }
     }
 

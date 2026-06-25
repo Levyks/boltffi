@@ -1,8 +1,12 @@
+fun interface {{ closure.interface_name() }} {
+    fun invoke({% for parameter in closure.interface_parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = closure.interface_return() %}: {{ return_type }}{% endif %}
+}
+
 private object {{ closure.name() }} {
-    private val map = java.util.concurrent.ConcurrentHashMap<Long, {{ closure.function_type() }}>()
+    private val map = java.util.concurrent.ConcurrentHashMap<Long, {{ closure.interface_name() }}>()
     private val counter = java.util.concurrent.atomic.AtomicLong(1L)
 
-    fun insert(value: {{ closure.function_type() }}): Long {
+    fun insert(value: {{ closure.interface_name() }}): Long {
         val handle = counter.getAndAdd(2L)
         map[handle] = value
         return handle

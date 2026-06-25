@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
+use boltffi_backend::target::kotlin::KotlinDesktopLoader as BackendKotlinDesktopLoader;
 use boltffi_backend::{CoverageMode, GeneratedOutput};
 use boltffi_bindgen::generate::{Generation, GenerationError};
 use boltffi_bindgen::target::Target;
 
 use crate::cargo::Cargo;
 use crate::cli::{CliError, Result};
-use crate::config::Config;
+use crate::config::{Config, targets::KotlinDesktopLoader};
 
 use super::{GenerateOptions, GenerateTarget};
 
@@ -66,6 +67,15 @@ fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
         .coverage_mode(CoverageMode::Partial)
         .kotlin_package(config.android_kotlin_package())
         .kotlin_file(config.android_kotlin_module_name())
+        .kotlin_android_library(config.resolved_android_kotlin_library_name())
+        .kotlin_desktop_jni_library(format!(
+            "{}_jni",
+            config.resolved_android_kotlin_desktop_library_name()
+        ))
+        .kotlin_desktop_fallback_library(config.resolved_android_kotlin_desktop_library_name())
+        .kotlin_desktop_loader(kotlin_desktop_loader(
+            config.android_kotlin_desktop_loader(),
+        ))
         .render(Target::Kotlin)
         .and_then(|output| {
             print_coverage("kotlin", &output);
@@ -73,6 +83,14 @@ fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
         })
         .map(drop)
         .map_err(|error| generation_error("kotlin", error))
+}
+
+fn kotlin_desktop_loader(loader: KotlinDesktopLoader) -> BackendKotlinDesktopLoader {
+    match loader {
+        KotlinDesktopLoader::Bundled => BackendKotlinDesktopLoader::Bundled,
+        KotlinDesktopLoader::System => BackendKotlinDesktopLoader::System,
+        KotlinDesktopLoader::None => BackendKotlinDesktopLoader::None,
+    }
 }
 
 pub fn run_python_generation(

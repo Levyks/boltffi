@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     CanonicalName, ClassDecl, ClassId, ExportedMethodDecl, HandlePresence, InitializerDecl, Native,
@@ -8,13 +10,12 @@ use crate::{
     bridge::jni::JniBridgeContract,
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         name_style::Name,
         render::function::ExportedCall,
         syntax::{Expression, Identifier, Statement, TypeName},
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/class.kt", escape = "none")]
@@ -34,7 +35,11 @@ pub struct Class {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Initializer {
     call: ExportedCall,
+    constructor: bool,
 }
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ConstructorSignature(Vec<String>);
 
 impl Class {
     pub fn from_declaration(
@@ -42,14 +47,15 @@ impl Class {
         bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
+        let initializers = decl
+            .initializers()
+            .iter()
+            .map(|initializer| Initializer::from_declaration(initializer, bridge, context))
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             name: Self::type_name(decl.name())?,
             release: Identifier::escape(decl.release().name().as_str())?,
-            initializers: decl
-                .initializers()
-                .iter()
-                .map(|initializer| Initializer::from_declaration(initializer, bridge, context))
-                .collect::<Result<Vec<_>>>()?,
+            initializers: Initializer::dedupe_constructors(initializers),
             static_methods: Self::methods(decl.methods(), None, bridge, context)?,
             instance_methods: Self::methods(
                 decl.methods(),
@@ -68,7 +74,7 @@ impl Class {
         context
             .class(id)
             .ok_or(Error::BrokenBridgeContract {
-                bridge: KOTLIN_TARGET,
+                bridge: KotlinHost::TARGET,
                 invariant: "class handle target has no class declaration",
             })
             .and_then(|decl| Self::type_name(decl.name()))
@@ -115,7 +121,7 @@ impl Class {
                     (None, None) => Vec::new(),
                     _ => {
                         return Err(Error::UnsupportedTarget {
-                            target: KOTLIN_TARGET,
+                            target: KotlinHost::TARGET,
                             shape: "class method receiver",
                         });
                     }
@@ -147,11 +153,44 @@ impl Initializer {
             bridge,
             context,
         )
-        .map(|call| Self { call })
+        .map(|call| Self {
+            call,
+            constructor: true,
+        })
     }
 
     pub fn call(&self) -> &ExportedCall {
         &self.call
+    }
+
+    pub fn constructor(&self) -> bool {
+        self.constructor
+    }
+
+    fn dedupe_constructors(initializers: Vec<Self>) -> Vec<Self> {
+        let (_, initializers) = initializers.into_iter().fold(
+            (BTreeSet::new(), Vec::new()),
+            |(mut signatures, mut initializers), mut initializer| {
+                if initializer.constructor {
+                    initializer.constructor =
+                        signatures.insert(ConstructorSignature::from_call(initializer.call()));
+                }
+                initializers.push(initializer);
+                (signatures, initializers)
+            },
+        );
+        initializers
+    }
+}
+
+impl ConstructorSignature {
+    fn from_call(call: &ExportedCall) -> Self {
+        Self(
+            call.parameters()
+                .iter()
+                .map(|parameter| parameter.ty().to_string())
+                .collect(),
+        )
     }
 }
 
@@ -177,7 +216,7 @@ impl ClassHandle {
             HandlePresence::Required => Ok(self.ty.clone()),
             HandlePresence::Nullable => Ok(self.ty.clone().nullable()),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown class handle presence",
             }),
         }
@@ -191,7 +230,7 @@ impl ClassHandle {
                 Ok(Expression::safe_property(value, handle).or_else(Expression::long(0)))
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown class handle presence",
             }),
         }
@@ -209,7 +248,7 @@ impl ClassHandle {
                 Expression::construct(self.ty.clone(), [value].into_iter().collect()),
             )),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown class handle presence",
             }),
         }
@@ -231,7 +270,7 @@ impl ClassHandle {
                 ])
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown class handle presence",
             }),
         }

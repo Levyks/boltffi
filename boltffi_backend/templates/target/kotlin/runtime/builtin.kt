@@ -8,13 +8,9 @@ private fun WireReader.readDuration(): java.time.Duration {
 
 private fun WireReader.readInstant(): java.time.Instant {
     val seconds = readI64()
-    val nanos = readI32().toLong()
+    val nanos = readI32()
     require(nanos >= 0L) { "Instant nanos out of range" }
-    if (seconds >= 0L) {
-        return java.time.Instant.EPOCH.plus(java.time.Duration.ofSeconds(seconds, nanos))
-    }
-    require(seconds != Long.MIN_VALUE) { "Instant out of range" }
-    return java.time.Instant.EPOCH.minus(java.time.Duration.ofSeconds(-seconds, nanos))
+    return java.time.Instant.ofEpochSecond(seconds, nanos.toLong())
 }
 
 private fun WireReader.readUuid(): java.util.UUID = java.util.UUID(readI64(), readI64())
@@ -29,15 +25,8 @@ private fun WireWriter.writeDuration(value: java.time.Duration) {
 }
 
 private fun WireWriter.writeInstant(value: java.time.Instant) {
-    var epochOffset = java.time.Duration.between(java.time.Instant.EPOCH, value)
-    var sign = 1L
-    if (epochOffset.isNegative) {
-        sign = -1L
-        epochOffset = epochOffset.negated()
-    }
-    require(epochOffset.nano >= 0) { "Invalid instant nanos" }
-    writeI64(sign * epochOffset.seconds)
-    writeI32(epochOffset.nano)
+    writeI64(value.epochSecond)
+    writeI32(value.nano)
 }
 
 private fun WireWriter.writeUuid(value: java.util.UUID) {

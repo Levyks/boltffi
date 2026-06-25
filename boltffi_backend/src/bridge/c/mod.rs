@@ -23,13 +23,13 @@ mod ty;
 pub use callback::{Callback, CallbackSlot};
 pub use contract::CBridgeContract;
 pub use enumeration::{Enum, EnumVariant};
-pub use function::Function;
+pub use function::{Function, ReturnChannel};
 pub use header::{CBridge, HeaderInclude};
 pub use identifier::Identifier;
 pub use parameter::{
     ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ClosureReturnParameter,
     ContinuationParameter, DirectVectorElementAbi, DirectVectorParameter, DirectWritebackParameter,
-    Parameter, ParameterGroup, ParameterIndex,
+    EncodedWritebackParameter, Parameter, ParameterGroup, ParameterIndex,
 };
 pub use record::{Field, Record};
 pub use stream::{DirectStreamBatch, Stream, StreamBatch};

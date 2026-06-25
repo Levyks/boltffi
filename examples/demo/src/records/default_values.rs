@@ -95,11 +95,6 @@ impl ServiceConfig {
             details = "This C# regression case is not asserted by the Swift demo suite yet. Add it when Swift demo coverage expands for fallible non-blittable record constructors."
         ),
         exclude(
-            kotlin,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Kotlin demo suite yet. Add it when Kotlin demo coverage expands for fallible non-blittable record constructors."
-        ),
-        exclude(
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for fallible non-blittable record constructors."
@@ -118,11 +113,6 @@ impl ServiceConfig {
             swift,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Swift demo suite yet. Add it when Swift demo coverage expands for fallible non-blittable record constructors."
-        ),
-        exclude(
-            kotlin,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Kotlin demo suite yet. Add it when Kotlin demo coverage expands for fallible non-blittable record constructors."
         ),
         exclude(
             java,
@@ -159,11 +149,6 @@ impl ServiceConfig {
             details = "This C# regression case is not asserted by the Swift demo suite yet. Add it when Swift demo coverage expands for optional non-blittable record constructors."
         ),
         exclude(
-            kotlin,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Kotlin demo suite yet. Add it when Kotlin demo coverage expands for optional non-blittable record constructors."
-        ),
-        exclude(
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for optional non-blittable record constructors."
@@ -182,11 +167,6 @@ impl ServiceConfig {
             swift,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Swift demo suite yet. Add it when Swift demo coverage expands for optional non-blittable record constructors."
-        ),
-        exclude(
-            kotlin,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Kotlin demo suite yet. Add it when Kotlin demo coverage expands for optional non-blittable record constructors."
         ),
         exclude(
             java,

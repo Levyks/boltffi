@@ -10,6 +10,7 @@ use crate::{
     },
     core::{Error, RenderContext, Result},
     target::kotlin::{
+        KotlinHost,
         codec::ScalarOption,
         name_style::KotlinPackage,
         primitive::KotlinPrimitive,
@@ -20,8 +21,6 @@ use crate::{
         syntax::TypeName,
     },
 };
-
-const KOTLIN_TARGET: &str = "kotlin";
 
 pub struct KotlinType;
 
@@ -78,7 +77,9 @@ impl KotlinType {
 
     pub fn native_return(return_value: &NativeReturn) -> Result<TypeName> {
         match return_value {
-            NativeReturn::Void | NativeReturn::Status => Ok(TypeName::unit()),
+            NativeReturn::Void | NativeReturn::Status | NativeReturn::EncodedError => {
+                Ok(TypeName::unit())
+            }
             NativeReturn::Value(scalar) => Self::jni(scalar.jni_type()),
             NativeReturn::Bytes | NativeReturn::Record(_) | NativeReturn::StatusWriteback(_) => {
                 Ok(TypeName::byte_array(true))
@@ -99,6 +100,7 @@ impl KotlinType {
 
     pub fn type_ref(ty: &TypeRef, context: &RenderContext<Native>) -> Result<TypeName> {
         ty.render_with(&mut KotlinTypeRef::new(context))
+            .map(ApiType::into_type)
     }
 
     pub fn type_ref_with_record_package(
@@ -107,6 +109,7 @@ impl KotlinType {
         package: &KotlinPackage,
     ) -> Result<TypeName> {
         ty.render_with(&mut KotlinTypeRef::new(context).record_package(package))
+            .map(ApiType::into_type)
     }
 
     fn direct_vector(parameter: &DirectVectorParameter) -> Result<TypeName> {
@@ -118,9 +121,14 @@ impl KotlinType {
     }
 }
 
-pub struct KotlinTypeRef<'context> {
+struct KotlinTypeRef<'context> {
     context: &'context RenderContext<'context, Native>,
     record_package: Option<KotlinPackage>,
+}
+
+struct ApiType {
+    ty: TypeName,
+    primitive: Option<Primitive>,
 }
 
 impl<'context> KotlinTypeRef<'context> {
@@ -138,44 +146,49 @@ impl<'context> KotlinTypeRef<'context> {
 }
 
 impl TypeRefRender for KotlinTypeRef<'_> {
-    type Output = Result<TypeName>;
+    type Output = Result<ApiType>;
 
     fn primitive(&mut self, primitive: Primitive) -> Self::Output {
-        KotlinType::primitive(primitive)
+        KotlinType::primitive(primitive).map(|ty| ApiType {
+            ty,
+            primitive: Some(primitive),
+        })
     }
 
     fn string(&mut self) -> Self::Output {
-        Ok(TypeName::string())
+        Ok(ApiType::new(TypeName::string()))
     }
 
     fn bytes(&mut self) -> Self::Output {
-        Ok(TypeName::byte_array(false))
+        Ok(ApiType::new(TypeName::byte_array(false)))
     }
 
     fn record(&mut self, id: RecordId) -> Self::Output {
         Record::type_name_from_id(id, self.context).map(|record| {
-            self.record_package
-                .as_ref()
-                .map_or(record.clone(), |package| {
-                    TypeName::qualified(package, record)
-                })
+            ApiType::new(
+                self.record_package
+                    .as_ref()
+                    .map_or(record.clone(), |package| {
+                        TypeName::qualified(package, record)
+                    }),
+            )
         })
     }
 
     fn enumeration(&mut self, id: EnumId) -> Self::Output {
-        Enumeration::type_name_from_id(id, self.context)
+        Enumeration::type_name_from_id(id, self.context).map(ApiType::new)
     }
 
     fn class(&mut self, _id: ClassId) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "class type",
         })
     }
 
     fn callback(&mut self, _id: CallbackId) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "callback type",
         })
     }
@@ -185,40 +198,60 @@ impl TypeRefRender for KotlinTypeRef<'_> {
             .custom_type(id)
             .map(|custom_type| custom_type.representation())
             .ok_or(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "custom type without declaration",
             })?
             .render_with(self)
+            .map(|inner| ApiType::new(inner.ty))
     }
 
     fn builtin(&mut self, kind: BuiltinType) -> Self::Output {
-        Ok(KotlinType::builtin(kind))
+        Ok(ApiType::new(KotlinType::builtin(kind)))
     }
 
     fn optional(&mut self, inner: Self::Output) -> Self::Output {
-        inner.map(TypeName::nullable)
+        inner.map(|inner| ApiType::new(inner.ty.nullable()))
     }
 
     fn sequence(&mut self, element: Self::Output) -> Self::Output {
-        element.map(TypeName::list)
+        let element = element?;
+        match element.primitive {
+            Some(primitive) => KotlinPrimitive::new(primitive)
+                .direct_vector_type()
+                .map(ApiType::new),
+            None => Ok(ApiType::new(TypeName::list(element.ty))),
+        }
     }
 
     fn tuple(&mut self, _elements: Vec<Self::Output>) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "tuple type",
         })
     }
 
     fn result(&mut self, ok: Self::Output, err: Self::Output) -> Self::Output {
-        Ok(TypeName::result(ok?, err?))
+        Ok(ApiType::new(TypeName::result(ok?.ty, err?.ty)))
     }
 
     fn map(&mut self, _key: Self::Output, _value: Self::Output) -> Self::Output {
         Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
+            target: KotlinHost::TARGET,
             shape: "map type",
         })
+    }
+}
+
+impl ApiType {
+    fn new(ty: TypeName) -> Self {
+        Self {
+            ty,
+            primitive: None,
+        }
+    }
+
+    fn into_type(self) -> TypeName {
+        self.ty
     }
 }
 
@@ -263,7 +296,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType<'_> {
                 Enumeration::type_name_from_id(*enumeration, self.context)
             }
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown direct function parameter",
             }),
         }
@@ -298,11 +331,11 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType<'_> {
                     .and_then(|handle| handle.ty())
             }
             HandleTarget::Stream(_) => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "handle function parameter",
             }),
             _ => Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
+                target: KotlinHost::TARGET,
                 shape: "unknown handle function parameter",
             }),
         }

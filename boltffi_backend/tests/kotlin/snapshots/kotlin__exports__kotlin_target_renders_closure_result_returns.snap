@@ -11,6 +11,10 @@ private object Utf8Codec {
     fun maxBytes(value: String): Int = value.length * 3
 }
 
+class FfiException(message: String) : RuntimeException(message)
+
+internal class BoltFfiErrorBufferException(val bytes: ByteArray) : RuntimeException("BoltFFI call failed")
+
 private object DirectVectorCodec {
     fun readBooleanArray(bytes: ByteArray): BooleanArray =
         BooleanArray(bytes.size) { index -> bytes[index] != 0.toByte() }
@@ -185,6 +189,78 @@ internal class WireReader(private val bytes: ByteArray) {
         return value
     }
 
+    fun readBooleanArray(): BooleanArray {
+        val length = readU32().toInt()
+        return BooleanArray(length) { readBool() }
+    }
+
+    fun readByteArray(): ByteArray = readBytes()
+
+    fun readShortArray(): ShortArray {
+        val length = readU32().toInt()
+        val byteCount = length * 2
+        val values = ShortArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readIntArray(): IntArray {
+        val length = readU32().toInt()
+        val byteCount = length * 4
+        val values = IntArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asIntBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readLongArray(): LongArray {
+        val length = readU32().toInt()
+        val byteCount = length * 8
+        val values = LongArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asLongBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readFloatArray(): FloatArray {
+        val length = readU32().toInt()
+        val byteCount = length * 4
+        val values = FloatArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asFloatBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
+    fun readDoubleArray(): DoubleArray {
+        val length = readU32().toInt()
+        val byteCount = length * 8
+        val values = DoubleArray(length)
+        java.nio.ByteBuffer
+            .wrap(bytes, position, byteCount)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asDoubleBuffer()
+            .get(values)
+        position += byteCount
+        return values
+    }
+
     fun <T> readOptionalValue(read: (WireReader) -> T): T? = readOptional(read)
 
     fun <T> readSequence(read: (WireReader) -> T): List<T> {
@@ -333,6 +409,63 @@ internal class WireWriter(initialCapacity: Int) {
         writeBytesRaw(value)
     }
 
+    fun writeBooleanArray(values: BooleanArray) {
+        writeU32(values.size.toUInt())
+        values.forEach { writeBool(it) }
+    }
+
+    fun writeByteArray(values: ByteArray) = writeBytes(values)
+
+    fun writeShortArray(values: ShortArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 2
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asShortBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeIntArray(values: IntArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 4
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asIntBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeLongArray(values: LongArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 8
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asLongBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeFloatArray(values: FloatArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 4
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asFloatBuffer().put(values)
+        position += byteCount
+    }
+
+    fun writeDoubleArray(values: DoubleArray) {
+        writeU32(values.size.toUInt())
+        val byteCount = values.size * 8
+        ensureCapacity(byteCount)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.asDoubleBuffer().put(values)
+        position += byteCount
+    }
+
     fun <T> writeOptionalValue(value: T?, write: (WireWriter, T) -> Unit) {
         writeOptional(value, write)
     }
@@ -424,15 +557,150 @@ private object WireWriterPool {
 
 @Suppress("FunctionName")
 private object Native {
+    init {
+        val androidLibrary = "boltffi"
+        val desktopPreferredLibrary = "boltffi_jni"
+        val desktopFallbackLibrary = "boltffi"
+        val vmName = System.getProperty("java.vm.name").orEmpty()
+        val isAndroidRuntime =
+            vmName.contains("dalvik", ignoreCase = true) ||
+            vmName.contains("art", ignoreCase = true)
+        if (isAndroidRuntime) {
+            System.loadLibrary(androidLibrary)
+        } else {
+            loadDesktopLibraries(desktopPreferredLibrary, desktopFallbackLibrary)
+        }
+    }
+
+    @Volatile
+    private var bundledLibraryDirectory: java.io.File? = null
+
+    private fun loadDesktopLibraries(preferredLibrary: String, fallbackLibrary: String) {
+        var preferredFailure = tryLoadDesktopLibrary(preferredLibrary)
+        if (preferredFailure == null) {
+            return
+        }
+
+        if (tryLoadOptionalDesktopLibrary(fallbackLibrary)) {
+            preferredFailure = tryLoadDesktopLibrary(preferredLibrary)
+            if (preferredFailure == null) {
+                return
+            }
+        }
+
+        throw preferredFailure
+    }
+
+    private fun tryLoadDesktopLibrary(libraryName: String): UnsatisfiedLinkError? {
+        try {
+            if (loadBundledLibraryIfPresent(libraryName) || loadExternalLibraryIfPresent(libraryName)) {
+                return null
+            }
+            return UnsatisfiedLinkError("Could not load native library '$libraryName'")
+        } catch (error: UnsatisfiedLinkError) {
+            return error
+        }
+    }
+
+    private fun tryLoadOptionalDesktopLibrary(libraryName: String): Boolean {
+        return try {
+            loadBundledLibraryIfPresent(libraryName) || loadExternalLibraryIfPresent(libraryName)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    private fun loadExternalLibraryIfPresent(libraryName: String): Boolean {
+        return try {
+            System.loadLibrary(libraryName)
+            true
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    private fun loadBundledLibraryIfPresent(libraryName: String): Boolean {
+        val mappedName = System.mapLibraryName(libraryName)
+        for (resourcePath in bundledLibraryResourceCandidates(mappedName)) {
+            Native::class.java.getResourceAsStream(resourcePath)?.use { input ->
+                val extracted = extractBundledLibrary(resourcePath, input)
+                System.load(extracted.absolutePath)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun extractBundledLibrary(
+        resourcePath: String,
+        input: java.io.InputStream,
+    ): java.io.File {
+        val fileName = resourcePath.substringAfterLast('/')
+        val extracted = java.io.File(bundledLibraryDirectory(), fileName)
+        if (!extracted.isFile) {
+            java.io.FileOutputStream(extracted).use { output ->
+                input.copyTo(output)
+            }
+            extracted.deleteOnExit()
+        }
+        return extracted
+    }
+
+    private fun bundledLibraryDirectory(): java.io.File {
+        bundledLibraryDirectory?.let { return it }
+        synchronized(this) {
+            bundledLibraryDirectory?.let { return it }
+            val created = java.io.File.createTempFile("boltffi-native-", "")
+            if (!created.delete() || !created.mkdir()) {
+                throw java.io.IOException("failed to create temp directory for bundled native extraction")
+            }
+            created.deleteOnExit()
+            bundledLibraryDirectory = created
+            return created
+        }
+    }
+
+    private fun bundledLibraryResourceCandidates(mappedName: String): List<String> {
+        val candidates = mutableListOf<String>()
+        for (directory in desktopNativeDirectories()) {
+            candidates += "/$directory/$mappedName"
+            candidates += "/native/$directory/$mappedName"
+        }
+        candidates += "/$mappedName"
+        return candidates
+    }
+
+    private fun desktopNativeDirectories(): List<String> {
+        val osName = System.getProperty("os.name").orEmpty().lowercase()
+        val osArch = System.getProperty("os.arch").orEmpty().lowercase()
+        return when {
+            (osName.contains("mac") || osName.contains("darwin")) &&
+                (osArch == "aarch64" || osArch == "arm64") ->
+                listOf("darwin-arm64", "darwin-aarch64")
+            (osName.contains("mac") || osName.contains("darwin")) && osArch == "x86_64" ->
+                listOf("darwin-x86_64", "darwin-x86-64")
+            osName.contains("linux") && (osArch == "x86_64" || osArch == "amd64") ->
+                listOf("linux-x86_64", "linux-x86-64")
+            osName.contains("linux") && (osArch == "aarch64" || osArch == "arm64") ->
+                listOf("linux-aarch64", "linux-arm64")
+            osName.contains("windows") && (osArch == "x86_64" || osArch == "amd64") ->
+                listOf("windows-x86_64", "windows-x86-64", "win32-x86_64")
+            else -> emptyList()
+        }
+    }
     @JvmStatic external fun boltffi_function_demo_apply(callback: Long, value: Int): Int
     @JvmStatic external fun boltffi_success_i32(returnOut: Long, value: Int): Unit
 }
 
+fun interface ClosureI32ToResultI32ErrMathError {
+    fun invoke(arg0: Int): Int
+}
+
 private object ClosureI32ToResultI32ErrDemoMathErrorCallbacks {
-    private val map = java.util.concurrent.ConcurrentHashMap<Long, ((Int) -> BoltFFIResult<Int, MathError>)>()
+    private val map = java.util.concurrent.ConcurrentHashMap<Long, ClosureI32ToResultI32ErrMathError>()
     private val counter = java.util.concurrent.atomic.AtomicLong(1L)
 
-    fun insert(value: ((Int) -> BoltFFIResult<Int, MathError>)): Long {
+    fun insert(value: ClosureI32ToResultI32ErrMathError): Long {
         val handle = counter.getAndAdd(2L)
         map[handle] = value
         return handle
@@ -446,21 +714,23 @@ private object ClosureI32ToResultI32ErrDemoMathErrorCallbacks {
     @JvmStatic
     fun call(handle: Long, arg0: Int, return_out: Long): ByteArray {
         val impl = map[handle] ?: error("ClosureI32ToResultI32ErrDemoMathErrorCallbacks: invalid handle $handle")
-        val __boltffi_closure_result = impl(arg0)
-        return __boltffi_closure_result.fold({ __boltffi_closure_success -> run { Native.boltffi_success_i32(return_out, __boltffi_closure_success); ByteArray(0) } }, { __boltffi_closure_error -> run { val __boltffi_closure_wire = WireWriterPool.acquire(4); val __boltffi_closure_writer = __boltffi_closure_wire.writer; __boltffi_closure_writer.writeI32(__boltffi_closure_error.value); val __boltffi_closure_error_bytes = __boltffi_closure_wire.bytes(); __boltffi_closure_wire.close(); __boltffi_closure_error_bytes } })
+        return try { run { Native.boltffi_success_i32(return_out, impl.invoke(arg0)); ByteArray(0) } } catch (__boltffi_closure_error: MathError) { run { val __boltffi_closure_wire = WireWriterPool.acquire(4); val __boltffi_closure_writer = __boltffi_closure_wire.writer; __boltffi_closure_writer.writeI32(__boltffi_closure_error.value); val __boltffi_closure_error_bytes = __boltffi_closure_wire.bytes(); __boltffi_closure_wire.close(); __boltffi_closure_error_bytes } }
     }
 }
 
 
-enum class MathError(val value: Int) {
-    InvalidInput(0);
+sealed class MathError(val value: Int) : Exception() {
+    object InvalidInput : MathError(0)
 
     companion object {
         fun fromValue(value: Int): MathError =
-            entries.first { it.value == value }
+            when (value) {
+                0 -> InvalidInput
+                else -> throw IllegalArgumentException("unknown MathError value: $value")
+            }
     }
 }
 
-fun apply(callback: ((Int) -> BoltFFIResult<Int, MathError>), value: Int): Int {
-    return Native.boltffi_function_demo_apply(ClosureI32ToResultI32ErrDemoMathErrorCallbacks.insert(callback), value)
+fun apply(callback: ClosureI32ToResultI32ErrMathError, value: Int): Int {
+    return try { Native.boltffi_function_demo_apply(ClosureI32ToResultI32ErrDemoMathErrorCallbacks.insert(callback), value) } catch (__boltffi_error: BoltFfiErrorBufferException) { run { val __boltffi_error_reader = WireReader(__boltffi_error.bytes); throw MathError.fromValue(__boltffi_error_reader.readI32()) } }
 }

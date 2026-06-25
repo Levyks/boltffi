@@ -6,6 +6,12 @@ class {{ class.name() }} internal constructor(internal val handle: Long) : AutoC
             Native.{{ class.release() }}(handle)
         }
     }
+{%- for initializer in class.initializers() %}
+{%- if initializer.constructor() %}
+
+    constructor({% for parameter in initializer.call().parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}) : this({{ initializer.call().name() }}({% for parameter in initializer.call().parameters() %}{{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}).handle)
+{%- endif %}
+{%- endfor %}
 {%- if !class.initializers().is_empty() || !class.static_methods().is_empty() %}
 
     companion object {

@@ -16,6 +16,16 @@ use super::{
     C_BRIDGE_LAYER, Identifier, Parameter, ParameterGroup, ParameterIndex, Type, names::Names,
 };
 
+/// Meaning of the C ABI return slot.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ReturnChannel {
+    /// The return slot carries the callable success value.
+    Value,
+    /// The return slot carries an encoded error payload.
+    EncodedError,
+}
+
 /// A C function declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -24,6 +34,7 @@ pub struct Function {
     params: Vec<Parameter>,
     parameter_groups: Vec<ParameterGroup>,
     returns: Type,
+    return_channel: ReturnChannel,
 }
 
 impl Function {
@@ -50,6 +61,11 @@ impl Function {
     /// Returns the C return type.
     pub fn returns(&self) -> &Type {
         &self.returns
+    }
+
+    /// Returns the semantic channel carried by the C return slot.
+    pub fn return_channel(&self) -> ReturnChannel {
+        self.return_channel
     }
 }
 
@@ -199,12 +215,23 @@ impl Function {
 
     /// Creates a C function declaration.
     pub fn new(name: impl Into<String>, params: Vec<Parameter>, returns: Type) -> Result<Self> {
+        Self::with_return_channel(name, params, returns, ReturnChannel::Value)
+    }
+
+    /// Creates a C function declaration with an explicit return slot channel.
+    pub fn with_return_channel(
+        name: impl Into<String>,
+        params: Vec<Parameter>,
+        returns: Type,
+        return_channel: ReturnChannel,
+    ) -> Result<Self> {
         let parameter_groups = ParameterGroup::from_params(&params)?;
         Ok(Self {
             name: Identifier::parse(name)?,
             params,
             parameter_groups,
             returns,
+            return_channel,
         })
     }
 }

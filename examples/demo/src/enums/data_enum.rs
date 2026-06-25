@@ -95,11 +95,6 @@ impl Shape {
             details = "This C# regression case is not asserted by the Swift demo suite yet. Add it when Swift demo coverage expands for optional data-enum constructors."
         ),
         exclude(
-            kotlin,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Kotlin demo suite yet. Add it when Kotlin demo coverage expands for optional data-enum constructors."
-        ),
-        exclude(
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for optional data-enum constructors."
@@ -118,11 +113,6 @@ impl Shape {
             swift,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Swift demo suite yet. Add it when Swift demo coverage expands for optional data-enum constructors."
-        ),
-        exclude(
-            kotlin,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the Kotlin demo suite yet. Add it when Kotlin demo coverage expands for optional data-enum constructors."
         ),
         exclude(
             java,

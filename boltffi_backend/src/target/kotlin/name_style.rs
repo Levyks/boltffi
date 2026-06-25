@@ -6,7 +6,10 @@ use boltffi_binding::{CanonicalName, NamePart};
 use crate::{
     bridge::jni::JvmClassPath,
     core::{Error, Result},
-    target::kotlin::syntax::{Identifier, TypeName},
+    target::kotlin::{
+        KotlinHost,
+        syntax::{Identifier, TypeName},
+    },
 };
 
 /// A Kotlin package name backed by the JVM package grammar.
@@ -18,6 +21,12 @@ pub struct KotlinPackage {
 /// A Kotlin source file stem.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct KotlinFile {
+    name: String,
+}
+
+/// A native library name accepted by Kotlin's runtime loader.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct KotlinLibrary {
     name: String,
 }
 
@@ -78,6 +87,36 @@ impl KotlinFile {
             .next()
             .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
             && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+    }
+}
+
+impl KotlinLibrary {
+    /// Parses a Kotlin native library load name.
+    pub fn parse(name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        if !name.is_empty()
+            && !name
+                .chars()
+                .any(|character| matches!(character, '/' | '\\'))
+        {
+            Ok(Self { name })
+        } else {
+            Err(Error::UnsupportedTarget {
+                target: KotlinHost::TARGET,
+                shape: "kotlin native library name",
+            })
+        }
+    }
+
+    /// Returns the library name passed to Kotlin's runtime loader.
+    pub fn as_str(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for KotlinLibrary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 

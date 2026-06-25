@@ -1,13 +1,30 @@
 {%- if enumeration.c_style() %}
 {%- if let Some(value_type) = enumeration.value_type() %}
+{%- if enumeration.error() %}
+sealed class {{ enumeration.name() }}(val value: {{ value_type }}) : Exception() {
+{%- else %}
 enum class {{ enumeration.name() }}(val value: {{ value_type }}) {
+{%- endif %}
 {%- for variant in enumeration.c_style_variants() %}
+{%- if enumeration.error() %}
+    object {{ variant.name() }} : {{ enumeration.name() }}({{ variant.value() }})
+{%- else %}
     {{ variant.name() }}({{ variant.value() }}){% if !loop.last %},{% else %};{% endif %}
+{%- endif %}
 {%- endfor %}
 
     companion object {
         fun fromValue(value: {{ value_type }}): {{ enumeration.name() }} =
+{%- if enumeration.error() %}
+            when (value) {
+{%- for variant in enumeration.c_style_variants() %}
+                {{ variant.value() }} -> {{ variant.name() }}
+{%- endfor %}
+                else -> throw IllegalArgumentException("unknown {{ enumeration.name() }} value: $value")
+            }
+{%- else %}
             entries.first { it.value == value }
+{%- endif %}
 {%- for initializer in enumeration.initializers() %}
 
         fun {{ initializer.name() }}({% for parameter in initializer.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = initializer.returns() %}: {{ return_type }}{% endif %} {
@@ -147,7 +164,7 @@ enum class {{ enumeration.name() }}(val value: {{ value_type }}) {
 }
 {%- endif %}
 {%- else if enumeration.data() %}
-sealed class {{ enumeration.name() }} {
+sealed class {{ enumeration.name() }}{% if enumeration.error() %} : Exception(){% endif %} {
     internal abstract fun wireSize(): Int
 
     internal abstract fun writeTo(writer: WireWriter)

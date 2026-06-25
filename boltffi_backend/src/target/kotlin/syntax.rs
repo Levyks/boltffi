@@ -167,6 +167,10 @@ impl TypeName {
         Self(name.into())
     }
 
+    pub fn qualified(package: impl fmt::Display, name: Self) -> Self {
+        Self::new(format!("{package}.{name}"))
+    }
+
     pub fn unit() -> Self {
         Self::new("Unit")
     }
@@ -269,6 +273,10 @@ impl Expression {
         Self(format!("{}L", value.into()))
     }
 
+    pub fn unsigned_long(value: impl Into<u128>) -> Self {
+        Self(format!("{}uL", value.into()))
+    }
+
     pub fn null() -> Self {
         Self("null".to_owned())
     }
@@ -308,6 +316,16 @@ impl Expression {
         Self(format!("{ty}({arguments})"))
     }
 
+    pub fn throwing(value: Self) -> Self {
+        Self(format!("throw {value}"))
+    }
+
+    pub fn try_catch(self, error: Identifier, ty: TypeName, body: Self) -> Self {
+        Self(format!(
+            "try {{ {self} }} catch ({error}: {ty}) {{ {body} }}"
+        ))
+    }
+
     pub fn property(receiver: impl fmt::Display, property: Identifier) -> Self {
         Self(format!("{receiver}.{property}"))
     }
@@ -326,6 +344,10 @@ impl Expression {
 
     pub fn divide(self, other: Self) -> Self {
         Self(format!("{self} / {other}"))
+    }
+
+    pub fn parenthesized(self) -> Self {
+        Self(format!("({self})"))
     }
 
     pub fn not_equal(self, other: Self) -> Self {
@@ -349,7 +371,9 @@ impl Expression {
     }
 
     pub fn sum_of(self, parameter: Identifier, body: Self) -> Self {
-        Self(format!("{self}.sumOf {{ {parameter} -> {body} }}"))
+        Self(format!(
+            "{self}.sumOf {{ {parameter} -> ({body}).toInt() }}"
+        ))
     }
 
     pub fn map(self, parameter: Identifier, body: Self) -> Self {
