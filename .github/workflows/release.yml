@@ -240,11 +240,12 @@ jobs:
           publish_crate boltffi_binding
           publish_crate boltffi_scan
           publish_crate boltffi_ffi_rules
+          publish_crate boltffi_backend
+          publish_crate boltffi_bindgen
           publish_crate boltffi_macros
+          publish_crate boltffi_verify
           publish_crate boltffi_core
           publish_crate boltffi
-          publish_crate boltffi_bindgen
-          publish_crate boltffi_verify
           publish_crate boltffi_cli
 
   publish-npm:
