@@ -53,6 +53,7 @@ jobs:
         with:
           # caching handled by Swatinem/rust-cache below
           cache: false
+          target: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
