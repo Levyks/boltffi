@@ -112,6 +112,7 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
                 DeclarationRef::Class(class) => methods.class(class),
                 DeclarationRef::Callback(callback) => methods.callback(callback),
                 DeclarationRef::Stream(stream) => methods.stream(stream),
+                DeclarationRef::Constant(constant) => methods.constant(constant),
                 _ => Ok(Vec::new()),
             })
             .collect::<Result<Vec<_>>>()?
@@ -189,6 +190,12 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
         })
     }
 
+    fn constants(&self) -> Vec<String> {
+        self.primary_chunks(|declaration| {
+            matches!(declaration.declaration(), DeclarationRef::Constant(_))
+        })
+    }
+
     fn declarations(&self) -> String {
         [
             self.records(),
@@ -196,6 +203,7 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             self.callbacks(),
             self.classes(),
             self.streams(),
+            self.constants(),
             self.functions(),
         ]
         .into_iter()

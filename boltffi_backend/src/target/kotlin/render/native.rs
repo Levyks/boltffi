@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use boltffi_binding::{
-    CallbackDecl, ClassDecl, ExportedCallable, FunctionDecl, Native, NativeSymbol, StreamDecl,
+    CallbackDecl, ClassDecl, ConstantDecl, ConstantValueDecl, ExportedCallable, FunctionDecl,
+    Native, NativeSymbol, StreamDecl,
 };
 
 use crate::{
@@ -129,6 +130,19 @@ impl<'bridge> NativeMethods<'bridge> {
         .into_iter()
         .map(|symbol| self.stream_symbol(symbol))
         .collect()
+    }
+
+    pub fn constant(&self, decl: &ConstantDecl<Native>) -> Result<Vec<NativeFunction>> {
+        match decl.value() {
+            ConstantValueDecl::Inline { .. } => Ok(Vec::new()),
+            ConstantValueDecl::Accessor { symbol, .. } => {
+                self.symbol(symbol).map(|function| vec![function])
+            }
+            _ => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "unknown constant declaration value",
+            }),
+        }
     }
 
     pub fn callback_handle_lifecycle(&self) -> Result<Vec<NativeFunction>> {

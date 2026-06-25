@@ -1,6 +1,7 @@
 mod callback;
 mod class;
 mod closure;
+mod constant;
 mod direct_vector;
 mod enumeration;
 mod field;
@@ -13,6 +14,7 @@ mod type_name;
 
 pub use callback::Callback;
 pub use class::Class;
+pub use constant::Constant;
 pub use enumeration::Enumeration;
 pub use function::Function;
 pub use module::Module;

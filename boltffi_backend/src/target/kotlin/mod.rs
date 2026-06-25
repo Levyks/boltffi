@@ -100,6 +100,7 @@ impl host::HostBackend for KotlinHost {
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Callbacks)
             .stable(BindingCapability::Streams)
+            .stable(BindingCapability::Constants)
             .stable(BindingCapability::CustomTypes)
     }
 
@@ -163,13 +164,11 @@ impl host::HostBackend for KotlinHost {
 
     fn constant(
         &self,
-        _decl: &ConstantDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        decl: &ConstantDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(Emitted::diagnostic(crate::core::Diagnostic::new(
-            "kotlin target skipped constant declaration",
-        )))
+        render::Constant::from_declaration(decl, bridge, context)?.render()
     }
 
     fn custom_type(

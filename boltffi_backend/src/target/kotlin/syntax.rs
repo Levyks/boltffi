@@ -273,6 +273,25 @@ impl Expression {
         Self("null".to_owned())
     }
 
+    pub fn bool(value: bool) -> Self {
+        Self(value.to_string())
+    }
+
+    pub fn literal(literal: Literal) -> Self {
+        Self(literal.to_string())
+    }
+
+    pub fn float(value: f64, single_precision: bool) -> Self {
+        let mut literal = value.to_string();
+        if !literal.contains('.') && !literal.contains('e') && !literal.contains('E') {
+            literal.push_str(".0");
+        }
+        if single_precision {
+            literal.push('f');
+        }
+        Self(literal)
+    }
+
     pub fn this() -> Self {
         Self("this".to_owned())
     }

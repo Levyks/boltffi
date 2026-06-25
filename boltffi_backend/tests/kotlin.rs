@@ -6,6 +6,8 @@ use boltffi_binding::{Native, lower};
 
 #[path = "kotlin/callback.rs"]
 mod callback;
+#[path = "kotlin/constant.rs"]
+mod constant;
 #[path = "kotlin/direct_vector.rs"]
 mod direct_vector;
 #[path = "kotlin/exports.rs"]
