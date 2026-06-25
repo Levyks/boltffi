@@ -1,5 +1,5 @@
 use askama::Template as AskamaTemplate;
-use boltffi_binding::{DeclarationRef, Native};
+use boltffi_binding::{BuiltinType, DeclarationRef, Native};
 
 use crate::{
     bridge::jni::JniBridgeContract,
@@ -22,6 +22,20 @@ struct ModuleTemplate {
 #[derive(AskamaTemplate)]
 #[template(path = "target/kotlin/runtime.kt", escape = "none")]
 struct RuntimeTemplate;
+
+#[derive(AskamaTemplate)]
+#[template(path = "target/kotlin/runtime/result.kt", escape = "none")]
+struct ResultRuntimeTemplate;
+
+#[derive(AskamaTemplate)]
+#[template(path = "target/kotlin/runtime/builtin.kt", escape = "none")]
+struct BuiltinRuntimeTemplate;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RuntimeFeatures {
+    builtin: bool,
+    result: bool,
+}
 
 pub struct Module<'host, 'bridge, 'decl> {
     host: &'host KotlinHost,
@@ -48,7 +62,8 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
         let declarations = self.declarations();
         let contents = ModuleTemplate {
             package: self.host.package().clone(),
-            runtime: RuntimeTemplate.render()?,
+            runtime: Runtime::new(RuntimeFeatures::from_declarations(&self.declarations))
+                .render()?,
             native_functions,
             declarations,
         }
@@ -137,5 +152,50 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             .iter()
             .flat_map(|declaration| declaration.emitted().diagnostics().iter().cloned())
             .collect()
+    }
+}
+
+struct Runtime {
+    features: RuntimeFeatures,
+}
+
+impl Runtime {
+    fn new(features: RuntimeFeatures) -> Self {
+        Self { features }
+    }
+
+    fn render(self) -> Result<String> {
+        let mut blocks = vec![RuntimeTemplate.render()?];
+        if self.features.builtin {
+            blocks.push(BuiltinRuntimeTemplate.render()?);
+        }
+        if self.features.result {
+            blocks.push(ResultRuntimeTemplate.render()?);
+        }
+        Ok(blocks.join("\n\n"))
+    }
+}
+
+impl RuntimeFeatures {
+    fn from_declarations(declarations: &[RenderedDeclaration<'_, Native>]) -> Self {
+        Self {
+            builtin: declarations
+                .iter()
+                .any(|declaration| Self::declaration_uses_builtin(declaration.declaration())),
+            result: declarations
+                .iter()
+                .any(|declaration| declaration.declaration().uses_result_codec()),
+        }
+    }
+
+    fn declaration_uses_builtin(declaration: DeclarationRef<'_, Native>) -> bool {
+        [
+            BuiltinType::Duration,
+            BuiltinType::SystemTime,
+            BuiltinType::Uuid,
+            BuiltinType::Url,
+        ]
+        .into_iter()
+        .any(|kind| declaration.uses_builtin_codec(kind))
     }
 }

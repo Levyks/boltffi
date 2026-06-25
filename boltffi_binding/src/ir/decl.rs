@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BufferShapeRules, ByteSize, CallableScope, CallbackId, CallbackProtocolIntrospect,
+    BufferShapeRules, BuiltinType, ByteSize, CallableScope, CallbackId, CallbackProtocolIntrospect,
     CanonicalName, ClassId, CodecPlan, ConstantId, CustomTypeConverters, CustomTypeId, DeclMeta,
     DeclarationId, DefaultValue, DirectFieldType, DirectValueType, ElementMeta, EnumId,
     ExportedCallable, FunctionId, ImportedCallable, InitializerId, IntegerRepr, IntegerValue,
@@ -147,6 +147,34 @@ impl<'a, S: Surface> DeclarationRef<'a, S> {
         match self {
             Self::CustomType(custom_type) => Some(custom_type),
             _ => None,
+        }
+    }
+
+    /// Returns whether any encoded value in this declaration uses a result codec.
+    pub fn uses_result_codec(self) -> bool {
+        match self {
+            Self::Record(record) => record.uses_result_codec(),
+            Self::Enum(enumeration) => enumeration.uses_result_codec(),
+            Self::Function(function) => function.uses_result_codec(),
+            Self::Class(class) => class.uses_result_codec(),
+            Self::Callback(callback) => callback.uses_result_codec(),
+            Self::Stream(stream) => stream.uses_result_codec(),
+            Self::Constant(constant) => constant.uses_result_codec(),
+            Self::CustomType(_) => false,
+        }
+    }
+
+    /// Returns whether any encoded value in this declaration uses the given builtin codec.
+    pub fn uses_builtin_codec(self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Record(record) => record.uses_builtin_codec(kind),
+            Self::Enum(enumeration) => enumeration.uses_builtin_codec(kind),
+            Self::Function(function) => function.uses_builtin_codec(kind),
+            Self::Class(class) => class.uses_builtin_codec(kind),
+            Self::Callback(callback) => callback.uses_builtin_codec(kind),
+            Self::Stream(stream) => stream.uses_builtin_codec(kind),
+            Self::Constant(constant) => constant.uses_builtin_codec(kind),
+            Self::CustomType(_) => false,
         }
     }
 }
@@ -381,6 +409,20 @@ impl<S: Surface> RecordDecl<S> {
             Self::Encoded(record) => record.meta(),
         }
     }
+
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::Direct(record) => record.uses_result_codec(),
+            Self::Encoded(record) => record.uses_result_codec(),
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Direct(record) => record.uses_builtin_codec(kind),
+            Self::Encoded(record) => record.uses_builtin_codec(kind),
+        }
+    }
 }
 
 /// A record that crosses the boundary as raw memory.
@@ -457,6 +499,23 @@ impl<S: Surface> DirectRecordDecl<S> {
     /// Returns the byte-level layout.
     pub fn layout(&self) -> &RecordLayout {
         &self.layout
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.initializers
+            .iter()
+            .any(InitializerDecl::uses_result_codec)
+            || self.methods.iter().any(MethodDecl::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.initializers
+            .iter()
+            .any(|initializer| initializer.uses_builtin_codec(kind))
+            || self
+                .methods
+                .iter()
+                .any(|method| method.uses_builtin_codec(kind))
     }
 }
 
@@ -544,6 +603,29 @@ impl<S: Surface> EncodedRecordDecl<S> {
     /// Returns the whole-record codec.
     pub fn codec(&self) -> &CodecPlan {
         &self.codec
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.fields.iter().any(EncodedFieldDecl::uses_result_codec)
+            || self
+                .initializers
+                .iter()
+                .any(InitializerDecl::uses_result_codec)
+            || self.methods.iter().any(MethodDecl::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.fields
+            .iter()
+            .any(|field| field.uses_builtin_codec(kind))
+            || self
+                .initializers
+                .iter()
+                .any(|initializer| initializer.uses_builtin_codec(kind))
+            || self
+                .methods
+                .iter()
+                .any(|method| method.uses_builtin_codec(kind))
     }
 }
 
@@ -644,6 +726,14 @@ impl EncodedFieldDecl {
     pub fn meta(&self) -> &ElementMeta {
         &self.meta
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.codec.uses_result()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.codec.uses_builtin(kind)
+    }
 }
 
 /// A user-defined enum after the classifier chose how it crosses.
@@ -674,6 +764,20 @@ impl<S: Surface> EnumDecl<S> {
         match self {
             Self::CStyle(enum_decl) => enum_decl.name(),
             Self::Data(enum_decl) => enum_decl.name(),
+        }
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::CStyle(enumeration) => enumeration.uses_result_codec(),
+            Self::Data(enumeration) => enumeration.uses_result_codec(),
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::CStyle(enumeration) => enumeration.uses_builtin_codec(kind),
+            Self::Data(enumeration) => enumeration.uses_builtin_codec(kind),
         }
     }
 }
@@ -748,6 +852,23 @@ impl<S: Surface> CStyleEnumDecl<S> {
     /// Returns the methods.
     pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.methods
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.initializers
+            .iter()
+            .any(InitializerDecl::uses_result_codec)
+            || self.methods.iter().any(MethodDecl::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.initializers
+            .iter()
+            .any(|initializer| initializer.uses_builtin_codec(kind))
+            || self
+                .methods
+                .iter()
+                .any(|method| method.uses_builtin_codec(kind))
     }
 }
 
@@ -865,6 +986,29 @@ impl<S: Surface> DataEnumDecl<S> {
     pub fn codec(&self) -> &CodecPlan {
         &self.codec
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.variants.iter().any(DataVariantDecl::uses_result_codec)
+            || self
+                .initializers
+                .iter()
+                .any(InitializerDecl::uses_result_codec)
+            || self.methods.iter().any(MethodDecl::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.variants
+            .iter()
+            .any(|variant| variant.uses_builtin_codec(kind))
+            || self
+                .initializers
+                .iter()
+                .any(|initializer| initializer.uses_builtin_codec(kind))
+            || self
+                .methods
+                .iter()
+                .any(|method| method.uses_builtin_codec(kind))
+    }
 }
 
 /// The integer tag assigned to one data enum variant.
@@ -930,6 +1074,14 @@ impl DataVariantDecl {
     pub fn meta(&self) -> &ElementMeta {
         &self.meta
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.payload.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.payload.uses_builtin_codec(kind)
+    }
 }
 
 /// The data carried by one variant of a data enum.
@@ -942,6 +1094,26 @@ pub enum DataVariantPayload {
     Tuple(Vec<EncodedFieldDecl>),
     /// Struct-style payload fields.
     Struct(Vec<EncodedFieldDecl>),
+}
+
+impl DataVariantPayload {
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::Tuple(fields) | Self::Struct(fields) => {
+                fields.iter().any(EncodedFieldDecl::uses_result_codec)
+            }
+            Self::Unit => false,
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Tuple(fields) | Self::Struct(fields) => {
+                fields.iter().any(|field| field.uses_builtin_codec(kind))
+            }
+            Self::Unit => false,
+        }
+    }
 }
 
 /// A free function exported across the boundary.
@@ -1002,6 +1174,14 @@ impl<S: Surface> FunctionDecl<S> {
     /// Returns the callable.
     pub fn callable(&self) -> &ExportedCallable<S> {
         &self.callable
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.callable.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.callable.uses_builtin_codec(kind)
     }
 }
 
@@ -1168,6 +1348,23 @@ impl<S: Surface> ClassDecl<S> {
     pub fn methods(&self) -> &[ExportedMethodDecl<S, NativeSymbol>] {
         &self.callables.methods
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.initializers()
+            .iter()
+            .any(InitializerDecl::uses_result_codec)
+            || self.methods().iter().any(MethodDecl::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.initializers()
+            .iter()
+            .any(|initializer| initializer.uses_builtin_codec(kind))
+            || self
+                .methods()
+                .iter()
+                .any(|method| method.uses_builtin_codec(kind))
+    }
 }
 
 impl From<InvalidClassDecl> for crate::BindingError {
@@ -1248,6 +1445,24 @@ impl<S: Surface> CallbackDecl<S> {
     pub fn local_protocol(&self) -> Option<&CallbackLocalProtocol<S>> {
         self.local_protocol.as_ref()
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.protocol()
+            .method_callables()
+            .any(ImportedCallable::uses_result_codec)
+            || self
+                .local_protocol()
+                .is_some_and(CallbackLocalProtocol::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.protocol()
+            .method_callables()
+            .any(|callable| callable.uses_builtin_codec(kind))
+            || self
+                .local_protocol()
+                .is_some_and(|protocol| protocol.uses_builtin_codec(kind))
+    }
 }
 
 /// Rust-side functions backing callback values implemented in Rust.
@@ -1296,6 +1511,18 @@ impl<S: Surface> CallbackLocalProtocol<S> {
     /// Returns the local method entry points.
     pub fn methods(&self) -> &[CallbackLocalMethodDecl<S>] {
         &self.methods
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.methods
+            .iter()
+            .any(CallbackLocalMethodDecl::uses_result_codec)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.methods
+            .iter()
+            .any(|method| method.uses_builtin_codec(kind))
     }
 }
 
@@ -1353,6 +1580,14 @@ impl<S: Surface> CallbackLocalMethodDecl<S> {
     /// Returns the Rust-owned callback method callable.
     pub fn callable(&self) -> &ExportedCallable<S> {
         &self.callable
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.callable.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.callable.uses_builtin_codec(kind)
     }
 }
 
@@ -1459,6 +1694,14 @@ impl<S: Surface> StreamDecl<S> {
         &self.item
     }
 
+    fn uses_result_codec(&self) -> bool {
+        self.item.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.item.uses_builtin_codec(kind)
+    }
+
     /// Returns the consumer-side protocol.
     pub fn protocol(&self) -> &StreamProtocol {
         &self.protocol
@@ -1529,6 +1772,20 @@ impl<S: Surface> StreamItemPlan<S> {
                 crate::BindingErrorKind::SliceInReturnPosition,
             )),
             _ => Ok(()),
+        }
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::Encoded { read, .. } => read.uses_result(),
+            Self::Direct { .. } => false,
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Encoded { read, .. } => read.uses_builtin(kind),
+            Self::Direct { .. } => false,
         }
     }
 }
@@ -1667,6 +1924,14 @@ impl<S: Surface> ConstantDecl<S> {
     pub fn value(&self) -> &ConstantValueDecl<S> {
         &self.value
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.value.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.value.uses_builtin_codec(kind)
+    }
 }
 
 /// How a constant's value is delivered to foreign code.
@@ -1715,6 +1980,20 @@ impl<S: Surface> ConstantValueDecl<S> {
     /// tuples, and unevaluated expressions).
     pub fn accessor(symbol: NativeSymbol, callable: Box<ExportedCallable<S>>) -> Self {
         Self::Accessor { symbol, callable }
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::Accessor { callable, .. } => callable.uses_result_codec(),
+            Self::Inline { .. } => false,
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Accessor { callable, .. } => callable.uses_builtin_codec(kind),
+            Self::Inline { ty, .. } => ty.uses_builtin(kind),
+        }
     }
 }
 
@@ -1848,6 +2127,14 @@ where
     pub fn callable(&self) -> &crate::CallableDecl<S, K> {
         &self.callable
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.callable.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.callable.uses_builtin_codec(kind)
+    }
 }
 
 /// A method whose body is implemented in Rust. The contained
@@ -1929,5 +2216,13 @@ impl<S: Surface> InitializerDecl<S> {
     /// Returns the constructed type.
     pub fn returns(&self) -> &ReturnTypeRef {
         &self.returns
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.callable.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.callable.uses_builtin_codec(kind)
     }
 }

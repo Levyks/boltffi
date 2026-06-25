@@ -14,7 +14,8 @@
 use std::fmt::Debug;
 
 use crate::{
-    ClosureRegistrationIntrospect, CodecNode, ReadPlan, Receive, Surface, ValueRef, WritePlan,
+    BuiltinType, ClosureRegistrationIntrospect, CodecNode, ReadPlan, Receive, Surface, ValueRef,
+    WritePlan,
 };
 
 /// Marker for data flowing from foreign code into Rust.
@@ -119,6 +120,12 @@ pub trait Direction:
     /// the value from the wire so there is nothing to bind.
     fn make_codec(value: ValueRef, root: CodecNode) -> Self::Codec;
 
+    /// Returns whether a direction-specific codec includes a result container.
+    fn codec_uses_result(codec: &Self::Codec) -> bool;
+
+    /// Returns whether a direction-specific codec includes the given builtin value.
+    fn codec_uses_builtin(codec: &Self::Codec, kind: BuiltinType) -> bool;
+
     /// Projects a `Receive` value into the direction's receive type.
     ///
     /// [`IntoRust`] returns the value unchanged. [`OutOfRust`] discards
@@ -137,6 +144,14 @@ impl Direction for IntoRust {
         WritePlan::new(value, root)
     }
 
+    fn codec_uses_result(codec: &WritePlan) -> bool {
+        codec.uses_result()
+    }
+
+    fn codec_uses_builtin(codec: &WritePlan, kind: BuiltinType) -> bool {
+        codec.uses_builtin(kind)
+    }
+
     fn receive_from(receive: Receive) -> Receive {
         receive
     }
@@ -151,6 +166,14 @@ impl Direction for OutOfRust {
 
     fn make_codec(_value: ValueRef, root: CodecNode) -> ReadPlan {
         ReadPlan::new(root)
+    }
+
+    fn codec_uses_result(codec: &ReadPlan) -> bool {
+        codec.uses_result()
+    }
+
+    fn codec_uses_builtin(codec: &ReadPlan, kind: BuiltinType) -> bool {
+        codec.uses_builtin(kind)
     }
 
     fn receive_from(_receive: Receive) {}

@@ -103,8 +103,14 @@ impl CodecRead for Reader<'_> {
         representation
     }
 
-    fn builtin(&mut self, _kind: BuiltinType) -> Self::Expr {
-        Self::unsupported("builtin wire read")
+    fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
+        let method = match kind {
+            BuiltinType::Duration => "readDuration",
+            BuiltinType::SystemTime => "readInstant",
+            BuiltinType::Uuid => "readUuid",
+            BuiltinType::Url => "readUri",
+        };
+        self.call(method)
     }
 
     fn optional(&mut self, inner: Self::Expr) -> Self::Expr {
@@ -137,8 +143,17 @@ impl CodecRead for Reader<'_> {
         Self::unsupported("tuple wire read")
     }
 
-    fn result(&mut self, _ok: Self::Expr, _err: Self::Expr) -> Self::Expr {
-        Self::unsupported("result wire read")
+    fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
+        Ok(Expression::call(
+            Expression::identifier(self.reader.clone()),
+            Identifier::parse("readResult")?,
+            [
+                Expression::lambda_expression(vec![self.reader.clone()], ok?),
+                Expression::lambda_expression(vec![self.reader.clone()], err?),
+            ]
+            .into_iter()
+            .collect::<ArgumentList>(),
+        ))
     }
 
     fn map(&mut self, _kind: MapKind, _key: Self::Expr, _value: Self::Expr) -> Self::Expr {

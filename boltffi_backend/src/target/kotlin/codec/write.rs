@@ -232,8 +232,14 @@ impl CodecWrite for Writer<'_> {
         representation
     }
 
-    fn builtin(&mut self, _kind: BuiltinType, _value: &ValueRef) -> Vec<Self::Stmt> {
-        Self::unsupported("builtin wire write")
+    fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt> {
+        let method = match kind {
+            BuiltinType::Duration => "writeDuration",
+            BuiltinType::SystemTime => "writeInstant",
+            BuiltinType::Uuid => "writeUuid",
+            BuiltinType::Url => "writeUri",
+        };
+        vec![Identifier::parse(method).and_then(|method| self.writer_call(method, value))]
     }
 
     fn optional(
@@ -291,12 +297,30 @@ impl CodecWrite for Writer<'_> {
 
     fn result(
         &mut self,
-        _value: &ValueRef,
-        _binder: BinderId,
-        _ok: Vec<Self::Stmt>,
-        _err: Vec<Self::Stmt>,
+        value: &ValueRef,
+        binder: BinderId,
+        ok: Vec<Self::Stmt>,
+        err: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
-        Self::unsupported("result wire write")
+        vec![self.value(value).and_then(|value| {
+            Ok(Statement::expression(Expression::call(
+                Expression::identifier(self.writer.clone()),
+                Identifier::parse("writeResult")?,
+                [
+                    value,
+                    Expression::lambda_statement(
+                        vec![self.writer.clone(), ValueExpression::binder(binder)?],
+                        Self::single_statement(ok)?,
+                    ),
+                    Expression::lambda_statement(
+                        vec![self.writer.clone(), ValueExpression::binder(binder)?],
+                        Self::single_statement(err)?,
+                    ),
+                ]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            )))
+        })]
     }
 
     fn map(

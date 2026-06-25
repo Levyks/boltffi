@@ -1,0 +1,740 @@
+---
+source: boltffi_backend/tests/kotlin/exports.rs
+assertion_line: 45
+expression: "rendered_fixture(\"exports/result_values\")"
+---
+===== jni/boltffi.h =====
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+    int32_t code;
+} FfiStatus;
+
+#define FFI_STATUS_OK ((FfiStatus){0})
+#define FFI_STATUS_NULL_POINTER ((FfiStatus){1})
+#define FFI_STATUS_BUFFER_TOO_SMALL ((FfiStatus){2})
+#define FFI_STATUS_INVALID_ARG ((FfiStatus){3})
+#define FFI_STATUS_CANCELLED ((FfiStatus){4})
+#define FFI_STATUS_INTERNAL_ERROR ((FfiStatus){100})
+
+typedef struct {
+    uint8_t *ptr;
+    uintptr_t len;
+    uintptr_t cap;
+    uintptr_t align;
+} FfiBuf_u8;
+
+typedef struct {
+    uint8_t *ptr;
+    uintptr_t len;
+    uintptr_t cap;
+} FfiString;
+
+typedef struct {
+    FfiString message;
+} FfiError;
+
+typedef struct {
+    const uint8_t *ptr;
+    uintptr_t len;
+} FfiSpan;
+
+typedef const void *RustFutureHandle;
+typedef int8_t StreamPollResult;
+typedef int32_t WaitResult;
+typedef void (*RustFutureContinuationCallback)(uint64_t callback_data, int8_t poll_result);
+typedef void (*StreamContinuationCallback)(uint64_t callback_data, StreamPollResult result);
+
+typedef struct {
+    uint64_t handle;
+    const void *vtable;
+} BoltFFICallbackHandle;
+
+void boltffi_free_string(FfiString string);
+void boltffi_free_buf(FfiBuf_u8 buf);
+FfiBuf_u8 boltffi_buf_from_bytes(const uint8_t *ptr, uintptr_t len);
+FfiStatus boltffi_last_error_message(FfiString *out);
+void boltffi_clear_last_error(void);
+FfiBuf_u8 boltffi_function_demo_result_to_string(const uint8_t *value_ptr, uintptr_t value_len);
+FfiBuf_u8 boltffi_function_demo_echo_response(const uint8_t *response_ptr, uintptr_t response_len);
+
+#ifdef __cplusplus
+}
+#endif
+===== jni/jni_glue.c =====
+#include <jni.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <limits.h>
+#include <stdlib.h>
+#if defined(__ANDROID__)
+#include <pthread.h>
+#endif
+
+#include "boltffi.h"
+static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
+    jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
+    if (exception_class == NULL) {
+        return;
+    }
+    (*env)->ThrowNew(env, exception_class, message);
+    (*env)->DeleteLocalRef(env, exception_class);
+}
+
+static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message) {
+    jclass exception_class = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
+    if (exception_class == NULL) {
+        return;
+    }
+    (*env)->ThrowNew(env, exception_class, message);
+    (*env)->DeleteLocalRef(env, exception_class);
+}
+
+static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
+    if (buffer.ptr == NULL) {
+        if (buffer.len != 0) {
+            boltffi_jni_throw_runtime(env, "BoltFFI buffer pointer was null with non-zero length");
+            return NULL;
+        }
+        return (*env)->NewByteArray(env, 0);
+    }
+    if (buffer.len > (uintptr_t)INT32_MAX) {
+        boltffi_free_buf(buffer);
+        boltffi_jni_throw_runtime(env, "BoltFFI buffer too large for Java byte array");
+        return NULL;
+    }
+    jbyteArray array = (*env)->NewByteArray(env, (jsize)buffer.len);
+    if (array == NULL) {
+        boltffi_free_buf(buffer);
+        return NULL;
+    }
+    (*env)->SetByteArrayRegion(env, array, 0, (jsize)buffer.len, (const jbyte *)buffer.ptr);
+    boltffi_free_buf(buffer);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->DeleteLocalRef(env, array);
+        return NULL;
+    }
+    return array;
+}
+
+static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
+    if (bytes == NULL && len != 0) {
+        boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
+        return NULL;
+    }
+    if (len > (uintptr_t)INT32_MAX) {
+        boltffi_jni_throw_runtime(env, "BoltFFI byte slice too large for Java byte array");
+        return NULL;
+    }
+    jbyteArray array = (*env)->NewByteArray(env, (jsize)len);
+    if (array == NULL) {
+        return NULL;
+    }
+    if (len != 0) {
+        (*env)->SetByteArrayRegion(env, array, 0, (jsize)len, (const jbyte *)bytes);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, array);
+            return NULL;
+        }
+    }
+    return array;
+}
+
+static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
+    FfiBuf_u8 empty = {0};
+    if (array == NULL) {
+        boltffi_jni_throw_runtime(env, "BoltFFI byte array return was null");
+        return empty;
+    }
+    jsize len = (*env)->GetArrayLength(env, array);
+    if (len == 0) {
+        return empty;
+    }
+    uint8_t *bytes = (uint8_t *)malloc((size_t)len);
+    if (bytes == NULL) {
+        boltffi_jni_throw_runtime(env, "failed to allocate BoltFFI byte array return");
+        return empty;
+    }
+    (*env)->GetByteArrayRegion(env, array, 0, len, (jbyte *)bytes);
+    if ((*env)->ExceptionCheck(env)) {
+        free(bytes);
+        return empty;
+    }
+    FfiBuf_u8 buffer = {
+        .ptr = bytes,
+        .len = (uintptr_t)len,
+        .cap = (uintptr_t)len,
+        .align = 1,
+    };
+    return buffer;
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1result_1to_1string(JNIEnv *env, jclass cls, jbyteArray value) {
+    (void)cls;
+
+    jbyte *__boltffi_value_ptr = NULL;
+    jsize __boltffi_value_len = 0;
+
+    if (value == NULL) {
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
+        goto __boltffi_error;
+    }
+    __boltffi_value_len = (*env)->GetArrayLength(env, value);
+    __boltffi_value_ptr = (*env)->GetByteArrayElements(env, value, NULL);
+    if (__boltffi_value_ptr == NULL) {
+        goto __boltffi_error;
+    }
+
+    (void)env;
+    FfiBuf_u8 result = boltffi_function_demo_result_to_string((const uint8_t *)__boltffi_value_ptr, (uintptr_t)__boltffi_value_len);
+
+    if (__boltffi_value_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, value, __boltffi_value_ptr, JNI_ABORT);
+        __boltffi_value_ptr = NULL;
+    }
+
+    return boltffi_jni_buffer_to_byte_array(env, result);
+__boltffi_error:
+    if (__boltffi_value_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, value, __boltffi_value_ptr, JNI_ABORT);
+        __boltffi_value_ptr = NULL;
+    }
+    return NULL;
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1echo_1response(JNIEnv *env, jclass cls, jbyteArray response) {
+    (void)cls;
+
+    jbyte *__boltffi_response_ptr = NULL;
+    jsize __boltffi_response_len = 0;
+
+    if (response == NULL) {
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
+        goto __boltffi_error;
+    }
+    __boltffi_response_len = (*env)->GetArrayLength(env, response);
+    __boltffi_response_ptr = (*env)->GetByteArrayElements(env, response, NULL);
+    if (__boltffi_response_ptr == NULL) {
+        goto __boltffi_error;
+    }
+
+    (void)env;
+    FfiBuf_u8 result = boltffi_function_demo_echo_response((const uint8_t *)__boltffi_response_ptr, (uintptr_t)__boltffi_response_len);
+
+    if (__boltffi_response_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, response, __boltffi_response_ptr, JNI_ABORT);
+        __boltffi_response_ptr = NULL;
+    }
+
+    return boltffi_jni_buffer_to_byte_array(env, result);
+__boltffi_error:
+    if (__boltffi_response_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, response, __boltffi_response_ptr, JNI_ABORT);
+        __boltffi_response_ptr = NULL;
+    }
+    return NULL;
+}
+
+===== com/boltffi/demo/Demo.kt =====
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
+package com.boltffi.demo
+
+private object Utf8Codec {
+    fun maxBytes(value: String): Int = value.length * 3
+}
+
+private object DirectVectorCodec {
+    fun readBooleanArray(bytes: ByteArray): BooleanArray =
+        BooleanArray(bytes.size) { index -> bytes[index] != 0.toByte() }
+
+    fun readByteArray(bytes: ByteArray): ByteArray = bytes
+
+    fun readShortArray(bytes: ByteArray): ShortArray {
+        val values = ShortArray(elementCount(bytes, 2))
+        nativeBuffer(bytes).asShortBuffer().get(values)
+        return values
+    }
+
+    fun readUShortArray(bytes: ByteArray): UShortArray =
+        readShortArray(bytes).toUShortArray()
+
+    fun readIntArray(bytes: ByteArray): IntArray {
+        val values = IntArray(elementCount(bytes, 4))
+        nativeBuffer(bytes).asIntBuffer().get(values)
+        return values
+    }
+
+    fun readUIntArray(bytes: ByteArray): UIntArray =
+        readIntArray(bytes).toUIntArray()
+
+    fun readLongArray(bytes: ByteArray): LongArray {
+        val values = LongArray(elementCount(bytes, 8))
+        nativeBuffer(bytes).asLongBuffer().get(values)
+        return values
+    }
+
+    fun readULongArray(bytes: ByteArray): ULongArray =
+        readLongArray(bytes).toULongArray()
+
+    fun readFloatArray(bytes: ByteArray): FloatArray {
+        val values = FloatArray(elementCount(bytes, 4))
+        nativeBuffer(bytes).asFloatBuffer().get(values)
+        return values
+    }
+
+    fun readDoubleArray(bytes: ByteArray): DoubleArray {
+        val values = DoubleArray(elementCount(bytes, 8))
+        nativeBuffer(bytes).asDoubleBuffer().get(values)
+        return values
+    }
+
+    private fun nativeBuffer(bytes: ByteArray): java.nio.ByteBuffer =
+        java.nio.ByteBuffer
+            .wrap(bytes)
+            .order(java.nio.ByteOrder.nativeOrder())
+
+    private fun elementCount(bytes: ByteArray, width: Int): Int {
+        require(bytes.size % width == 0)
+        return bytes.size / width
+    }
+}
+
+internal class WireReader(private val bytes: ByteArray) {
+    private var position = 0
+
+    fun readBool(): Boolean = readI8() != 0.toByte()
+
+    fun readI8(): Byte {
+        val value = bytes[position]
+        position += 1
+        return value
+    }
+
+    fun readU8(): UByte = readI8().toUByte()
+
+    fun readI16(): Short {
+        val value =
+            (bytes[position].toInt() and 0xff) or
+                ((bytes[position + 1].toInt() and 0xff) shl 8)
+        position += 2
+        return value.toShort()
+    }
+
+    fun readU16(): UShort = readI16().toUShort()
+
+    fun readI32(): Int {
+        val value =
+            (bytes[position].toInt() and 0xff) or
+                ((bytes[position + 1].toInt() and 0xff) shl 8) or
+                ((bytes[position + 2].toInt() and 0xff) shl 16) or
+                ((bytes[position + 3].toInt() and 0xff) shl 24)
+        position += 4
+        return value
+    }
+
+    fun readU32(): UInt = readI32().toUInt()
+
+    fun readI64(): Long {
+        val low = readI32().toLong() and 0xffffffffL
+        val high = readI32().toLong() and 0xffffffffL
+        return low or (high shl 32)
+    }
+
+    fun readU64(): ULong = readI64().toULong()
+
+    fun readF32(): Float = java.lang.Float.intBitsToFloat(readI32())
+
+    fun readF64(): Double = java.lang.Double.longBitsToDouble(readI64())
+
+    fun readOptionalBool(): Boolean? = readOptional { it.readBool() }
+
+    fun readOptionalI8(): Byte? = readOptional { it.readI8() }
+
+    fun readOptionalU8(): UByte? = readOptional { it.readU8() }
+
+    fun readOptionalI16(): Short? = readOptional { it.readI16() }
+
+    fun readOptionalU16(): UShort? = readOptional { it.readU16() }
+
+    fun readOptionalI32(): Int? = readOptional { it.readI32() }
+
+    fun readOptionalU32(): UInt? = readOptional { it.readU32() }
+
+    fun readOptionalI64(): Long? = readOptional { it.readI64() }
+
+    fun readOptionalU64(): ULong? = readOptional { it.readU64() }
+
+    fun readOptionalF32(): Float? = readOptional { it.readF32() }
+
+    fun readOptionalF64(): Double? = readOptional { it.readF64() }
+
+    fun readString(): String {
+        val length = readU32().toInt()
+        val value = String(bytes, position, length, Charsets.UTF_8)
+        position += length
+        return value
+    }
+
+    fun readBytes(): ByteArray {
+        val length = readU32().toInt()
+        val value = bytes.copyOfRange(position, position + length)
+        position += length
+        return value
+    }
+
+    fun <T> readOptionalValue(read: (WireReader) -> T): T? = readOptional(read)
+
+    fun <T> readSequence(read: (WireReader) -> T): List<T> {
+        val length = readU32().toInt()
+        return List(length) { read(this) }
+    }
+
+    private inline fun <T> readOptional(read: (WireReader) -> T): T? {
+        return when (readU8()) {
+            0.toUByte() -> null
+            1.toUByte() -> read(this)
+            else -> throw IllegalArgumentException("invalid optional wire tag")
+        }
+    }
+}
+
+internal class WireWriter(initialCapacity: Int) {
+    private var buffer = java.nio.ByteBuffer
+        .allocateDirect(initialCapacity)
+        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    private var position = 0
+
+    fun reset(requiredCapacity: Int) {
+        if (buffer.capacity() < requiredCapacity) {
+            buffer = java.nio.ByteBuffer
+                .allocateDirect(requiredCapacity)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        }
+        position = 0
+    }
+
+    fun toByteArray(): ByteArray {
+        val bytes = ByteArray(position)
+        val view = buffer.duplicate()
+        view.position(0)
+        view.get(bytes, 0, position)
+        return bytes
+    }
+
+    fun writeBool(value: Boolean) {
+        ensureCapacity(1)
+        buffer.put(position, if (value) 1.toByte() else 0.toByte())
+        position += 1
+    }
+
+    fun writeI8(value: Byte) {
+        ensureCapacity(1)
+        buffer.put(position, value)
+        position += 1
+    }
+
+    fun writeU8(value: UByte) {
+        writeI8(value.toByte())
+    }
+
+    fun writeI16(value: Short) {
+        ensureCapacity(2)
+        buffer.putShort(position, value)
+        position += 2
+    }
+
+    fun writeU16(value: UShort) {
+        writeI16(value.toShort())
+    }
+
+    fun writeI32(value: Int) {
+        ensureCapacity(4)
+        buffer.putInt(position, value)
+        position += 4
+    }
+
+    fun writeU32(value: UInt) {
+        writeI32(value.toInt())
+    }
+
+    fun writeI64(value: Long) {
+        ensureCapacity(8)
+        buffer.putLong(position, value)
+        position += 8
+    }
+
+    fun writeU64(value: ULong) {
+        writeI64(value.toLong())
+    }
+
+    fun writeF32(value: Float) {
+        writeI32(java.lang.Float.floatToRawIntBits(value))
+    }
+
+    fun writeF64(value: Double) {
+        writeI64(java.lang.Double.doubleToRawLongBits(value))
+    }
+
+    fun writeOptionalBool(value: Boolean?) = writeOptional(value) { writer, present ->
+        writer.writeBool(present)
+    }
+
+    fun writeOptionalI8(value: Byte?) = writeOptional(value) { writer, present ->
+        writer.writeI8(present)
+    }
+
+    fun writeOptionalU8(value: UByte?) = writeOptional(value) { writer, present ->
+        writer.writeU8(present)
+    }
+
+    fun writeOptionalI16(value: Short?) = writeOptional(value) { writer, present ->
+        writer.writeI16(present)
+    }
+
+    fun writeOptionalU16(value: UShort?) = writeOptional(value) { writer, present ->
+        writer.writeU16(present)
+    }
+
+    fun writeOptionalI32(value: Int?) = writeOptional(value) { writer, present ->
+        writer.writeI32(present)
+    }
+
+    fun writeOptionalU32(value: UInt?) = writeOptional(value) { writer, present ->
+        writer.writeU32(present)
+    }
+
+    fun writeOptionalI64(value: Long?) = writeOptional(value) { writer, present ->
+        writer.writeI64(present)
+    }
+
+    fun writeOptionalU64(value: ULong?) = writeOptional(value) { writer, present ->
+        writer.writeU64(present)
+    }
+
+    fun writeOptionalF32(value: Float?) = writeOptional(value) { writer, present ->
+        writer.writeF32(present)
+    }
+
+    fun writeOptionalF64(value: Double?) = writeOptional(value) { writer, present ->
+        writer.writeF64(present)
+    }
+
+    fun writeString(value: String) {
+        val bytes = value.toByteArray(Charsets.UTF_8)
+        writeU32(bytes.size.toUInt())
+        writeBytesRaw(bytes)
+    }
+
+    fun writeBytes(value: ByteArray) {
+        writeU32(value.size.toUInt())
+        writeBytesRaw(value)
+    }
+
+    fun <T> writeOptionalValue(value: T?, write: (WireWriter, T) -> Unit) {
+        writeOptional(value, write)
+    }
+
+    fun <T> writeSequence(value: Iterable<T>, count: Int, write: (WireWriter, T) -> Unit) {
+        writeU32(count.toUInt())
+        value.forEach { item -> write(this, item) }
+    }
+
+    private fun writeBytesRaw(bytes: ByteArray) {
+        ensureCapacity(bytes.size)
+        val view = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        view.position(position)
+        view.put(bytes)
+        position += bytes.size
+    }
+
+    private fun ensureCapacity(needed: Int) {
+        val required = position + needed
+        if (required <= buffer.capacity()) {
+            return
+        }
+        val nextCapacity = maxOf(buffer.capacity() * 2, required)
+        val next = java.nio.ByteBuffer
+            .allocateDirect(nextCapacity)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val source = buffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        source.limit(position)
+        source.position(0)
+        next.put(source)
+        buffer = next
+    }
+
+    private inline fun <T> writeOptional(value: T?, write: (WireWriter, T) -> Unit) {
+        if (value == null) {
+            writeU8(0.toUByte())
+            return
+        }
+        writeU8(1.toUByte())
+        write(this, value)
+    }
+}
+
+private const val MAX_CACHED_WIRE_WRITER_BYTES: Int = 1024 * 1024
+
+private class WireWriterPoolState(private val cacheSize: Int = 4) {
+    private val cachedWriters: Array<WireWriter?> = arrayOfNulls(cacheSize)
+    private var depth = 0
+
+    fun acquire(requiredCapacity: Int): BorrowedWireWriter {
+        val slot = depth
+        depth = slot + 1
+        val shouldCache = requiredCapacity <= MAX_CACHED_WIRE_WRITER_BYTES && slot < cacheSize
+        val writer = if (shouldCache) {
+            cachedWriters[slot] ?: WireWriter(requiredCapacity).also { cachedWriters[slot] = it }
+        } else {
+            WireWriter(requiredCapacity)
+        }
+
+        writer.reset(requiredCapacity)
+        return BorrowedWireWriter(this, writer)
+    }
+
+    fun release() {
+        depth -= 1
+    }
+}
+
+private class BorrowedWireWriter(
+    private val state: WireWriterPoolState,
+    val writer: WireWriter,
+) : AutoCloseable {
+    fun bytes(): ByteArray = writer.toByteArray()
+
+    override fun close() {
+        state.release()
+    }
+}
+
+private object WireWriterPool {
+    private val state: ThreadLocal<WireWriterPoolState> =
+        ThreadLocal.withInitial { WireWriterPoolState() }
+
+    fun acquire(requiredCapacity: Int): BorrowedWireWriter {
+        val poolState = state.get() ?: WireWriterPoolState().also { state.set(it) }
+        return poolState.acquire(requiredCapacity)
+    }
+}
+
+private fun <T, E> WireReader.readResult(
+    readOk: (WireReader) -> T,
+    readErr: (WireReader) -> E,
+): BoltFFIResult<T, E> {
+    return when (readU8()) {
+        0.toUByte() -> BoltFFIResult.Ok(readOk(this))
+        1.toUByte() -> BoltFFIResult.Err(readErr(this))
+        else -> throw IllegalArgumentException("invalid result wire tag")
+    }
+}
+
+private fun <T, E> WireWriter.writeResult(
+    value: BoltFFIResult<T, E>,
+    writeOk: (WireWriter, T) -> Unit,
+    writeErr: (WireWriter, E) -> Unit,
+) {
+    when (value) {
+        is BoltFFIResult.Ok -> {
+            writeU8(0.toUByte())
+            writeOk(this, value.value)
+        }
+        is BoltFFIResult.Err -> {
+            writeU8(1.toUByte())
+            writeErr(this, value.error)
+        }
+    }
+}
+
+sealed class BoltFFIResult<out T, out E> {
+    data class Ok<T>(val value: T) : BoltFFIResult<T, Nothing>()
+    data class Err<E>(val error: E) : BoltFFIResult<Nothing, E>()
+}
+
+private inline fun <T, E> BoltFFIResult<T, E>.wireSize(
+    okSize: (T) -> Int,
+    errSize: (E) -> Int,
+): Int =
+    1 + when (this) {
+        is BoltFFIResult.Ok -> okSize(value)
+        is BoltFFIResult.Err -> errSize(error)
+    }
+
+@Suppress("FunctionName")
+private object Native {
+    @JvmStatic external fun boltffi_function_demo_result_to_string(value: ByteArray): ByteArray?
+    @JvmStatic external fun boltffi_function_demo_echo_response(response: ByteArray): ByteArray?
+}
+
+
+data class Response(
+    val result: BoltFFIResult<Int, String>
+) {
+    internal fun wireSize(): Int {
+        return this.result.wireSize({ __boltffi_value_0 -> 4 }, { __boltffi_value_0 -> 4 + Utf8Codec.maxBytes(__boltffi_value_0) })
+    }
+
+    internal fun writeTo(writer: WireWriter) {
+        writer.writeResult(this.result, { writer, __boltffi_value_0 -> writer.writeI32(__boltffi_value_0) }, { writer, __boltffi_value_0 -> writer.writeString(__boltffi_value_0) })
+    }
+
+    internal fun toByteArray(): ByteArray {
+        val buffer = WireWriterPool.acquire(wireSize())
+        val writer = buffer.writer
+        try {
+            writeTo(writer)
+            return buffer.bytes()
+        } finally {
+            buffer.close()
+        }
+    }
+
+    companion object {
+        internal fun fromReader(reader: WireReader): Response {
+            return Response(
+                reader.readResult({ reader -> reader.readI32() }, { reader -> reader.readString() })
+            )
+        }
+
+        internal fun fromByteArray(bytes: ByteArray): Response {
+            val reader = WireReader(bytes)
+            return fromReader(reader)
+        }
+    }
+}
+
+fun resultToString(value: BoltFFIResult<Int, String>): String {
+    val __boltffi_value_wire = WireWriterPool.acquire(value.wireSize({ __boltffi_value_0 -> 4 }, { __boltffi_value_0 -> 4 + Utf8Codec.maxBytes(__boltffi_value_0) }))
+    val __boltffi_value_writer = __boltffi_value_wire.writer
+    __boltffi_value_writer.writeResult(value, { __boltffi_value_writer, __boltffi_value_0 -> __boltffi_value_writer.writeI32(__boltffi_value_0) }, { __boltffi_value_writer, __boltffi_value_0 -> __boltffi_value_writer.writeString(__boltffi_value_0) })
+    try {
+        val __boltffi_result = Native.boltffi_function_demo_result_to_string(__boltffi_value_wire.bytes()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_reader = WireReader(__boltffi_result)
+        return __boltffi_reader.readString()
+    } finally {
+        __boltffi_value_wire.close()
+    }
+}
+
+fun echoResponse(response: Response): Response {
+    val __boltffi_response_wire = WireWriterPool.acquire(response.wireSize())
+    val __boltffi_response_writer = __boltffi_response_wire.writer
+    response.writeTo(__boltffi_response_writer)
+    try {
+        val __boltffi_result = Native.boltffi_function_demo_echo_response(__boltffi_response_wire.bytes()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_reader = WireReader(__boltffi_result)
+        return Response.fromReader(__boltffi_reader)
+    } finally {
+        __boltffi_response_wire.close()
+    }
+}

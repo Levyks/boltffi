@@ -42,10 +42,14 @@ impl<'context> Sizer<'context> {
     }
 
     fn string_size(&self, value: &ValueRef) -> Result<Expression> {
+        self.string_expression_size(self.value(value)?)
+    }
+
+    fn string_expression_size(&self, value: Expression) -> Result<Expression> {
         Ok(Self::fixed(4)?.add(Expression::call(
             "Utf8Codec",
             Identifier::parse("maxBytes")?,
-            [self.value(value)?].into_iter().collect::<ArgumentList>(),
+            [value].into_iter().collect::<ArgumentList>(),
         )))
     }
 
@@ -134,8 +138,13 @@ impl CodecSize for Sizer<'_> {
         representation
     }
 
-    fn builtin(&mut self, _kind: BuiltinType, _value: &ValueRef) -> Self::Expr {
-        Self::unsupported("builtin wire size")
+    fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Self::Expr {
+        match kind {
+            BuiltinType::Duration | BuiltinType::SystemTime => Self::fixed(12),
+            BuiltinType::Uuid => Self::fixed(16),
+            BuiltinType::Url => self
+                .string_expression_size(self.value(value)?.convert(Identifier::parse("toString")?)),
+        }
     }
 
     fn optional(&mut self, value: &ValueRef, binder: BinderId, inner: Self::Expr) -> Self::Expr {
@@ -162,12 +171,14 @@ impl CodecSize for Sizer<'_> {
 
     fn result(
         &mut self,
-        _value: &ValueRef,
-        _binder: BinderId,
-        _ok: Self::Expr,
-        _err: Self::Expr,
+        value: &ValueRef,
+        binder: BinderId,
+        ok: Self::Expr,
+        err: Self::Expr,
     ) -> Self::Expr {
-        Self::unsupported("result wire size")
+        let value = self.value(value)?;
+        let binder = ValueExpression::binder(binder)?;
+        Ok(value.result_size(binder, ok?, err?))
     }
 
     fn map(

@@ -39,6 +39,16 @@ impl ReadPlan {
     {
         CodecWalker::read(&self.root, renderer)
     }
+
+    /// Returns whether this read plan includes a result container.
+    pub fn uses_result(&self) -> bool {
+        self.root.uses_result()
+    }
+
+    /// Returns whether this read plan includes the given builtin value.
+    pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
+        self.root.uses_builtin(kind)
+    }
 }
 
 /// Instructions for emitting one value as boundary bytes.
@@ -82,6 +92,16 @@ impl WritePlan {
     {
         CodecWalker::size(&self.root, &self.value, renderer)
     }
+
+    /// Returns whether this write plan includes a result container.
+    pub fn uses_result(&self) -> bool {
+        self.root.uses_result()
+    }
+
+    /// Returns whether this write plan includes the given builtin value.
+    pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
+        self.root.uses_builtin(kind)
+    }
 }
 
 /// Bidirectional codec selected for one encoded value.
@@ -108,6 +128,16 @@ impl CodecPlan {
     /// Returns the plan used to write the encoded value.
     pub fn write(&self) -> &WritePlan {
         &self.write
+    }
+
+    /// Returns whether either direction includes a result container.
+    pub fn uses_result(&self) -> bool {
+        self.read.uses_result() || self.write.uses_result()
+    }
+
+    /// Returns whether either direction includes the given builtin value.
+    pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
+        self.read.uses_builtin(kind) || self.write.uses_builtin(kind)
     }
 }
 
@@ -195,6 +225,33 @@ impl CodecNode {
             Self::Tuple(elements) => elements.iter().any(Self::contains_custom),
             Self::Result { ok, err } => ok.contains_custom() || err.contains_custom(),
             Self::Map { key, value, .. } => key.contains_custom() || value.contains_custom(),
+            _ => false,
+        }
+    }
+
+    /// Returns whether this codec tree includes a result container.
+    pub fn uses_result(&self) -> bool {
+        match self {
+            Self::Result { .. } => true,
+            Self::Custom { representation, .. } => representation.uses_result(),
+            Self::Optional(inner) | Self::Sequence { element: inner, .. } => inner.uses_result(),
+            Self::Tuple(elements) => elements.iter().any(Self::uses_result),
+            Self::Map { key, value, .. } => key.uses_result() || value.uses_result(),
+            _ => false,
+        }
+    }
+
+    /// Returns whether this codec tree includes the given builtin value.
+    pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Builtin(builtin) => *builtin == kind,
+            Self::Custom { representation, .. } => representation.uses_builtin(kind),
+            Self::Optional(inner) | Self::Sequence { element: inner, .. } => {
+                inner.uses_builtin(kind)
+            }
+            Self::Tuple(elements) => elements.iter().any(|element| element.uses_builtin(kind)),
+            Self::Result { ok, err } => ok.uses_builtin(kind) || err.uses_builtin(kind),
+            Self::Map { key, value, .. } => key.uses_builtin(kind) || value.uses_builtin(kind),
             _ => false,
         }
     }

@@ -230,6 +230,10 @@ impl TypeName {
         Self::new(format!("List<{element}>"))
     }
 
+    pub fn result(ok: Self, err: Self) -> Self {
+        Self::new(format!("BoltFFIResult<{ok}, {err}>"))
+    }
+
     pub fn nullable(self) -> Self {
         Self::new(format!("{self}?"))
     }
@@ -315,6 +319,12 @@ impl Expression {
     pub fn optional_size(self, parameter: Identifier, body: Self) -> Self {
         Self(format!(
             "1 + ({self}?.let {{ {parameter} -> {body} }} ?: 0)"
+        ))
+    }
+
+    pub fn result_size(self, parameter: Identifier, ok: Self, err: Self) -> Self {
+        Self(format!(
+            "{self}.wireSize({{ {parameter} -> {ok} }}, {{ {parameter} -> {err} }})"
         ))
     }
 

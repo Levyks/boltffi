@@ -27,6 +27,15 @@ impl KotlinType {
         KotlinPrimitive::new(primitive).api_type()
     }
 
+    pub fn builtin(kind: BuiltinType) -> TypeName {
+        match kind {
+            BuiltinType::Duration => TypeName::new("java.time.Duration"),
+            BuiltinType::SystemTime => TypeName::new("java.time.Instant"),
+            BuiltinType::Uuid => TypeName::new("java.util.UUID"),
+            BuiltinType::Url => TypeName::new("java.net.URI"),
+        }
+    }
+
     pub fn jni(jni_type: JniType) -> Result<TypeName> {
         match jni_type {
             JniType::Boolean => Ok(TypeName::boolean()),
@@ -146,11 +155,8 @@ impl TypeRefRender for KotlinTypeRef<'_> {
             .render_with(self)
     }
 
-    fn builtin(&mut self, _kind: BuiltinType) -> Self::Output {
-        Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
-            shape: "builtin type",
-        })
+    fn builtin(&mut self, kind: BuiltinType) -> Self::Output {
+        Ok(KotlinType::builtin(kind))
     }
 
     fn optional(&mut self, inner: Self::Output) -> Self::Output {
@@ -168,11 +174,8 @@ impl TypeRefRender for KotlinTypeRef<'_> {
         })
     }
 
-    fn result(&mut self, _ok: Self::Output, _err: Self::Output) -> Self::Output {
-        Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
-            shape: "result type",
-        })
+    fn result(&mut self, ok: Self::Output, err: Self::Output) -> Self::Output {
+        Ok(TypeName::result(ok?, err?))
     }
 
     fn map(&mut self, _key: Self::Output, _value: Self::Output) -> Self::Output {

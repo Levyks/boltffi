@@ -41,6 +41,16 @@ fn kotlin_target_renders_custom_types_through_representations() {
 }
 
 #[test]
+fn kotlin_target_renders_result_values_through_shared_codec() {
+    insta::assert_snapshot!(rendered_fixture("exports/result_values"));
+}
+
+#[test]
+fn kotlin_target_renders_builtin_values_through_shared_codec() {
+    insta::assert_snapshot!(rendered_fixture("exports/builtin_functions"));
+}
+
+#[test]
 fn kotlin_target_encodes_nullable_primitives_as_compact_wire() {
     insta::assert_snapshot!(rendered_fixture("exports/nullable_primitive_functions"));
 }
