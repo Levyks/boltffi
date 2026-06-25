@@ -1,6 +1,6 @@
 ---
-source: boltffi_backend/tests/kotlin/exports.rs
-expression: "rendered_fixture(\"exports/async_class_methods\")"
+source: boltffi_backend/tests/kotlin/callback.rs
+expression: "rendered_fixture(\"callback/async_callback_returning_callback_handle\")"
 ---
 ===== com/boltffi/demo/Demo.kt =====
 @file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
@@ -485,46 +485,181 @@ internal suspend inline fun <T> boltffiCallAsync(
 
 @Suppress("FunctionName")
 private object Native {
-    @JvmStatic external fun boltffi_release_class_demo_engine(handle: Long): Unit
-    @JvmStatic external fun boltffi_init_class_demo_engine_new(): Long
-    @JvmStatic external fun boltffi_method_class_demo_engine_compute(`receiver`: Long, value: Int): Long
-    @JvmStatic external fun boltffi_async_method_class_demo_engine_compute_poll(handle: Long, callback_data: Long): Unit
-    @JvmStatic external fun boltffi_async_method_class_demo_engine_compute_complete(handle: Long): Int
-    @JvmStatic external fun boltffi_async_method_class_demo_engine_compute_cancel(handle: Long): Unit
-    @JvmStatic external fun boltffi_async_method_class_demo_engine_compute_free(handle: Long): Unit
-    @JvmStatic external fun boltffi_async_method_class_demo_engine_compute_panic_message(handle: Long): ByteArray?
+    @JvmStatic external fun boltffi_async_callback_complete_Callback_demo_child(callback: Long, context: Long, result: Long): Unit
+    @JvmStatic external fun boltffi_async_callback_complete_Callback_demo_child_failure(callback: Long, context: Long): Unit
+    @JvmStatic external fun boltffi_async_callback_complete_Callback_demo_child_error(callback: Long, context: Long, result: Long): Unit
+    @JvmStatic external fun boltffi_async_callback_complete_Callback_demo_sibling(callback: Long, context: Long, result: Long): Unit
+    @JvmStatic external fun boltffi_async_callback_complete_Callback_demo_sibling_failure(callback: Long, context: Long): Unit
+    @JvmStatic external fun boltffi_async_callback_complete_Callback_demo_sibling_error(callback: Long, context: Long, result: Long): Unit
 
     @JvmStatic fun boltffiFutureContinuationCallback(handle: Long, pollResult: Byte) {
         BoltFfiAsync.resume(handle, pollResult)
     }
 }
 
-class Engine internal constructor(internal val handle: Long) : AutoCloseable {
-    private val __boltffi_closed = java.util.concurrent.atomic.AtomicBoolean(false)
+interface Child {
+    fun onValue(value: UInt): UInt
+}
 
-    override fun close() {
-        if (__boltffi_closed.compareAndSet(false, true)) {
-            Native.boltffi_release_class_demo_engine(handle)
+private object ChildMap {
+    private val map = java.util.concurrent.ConcurrentHashMap<Long, Child>()
+    private val counter = java.util.concurrent.atomic.AtomicLong(1L)
+
+    fun insert(value: Child): Long {
+        val handle = counter.getAndAdd(2L)
+        map[handle] = value
+        return handle
+    }
+
+    fun get(handle: Long): Child? = map[handle]
+
+    fun remove(handle: Long): Child? = map.remove(handle)
+
+    fun clone(handle: Long): Long {
+        val value = map[handle] ?: return 0L
+        return insert(value)
+    }
+}
+
+object ChildCallbacks {
+    @JvmStatic
+    fun free(handle: Long) {
+        ChildMap.remove(handle)
+    }
+
+    @JvmStatic
+    fun clone(handle: Long): Long {
+        return ChildMap.clone(handle)
+    }
+
+    @JvmStatic
+    fun on_value(handle: Long, value: Int): Int {
+        val impl = ChildMap.get(handle) ?: error("ChildMap: invalid handle $handle")
+        return impl.onValue(value.toUInt()).toInt()
+    }
+}
+
+object ChildBridge {
+    fun create(value: Child): Long {
+        return ChildMap.insert(value)
+    }
+}
+
+interface Sibling {
+    fun onName(name: String)
+}
+
+private object SiblingMap {
+    private val map = java.util.concurrent.ConcurrentHashMap<Long, Sibling>()
+    private val counter = java.util.concurrent.atomic.AtomicLong(1L)
+
+    fun insert(value: Sibling): Long {
+        val handle = counter.getAndAdd(2L)
+        map[handle] = value
+        return handle
+    }
+
+    fun get(handle: Long): Sibling? = map[handle]
+
+    fun remove(handle: Long): Sibling? = map.remove(handle)
+
+    fun clone(handle: Long): Long {
+        val value = map[handle] ?: return 0L
+        return insert(value)
+    }
+}
+
+object SiblingCallbacks {
+    @JvmStatic
+    fun free(handle: Long) {
+        SiblingMap.remove(handle)
+    }
+
+    @JvmStatic
+    fun clone(handle: Long): Long {
+        return SiblingMap.clone(handle)
+    }
+
+    @JvmStatic
+    fun on_name(handle: Long, name: ByteArray) {
+        val impl = SiblingMap.get(handle) ?: error("SiblingMap: invalid handle $handle")
+        val __boltffi_name_reader = WireReader(name)
+        val __boltffi_name_value = __boltffi_name_reader.readString()
+        impl.onName(__boltffi_name_value)
+    }
+}
+
+object SiblingBridge {
+    fun create(value: Sibling): Long {
+        return SiblingMap.insert(value)
+    }
+}
+
+interface Listener {
+    suspend fun child(): Child
+    suspend fun sibling(): Sibling
+}
+
+private object ListenerMap {
+    private val map = java.util.concurrent.ConcurrentHashMap<Long, Listener>()
+    private val counter = java.util.concurrent.atomic.AtomicLong(1L)
+
+    fun insert(value: Listener): Long {
+        val handle = counter.getAndAdd(2L)
+        map[handle] = value
+        return handle
+    }
+
+    fun get(handle: Long): Listener? = map[handle]
+
+    fun remove(handle: Long): Listener? = map.remove(handle)
+
+    fun clone(handle: Long): Long {
+        val value = map[handle] ?: return 0L
+        return insert(value)
+    }
+}
+
+object ListenerCallbacks {
+    @JvmStatic
+    fun free(handle: Long) {
+        ListenerMap.remove(handle)
+    }
+
+    @JvmStatic
+    fun clone(handle: Long): Long {
+        return ListenerMap.clone(handle)
+    }
+
+    @JvmStatic
+    fun child(handle: Long, callback: Long, context: Long) {
+        val impl = ListenerMap.get(handle) ?: error("ListenerMap: invalid handle $handle")
+        boltffiLaunchCallback {
+            try {
+                val __boltffi_result = impl.child()
+                Native.boltffi_async_callback_complete_Callback_demo_child(callback, context, ChildBridge.create(__boltffi_result))
+            } catch (throwable: Throwable) {
+                Native.boltffi_async_callback_complete_Callback_demo_child_failure(callback, context)
+            }
         }
     }
 
-    companion object {
-        fun new(): Engine {
-            return Engine(Native.boltffi_init_class_demo_engine_new())
+    @JvmStatic
+    fun sibling(handle: Long, callback: Long, context: Long) {
+        val impl = ListenerMap.get(handle) ?: error("ListenerMap: invalid handle $handle")
+        boltffiLaunchCallback {
+            try {
+                val __boltffi_result = impl.sibling()
+                Native.boltffi_async_callback_complete_Callback_demo_sibling(callback, context, SiblingBridge.create(__boltffi_result))
+            } catch (throwable: Throwable) {
+                Native.boltffi_async_callback_complete_Callback_demo_sibling_failure(callback, context)
+            }
         }
     }
+}
 
-    suspend fun compute(value: UInt): UInt {
-        return boltffiCallAsync(
-            createFuture = {
-                Native.boltffi_method_class_demo_engine_compute(this.handle, value.toInt())
-            },
-            poll = { future, contHandle -> Native.boltffi_async_method_class_demo_engine_compute_poll(future, contHandle) },
-            complete = { future ->
-                Native.boltffi_async_method_class_demo_engine_compute_complete(future).toUInt()
-            },
-            free = { future -> Native.boltffi_async_method_class_demo_engine_compute_free(future) },
-            cancel = { future -> Native.boltffi_async_method_class_demo_engine_compute_cancel(future) },
-        )
+object ListenerBridge {
+    fun create(value: Listener): Long {
+        return ListenerMap.insert(value)
     }
 }

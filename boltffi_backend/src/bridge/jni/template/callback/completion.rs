@@ -16,6 +16,7 @@ use crate::bridge::{
 pub struct CallbackCompletionInvokerView {
     pub success: Identifier,
     pub failure: Identifier,
+    pub error: Option<Identifier>,
     pub has_payload: bool,
     pub payload_c_type: TypeFragment,
     pub payload_jni_type: TypeFragment,
@@ -31,6 +32,7 @@ impl CallbackCompletionInvokerView {
         Self {
             success: invoker.success().as_identifier().clone(),
             failure: invoker.failure().as_identifier().clone(),
+            error: invoker.error().map(|symbol| symbol.as_identifier().clone()),
             has_payload: payload.is_some(),
             payload_c_type: payload
                 .map(CallbackCompletionPayload::c_type)

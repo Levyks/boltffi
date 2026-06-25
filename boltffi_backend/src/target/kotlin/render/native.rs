@@ -8,6 +8,7 @@ use crate::{
     bridge::{
         c::Identifier as CIdentifier,
         jni::{
+            CallbackCompletionInvoker, CallbackCompletionPayload, CallbackCompletionPayloadValue,
             CallbackHandleLifecycle, CallbackHandleMethod, CallbackRegistration, JniBridgeContract,
             NativeMethod, NativeParameter, SuccessOutValue, SuccessOutWriter,
         },
@@ -25,6 +26,7 @@ pub struct NativeMethods<'bridge> {
     methods: HashMap<&'bridge str, &'bridge NativeMethod>,
     callbacks: HashMap<&'bridge str, &'bridge CallbackRegistration>,
     success_out_writers: &'bridge [SuccessOutWriter],
+    callback_completions: &'bridge [CallbackCompletionInvoker],
     callback_handle_lifecycle: Option<&'bridge CallbackHandleLifecycle>,
 }
 
@@ -55,6 +57,7 @@ impl<'bridge> NativeMethods<'bridge> {
                 .map(|callback| (callback.register().as_str(), callback))
                 .collect(),
             success_out_writers: bridge.success_out_writers(),
+            callback_completions: bridge.callback_completions(),
             callback_handle_lifecycle: bridge.callback_handle_lifecycle(),
         }
     }
@@ -104,6 +107,14 @@ impl<'bridge> NativeMethods<'bridge> {
             .map(NativeFunction::from_callback_handle_lifecycle)
             .transpose()
             .map(Option::unwrap_or_default)
+    }
+
+    pub fn callback_completions(&self) -> Result<Vec<NativeFunction>> {
+        self.callback_completions
+            .iter()
+            .map(NativeFunction::from_callback_completion_invoker)
+            .collect::<Result<Vec<_>>>()
+            .map(|functions| functions.into_iter().flatten().collect())
     }
 
     pub fn success_out_writers(&self) -> Result<Vec<NativeFunction>> {
@@ -195,6 +206,28 @@ impl NativeFunction {
         })
     }
 
+    pub fn from_callback_completion_invoker(
+        invoker: &CallbackCompletionInvoker,
+    ) -> Result<Vec<Self>> {
+        let payload = invoker.payload();
+        Ok([
+            Some(Self::callback_completion_function(
+                invoker.success_method().as_str(),
+                payload,
+            )?),
+            Some(Self::callback_failure_function(
+                invoker.failure_method().as_str(),
+            )?),
+            invoker
+                .error_method()
+                .map(|method| Self::callback_completion_function(method.as_str(), payload))
+                .transpose()?,
+        ]
+        .into_iter()
+        .flatten()
+        .collect())
+    }
+
     pub fn name(&self) -> &Identifier {
         &self.name
     }
@@ -223,6 +256,38 @@ impl NativeFunction {
             }
         }
     }
+
+    fn callback_completion_function(
+        name: &str,
+        payload: Option<&CallbackCompletionPayload>,
+    ) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::escape(name)?,
+            parameters: [
+                NativeFunctionParameter::callback_pointer()?,
+                NativeFunctionParameter::callback_context()?,
+            ]
+            .into_iter()
+            .chain(
+                payload
+                    .map(NativeFunctionParameter::callback_payload)
+                    .transpose()?,
+            )
+            .collect(),
+            returns: TypeName::unit(),
+        })
+    }
+
+    fn callback_failure_function(name: &str) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::escape(name)?,
+            parameters: vec![
+                NativeFunctionParameter::callback_pointer()?,
+                NativeFunctionParameter::callback_context()?,
+            ],
+            returns: TypeName::unit(),
+        })
+    }
 }
 
 impl NativeFunctionParameter {
@@ -237,6 +302,33 @@ impl NativeFunctionParameter {
         Ok(Self {
             name: Identifier::parse("handle")?,
             ty: TypeName::long(),
+        })
+    }
+
+    pub fn callback_pointer() -> Result<Self> {
+        Ok(Self {
+            name: Identifier::parse("callback")?,
+            ty: TypeName::long(),
+        })
+    }
+
+    pub fn callback_context() -> Result<Self> {
+        Ok(Self {
+            name: Identifier::parse("context")?,
+            ty: TypeName::long(),
+        })
+    }
+
+    pub fn callback_payload(payload: &CallbackCompletionPayload) -> Result<Self> {
+        Ok(Self {
+            name: Identifier::parse("result")?,
+            ty: match payload.value() {
+                CallbackCompletionPayloadValue::Scalar(jni_type) => KotlinType::jni(jni_type)?,
+                CallbackCompletionPayloadValue::Bytes | CallbackCompletionPayloadValue::Record => {
+                    TypeName::byte_array(false)
+                }
+                CallbackCompletionPayloadValue::CallbackHandle => TypeName::long(),
+            },
         })
     }
 

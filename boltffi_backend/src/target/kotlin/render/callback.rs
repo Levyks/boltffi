@@ -9,6 +9,7 @@ use boltffi_binding::{
 
 use crate::{
     bridge::jni::{
+        CallbackCompletionArgument, CallbackCompletionInvoker, CallbackCompletionPayloadValue,
         CallbackHandleMethod as JniCallbackHandleMethod, CallbackMethod as JniCallbackMethod,
         CallbackRegistration, JniBridgeContract, SuccessOutArgument,
     },
@@ -55,6 +56,8 @@ pub struct Method {
     jvm_return: Option<TypeName>,
     setup: Vec<Statement>,
     call_return: Vec<Statement>,
+    asynchronous: bool,
+    async_body: Option<AsyncMethodBody>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,6 +74,12 @@ pub struct HandleMethod {
     setup: Vec<Statement>,
     call: Vec<Statement>,
     cleanup: Vec<Statement>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AsyncMethodBody {
+    statements: Vec<Statement>,
+    failure: Statement,
 }
 
 pub struct CallbackHandle {
@@ -128,6 +137,8 @@ enum ReturnConversion {
         source_name: Name,
     },
     DirectVector(DirectVector),
+    ClassHandle(ClassHandle),
+    CallbackHandle(CallbackHandle),
 }
 
 struct FallibleReturn<'error> {
@@ -161,6 +172,15 @@ enum HandleReturnConversion {
     ScalarOption(Primitive),
 }
 
+struct AsyncCompletion {
+    success: Identifier,
+    failure: Identifier,
+    error: Option<Identifier>,
+    payload: Option<CallbackCompletionPayloadValue>,
+    callback: Identifier,
+    context: Identifier,
+}
+
 impl Callback {
     pub fn from_declaration(
         decl: &CallbackDecl<Native>,
@@ -181,7 +201,7 @@ impl Callback {
             .methods()
             .iter()
             .zip(registration.methods())
-            .map(|(source, method)| Method::from_declaration(source, method, context))
+            .map(|(source, method)| Method::from_declaration(source, method, bridge, context))
             .collect::<Result<Vec<_>>>()?;
         if !registration.handle_methods().is_empty()
             && decl.protocol().vtable().methods().len() != registration.handle_methods().len()
@@ -293,27 +313,55 @@ impl Method {
     pub fn setup(&self) -> &[Statement] {
         &self.setup
     }
+
+    pub fn asynchronous(&self) -> bool {
+        self.asynchronous
+    }
+
+    pub fn async_body(&self) -> Option<&AsyncMethodBody> {
+        self.async_body.as_ref()
+    }
+}
+
+impl AsyncMethodBody {
+    pub fn statements(&self) -> &[Statement] {
+        &self.statements
+    }
+
+    pub fn failure(&self) -> &Statement {
+        &self.failure
+    }
 }
 
 impl Method {
     fn from_declaration(
         source: &ImportedMethodDecl<Native, VTableSlot>,
         method: &JniCallbackMethod,
+        bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let callable = source.callable();
-        if !matches!(callable.execution(), ExecutionDecl::Synchronous(_)) {
-            return Err(Error::UnsupportedTarget {
-                target: KOTLIN_TARGET,
-                shape: "async callback method",
-            });
-        }
         if source.target().as_str() != method.method().as_str() {
             return Err(Error::BrokenBridgeContract {
                 bridge: "jni",
                 invariant: "callback declaration method does not match JNI registration method",
             });
         }
+        let asynchronous = match callable.execution() {
+            ExecutionDecl::Synchronous(_) => false,
+            ExecutionDecl::Asynchronous(_) => true,
+            _ => {
+                return Err(Error::UnsupportedTarget {
+                    target: KOTLIN_TARGET,
+                    shape: "unknown callback method execution",
+                });
+            }
+        };
+        let async_completion = if asynchronous {
+            Some(AsyncCompletion::from_method(method, bridge)?)
+        } else {
+            None
+        };
         let parameters = callable
             .params()
             .iter()
@@ -353,7 +401,32 @@ impl Method {
             .into_iter()
             .flatten()
             .chain(parameters.iter().map(|parameter| parameter.jvm.clone()))
+            .chain(
+                async_completion
+                    .as_ref()
+                    .map(AsyncCompletion::parameters)
+                    .unwrap_or_default(),
+            )
             .collect();
+        let call_return = match (&fallible, &async_completion) {
+            (_, Some(_)) => Vec::new(),
+            (Some(fallible), None) => {
+                return_value.fallible_statements(interface_call.clone(), fallible, context)?
+            }
+            (None, None) => return_value.statements(interface_call.clone(), context)?,
+        };
+        let async_body = async_completion
+            .as_ref()
+            .map(|completion| {
+                AsyncMethodBody::from_call(
+                    interface_call,
+                    &return_value,
+                    fallible.as_ref(),
+                    completion,
+                    context,
+                )
+            })
+            .transpose()?;
         Ok(Self {
             name: Name::new(source.name()).function()?,
             jvm_name: Identifier::escape(method.method().as_str())?,
@@ -367,17 +440,128 @@ impl Method {
                 .collect(),
             jvm_parameters,
             public_return,
-            jvm_return: fallible
-                .as_ref()
-                .map(|_| TypeName::byte_array(false))
-                .or_else(|| return_value.jvm_ty.clone()),
-            call_return: match fallible {
-                Some(fallible) => {
-                    return_value.fallible_statements(interface_call, fallible, context)?
-                }
-                None => return_value.statements(interface_call, context)?,
+            jvm_return: if asynchronous {
+                None
+            } else {
+                fallible
+                    .as_ref()
+                    .map(|_| TypeName::byte_array(false))
+                    .or_else(|| return_value.jvm_ty.clone())
             },
+            call_return,
+            asynchronous,
+            async_body,
         })
+    }
+}
+
+impl AsyncMethodBody {
+    fn from_call(
+        call: Expression,
+        return_value: &ReturnValue,
+        fallible: Option<&FallibleReturn<'_>>,
+        completion: &AsyncCompletion,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        Ok(Self {
+            statements: match fallible {
+                Some(fallible) => return_value
+                    .completion_fallible_statements(call, fallible, completion, context)?,
+                None => return_value.completion_success_statements(call, completion, context)?,
+            },
+            failure: completion.failure_statement(),
+        })
+    }
+}
+
+impl AsyncCompletion {
+    fn from_method(method: &JniCallbackMethod, bridge: &JniBridgeContract) -> Result<Self> {
+        let completions = method.completions();
+        let completion = match completions.as_slice() {
+            [completion] => completion,
+            [] => {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: "jni",
+                    invariant: "async callback method has no JNI completion argument",
+                });
+            }
+            _ => {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: "jni",
+                    invariant: "async callback method has more than one JNI completion argument",
+                });
+            }
+        };
+        let invoker = Self::invoker(completion, bridge)?;
+        Ok(Self {
+            success: Identifier::escape(invoker.success_method().as_str())?,
+            failure: Identifier::escape(invoker.failure_method().as_str())?,
+            error: invoker
+                .error_method()
+                .map(|method| Identifier::escape(method.as_str()))
+                .transpose()?,
+            payload: invoker.payload().map(|payload| payload.value()),
+            callback: Identifier::parse("callback")?,
+            context: Identifier::parse("context")?,
+        })
+    }
+
+    fn parameters(&self) -> Vec<Parameter> {
+        [
+            Parameter {
+                name: self.callback.clone(),
+                ty: TypeName::long(),
+            },
+            Parameter {
+                name: self.context.clone(),
+                ty: TypeName::long(),
+            },
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn success_statement(&self, payload: Option<Expression>) -> Statement {
+        self.call(&self.success, payload)
+    }
+
+    fn error_statement(&self, payload: Expression) -> Result<Statement> {
+        self.error
+            .as_ref()
+            .map(|method| self.call(method, Some(payload)))
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: "jni",
+                invariant: "fallible async callback method has no JNI error completion invoker",
+            })
+    }
+
+    fn failure_statement(&self) -> Statement {
+        self.call(&self.failure, None)
+    }
+
+    fn call(&self, method: &Identifier, payload: Option<Expression>) -> Statement {
+        let arguments = [
+            Expression::identifier(self.callback.clone()),
+            Expression::identifier(self.context.clone()),
+        ]
+        .into_iter()
+        .chain(payload)
+        .collect::<Vec<_>>();
+        Statement::expression(NativeCall::new(method.clone(), arguments).expression())
+    }
+
+    fn invoker<'bridge>(
+        completion: &CallbackCompletionArgument<'_>,
+        bridge: &'bridge JniBridgeContract,
+    ) -> Result<&'bridge CallbackCompletionInvoker> {
+        bridge
+            .callback_completions()
+            .iter()
+            .find(|invoker| invoker.payload() == completion.payload())
+            .ok_or(Error::BrokenBridgeContract {
+                bridge: "jni",
+                invariant: "async callback completion has no shared JNI invoker",
+            })
     }
 }
 
@@ -1072,15 +1256,38 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
 
     fn handle(
         &mut self,
-        _slot: ReturnValueSlot,
-        _target: &'plan HandleTarget,
+        slot: ReturnValueSlot,
+        target: &'plan HandleTarget,
         _carrier: <Native as Surface>::HandleCarrier,
-        _presence: HandlePresence,
+        presence: HandlePresence,
     ) -> Self::Output {
-        Err(Error::UnsupportedTarget {
-            target: KOTLIN_TARGET,
-            shape: "callback method handle return",
-        })
+        self.require_supported_slot(slot, "callback method out-pointer handle return")?;
+        match target {
+            HandleTarget::Class(class) => {
+                let handle = ClassHandle::new(*class, presence, self.context)?;
+                Ok(ReturnValue {
+                    public_ty: Some(handle.ty()?),
+                    jvm_ty: Some(TypeName::long()),
+                    conversion: ReturnConversion::ClassHandle(handle),
+                })
+            }
+            HandleTarget::Callback(callback) => {
+                let handle = CallbackHandle::new(*callback, presence, self.context)?;
+                Ok(ReturnValue {
+                    public_ty: Some(handle.ty()?),
+                    jvm_ty: Some(TypeName::long()),
+                    conversion: ReturnConversion::CallbackHandle(handle),
+                })
+            }
+            HandleTarget::Stream(_) => Err(Error::UnsupportedTarget {
+                target: KOTLIN_TARGET,
+                shape: "callback method stream return",
+            }),
+            _ => Err(Error::UnsupportedTarget {
+                target: KOTLIN_TARGET,
+                shape: "unknown callback method handle return",
+            }),
+        }
     }
 
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {
@@ -1270,7 +1477,7 @@ impl ReturnValue {
     fn fallible_statements(
         &self,
         call: Expression,
-        fallible: FallibleReturn,
+        fallible: &FallibleReturn,
         context: &RenderContext<Native>,
     ) -> Result<Vec<Statement>> {
         let result = fallible.source_name.generated("result")?;
@@ -1282,11 +1489,75 @@ impl ReturnValue {
                 success.clone(),
                 self.fallible_success_expression(
                     Expression::identifier(success),
-                    &fallible,
+                    fallible,
                     context,
                 )?,
                 error.clone(),
                 fallible.error_expression(Expression::identifier(error), context)?,
+            )),
+        ])
+    }
+
+    fn completion_success_statements(
+        &self,
+        call: Expression,
+        completion: &AsyncCompletion,
+        context: &RenderContext<Native>,
+    ) -> Result<Vec<Statement>> {
+        match completion.payload {
+            None if matches!(&self.conversion, ReturnConversion::Void) => Ok(vec![
+                Statement::expression(call),
+                completion.success_statement(None),
+            ]),
+            None => Err(Error::BrokenBridgeContract {
+                bridge: "jni",
+                invariant: "async callback return payload is missing",
+            }),
+            Some(CallbackCompletionPayloadValue::Bytes)
+                if matches!(&self.conversion, ReturnConversion::Void) =>
+            {
+                Ok(vec![
+                    completion.success_statement(Some(Self::empty_error_payload())),
+                ])
+            }
+            Some(_) => {
+                let result = Identifier::parse("__boltffi_result")?;
+                let (setup, payload, cleanup) =
+                    self.success_value(Expression::identifier(result.clone()), context)?;
+                Ok(std::iter::once(Statement::value(result, call))
+                    .chain(setup)
+                    .chain(std::iter::once(completion.success_statement(Some(payload))))
+                    .chain(cleanup)
+                    .collect())
+            }
+        }
+    }
+
+    fn completion_fallible_statements(
+        &self,
+        call: Expression,
+        fallible: &FallibleReturn,
+        completion: &AsyncCompletion,
+        context: &RenderContext<Native>,
+    ) -> Result<Vec<Statement>> {
+        let result = fallible.source_name.generated("result")?;
+        let success = fallible.source_name.generated("success")?;
+        let error = fallible.source_name.generated("error")?;
+        Ok(vec![
+            Statement::value(result.clone(), call),
+            Statement::expression(Expression::identifier(result).result_fold(
+                success.clone(),
+                self.completion_success_expression(
+                    Expression::identifier(success),
+                    completion,
+                    context,
+                )?,
+                error.clone(),
+                fallible.completion_error_expression(
+                    Expression::identifier(error),
+                    completion,
+                    context,
+                )?,
             )),
         ])
     }
@@ -1350,6 +1621,14 @@ impl ReturnValue {
             ReturnConversion::DirectVector(vector) => Ok(vec![Statement::return_value(
                 vector.byte_array_expression(call),
             )]),
+            ReturnConversion::ClassHandle(handle) => handle
+                .parameter_argument(call)
+                .map(Statement::return_value)
+                .map(|statement| vec![statement]),
+            ReturnConversion::CallbackHandle(handle) => handle
+                .parameter_argument(call)
+                .map(Statement::return_value)
+                .map(|statement| vec![statement]),
             ReturnConversion::Direct(_) => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
                 shape: "callback method direct return",
@@ -1394,6 +1673,50 @@ impl ReturnValue {
         Ok(Self::empty_error_payload())
     }
 
+    fn completion_success_expression(
+        &self,
+        value: Expression,
+        completion: &AsyncCompletion,
+        context: &RenderContext<Native>,
+    ) -> Result<Expression> {
+        Ok(Expression::run(
+            self.completion_success_value(value, completion, context)?,
+            Expression::identifier(Identifier::parse("Unit")?),
+        ))
+    }
+
+    fn completion_success_value(
+        &self,
+        value: Expression,
+        completion: &AsyncCompletion,
+        context: &RenderContext<Native>,
+    ) -> Result<Vec<Statement>> {
+        match completion.payload {
+            None if matches!(&self.conversion, ReturnConversion::Void) => {
+                Ok(vec![completion.success_statement(None)])
+            }
+            None => Err(Error::BrokenBridgeContract {
+                bridge: "jni",
+                invariant: "async callback return payload is missing",
+            }),
+            Some(CallbackCompletionPayloadValue::Bytes)
+                if matches!(&self.conversion, ReturnConversion::Void) =>
+            {
+                Ok(vec![
+                    completion.success_statement(Some(Self::empty_error_payload())),
+                ])
+            }
+            Some(_) => {
+                let (setup, payload, cleanup) = self.success_value(value, context)?;
+                Ok(setup
+                    .into_iter()
+                    .chain(std::iter::once(completion.success_statement(Some(payload))))
+                    .chain(cleanup)
+                    .collect())
+            }
+        }
+    }
+
     fn success_value(
         &self,
         value: Expression,
@@ -1425,6 +1748,12 @@ impl ReturnValue {
                 .into_parts()),
             ReturnConversion::DirectVector(vector) => {
                 Ok((Vec::new(), vector.byte_array_expression(value), Vec::new()))
+            }
+            ReturnConversion::ClassHandle(handle) => {
+                Ok((Vec::new(), handle.parameter_argument(value)?, Vec::new()))
+            }
+            ReturnConversion::CallbackHandle(handle) => {
+                Ok((Vec::new(), handle.parameter_argument(value)?, Vec::new()))
             }
             ReturnConversion::Void | ReturnConversion::Direct(_) => Err(Error::UnsupportedTarget {
                 target: KOTLIN_TARGET,
@@ -1460,6 +1789,29 @@ impl FallibleReturn<'_> {
                 .chain(cleanup)
                 .collect(),
             Expression::identifier(bytes),
+        ))
+    }
+
+    fn completion_error_expression(
+        &self,
+        value: Expression,
+        completion: &AsyncCompletion,
+        context: &RenderContext<Native>,
+    ) -> Result<Expression> {
+        let bytes = self.source_name.generated("error_bytes")?;
+        let write =
+            WireBuffer::new(&self.source_name)?.write_value(self.error_codec, value, context)?;
+        let (setup, expression, cleanup) = write.into_parts();
+        Ok(Expression::run(
+            setup
+                .into_iter()
+                .chain(std::iter::once(Statement::value(bytes.clone(), expression)))
+                .chain(std::iter::once(
+                    completion.error_statement(Expression::identifier(bytes))?,
+                ))
+                .chain(cleanup)
+                .collect(),
+            Expression::identifier(Identifier::parse("Unit")?),
         ))
     }
 }

@@ -42,10 +42,10 @@ pub use bytes::BytesParameter;
 pub use callback::{
     CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
     CallbackClosureReturn, CallbackCompletionArgument, CallbackCompletionInvoker,
-    CallbackCompletionPayload, CallbackDirectVectorArgument, CallbackHandleArgument,
-    CallbackHandleClosureReturn, CallbackHandleCompletion, CallbackHandleLifecycle,
-    CallbackHandleMethod, CallbackMethod, CallbackParameter, CallbackRecordArgument,
-    CallbackRegistration, CallbackReturn,
+    CallbackCompletionPayload, CallbackCompletionPayloadValue, CallbackDirectVectorArgument,
+    CallbackHandleArgument, CallbackHandleClosureReturn, CallbackHandleCompletion,
+    CallbackHandleLifecycle, CallbackHandleMethod, CallbackMethod, CallbackParameter,
+    CallbackRecordArgument, CallbackRegistration, CallbackReturn,
 };
 pub use closure::{
     CallbackClosureHandle, ClosureArgument, ClosureBytesArgument, ClosureCParameter,

@@ -34,6 +34,7 @@ pub use c_parameter::CallbackCParameter;
 pub use closure::CallbackClosureArgument;
 pub use completion::{
     CallbackCompletionArgument, CallbackCompletionInvoker, CallbackCompletionPayload,
+    CallbackCompletionPayloadValue,
 };
 pub use direct_vector::CallbackDirectVectorArgument;
 pub use handle::CallbackHandleArgument;

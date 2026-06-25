@@ -316,6 +316,13 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1co
     complete((void *)context, (FfiStatus){.code = 1}, (___Mode){0});
 }
 
+JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1complete_1Enum_1_1_1_1Mode_1error(JNIEnv *env, jclass cls, jlong callback, jlong context, jbyte result) {
+    (void)cls;
+    void (*complete)(void *, FfiStatus, ___Mode) = (void (*)(void *, FfiStatus, ___Mode))callback;
+    (void)env;
+    complete((void *)context, (FfiStatus){.code = 1}, (___Mode)result);
+}
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;

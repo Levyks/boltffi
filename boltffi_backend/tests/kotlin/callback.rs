@@ -51,3 +51,15 @@ fn kotlin_target_renders_callback_handle_returns() {
 fn kotlin_target_renders_nullable_callback_handle_returns() {
     insta::assert_snapshot!(rendered_fixture("callback/nullable_callback_handle_return"));
 }
+
+#[test]
+fn kotlin_target_renders_async_callback_return_shapes() {
+    insta::assert_snapshot!(rendered_fixture("callback/async_callback_return_shapes"));
+}
+
+#[test]
+fn kotlin_target_renders_async_callback_handle_returns() {
+    insta::assert_snapshot!(rendered_fixture(
+        "callback/async_callback_returning_callback_handle"
+    ));
+}

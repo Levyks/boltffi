@@ -16,10 +16,19 @@ private class BoltFfiHandleMap<T> {
 private val boltffiContinuationMap =
     BoltFfiHandleMap<kotlinx.coroutines.CancellableContinuation<Byte>>()
 
+private val boltffiCallbackScope =
+    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob())
+
 private object BoltFfiAsync {
     fun resume(handle: Long, pollResult: Byte) {
         val continuation = boltffiContinuationMap.remove(handle) ?: return
         continuation.resumeWith(Result.success(pollResult))
+    }
+}
+
+internal fun boltffiLaunchCallback(block: suspend () -> Unit) {
+    kotlinx.coroutines.launch(boltffiCallbackScope) {
+        block()
     }
 }
 

@@ -447,6 +447,13 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1co
     complete((void *)context, (FfiStatus){.code = 1}, (uint32_t){0});
 }
 
+JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1callback_1complete_1U32_1error(JNIEnv *env, jclass cls, jlong callback, jlong context, jint result) {
+    (void)cls;
+    void (*complete)(void *, FfiStatus, uint32_t) = (void (*)(void *, FfiStatus, uint32_t))callback;
+    (void)env;
+    complete((void *)context, (FfiStatus){.code = 1}, (uint32_t)result);
+}
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;

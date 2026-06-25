@@ -1,6 +1,6 @@
 interface {{ callback.name() }} {
 {%- for method in callback.methods() %}
-    fun {{ method.name() }}({% for parameter in method.public_parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.public_return() %}: {{ return_type }}{% endif %}
+    {% if method.asynchronous() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.public_parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.public_return() %}: {{ return_type }}{% endif %}
 {%- endfor %}
 }
 
@@ -42,9 +42,21 @@ object {{ callback.callbacks_name() }} {
 {%- for statement in method.setup() %}
         {{ statement }}
 {%- endfor %}
+{%- if let Some(async_body) = method.async_body() %}
+        boltffiLaunchCallback {
+            try {
+{%- for statement in async_body.statements() %}
+                {{ statement }}
+{%- endfor %}
+            } catch (throwable: Throwable) {
+                {{ async_body.failure() }}
+            }
+        }
+{%- else %}
 {%- for statement in method.call_return() %}
         {{ statement }}
 {%- endfor %}
+{%- endif %}
     }
 {%- endfor %}
 }

@@ -112,6 +112,7 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             .into_iter()
             .flatten()
             .chain(methods.callback_handle_lifecycle()?)
+            .chain(methods.callback_completions()?)
             .chain(methods.success_out_writers()?)
             .collect::<Vec<_>>();
         Self::unique_native_functions(functions)

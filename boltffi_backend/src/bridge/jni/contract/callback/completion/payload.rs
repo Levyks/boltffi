@@ -32,10 +32,28 @@ pub struct CallbackCompletionPayload {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum CallbackCompletionPayloadKind {
-    Scalar,
+    Scalar(JniType),
     Bytes,
     Record,
     CallbackHandle { create_handle: Identifier },
+}
+
+/// JVM value shape accepted by an async callback completion method.
+///
+/// The value is narrower than the C payload type. It names the kind of JVM
+/// argument the generated completion method receives after the JNI bridge has
+/// validated the C payload can cross the boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum CallbackCompletionPayloadValue {
+    /// A primitive JNI value.
+    Scalar(JniType),
+    /// An owned encoded byte buffer.
+    Bytes,
+    /// A direct record copied through a byte array.
+    Record,
+    /// A callback handle carried as a JVM long.
+    CallbackHandle,
 }
 
 impl CallbackCompletionPayload {
@@ -105,13 +123,16 @@ impl CallbackCompletionPayload {
             | c::Type::Float64
             | c::Type::StreamPollResult
             | c::Type::WaitResult
-            | c::Type::CStyleEnum { .. }) => Ok(Self {
-                suffix: Self::scalar_suffix(ty)?,
-                c_type: TypeFragment::anonymous(ty)?,
-                jni_type: JniType::from_c_type(ty)?.as_type_fragment(),
-                jni_signature: JniType::from_c_type(ty)?.signature().to_owned(),
-                kind: CallbackCompletionPayloadKind::Scalar,
-            }),
+            | c::Type::CStyleEnum { .. }) => {
+                let jni_type = JniType::from_c_type(ty)?;
+                Ok(Self {
+                    suffix: Self::scalar_suffix(ty)?,
+                    c_type: TypeFragment::anonymous(ty)?,
+                    jni_type: jni_type.as_type_fragment(),
+                    jni_signature: jni_type.signature().to_owned(),
+                    kind: CallbackCompletionPayloadKind::Scalar(jni_type),
+                })
+            }
         }
     }
 
@@ -133,6 +154,20 @@ impl CallbackCompletionPayload {
     /// Returns the JVM method descriptor fragment for this payload.
     pub fn jni_signature(&self) -> &str {
         &self.jni_signature
+    }
+
+    /// Returns the JVM value shape carried by the completion method.
+    pub fn value(&self) -> CallbackCompletionPayloadValue {
+        match self.kind {
+            CallbackCompletionPayloadKind::Scalar(jni_type) => {
+                CallbackCompletionPayloadValue::Scalar(jni_type)
+            }
+            CallbackCompletionPayloadKind::Bytes => CallbackCompletionPayloadValue::Bytes,
+            CallbackCompletionPayloadKind::Record => CallbackCompletionPayloadValue::Record,
+            CallbackCompletionPayloadKind::CallbackHandle { .. } => {
+                CallbackCompletionPayloadValue::CallbackHandle
+            }
+        }
     }
 
     /// Returns whether the payload is an owned byte buffer.
