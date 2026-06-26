@@ -13,6 +13,7 @@ use super::{
     KmpBridge, KmpBridgeContract, KmpEmissionOptions, KmpEmitter, KmpPlatform, KmpSupportMode,
     Syntax,
     lower::{KmpLowerer, KmpLoweringOptions, KmpSupportPlan},
+    plan::KmpJvmDelegateOutput,
 };
 
 /// Kotlin Multiplatform host renderer for the IR backend plan.
@@ -29,6 +30,7 @@ pub struct KmpHost {
     package_name: String,
     module_name: String,
     min_sdk: u32,
+    jvm_delegate: Option<KmpJvmDelegateOutput>,
 }
 
 impl KmpHost {
@@ -40,6 +42,7 @@ impl KmpHost {
             package_name: "com.example.boltffi".to_string(),
             module_name: "BoltFFI".to_string(),
             min_sdk: 24,
+            jvm_delegate: None,
         }
     }
 
@@ -73,6 +76,12 @@ impl KmpHost {
         self
     }
 
+    /// Supplies JVM-family delegate output for APIs rendered by the Kotlin/JNI backend.
+    pub fn jvm_delegate(mut self, delegate: KmpJvmDelegateOutput) -> Self {
+        self.jvm_delegate = Some(delegate);
+        self
+    }
+
     /// Creates the backend target stack for this skeletal KMP host.
     pub fn into_target(self) -> Target<Self, KmpBridge> {
         Target::new(self, KmpBridge)
@@ -83,10 +92,22 @@ impl KmpHost {
     }
 
     fn support_plan(&self, bindings: &Bindings<Native>) -> KmpSupportPlan {
-        KmpLowerer::new(
-            KmpLoweringOptions::new().selected_platforms(self.selected_platforms.clone()),
-        )
-        .support_plan(bindings)
+        KmpLowerer::new(self.lowering_options(KmpSupportMode::Strict)).support_plan(bindings)
+    }
+
+    fn lowering_options(&self, support_mode: KmpSupportMode) -> KmpLoweringOptions {
+        let mut options = KmpLoweringOptions::new()
+            .selected_platforms(self.selected_platforms.clone())
+            .support_mode(support_mode);
+        let internal_package = format!("{}.jvm", self.package_name);
+        if let Some(delegate) = self
+            .jvm_delegate
+            .clone()
+            .filter(|delegate| delegate.internal_package() == internal_package)
+        {
+            options = options.jvm_delegate(delegate);
+        }
+        options
     }
 }
 
@@ -264,13 +285,9 @@ impl host::HostBackend for KmpHost {
         } else {
             self.support_mode
         };
-        let module = KmpLowerer::new(
-            KmpLoweringOptions::new()
-                .selected_platforms(self.selected_platforms.clone())
-                .support_mode(support_mode),
-        )
-        .lower_support_plan(support_plan)
-        .map_err(|error| error.into_backend_error())?;
+        let module = KmpLowerer::new(self.lowering_options(support_mode))
+            .lower_support_plan(support_plan)
+            .map_err(|error| error.into_backend_error())?;
         let emitted = KmpEmitter::new(KmpEmissionOptions::new(
             self.package_name.clone(),
             self.module_name.clone(),
@@ -292,7 +309,10 @@ mod tests {
 
     use crate::{
         Error,
-        target::kmp::{KMP_SUPPORT_REPORT_FILE, KmpHost, KmpPlatform},
+        target::kmp::{
+            KMP_SUPPORT_REPORT_FILE, KmpHost, KmpJvmDelegateFunction, KmpJvmDelegateOutput,
+            KmpPlatform, KmpTypePlan,
+        },
     };
 
     fn bindings(source: &str) -> Bindings<Native> {
@@ -336,6 +356,46 @@ mod tests {
         ]
     }
 
+    fn add_delegate() -> KmpJvmDelegateOutput {
+        KmpJvmDelegateOutput::new(
+            "com.example.boltffi.jvm",
+            "private const val BOLTFFI_LIBRARY_NAME: String = \"boltffi_demo\"\n",
+            vec![KmpJvmDelegateFunction::new(
+                "boltffi_function_demo_add",
+                "add",
+                vec![
+                    KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
+                    KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
+                ],
+                Some(KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)),
+                "/* delegated JNI glue */\n",
+            )],
+        )
+    }
+
+    fn duplicate_ping_delegate() -> KmpJvmDelegateOutput {
+        KmpJvmDelegateOutput::new(
+            "com.example.boltffi.jvm",
+            "private const val BOLTFFI_LIBRARY_NAME: String = \"boltffi_demo\"\n",
+            vec![
+                KmpJvmDelegateFunction::new(
+                    "boltffi_function_demo_ping_pong",
+                    "pingPong",
+                    vec![KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)],
+                    Some(KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)),
+                    "/* delegated ping_pong JNI glue */\n",
+                ),
+                KmpJvmDelegateFunction::new(
+                    "boltffi_function_demo_ping__pong",
+                    "pingPong",
+                    vec![KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)],
+                    Some(KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)),
+                    "/* delegated ping__pong JNI glue */\n",
+                ),
+            ],
+        )
+    }
+
     #[test]
     fn kmp_target_renders_empty_surface_file_list() {
         let output = KmpHost::new()
@@ -372,6 +432,69 @@ mod tests {
             }
             other => panic!("unexpected KMP IR skeleton error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn kmp_target_renders_sync_primitive_function_with_jvm_delegate() {
+        let output = KmpHost::new()
+            .jvm_delegate(add_delegate())
+            .into_target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
+            .expect("delegated primitive sync function should render");
+
+        let common = file(
+            &output,
+            "src/commonMain/kotlin/com/example/boltffi/BoltFFI.kt",
+        );
+        assert!(common.contains("expect fun add(left: Int, right: Int): Int"));
+
+        for path in [
+            "src/jvmMain/kotlin/com/example/boltffi/BoltFFIJvmActual.kt",
+            "src/androidMain/kotlin/com/example/boltffi/BoltFFIAndroidActual.kt",
+        ] {
+            let actual = file(&output, path);
+            assert!(actual.contains("actual fun add(left: Int, right: Int): Int"));
+            assert!(actual.contains("return com.example.boltffi.jvm.add(left, right)"));
+            assert!(!actual.contains("FfiException"));
+        }
+
+        let delegated_kotlin = "// Auto-generated by BoltFFI. Do not edit.\n\npackage com.example.boltffi.jvm\n\nprivate const val BOLTFFI_LIBRARY_NAME: String = \"boltffi_demo\"\n\nprivate object Native {\n    @JvmStatic external fun boltffi_function_demo_add(left: Int, right: Int): Int\n}\n\nfun add(left: Int, right: Int): Int {\n    return Native.boltffi_function_demo_add(left, right)\n}\n";
+        assert_eq!(
+            file(
+                &output,
+                "src/jvmMain/kotlin/com/example/boltffi/jvm/BoltFFI.kt"
+            ),
+            delegated_kotlin
+        );
+        assert_eq!(
+            file(
+                &output,
+                "src/androidMain/kotlin/com/example/boltffi/jvm/BoltFFI.kt"
+            ),
+            delegated_kotlin
+        );
+        assert_eq!(
+            file(&output, "src/jvmMain/c/jni_glue.c"),
+            "/* Auto-generated by BoltFFI. Do not edit. */\n\n/* delegated JNI glue */\n"
+        );
+        assert_eq!(
+            file(&output, "src/androidMain/c/jni_glue.c"),
+            "/* Auto-generated by BoltFFI. Do not edit. */\n\n/* delegated JNI glue */\n"
+        );
+
+        let report: serde_json::Value =
+            serde_json::from_str(file(&output, KMP_SUPPORT_REPORT_FILE))
+                .expect("valid support report");
+        assert_eq!(report["admitted_apis"][0]["kind"], "function");
+        assert_eq!(report["admitted_apis"][0]["name"], "add");
+        assert_eq!(report["rejected_apis"], serde_json::json!([]));
     }
 
     #[test]
@@ -418,8 +541,42 @@ mod tests {
     }
 
     #[test]
+    fn kmp_target_partial_prunes_delegate_with_mismatched_internal_package() {
+        let output = KmpHost::new()
+            .package_name("com.acme.demo")
+            .jvm_delegate(add_delegate())
+            .into_target()
+            .render_partial(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
+            .expect("partial KMP generation should prune a package-mismatched delegate");
+
+        let common = file(&output, "src/commonMain/kotlin/com/acme/demo/BoltFFI.kt");
+        assert!(!common.contains("expect fun add"));
+
+        let report: serde_json::Value =
+            serde_json::from_str(file(&output, KMP_SUPPORT_REPORT_FILE))
+                .expect("valid support report");
+        assert_eq!(report["admitted_apis"], serde_json::json!([]));
+        assert_eq!(report["rejected_apis"][0]["kind"], "function");
+        assert_eq!(report["rejected_apis"][0]["name"], "add");
+        assert!(
+            report["rejected_apis"][0]["reason"]
+                .as_str()
+                .expect("reason")
+                .contains("JNI glue emission")
+        );
+    }
+
+    #[test]
     fn kmp_target_partial_reports_support_metadata_reasons_for_duplicate_function_declarations() {
         let output = KmpHost::new()
+            .jvm_delegate(duplicate_ping_delegate())
             .into_target()
             .render_partial(&bindings(
                 r#"
@@ -460,16 +617,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(diagnostic_messages.len(), 2);
-        assert_eq!(output.coverage().unsupported().len(), 2);
-        assert_eq!(rejected_reasons.len(), 2);
+        assert_eq!(rejected_reasons.len(), 1, "{rejected_reasons:#?}");
         for reasons in [diagnostic_messages, unsupported_reasons, rejected_reasons] {
-            assert!(
-                reasons
-                    .iter()
-                    .any(|reason| reason.contains("JNI glue emission")),
-                "{reasons:#?}"
-            );
             assert!(
                 reasons
                     .iter()

@@ -63,6 +63,13 @@ M1 is complete:
 - M1c does not provide real JVM/Android API body parity. That starts in M2.
 - M1d keeps behavior unchanged: KMP packaging still reuses the existing JVM/Android packagers, while generated-project paths now live behind `KmpPackageLayout`.
 
+M2 has started:
+
+- M2a introduced a backend-owned JVM-family delegate seam for KMP.
+- `commonMain` expect declarations remain KMP-owned, while JVM/Android internal Kotlin and JNI glue can be supplied by a delegate owned outside `boltffi_backend`.
+- The backend can admit a delegated infallible sync primitive free function in strict mode through internal delegate tests.
+- Production IR generation remains intentionally fail-closed in M2a. `boltffi_bindgen` does not yet construct or attach the real Kotlin/JNI delegate.
+
 ## Target Architecture
 
 ### Backend Layout
@@ -209,10 +216,50 @@ Verification:
 
 Goal: rebuild the useful part first, cut production JVM/Android KMP over to the new architecture, and remove the old production KMP path.
 
+#### M2a: Backend Delegate Seam
+
+Goal: prove the KMP backend can admit and emit an infallible sync primitive free function only when a JVM-family delegate is supplied, without claiming production Kotlin/JNI integration.
+
+Completed:
+
+- Added a backend-owned JVM-family delegate seam.
+- Kept `commonMain` expect declarations KMP-owned.
+- Kept strict mode fail-closed when no delegate covers a function.
+- Added backend tests for delegated primitive sync functions, native-symbol/type/name matching, package mismatch rejection, and preview-prune duplicate handling.
+- Added an IR CLI regression test proving production `generate kmp --ir` remains fail-closed until M2b body parity is wired.
+
+M2a non-goals:
+
+- Do not wire `boltffi_bindgen::Generation::kmp_host()` to Kotlin/JNI output.
+- Do not model the mature Kotlin/JNI shared `Native` runtime or C translation-unit preamble as production behavior.
+- Do not claim generated KMP projects with non-empty APIs compile through the IR path.
+
+Exit criteria:
+
+- Backend-level delegate seam tests pass.
+- Production IR KMP remains fail-closed without the real delegate adapter.
+- No KMP fallback stubs or `NotImplementedError` paths are emitted for admitted APIs.
+
+Verification:
+
+- `cargo test -p boltffi_backend kmp -- --nocapture`
+- `cargo test -p boltffi_cli ir_kmp_strict_generation_fails_closed_until_m2b_body_parity`
+- `cargo fmt --check`
+- `git diff --check`
+- `rg "NotImplementedError|NativeRuntimeNotImplemented" boltffi_bindgen/src/render/kmp boltffi_backend/src/target/kmp`
+
+#### M2b: Kotlin/JNI Delegate Adapter
+
+Goal: connect production IR KMP generation to the mature Kotlin/JNI lowerers/emitters.
+
 Work:
 
 - Generate `commonMain`, `jvmMain`, and `androidMain`.
 - Delegate JVM/Android implementation to existing Kotlin/JNI lowerers and emitters.
+- Add the `boltffi_bindgen` bridge that converts `FfiContract` + `AbiContract` into KMP JVM-family delegate output.
+- Preserve the shared Kotlin `Native` runtime inside the owner object that declares external methods.
+- Preserve shared JNI C preamble/includes/helpers once per generated translation unit.
+- Filter delegate functions to the admitted KMP support surface.
 - Keep common-to-JVM conversion plans explicit.
 - Keep Android `jniLibs` packaging through the existing Android packager.
 - Keep JVM native resources through the existing JVM packager.
@@ -390,13 +437,14 @@ Verification:
 1. Done: reset docs and support contract.
 2. Done: introduce KMP plan/lower/emit skeleton and support report.
 3. Done: move packaging to `pack/kmp/*` with no feature expansion.
-4. Next: rebuild JVM/Android KMP generation and packaging.
-5. Add Apple target/layout planning and static library staging.
-6. Add Apple sync value actuals.
-7. Add Apple classes/handles.
-8. Add callbacks.
-9. Add async and streams.
-10. Add publication/demo/CI/docs hardening.
+4. In progress: rebuild JVM/Android KMP generation and packaging.
+5. Next: connect `boltffi_bindgen` Kotlin/JNI lowerers to the KMP JVM delegate seam.
+6. Add Apple target/layout planning and static library staging.
+7. Add Apple sync value actuals.
+8. Add Apple classes/handles.
+9. Add callbacks.
+10. Add async and streams.
+11. Add publication/demo/CI/docs hardening.
 
 ## Salvage Plan
 

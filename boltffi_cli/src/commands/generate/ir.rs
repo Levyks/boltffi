@@ -403,6 +403,10 @@ mod tests {
         std::env::temp_dir().join(format!("{prefix}-{unique_suffix}"))
     }
 
+    fn demo_manifest_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/demo/Cargo.toml")
+    }
+
     #[test]
     fn ir_kmp_prepare_output_removes_managed_paths_and_preserves_native_outputs() {
         let output_directory = unique_temp_dir("boltffi-ir-kmp-generated-cleanup-test");
@@ -530,5 +534,43 @@ enabled = true
             CliError::CommandFailed { command, status: None }
                 if command.contains("kotlin_multiplatform is experimental")
         ));
+    }
+
+    #[test]
+    fn ir_kmp_strict_generation_fails_closed_until_m2b_body_parity() {
+        let output_directory = unique_temp_dir("boltffi-ir-kmp-strict-no-delegate-test");
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+
+[targets.kotlin_multiplatform]
+enabled = true
+package = "com.boltffi.demo"
+"#,
+        );
+
+        let error = super::write_kmp(
+            &config,
+            output_directory.clone(),
+            demo_manifest_path(),
+            Vec::new(),
+        )
+        .expect_err("M2a production IR KMP must fail closed until M2b body parity is wired");
+
+        assert!(
+            matches!(
+                &error,
+                CliError::CommandFailed { command, status: None }
+                    if command.contains("generate kmp: render bindings")
+                        && command.contains("did not render every declaration")
+            ),
+            "{error:?}"
+        );
+
+        if output_directory.exists() {
+            fs::remove_dir_all(output_directory).expect("cleanup generated output");
+        }
     }
 }

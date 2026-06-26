@@ -394,6 +394,9 @@ impl Generation {
     }
 
     fn kmp_host(&self) -> KmpHost {
+        // M2a intentionally leaves the real Kotlin/JNI delegate unwired here.
+        // Production IR KMP stays fail-closed until the M2b adapter can supply
+        // a package-matched, filtered JVM-family delegate from bindgen.
         let host = KmpHost::new().support_mode(self.kmp_support_mode);
         let host = self
             .kmp_package_name

@@ -169,6 +169,7 @@ pub struct KmpModule {
     common: KmpCommonModule,
     platforms: Vec<KmpPlatformModule>,
     support_report: KmpSupportReport,
+    jvm_delegate: Option<KmpJvmDelegateOutput>,
 }
 
 impl KmpModule {
@@ -182,7 +183,14 @@ impl KmpModule {
             common,
             platforms,
             support_report,
+            jvm_delegate: None,
         }
+    }
+
+    /// Attaches JVM-family delegate output used by platform source-set emission.
+    pub fn with_jvm_delegate(mut self, delegate: KmpJvmDelegateOutput) -> Self {
+        self.jvm_delegate = Some(delegate);
+        self
     }
 
     /// Returns the planned common source-set API surface.
@@ -198,6 +206,105 @@ impl KmpModule {
     /// Returns the support report for this plan.
     pub const fn support_report(&self) -> &KmpSupportReport {
         &self.support_report
+    }
+
+    /// Returns delegated JVM-family output, if this plan admitted delegated APIs.
+    pub const fn jvm_delegate(&self) -> Option<&KmpJvmDelegateOutput> {
+        self.jvm_delegate.as_ref()
+    }
+}
+
+/// JVM-family output supplied by the Kotlin/JNI renderer for KMP source sets.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub struct KmpJvmDelegateOutput {
+    internal_package: String,
+    internal_kotlin_runtime_source: String,
+    functions: Vec<KmpJvmDelegateFunction>,
+}
+
+impl KmpJvmDelegateOutput {
+    /// Creates delegate output for the functions rendered by the Kotlin/JNI backend.
+    pub fn new(
+        internal_package: impl Into<String>,
+        internal_kotlin_runtime_source: impl Into<String>,
+        functions: Vec<KmpJvmDelegateFunction>,
+    ) -> Self {
+        Self {
+            internal_package: internal_package.into(),
+            internal_kotlin_runtime_source: internal_kotlin_runtime_source.into(),
+            functions,
+        }
+    }
+
+    /// Returns the Kotlin package declared by delegated JVM-family source.
+    pub fn internal_package(&self) -> &str {
+        &self.internal_package
+    }
+
+    /// Returns shared internal Kotlin runtime source used by delegated functions.
+    pub fn internal_kotlin_runtime_source(&self) -> &str {
+        &self.internal_kotlin_runtime_source
+    }
+
+    /// Returns whether this delegate contains platform implementation for `function`.
+    pub fn covers_function(&self, function: &KmpFunctionPlan) -> bool {
+        self.function_for(function).is_some()
+    }
+
+    /// Returns delegated source for `function`, if covered.
+    pub fn function_for(&self, function: &KmpFunctionPlan) -> Option<&KmpJvmDelegateFunction> {
+        self.functions
+            .iter()
+            .find(|candidate| candidate.matches(function))
+    }
+}
+
+/// One function covered by a JVM-family delegate output.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub struct KmpJvmDelegateFunction {
+    native_symbol: String,
+    kotlin_name: String,
+    param_types: Vec<KmpTypePlan>,
+    returns: Option<KmpTypePlan>,
+    jni_glue_source: String,
+}
+
+impl KmpJvmDelegateFunction {
+    /// Creates a delegated function signature for one native symbol.
+    pub fn new(
+        native_symbol: impl Into<String>,
+        kotlin_name: impl Into<String>,
+        param_types: Vec<KmpTypePlan>,
+        returns: Option<KmpTypePlan>,
+        jni_glue_source: impl Into<String>,
+    ) -> Self {
+        Self {
+            native_symbol: native_symbol.into(),
+            kotlin_name: kotlin_name.into(),
+            param_types,
+            returns,
+            jni_glue_source: jni_glue_source.into(),
+        }
+    }
+
+    /// Returns the JNI C glue source snippet for this delegated function.
+    pub fn jni_glue_source(&self) -> &str {
+        &self.jni_glue_source
+    }
+
+    fn matches(&self, function: &KmpFunctionPlan) -> bool {
+        self.native_symbol == function.native_symbol
+            && self.kotlin_name == function.name
+            && !self.jni_glue_source.trim().is_empty()
+            && self.param_types.len() == function.params.len()
+            && self
+                .param_types
+                .iter()
+                .zip(function.params.iter())
+                .all(|(expected, actual)| expected == actual.ty())
+            && self.returns.as_ref() == function.returns.as_ref()
     }
 }
 
@@ -366,7 +473,7 @@ impl KmpFunctionPlan {
 }
 
 /// Planned Kotlin function parameter.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct KmpParamPlan {
     name: String,
@@ -394,7 +501,7 @@ impl KmpParamPlan {
 }
 
 /// Planned Kotlin type for supported KMP declarations.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum KmpTypePlan {
     /// Primitive scalar type.
