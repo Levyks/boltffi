@@ -7,6 +7,8 @@ use crate::render::jni::{JniEmitter, JniLowerer, JvmBindingStyle};
 use crate::render::kotlin::{KotlinEmitter, KotlinLowerer, KotlinOptions, NamingConvention};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod delegate;
+
 const KMP_COMMON_RUNTIME_TYPE_NAMES: &[&str] = &["FfiException", "BoltFFIResult"];
 
 /// Relative path of the generated KMP support metadata file.
