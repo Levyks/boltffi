@@ -444,16 +444,16 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1op
     (void)cls;
 
     (void)env;
-    BoltFFICallbackHandle result = boltffi_function_demo_optional_boxed_listener();
+    BoltFFICallbackHandle __boltffi_result = boltffi_function_demo_optional_boxed_listener();
 
-    return boltffi_jni_callback_handle_new_owned(env, result);
+    return boltffi_jni_callback_handle_new_owned(env, __boltffi_result);
 }
 
 JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1optional_1shared_1listener(JNIEnv *env, jclass cls) {
     (void)cls;
 
     (void)env;
-    BoltFFICallbackHandle result = boltffi_function_demo_optional_shared_listener();
+    BoltFFICallbackHandle __boltffi_result = boltffi_function_demo_optional_shared_listener();
 
-    return boltffi_jni_callback_handle_new_owned(env, result);
+    return boltffi_jni_callback_handle_new_owned(env, __boltffi_result);
 }

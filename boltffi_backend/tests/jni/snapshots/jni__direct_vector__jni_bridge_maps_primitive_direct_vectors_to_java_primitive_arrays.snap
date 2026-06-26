@@ -122,7 +122,7 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1sum
     }
 
     (void)env;
-    int32_t result = boltffi_function_demo_sum((const int32_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);
+    int32_t __boltffi_result = boltffi_function_demo_sum((const int32_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);
 
     if (__boltffi_values_ptr != NULL) {
         if (__boltffi_values_needs_release) {
@@ -131,7 +131,7 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1sum
         __boltffi_values_ptr = NULL;
     }
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 __boltffi_error:
     if (__boltffi_values_ptr != NULL) {
         if (__boltffi_values_needs_release) {

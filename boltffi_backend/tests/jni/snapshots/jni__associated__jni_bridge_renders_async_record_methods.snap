@@ -411,9 +411,9 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1de
     }
 
     (void)env;
-    RustFutureHandle result = boltffi_method_record_demo_point_compute(__boltffi_receiver_value);
+    RustFutureHandle __boltffi_result = boltffi_method_record_demo_point_compute(__boltffi_receiver_value);
 
-    return (jlong)result;
+    return (jlong)__boltffi_result;
 __boltffi_error:
     return 0;
 }
@@ -430,25 +430,25 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1reco
 JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1record_1demo_1point_1compute_1complete(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
 
-    FfiStatus status = (FfiStatus){0};
+    FfiStatus __boltffi_status = (FfiStatus){0};
 
-    double result = boltffi_async_method_record_demo_point_compute_complete((RustFutureHandle)handle, &status);
+    double __boltffi_result = boltffi_async_method_record_demo_point_compute_complete((RustFutureHandle)handle, &__boltffi_status);
 
-    if (status.code != 0) {
-        boltffi_jni_throw_status(env, status);
+    if (__boltffi_status.code != 0) {
+        boltffi_jni_throw_status(env, __boltffi_status);
         return 0;
     }
 
-    return (jdouble)result;
+    return (jdouble)__boltffi_result;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1record_1demo_1point_1compute_1panic_1message(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
 
     (void)env;
-    FfiBuf_u8 result = boltffi_async_method_record_demo_point_compute_panic_message((RustFutureHandle)handle);
+    FfiBuf_u8 __boltffi_result = boltffi_async_method_record_demo_point_compute_panic_message((RustFutureHandle)handle);
 
-    return boltffi_jni_buffer_to_byte_array(env, result);
+    return boltffi_jni_buffer_to_byte_array(env, __boltffi_result);
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1async_1method_1record_1demo_1point_1compute_1cancel(JNIEnv *env, jclass cls, jlong handle) {

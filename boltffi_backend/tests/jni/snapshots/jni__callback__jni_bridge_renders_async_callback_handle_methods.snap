@@ -496,7 +496,7 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1ma
     (void)cls;
 
     (void)env;
-    BoltFFICallbackHandle result = boltffi_function_demo_make_listener();
+    BoltFFICallbackHandle __boltffi_result = boltffi_function_demo_make_listener();
 
-    return boltffi_jni_callback_handle_new_owned(env, result);
+    return boltffi_jni_callback_handle_new_owned(env, __boltffi_result);
 }

@@ -216,9 +216,9 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1record_
     (void)cls;
 
     (void)env;
-    ___Point result = boltffi_init_record_demo_point_origin();
+    ___Point __boltffi_result = boltffi_init_record_demo_point_origin();
 
-    return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));
+    return boltffi_jni_record_to_byte_array(env, &__boltffi_result, (uintptr_t)sizeof(__boltffi_result));
 }
 
 JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1demo_1point_1distance(JNIEnv *env, jclass cls, jbyteArray receiver, jbyteArray other) {
@@ -235,9 +235,9 @@ JNIEXPORT jdouble JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1record_1
     }
 
     (void)env;
-    double result = boltffi_method_record_demo_point_distance(__boltffi_receiver_value, __boltffi_other_value);
+    double __boltffi_result = boltffi_method_record_demo_point_distance(__boltffi_receiver_value, __boltffi_other_value);
 
-    return (jdouble)result;
+    return (jdouble)__boltffi_result;
 __boltffi_error:
     return 0;
 }
@@ -270,7 +270,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1recor
     }
 
     (void)env;
-    FfiBuf_u8 result = boltffi_method_record_demo_person_rename((const uint8_t *)__boltffi_receiver_ptr, (uintptr_t)__boltffi_receiver_len, (const uint8_t *)__boltffi_name_ptr, (uintptr_t)__boltffi_name_len);
+    FfiBuf_u8 __boltffi_result = boltffi_method_record_demo_person_rename((const uint8_t *)__boltffi_receiver_ptr, (uintptr_t)__boltffi_receiver_len, (const uint8_t *)__boltffi_name_ptr, (uintptr_t)__boltffi_name_len);
 
     if (__boltffi_receiver_ptr != NULL) {
         (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);
@@ -281,7 +281,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1recor
         __boltffi_name_ptr = NULL;
     }
 
-    return boltffi_jni_buffer_to_byte_array(env, result);
+    return boltffi_jni_buffer_to_byte_array(env, __boltffi_result);
 __boltffi_error:
     if (__boltffi_receiver_ptr != NULL) {
         (*env)->ReleaseByteArrayElements(env, receiver, __boltffi_receiver_ptr, JNI_ABORT);

@@ -384,18 +384,18 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engi
     (void)cls;
 
     (void)env;
-    uint64_t result = boltffi_stream_demo_engine_points_subscribe(receiver);
+    uint64_t __boltffi_result = boltffi_stream_demo_engine_points_subscribe(receiver);
 
-    return (jlong)result;
+    return (jlong)__boltffi_result;
 }
 
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1points_1wait(JNIEnv *env, jclass cls, jlong subscription, jint timeout_milliseconds) {
     (void)cls;
 
     (void)env;
-    WaitResult result = boltffi_stream_demo_engine_points_wait(subscription, timeout_milliseconds);
+    WaitResult __boltffi_result = boltffi_stream_demo_engine_points_wait(subscription, timeout_milliseconds);
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1points_1poll(JNIEnv *env, jclass cls, jlong subscription, jlong callback_data) {
@@ -429,27 +429,27 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engi
     (void)cls;
 
     (void)env;
-    uint64_t result = boltffi_stream_demo_engine_names_subscribe(receiver);
+    uint64_t __boltffi_result = boltffi_stream_demo_engine_names_subscribe(receiver);
 
-    return (jlong)result;
+    return (jlong)__boltffi_result;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1names_1pop_1batch(JNIEnv *env, jclass cls, jlong subscription, jlong max_count) {
     (void)cls;
 
     (void)env;
-    FfiBuf_u8 result = boltffi_stream_demo_engine_names_pop_batch(subscription, max_count);
+    FfiBuf_u8 __boltffi_result = boltffi_stream_demo_engine_names_pop_batch(subscription, max_count);
 
-    return boltffi_jni_buffer_to_byte_array(env, result);
+    return boltffi_jni_buffer_to_byte_array(env, __boltffi_result);
 }
 
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1names_1wait(JNIEnv *env, jclass cls, jlong subscription, jint timeout_milliseconds) {
     (void)cls;
 
     (void)env;
-    WaitResult result = boltffi_stream_demo_engine_names_wait(subscription, timeout_milliseconds);
+    WaitResult __boltffi_result = boltffi_stream_demo_engine_names_wait(subscription, timeout_milliseconds);
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1stream_1demo_1engine_1names_1poll(JNIEnv *env, jclass cls, jlong subscription, jlong callback_data) {

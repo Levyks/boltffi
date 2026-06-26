@@ -511,10 +511,10 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong callback) {
     (void)cls;
 
-    FfiStatus status = boltffi_function_demo_install(boltffi_jni____closure__to_box_demo_listener_call, (void *)callback, boltffi_jni____closure__to_box_demo_listener_release);
+    FfiStatus __boltffi_status = boltffi_function_demo_install(boltffi_jni____closure__to_box_demo_listener_call, (void *)callback, boltffi_jni____closure__to_box_demo_listener_release);
 
-    if (status.code != 0) {
-        boltffi_jni_throw_status(env, status);
+    if (__boltffi_status.code != 0) {
+        boltffi_jni_throw_status(env, __boltffi_status);
         return;
     }
 

@@ -84,16 +84,16 @@ JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1enum_1demo_1
     (void)cls;
 
     (void)env;
-    ___Mode result = boltffi_init_enum_demo_mode_default();
+    ___Mode __boltffi_result = boltffi_init_enum_demo_mode_default();
 
-    return (jbyte)result;
+    return (jbyte)__boltffi_result;
 }
 
 JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1enum_1demo_1mode_1code(JNIEnv *env, jclass cls, jbyte receiver) {
     (void)cls;
 
     (void)env;
-    uint8_t result = boltffi_method_enum_demo_mode_code((___Mode)receiver);
+    uint8_t __boltffi_result = boltffi_method_enum_demo_mode_code((___Mode)receiver);
 
-    return (jbyte)result;
+    return (jbyte)__boltffi_result;
 }

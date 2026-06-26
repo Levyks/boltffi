@@ -179,7 +179,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1const_1demo_1
     (void)cls;
 
     (void)env;
-    FfiBuf_u8 result = boltffi_const_demo_magic();
+    FfiBuf_u8 __boltffi_result = boltffi_const_demo_magic();
 
-    return boltffi_jni_buffer_to_byte_array(env, result);
+    return boltffi_jni_buffer_to_byte_array(env, __boltffi_result);
 }

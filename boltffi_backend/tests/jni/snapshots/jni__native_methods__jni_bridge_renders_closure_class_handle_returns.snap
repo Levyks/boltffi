@@ -337,18 +337,18 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1class_1demo_
     (void)cls;
 
     (void)env;
-    uint64_t result = boltffi_init_class_demo_engine_new();
+    uint64_t __boltffi_result = boltffi_init_class_demo_engine_new();
 
-    return (jlong)result;
+    return (jlong)__boltffi_result;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong callback) {
     (void)cls;
 
-    FfiStatus status = boltffi_function_demo_install(boltffi_jni____closure__to_demo_engine_call, (void *)callback, boltffi_jni____closure__to_demo_engine_release);
+    FfiStatus __boltffi_status = boltffi_function_demo_install(boltffi_jni____closure__to_demo_engine_call, (void *)callback, boltffi_jni____closure__to_demo_engine_release);
 
-    if (status.code != 0) {
-        boltffi_jni_throw_status(env, status);
+    if (__boltffi_status.code != 0) {
+        boltffi_jni_throw_status(env, __boltffi_status);
         return;
     }
 

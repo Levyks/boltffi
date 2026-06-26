@@ -115,14 +115,14 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1cou
     }
 
     (void)env;
-    uint32_t result = boltffi_function_demo_count((const uint8_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);
+    uint32_t __boltffi_result = boltffi_function_demo_count((const uint8_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);
 
     if (__boltffi_values_ptr != NULL) {
         (*env)->ReleaseByteArrayElements(env, values, __boltffi_values_ptr, JNI_ABORT);
         __boltffi_values_ptr = NULL;
     }
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 __boltffi_error:
     if (__boltffi_values_ptr != NULL) {
         (*env)->ReleaseByteArrayElements(env, values, __boltffi_values_ptr, JNI_ABORT);

@@ -144,9 +144,9 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
     }
 
     (void)env;
-    ___Point result = boltffi_function_demo_echo_point(__boltffi_point_value);
+    ___Point __boltffi_result = boltffi_function_demo_echo_point(__boltffi_point_value);
 
-    return boltffi_jni_record_to_byte_array(env, &result, (uintptr_t)sizeof(result));
+    return boltffi_jni_record_to_byte_array(env, &__boltffi_result, (uintptr_t)sizeof(__boltffi_result));
 __boltffi_error:
     return NULL;
 }
@@ -155,7 +155,7 @@ JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1ec
     (void)cls;
 
     (void)env;
-    ___Mode result = boltffi_function_demo_echo_mode((___Mode)mode);
+    ___Mode __boltffi_result = boltffi_function_demo_echo_mode((___Mode)mode);
 
-    return (jbyte)result;
+    return (jbyte)__boltffi_result;
 }
