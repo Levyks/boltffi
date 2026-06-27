@@ -1,12 +1,20 @@
 use std::collections::HashMap;
 
-use boltffi_backend::target::kmp::{KmpJvmDelegateFunction, KmpJvmDelegateOutput, KmpTypePlan};
-use boltffi_binding::Primitive as BackendPrimitive;
+use boltffi_backend::target::kmp::lower::lower_native_function_plan;
+use boltffi_backend::target::kmp::{
+    KmpFunctionPlan, KmpJvmDelegateFunction, KmpJvmDelegateOutput, KmpTypePlan,
+};
+use boltffi_binding::{
+    Bindings, CanonicalName as BindingName, Decl, DirectValueType, ErrorChannel, ExecutionDecl,
+    FunctionDecl as BindingFunctionDecl, IncomingParam, Native, ParamPlan,
+    Primitive as BackendPrimitive, Receive, ReturnPlan,
+};
+use boltffi_ffi_rules::{callable::ExecutionKind, naming};
 
-use crate::ir::FfiContract;
 use crate::ir::abi::{AbiContract, CallId, CallMode};
-use crate::ir::definitions::{FunctionDef, ParamPassing, ReturnDef};
+use crate::ir::definitions::{FunctionDef, ParamDef, ParamPassing, ReturnDef};
 use crate::ir::types::{PrimitiveType, TypeExpr};
+use crate::ir::{FfiContract, Lowerer, PackageInfo, TypeCatalog};
 use crate::render::jni::{JniEmitter, JniFunction, JniLowerer, JniModule, JvmBindingStyle};
 use crate::render::kmp::{
     KmpSurfaceSupport, filter_abi_for_kmp_surface, filter_contract_for_kmp_surface,
@@ -45,6 +53,24 @@ impl KmpJvmDelegateAdapter {
         contract: &FfiContract,
         abi: &AbiContract,
     ) -> Result<KmpJvmDelegateOutput, KmpJvmDelegateAdapterError> {
+        self.adapt_with_delegate_entries(contract, abi, &HashMap::new())
+    }
+
+    pub(crate) fn adapt_bindings(
+        &self,
+        bindings: &Bindings<Native>,
+    ) -> Result<KmpJvmDelegateOutput, KmpJvmDelegateAdapterError> {
+        let (contract, delegate_entries_by_legacy_symbol) = legacy_contract_for_bindings(bindings);
+        let abi = Lowerer::new(&contract).to_abi_contract();
+        self.adapt_with_delegate_entries(&contract, &abi, &delegate_entries_by_legacy_symbol)
+    }
+
+    fn adapt_with_delegate_entries(
+        &self,
+        contract: &FfiContract,
+        abi: &AbiContract,
+        delegate_entries_by_legacy_symbol: &HashMap<String, KmpFunctionPlan>,
+    ) -> Result<KmpJvmDelegateOutput, KmpJvmDelegateAdapterError> {
         let internal_package = format!("{}.jvm", self.package_name);
         let support = KmpSurfaceSupport::for_contract(contract);
         let internal_contract = filter_contract_for_kmp_delegate_surface(contract, &support);
@@ -75,6 +101,7 @@ impl KmpJvmDelegateAdapter {
             &kotlin_module,
             &jni_module,
             &shared_jni_source,
+            delegate_entries_by_legacy_symbol,
         )?;
 
         Ok(
@@ -90,6 +117,7 @@ fn delegate_functions(
     kotlin_module: &KotlinModule,
     jni_module: &JniModule,
     shared_jni_source: &str,
+    delegate_entries_by_legacy_symbol: &HashMap<String, KmpFunctionPlan>,
 ) -> Result<Vec<KmpJvmDelegateFunction>, KmpJvmDelegateAdapterError> {
     let function_defs = function_defs_by_symbol(contract, abi);
     let native_functions = kotlin_module
@@ -113,19 +141,35 @@ fn delegate_functions(
         let Some(function_def) = function_defs.get(kotlin_function.ffi_name.as_str()) else {
             continue;
         };
-        let Some((param_types, returns)) = kmp_function_signature(function_def) else {
-            continue;
-        };
         if !native_functions.contains_key(kotlin_function.ffi_name.as_str()) {
             continue;
         }
         let Some(jni_function) = jni_functions.get(kotlin_function.ffi_name.as_str()) else {
             continue;
         };
-        let native_symbol = kmp_native_function_symbol(contract, function_def);
+        let legacy_symbol = kotlin_function.ffi_name.as_str();
+        let (native_symbol, kotlin_name, param_types, returns) =
+            if let Some(function_plan) = delegate_entries_by_legacy_symbol.get(legacy_symbol) {
+                (
+                    function_plan.native_symbol().to_string(),
+                    function_plan.name().to_string(),
+                    function_plan_param_types(function_plan),
+                    function_plan.returns().cloned(),
+                )
+            } else {
+                let Some((param_types, returns)) = kmp_function_signature(function_def) else {
+                    continue;
+                };
+                (
+                    kmp_native_function_symbol(contract, function_def),
+                    kotlin_function.func_name.clone(),
+                    param_types,
+                    returns,
+                )
+            };
         delegates.push(KmpJvmDelegateFunction::new(
             native_symbol.clone(),
-            kotlin_function.func_name.clone(),
+            kotlin_name,
             param_types,
             returns,
             jni_function_source(jni_module, jni_function, &native_symbol, shared_jni_source)?,
@@ -133,6 +177,138 @@ fn delegate_functions(
     }
 
     Ok(delegates)
+}
+
+fn function_plan_param_types(function_plan: &KmpFunctionPlan) -> Vec<KmpTypePlan> {
+    function_plan
+        .params()
+        .iter()
+        .map(|param| param.ty().clone())
+        .collect()
+}
+
+fn legacy_contract_for_bindings(
+    bindings: &Bindings<Native>,
+) -> (FfiContract, HashMap<String, KmpFunctionPlan>) {
+    let mut delegate_entries_by_legacy_symbol = HashMap::new();
+    let mut functions = Vec::new();
+    for declaration in bindings.decls() {
+        let Decl::Function(function) = declaration else {
+            continue;
+        };
+        let Ok(function_plan) = lower_native_function_plan(function) else {
+            continue;
+        };
+        let legacy_id = legacy_function_id(function_plan.native_symbol());
+        let Some(function_def) = legacy_function_for_binding(function, &legacy_id) else {
+            continue;
+        };
+        let legacy_symbol = naming::function_ffi_name(function_def.id.as_str()).into_string();
+        delegate_entries_by_legacy_symbol.insert(legacy_symbol, function_plan);
+        functions.push(function_def);
+    }
+
+    (
+        FfiContract {
+            package: PackageInfo {
+                name: binding_name_identifier(bindings.package().name()),
+                version: bindings.package().version().map(ToOwned::to_owned),
+            },
+            catalog: TypeCatalog::new(),
+            functions,
+        },
+        delegate_entries_by_legacy_symbol,
+    )
+}
+
+fn legacy_function_id(native_symbol: &str) -> String {
+    format!("kmp_delegate_{native_symbol}")
+}
+
+fn legacy_function_for_binding(
+    function: &BindingFunctionDecl<Native>,
+    legacy_id: &str,
+) -> Option<FunctionDef> {
+    let callable = function.callable();
+    if callable.receiver().is_some()
+        || !matches!(callable.execution(), ExecutionDecl::Synchronous(_))
+        || !matches!(callable.error().channel(), ErrorChannel::None)
+    {
+        return None;
+    }
+
+    let params = callable
+        .params()
+        .iter()
+        .map(|param| {
+            let IncomingParam::Value(ParamPlan::Direct {
+                ty: DirectValueType::Primitive(primitive),
+                receive,
+            }) = param.payload()
+            else {
+                return None;
+            };
+            Some(ParamDef {
+                name: binding_name_identifier(param.name()).into(),
+                type_expr: TypeExpr::Primitive(legacy_primitive(*primitive)?),
+                passing: legacy_param_passing(*receive)?,
+                doc: None,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    let returns = match callable.returns().plan() {
+        ReturnPlan::Void => ReturnDef::Void,
+        ReturnPlan::DirectViaReturnSlot {
+            ty: DirectValueType::Primitive(primitive),
+        } => ReturnDef::Value(TypeExpr::Primitive(legacy_primitive(*primitive)?)),
+        _ => return None,
+    };
+
+    Some(FunctionDef {
+        id: legacy_id.into(),
+        params,
+        returns,
+        execution_kind: ExecutionKind::Sync,
+        doc: None,
+        deprecated: None,
+    })
+}
+
+fn binding_name_identifier(name: &BindingName) -> String {
+    name.parts()
+        .iter()
+        .map(|part| part.as_str())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+fn legacy_param_passing(receive: Receive) -> Option<ParamPassing> {
+    match receive {
+        Receive::ByValue => Some(ParamPassing::Value),
+        Receive::ByRef => Some(ParamPassing::Ref),
+        Receive::ByMutRef => Some(ParamPassing::RefMut),
+        _ => None,
+    }
+}
+
+fn legacy_primitive(primitive: BackendPrimitive) -> Option<PrimitiveType> {
+    match primitive {
+        BackendPrimitive::Bool => Some(PrimitiveType::Bool),
+        BackendPrimitive::I8 => Some(PrimitiveType::I8),
+        BackendPrimitive::U8 => Some(PrimitiveType::U8),
+        BackendPrimitive::I16 => Some(PrimitiveType::I16),
+        BackendPrimitive::U16 => Some(PrimitiveType::U16),
+        BackendPrimitive::I32 => Some(PrimitiveType::I32),
+        BackendPrimitive::U32 => Some(PrimitiveType::U32),
+        BackendPrimitive::I64 => Some(PrimitiveType::I64),
+        BackendPrimitive::U64 => Some(PrimitiveType::U64),
+        BackendPrimitive::ISize => Some(PrimitiveType::ISize),
+        BackendPrimitive::USize => Some(PrimitiveType::USize),
+        BackendPrimitive::F32 => Some(PrimitiveType::F32),
+        BackendPrimitive::F64 => Some(PrimitiveType::F64),
+        _ => None,
+    }
 }
 
 fn filter_contract_for_kmp_delegate_surface(

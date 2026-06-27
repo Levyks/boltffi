@@ -537,8 +537,8 @@ enabled = true
     }
 
     #[test]
-    fn ir_kmp_strict_generation_fails_closed_until_m2b_body_parity() {
-        let output_directory = unique_temp_dir("boltffi-ir-kmp-strict-no-delegate-test");
+    fn ir_kmp_strict_generation_still_fails_closed_for_unsupported_surface() {
+        let output_directory = unique_temp_dir("boltffi-ir-kmp-strict-unsupported-test");
         let config = parse_config(
             r#"
 [package]
@@ -557,7 +557,7 @@ package = "com.boltffi.demo"
             demo_manifest_path(),
             Vec::new(),
         )
-        .expect_err("M2a production IR KMP must fail closed until M2b body parity is wired");
+        .expect_err("production IR KMP must fail closed for unsupported declarations");
 
         assert!(
             matches!(
