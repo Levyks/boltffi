@@ -1,10 +1,17 @@
 use std::path::Path;
 
-use super::{bridge_fixture, rendered_fixture};
+use super::{bridge_fixture, rendered_fixture, rendered_fixture_with_support};
 
 #[test]
 fn jni_bridge_layers_primitive_functions_on_c_bridge() {
     insta::assert_snapshot!(rendered_fixture("exports/primitive_functions"));
+}
+
+#[test]
+fn jni_bridge_renders_shared_support_fragments() {
+    insta::assert_snapshot!(rendered_fixture_with_support(
+        "exports/closure_result_return"
+    ));
 }
 
 #[test]

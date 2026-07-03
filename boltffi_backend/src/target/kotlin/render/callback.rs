@@ -15,7 +15,7 @@ use crate::{
     },
     core::{Emitted, Error, RenderContext, Result},
     target::kotlin::{
-        KotlinHost,
+        KotlinApiStyle, KotlinHost,
         codec::{Reader, ScalarOption, WireBuffer},
         name_style::Name,
         primitive::KotlinPrimitive,
@@ -961,7 +961,8 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
                 ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
                 DirectValueType::Record(record),
             ) => {
-                let ty = Record::type_name_from_id(*record, self.context)?;
+                let ty = Record::type_name_from_id(*record, self.context)
+                    .map(|name| self.host.generated_type(name))?;
                 Ok(ReturnValue {
                     public_ty: Some(ty.clone()),
                     jvm_ty: Some(TypeName::byte_array(false)),
@@ -1190,8 +1191,9 @@ impl ReturnRender<'_> {
     ) -> Result<ReturnValue> {
         let enumeration = Enumeration::from_id(enumeration, host, context)?;
         let repr = enumeration.repr()?;
+        let ty = host.generated_type(enumeration.name().clone());
         Ok(ReturnValue {
-            public_ty: Some(enumeration.name().clone()),
+            public_ty: Some(ty),
             jvm_ty: Some(KotlinPrimitive::new(repr).native_type()?),
             conversion: ReturnConversion::DirectEnum { repr },
         })
@@ -1211,8 +1213,12 @@ impl ReturnValue {
             self.fallible_success_expression(call, fallible, host, context)?
                 .try_catch(
                     error.clone(),
-                    fallible.error_type(host, context)?,
-                    fallible.error_expression(Expression::identifier(error), host, context)?,
+                    fallible.catch_type(host, context)?,
+                    fallible.error_expression(
+                        fallible.error_payload(Expression::identifier(error))?,
+                        host,
+                        context,
+                    )?,
                 ),
         )])
     }
@@ -1266,9 +1272,9 @@ impl ReturnValue {
             self.completion_success_expression(call, completion, host, context)?
                 .try_catch(
                     error.clone(),
-                    fallible.error_type(host, context)?,
+                    fallible.catch_type(host, context)?,
                     fallible.completion_error_expression(
-                        Expression::identifier(error),
+                        fallible.error_payload(Expression::identifier(error))?,
                         completion,
                         host,
                         context,
@@ -1367,27 +1373,32 @@ impl ReturnValue {
                     bridge: "jni",
                     invariant: "fallible callback method has no success out-pointer",
                 })?;
-            let (setup, value, cleanup) = self.success_value(value, host, context)?;
+            let result = fallible.source_name.generated("result")?;
+            let (setup, payload, cleanup) =
+                self.success_value(Expression::identifier(result.clone()), host, context)?;
             let write = Statement::expression(Expression::call(
                 "Native",
                 Identifier::escape(success_out.writer().as_str())?,
                 [
                     Expression::identifier(Identifier::escape(success_out.name().as_str())?),
-                    value,
+                    payload,
                 ]
                 .into_iter()
                 .collect::<ArgumentList>(),
             ));
             return Ok(Expression::run(
-                setup
-                    .into_iter()
+                std::iter::once(Statement::value(result, value))
+                    .chain(setup)
                     .chain(std::iter::once(write))
                     .chain(cleanup)
                     .collect(),
                 Self::empty_error_payload(),
             ));
         };
-        Ok(Self::empty_error_payload())
+        Ok(Expression::run(
+            vec![Statement::expression(value)],
+            Self::empty_error_payload(),
+        ))
     }
 
     fn completion_success_expression(
@@ -1397,8 +1408,24 @@ impl ReturnValue {
         host: &KotlinHost,
         context: &RenderContext<Native>,
     ) -> Result<Expression> {
+        let statements = match &self.conversion {
+            ReturnConversion::Void => {
+                self.completion_success_value(value, completion, host, context)?
+            }
+            _ => {
+                let result = Identifier::parse("__boltffi_result")?;
+                std::iter::once(Statement::value(result.clone(), value))
+                    .chain(self.completion_success_value(
+                        Expression::identifier(result),
+                        completion,
+                        host,
+                        context,
+                    )?)
+                    .collect()
+            }
+        };
         Ok(Expression::run(
-            self.completion_success_value(value, completion, host, context)?,
+            statements,
             Expression::identifier(Identifier::parse("Unit")?),
         ))
     }
@@ -1411,9 +1438,10 @@ impl ReturnValue {
         context: &RenderContext<Native>,
     ) -> Result<Vec<Statement>> {
         match completion.payload {
-            None if matches!(&self.conversion, ReturnConversion::Void) => {
-                Ok(vec![completion.success_statement(None)])
-            }
+            None if matches!(&self.conversion, ReturnConversion::Void) => Ok(vec![
+                Statement::expression(value),
+                completion.success_statement(None),
+            ]),
             None => Err(Error::BrokenBridgeContract {
                 bridge: "jni",
                 invariant: "async callback return payload is missing",
@@ -1492,8 +1520,38 @@ impl ReturnValue {
 }
 
 impl FallibleReturn<'_> {
-    fn error_type(&self, host: &KotlinHost, context: &RenderContext<Native>) -> Result<TypeName> {
-        KotlinType::type_ref(self.error_ty, host, context)
+    fn catch_type(&self, host: &KotlinHost, context: &RenderContext<Native>) -> Result<TypeName> {
+        match self.error_ty {
+            TypeRef::Record(record) => Record::type_name_from_id(*record, context)
+                .map(|name| self.generated_error_type(name, host)),
+            TypeRef::Enum(enumeration) => Enumeration::type_name_from_id(*enumeration, context)
+                .map(|name| self.generated_error_type(name, host)),
+            TypeRef::String => Ok(TypeName::new("Throwable")),
+            _ => Err(KotlinHost::unsupported("callback method error return")),
+        }
+    }
+
+    fn error_payload(&self, value: Expression) -> Result<Expression> {
+        match self.error_ty {
+            TypeRef::Record(_) | TypeRef::Enum(_) => Ok(value),
+            TypeRef::String => Ok(Expression::property(
+                value.clone(),
+                Identifier::parse("message")?,
+            )
+            .or_else(Expression::call(
+                value,
+                Identifier::parse("toString")?,
+                ArgumentList::default(),
+            ))),
+            _ => Err(KotlinHost::unsupported("callback method error return")),
+        }
+    }
+
+    fn generated_error_type(&self, name: TypeName, host: &KotlinHost) -> TypeName {
+        match host.api_layout() {
+            KotlinApiStyle::TopLevel => name,
+            KotlinApiStyle::ModuleObject => TypeName::qualified(host.file(), name),
+        }
     }
 
     fn error_expression(

@@ -177,6 +177,39 @@ pub fn invoke_result_message_callback(
 }
 
 #[export]
+pub trait StringResultMessageCallback {
+    fn render_message(&self, key: i32) -> Result<String, String>;
+}
+
+#[demo_bench_macros::demo_case(
+    "case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success",
+    justification = "Ensure a callback method returning Result<String, String> returns its encoded success payload.",
+    directions = "Call `callbacks::sync_traits::invoke_string_result_message_callback` through the generated binding and assert a callback Result<String, String> returns its encoded success payload.",
+    exclude(swift, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; Swift coverage for this callback shape has not been added yet."),
+    exclude(java, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; Java coverage for this callback shape has not been added yet."),
+    exclude(csharp, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; C# coverage for this callback shape has not been added yet."),
+    exclude(typescript, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; TypeScript coverage for this callback shape has not been added yet."),
+    exclude(python, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; Python coverage for this callback shape has not been added yet.")
+)]
+#[demo_bench_macros::demo_case(
+    "case:callbacks.sync_traits.string_result_message_callback.should_report_string_error",
+    justification = "Ensure a callback method returning Result<String, String> maps a thrown language error into the Rust String error path.",
+    directions = "Call `callbacks::sync_traits::invoke_string_result_message_callback` through the generated binding with a failing callback and assert the String error is reported by the target language.",
+    exclude(swift, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; Swift coverage for this callback shape has not been added yet."),
+    exclude(java, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; Java coverage for this callback shape has not been added yet."),
+    exclude(csharp, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; C# coverage for this callback shape has not been added yet."),
+    exclude(typescript, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; TypeScript coverage for this callback shape has not been added yet."),
+    exclude(python, reason = ExclusionReason::CoverageGap, details = "Kotlin-specific regression coverage added first; Python coverage for this callback shape has not been added yet.")
+)]
+#[export]
+pub fn invoke_string_result_message_callback(
+    callback: impl StringResultMessageCallback,
+    key: i32,
+) -> Result<String, String> {
+    callback.render_message(key)
+}
+
+#[export]
 pub trait MultiMethodCallback {
     fn method_a(&self, x: i32) -> i32;
     fn method_b(&self, x: i32, y: i32) -> i32;

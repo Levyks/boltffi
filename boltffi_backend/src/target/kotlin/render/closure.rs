@@ -14,7 +14,7 @@ use crate::{
     bridge::jni::{ClosureRegistration, JniBridgeContract, SuccessOutArgument},
     core::{Error, RenderContext, RenderedDeclaration, Result},
     target::kotlin::{
-        KotlinHost,
+        KotlinApiStyle, KotlinHost,
         codec::{ScalarOption, WireBuffer},
         name_style::Name,
         primitive::KotlinPrimitive,
@@ -362,12 +362,21 @@ impl<'context> ClosureTypeName<'context> {
         match ty {
             DirectValueType::Primitive(primitive) => primitive_name(*primitive).map(str::to_owned),
             DirectValueType::Record(record) => Record::type_name_from_id(*record, self.context)
+                .map(|name| self.generated_type(name))
                 .map(|name| type_name_fragment(&name)),
             DirectValueType::Enum(enumeration) => {
                 Enumeration::type_name_from_id(*enumeration, self.context)
+                    .map(|name| self.generated_type(name))
                     .map(|name| type_name_fragment(&name))
             }
             _ => Err(KotlinHost::unsupported("closure direct type name")),
+        }
+    }
+
+    fn generated_type(&self, name: TypeName) -> TypeName {
+        match self.host.api_layout() {
+            KotlinApiStyle::TopLevel => name,
+            KotlinApiStyle::ModuleObject => TypeName::qualified(self.host.file(), name),
         }
     }
 
@@ -521,11 +530,15 @@ impl TypeRefRender for ClosureTypeName<'_> {
     }
 
     fn record(&mut self, id: RecordId) -> Self::Output {
-        Record::type_name_from_id(id, self.context).map(|name| type_name_fragment(&name))
+        Record::type_name_from_id(id, self.context)
+            .map(|name| self.generated_type(name))
+            .map(|name| type_name_fragment(&name))
     }
 
     fn enumeration(&mut self, id: EnumId) -> Self::Output {
-        Enumeration::type_name_from_id(id, self.context).map(|name| type_name_fragment(&name))
+        Enumeration::type_name_from_id(id, self.context)
+            .map(|name| self.generated_type(name))
+            .map(|name| type_name_fragment(&name))
     }
 
     fn class(&mut self, id: ClassId) -> Self::Output {
@@ -665,7 +678,8 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
                 conversion: ReturnConversion::DirectPrimitive(*primitive),
             }),
             DirectValueType::Record(record) => {
-                let ty = Record::type_name_from_id(*record, self.context)?;
+                let ty = Record::type_name_from_id(*record, self.context)
+                    .map(|name| self.host.generated_type(name))?;
                 Ok(ClosureReturnValue {
                     public_ty: Some(ty.clone()),
                     jvm_ty: Some(TypeName::byte_array(false)),
@@ -675,8 +689,9 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
             DirectValueType::Enum(enumeration) => {
                 let enumeration = Enumeration::from_id(*enumeration, self.host, self.context)?;
                 let repr = enumeration.repr()?;
+                let ty = self.host.generated_type(enumeration.name().clone());
                 Ok(ClosureReturnValue {
-                    public_ty: Some(enumeration.name().clone()),
+                    public_ty: Some(ty),
                     jvm_ty: Some(KotlinPrimitive::new(repr).native_type()?),
                     conversion: ReturnConversion::DirectEnum { repr },
                 })

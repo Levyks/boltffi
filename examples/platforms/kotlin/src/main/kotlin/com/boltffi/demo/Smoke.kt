@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
 package com.boltffi.demo
 
 import kotlinx.coroutines.async
@@ -19,7 +21,7 @@ fun main() {
         "echoVecIsize failed",
     )
     requireThat(
-        echoVecUsize(longArrayOf(0L, 7L, 42L)).contentEquals(longArrayOf(0L, 7L, 42L)),
+        echoVecUsize(ulongArrayOf(0uL, 7uL, 42uL)).contentEquals(ulongArrayOf(0uL, 7uL, 42uL)),
         "echoVecUsize failed",
     )
 

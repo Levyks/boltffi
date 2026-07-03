@@ -90,6 +90,16 @@ class DemoCallbacksAndAsyncTest {
                 return "message:$key"
             }
         }
+        var stringResultInvocations = 0
+        val stringResultMessageCallback = object : StringResultMessageCallback {
+            override fun renderMessage(key: Int): String {
+                stringResultInvocations += 1
+                if (key < 0) {
+                    throw IllegalArgumentException("invalid callback key $key")
+                }
+                return "string-message:$key"
+            }
+        }
         val multiMethod = object : MultiMethodCallback {
             override fun methodA(x: Int): Int = x + 1
             override fun methodB(x: Int, y: Int): Int = x * y
@@ -142,6 +152,16 @@ class DemoCallbacksAndAsyncTest {
         assertNull(invokeOptionalMessageCallback(optionalMessageCallback, 0))
         assertEquals("message:8", invokeResultMessageCallback(resultMessageCallback, 8))
         assertEquals(MathError.NegativeInput, assertFailsWith<MathError> { invokeResultMessageCallback(resultMessageCallback, -1) })
+        demoCase("case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success")
+        assertEquals("string-message:11", invokeStringResultMessageCallback(stringResultMessageCallback, 11))
+        assertEquals(1, stringResultInvocations)
+        demoCase("case:callbacks.sync_traits.string_result_message_callback.should_report_string_error")
+        assertMessageContains(
+            assertFailsWith<FfiException> {
+                invokeStringResultMessageCallback(stringResultMessageCallback, -1)
+            },
+            "invalid callback key -1",
+        )
         assertContentEquals(intArrayOf(1, 4, 9), processVec(vecProcessor, intArrayOf(1, 2, 3)))
         assertEquals(21, invokeMultiMethod(multiMethod, 3, 4))
         assertEquals(21, invokeMultiMethodBoxed(multiMethod, 3, 4))

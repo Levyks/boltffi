@@ -90,6 +90,7 @@ fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
         .kotlin_desktop_loader(kotlin_desktop_loader(
             config.android_kotlin_desktop_loader(),
         ))
+        .kotlin_c_header(PathBuf::from("jni").join(format!("{}.h", config.library_name())))
         .render(target)
         .and_then(|output| {
             print_coverage(target_name, &output);

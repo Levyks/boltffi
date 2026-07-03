@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
 package com.boltffi.demo
 
 import java.net.URI
@@ -126,17 +128,17 @@ class DemoValueTypesTest {
         assertContentEquals(byteArrayOf(-1, 0, 7), echoVecI8(byteArrayOf(-1, 0, 7)), "case:primitives.vecs.i8.should_roundtrip_values")
         assertContentEquals(byteArrayOf(0, 1, 2, 3), echoVecU8(byteArrayOf(0, 1, 2, 3)), "case:primitives.vecs.u8.should_roundtrip_values")
         assertContentEquals(shortArrayOf(-3, 0, 9), echoVecI16(shortArrayOf(-3, 0, 9)), "case:primitives.vecs.i16.should_roundtrip_values")
-        assertContentEquals(shortArrayOf(0, 10, 20), echoVecU16(shortArrayOf(0, 10, 20)), "case:primitives.vecs.u16.should_roundtrip_values")
-        assertContentEquals(intArrayOf(0, 10, 20), echoVecU32(intArrayOf(0, 10, 20)), "case:primitives.vecs.u32.should_roundtrip_values")
+        assertContentEquals(ushortArrayOf(0u, 10u, 20u), echoVecU16(ushortArrayOf(0u, 10u, 20u)), "case:primitives.vecs.u16.should_roundtrip_values")
+        assertContentEquals(uintArrayOf(0u, 10u, 20u), echoVecU32(uintArrayOf(0u, 10u, 20u)), "case:primitives.vecs.u32.should_roundtrip_values")
         assertContentEquals(longArrayOf(-5L, 0L, 8L), echoVecI64(longArrayOf(-5L, 0L, 8L)), "case:primitives.vecs.i64.should_roundtrip_values")
-        assertContentEquals(longArrayOf(0L, 1L, 2L), echoVecU64(longArrayOf(0L, 1L, 2L)), "case:primitives.vecs.u64.should_roundtrip_values")
+        assertContentEquals(ulongArrayOf(0uL, 1uL, 2uL), echoVecU64(ulongArrayOf(0uL, 1uL, 2uL)), "case:primitives.vecs.u64.should_roundtrip_values")
         assertContentEquals(longArrayOf(-2L, 0L, 5L), echoVecIsize(longArrayOf(-2L, 0L, 5L)), "case:primitives.vecs.isize.should_roundtrip_values")
-        assertContentEquals(longArrayOf(0L, 2L, 4L), echoVecUsize(longArrayOf(0L, 2L, 4L)), "case:primitives.vecs.usize.should_roundtrip_values")
+        assertContentEquals(ulongArrayOf(0uL, 2uL, 4uL), echoVecUsize(ulongArrayOf(0uL, 2uL, 4uL)), "case:primitives.vecs.usize.should_roundtrip_values")
         assertContentEquals(floatArrayOf(1.25f, -2.5f), echoVecF32(floatArrayOf(1.25f, -2.5f)), "case:primitives.vecs.f32.should_roundtrip_values_with_tolerance")
         assertContentEquals(doubleArrayOf(1.5, 2.5), echoVecF64(doubleArrayOf(1.5, 2.5)), "case:primitives.vecs.f64.should_roundtrip_values")
         assertContentEquals(booleanArrayOf(true, false, true), echoVecBool(booleanArrayOf(true, false, true)), "case:primitives.vecs.bool.should_roundtrip_values")
         assertContentEquals(listOf("hello", "world"), echoVecString(listOf("hello", "world")), "case:primitives.vecs.string.should_roundtrip_values")
-        assertContentEquals(intArrayOf(2, 5), vecStringLengths(listOf("hi", "café")), "case:primitives.vecs.string.should_report_utf8_byte_lengths")
+        assertContentEquals(uintArrayOf(2u, 5u), vecStringLengths(listOf("hi", "café")), "case:primitives.vecs.string.should_report_utf8_byte_lengths")
         assertEquals(60L, sumVecI32(intArrayOf(10, 20, 30)), "case:primitives.vecs.i32.should_sum_values")
         assertContentEquals(intArrayOf(0, 1, 2, 3, 4), makeRange(0, 5), "case:primitives.vecs.i32.should_make_range")
         assertContentEquals(intArrayOf(3, 2, 1), reverseVecI32(intArrayOf(1, 2, 3)), "case:primitives.vecs.i32.should_reverse_values")
@@ -149,10 +151,10 @@ class DemoValueTypesTest {
         demoCase("case:primitives.vecs.f64.should_sum_values")
         assertDoubleEquals(7.5, sumF64Vec(doubleArrayOf(1.5, 2.5, 3.5)))
 
-        val u64Values = longArrayOf(5L, 9L, 11L)
+        val u64Values = ulongArrayOf(5uL, 9uL, 11uL)
         demoCase("case:primitives.vecs.u64.should_increment_first_value_in_place")
         incU64(u64Values)
-        assertEquals(6L, u64Values[0])
+        assertEquals(6uL, u64Values[0])
         demoCase("case:primitives.vecs.u64.should_increment_value")
         assertEquals(43uL, incU64Value(42uL))
     }
@@ -185,7 +187,7 @@ class DemoValueTypesTest {
             assertContentEquals(isizes[i], roundTrippedIsizes[i])
         }
 
-        val usizes = listOf(longArrayOf(0L, 2L, 4L), longArrayOf(), longArrayOf(8L))
+        val usizes = listOf(ulongArrayOf(0uL, 2uL, 4uL), ulongArrayOf(), ulongArrayOf(8uL))
         demoCase("case:primitives.vecs.nested_usize.should_roundtrip_values")
         val roundTrippedUsizes = echoVecVecUsize(usizes)
         assertEquals(usizes.size, roundTrippedUsizes.size)

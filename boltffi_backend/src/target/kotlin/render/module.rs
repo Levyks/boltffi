@@ -2,8 +2,9 @@ use askama::Template as AskamaTemplate;
 use std::collections::{BTreeSet, HashSet};
 
 use boltffi_binding::{
-    BuiltinType, ClassDecl, ConstantValueDecl, DeclarationRef, EnumDecl, EnumId, ErrorChannel,
-    ExportedCallable, ExportedMethodDecl, FunctionDecl, InitializerDecl, Native, NativeSymbol,
+    BuiltinType, CallbackProtocolIntrospect, ClassDecl, ConstantValueDecl, DeclarationRef,
+    EnumDecl, EnumId, ErrorChannel, ExportedCallable, ExportedMethodDecl, FunctionDecl,
+    ImportedCallable, IncomingParam, InitializerDecl, Native, NativeSymbol, OutgoingParam,
     RecordDecl, RecordId, TypeRef,
 };
 
@@ -102,7 +103,6 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
         let closures = self.closures()?;
         let error_types = ErrorTypes::from_declarations(&self.declarations);
         let declarations = self.declarations(&error_types)?;
-        let declarations = self.api_declarations(declarations);
         let features = RuntimeFeatures::from_declarations(&self.declarations);
         let contents = ModuleTemplate {
             package: self.host.package().clone(),
@@ -248,7 +248,22 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
     }
 
     fn declarations(&self, error_types: &ErrorTypes) -> Result<String> {
-        Ok([
+        match self.host.api_layout() {
+            KotlinApiStyle::TopLevel => self.all_declarations(error_types),
+            KotlinApiStyle::ModuleObject => {
+                let callbacks = self.callbacks()?.join("\n\n");
+                let declarations = self.api_declarations(self.object_declarations(error_types)?);
+                Ok([callbacks, declarations]
+                    .into_iter()
+                    .filter(|chunk| !chunk.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"))
+            }
+        }
+    }
+
+    fn all_declarations(&self, error_types: &ErrorTypes) -> Result<String> {
+        Ok(Self::join_declarations([
             self.custom_types()?,
             self.records(error_types)?,
             self.enumerations(error_types)?,
@@ -257,11 +272,27 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             self.streams()?,
             self.constants()?,
             self.functions()?,
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n\n"))
+        ]))
+    }
+
+    fn object_declarations(&self, error_types: &ErrorTypes) -> Result<String> {
+        Ok(Self::join_declarations([
+            self.custom_types()?,
+            self.records(error_types)?,
+            self.enumerations(error_types)?,
+            self.classes()?,
+            self.streams()?,
+            self.constants()?,
+            self.functions()?,
+        ]))
+    }
+
+    fn join_declarations<const COUNT: usize>(groups: [Vec<String>; COUNT]) -> String {
+        groups
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     fn primary_chunks(
@@ -428,15 +459,19 @@ impl ErrorTypes {
             DeclarationRef::Class(class) => self.insert_class(class),
             DeclarationRef::Constant(constant) => {
                 if let ConstantValueDecl::Accessor { callable, .. } = constant.value() {
-                    self.insert_callable(callable);
+                    self.insert_exported_callable(callable);
                 }
             }
             DeclarationRef::Callback(callback) => {
+                callback
+                    .protocol()
+                    .method_callables()
+                    .for_each(|callable| self.insert_imported_callable(callable));
                 if let Some(protocol) = callback.local_protocol() {
                     protocol
                         .methods()
                         .iter()
-                        .for_each(|method| self.insert_callable(method.callable()));
+                        .for_each(|method| self.insert_exported_callable(method.callable()));
                 }
             }
             DeclarationRef::Stream(_) | DeclarationRef::CustomType(_) => {}
@@ -444,7 +479,7 @@ impl ErrorTypes {
     }
 
     fn insert_function(&mut self, function: &FunctionDecl<Native>) {
-        self.insert_callable(function.callable());
+        self.insert_exported_callable(function.callable());
     }
 
     fn insert_record(&mut self, record: &RecordDecl<Native>) {
@@ -482,16 +517,32 @@ impl ErrorTypes {
     ) {
         initializers
             .iter()
-            .for_each(|initializer| self.insert_callable(initializer.callable()));
+            .for_each(|initializer| self.insert_exported_callable(initializer.callable()));
         methods
             .iter()
-            .for_each(|method| self.insert_callable(method.callable()));
+            .for_each(|method| self.insert_exported_callable(method.callable()));
     }
 
-    fn insert_callable(&mut self, callable: &ExportedCallable<Native>) {
+    fn insert_exported_callable(&mut self, callable: &ExportedCallable<Native>) {
         if let ErrorChannel::Encoded { ty, .. } = callable.error().channel() {
             self.insert_type(ty);
         }
+        callable.params().iter().for_each(|parameter| {
+            if let IncomingParam::Closure(closure) = parameter.payload() {
+                self.insert_imported_callable(closure.invoke());
+            }
+        });
+    }
+
+    fn insert_imported_callable(&mut self, callable: &ImportedCallable<Native>) {
+        if let ErrorChannel::Encoded { ty, .. } = callable.error().channel() {
+            self.insert_type(ty);
+        }
+        callable.params().iter().for_each(|parameter| {
+            if let OutgoingParam::Closure(closure) = parameter.payload() {
+                self.insert_exported_callable(closure.invoke());
+            }
+        });
     }
 
     fn insert_type(&mut self, ty: &TypeRef) {

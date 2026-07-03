@@ -38,6 +38,7 @@ pub struct Generation {
     kotlin_android_library: Option<String>,
     kotlin_desktop_jni_library: Option<String>,
     kotlin_desktop_fallback_library: Option<String>,
+    kotlin_c_header: Option<PathBuf>,
     kotlin_desktop_loader: KotlinDesktopLoader,
     kotlin_api_style: KotlinApiStyle,
     kotlin_factory_style: KotlinFactoryStyle,
@@ -61,6 +62,7 @@ impl Generation {
             kotlin_android_library: None,
             kotlin_desktop_jni_library: None,
             kotlin_desktop_fallback_library: None,
+            kotlin_c_header: None,
             kotlin_desktop_loader: KotlinDesktopLoader::default(),
             kotlin_api_style: KotlinApiStyle::default(),
             kotlin_factory_style: KotlinFactoryStyle::default(),
@@ -137,6 +139,12 @@ impl Generation {
     /// Sets the desktop fallback native library load name used by Kotlin.
     pub fn kotlin_desktop_fallback_library(mut self, library: impl Into<String>) -> Self {
         self.kotlin_desktop_fallback_library = Some(library.into());
+        self
+    }
+
+    /// Sets the generated C header included by the JNI bridge.
+    pub fn kotlin_c_header(mut self, path: impl Into<PathBuf>) -> Self {
+        self.kotlin_c_header = Some(path.into());
         self
     }
 
@@ -239,12 +247,17 @@ impl Generation {
                 host.desktop_jni_library(library.clone())
             })
             .map_err(GenerationError::Render)?;
-        self.kotlin_desktop_fallback_library
+        let host = self
+            .kotlin_desktop_fallback_library
             .iter()
             .try_fold(host, |host, library| {
                 host.desktop_fallback_library(library.clone())
             })
-            .map_err(GenerationError::Render)
+            .map_err(GenerationError::Render)?;
+        Ok(self
+            .kotlin_c_header
+            .iter()
+            .fold(host, |host, header| host.c_header(header.clone())))
     }
 
     fn render_backend<H, S>(

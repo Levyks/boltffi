@@ -2,11 +2,19 @@ use boltffi_backend::target::kotlin::{
     KotlinApiStyle, KotlinCustomMapping, KotlinFactoryStyle, KotlinHost,
 };
 
-use super::{rendered_fixture, rendered_fixture_with_host};
+use super::{
+    files_with_host, fixture, rendered_files, rendered_fixture, rendered_fixture_with_host,
+    rendered_fixture_with_runtime,
+};
 
 #[test]
 fn kotlin_target_renders_primitive_function_stack() {
     insta::assert_snapshot!(rendered_fixture("exports/primitive_functions"));
+}
+
+#[test]
+fn kotlin_target_renders_shared_runtime_support() {
+    insta::assert_snapshot!(rendered_fixture_with_runtime("exports/primitive_functions"));
 }
 
 #[test]
@@ -146,6 +154,38 @@ fn kotlin_target_renders_closure_record_returns() {
 }
 
 #[test]
+fn kotlin_target_qualifies_module_object_closure_payload_types() {
+    let host = KotlinHost::new("com.boltffi.demo", "Demo")
+        .expect("Kotlin host")
+        .api_style(KotlinApiStyle::ModuleObject);
+    let rendered = rendered_fixture_with_host("exports/closure_direct_record_return", host);
+
+    assert!(rendered.contains("fun interface ClosureToDemoPoint"));
+    assert!(rendered.contains("fun invoke(): Demo.Point"));
+    assert!(rendered.contains("object Demo {"));
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
 fn kotlin_target_renders_closure_handle_returns() {
     insta::assert_snapshot!(rendered_fixture("exports/closure_callback_handle_return"));
+}
+
+#[test]
+fn kotlin_target_uses_configured_c_header_in_jni_bridge() {
+    let host = KotlinHost::new("com.boltffi.demo", "Demo")
+        .expect("Kotlin host")
+        .c_header("jni/demo.h");
+    let files = files_with_host(&fixture("exports/single_function"), host);
+    let jni_source = files
+        .iter()
+        .find(|(path, _)| path.ends_with("jni_glue.c"))
+        .map(|(_, contents)| contents)
+        .expect("Kotlin target should render JNI glue");
+
+    assert!(jni_source.contains("#include \"demo.h\""));
+    assert!(!jni_source.contains("#include \"boltffi.h\""));
+
+    insta::assert_snapshot!(rendered_files(&files));
 }

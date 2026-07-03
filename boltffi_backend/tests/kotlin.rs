@@ -35,6 +35,15 @@ pub fn rendered_fixture_with_host(name: &str, host: KotlinHost) -> String {
     rendered_files(&[kotlin_file])
 }
 
+pub fn rendered_fixture_with_runtime(name: &str) -> String {
+    let host = KotlinHost::new("com.boltffi.demo", "Demo").expect("Kotlin host");
+    let kotlin_file = files_with_host(&fixture(name), host)
+        .into_iter()
+        .find(|(path, _)| path.ends_with(".kt"))
+        .expect("Kotlin target should render a Kotlin source file");
+    rendered_files_with_runtime(&[kotlin_file])
+}
+
 pub fn files(source: &str) -> Vec<(String, String)> {
     let host = KotlinHost::new("com.boltffi.demo", "Demo").expect("Kotlin host");
     files_with_host(source, host)
@@ -73,7 +82,106 @@ pub fn fixture_path(name: &str) -> PathBuf {
 pub fn rendered_files(files: &[(String, String)]) -> String {
     files
         .iter()
+        .map(|(path, contents)| {
+            let snapshot = KotlinSnapshot::new(contents);
+            format!("===== {path} =====\n{}", snapshot.without_runtime())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn rendered_files_with_runtime(files: &[(String, String)]) -> String {
+    files
+        .iter()
         .map(|(path, contents)| format!("===== {path} =====\n{contents}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+struct KotlinSnapshot<'source> {
+    source: &'source str,
+}
+
+impl<'source> KotlinSnapshot<'source> {
+    fn new(source: &'source str) -> Self {
+        Self { source }
+    }
+
+    fn without_runtime(&self) -> String {
+        let source = self.without_shared_runtime();
+        Self::without_native_loader(&source)
+    }
+
+    fn without_shared_runtime(&self) -> String {
+        let Some(runtime) = self.source.find("\nprivate object Utf8Codec") else {
+            return self.source.to_owned();
+        };
+        let Some(native) = self
+            .source
+            .find("\n@Suppress(\"FunctionName\")\nprivate object Native")
+        else {
+            return self.source.to_owned();
+        };
+        format!(
+            "{}\n{}",
+            self.source[..runtime].trim_end(),
+            self.source[native..].trim_start()
+        )
+    }
+
+    fn without_native_loader(source: &str) -> String {
+        let Some(native) = source.find("@Suppress(\"FunctionName\")\nprivate object Native {\n")
+        else {
+            return source.to_owned();
+        };
+        let Some(external) = source[native..].find("\n    @JvmStatic external fun") else {
+            return Self::without_empty_native_loader(source, native);
+        };
+        format!(
+            "{}@Suppress(\"FunctionName\")\nprivate object Native {{\n{}",
+            &source[..native],
+            source[native + external..].trim_start_matches('\n')
+        )
+    }
+
+    fn without_empty_native_loader(source: &str, native: usize) -> String {
+        let Some(end) = KotlinObject::from_start(&source[native..]).map(KotlinObject::end) else {
+            return source.to_owned();
+        };
+        format!(
+            "{}\n\n{}",
+            source[..native].trim_end(),
+            source[native + end..].trim_start_matches('\n')
+        )
+    }
+}
+
+struct KotlinObject {
+    end: usize,
+}
+
+impl KotlinObject {
+    fn from_start(source: &str) -> Option<Self> {
+        let open = source.find('{')?;
+        source[open..]
+            .char_indices()
+            .scan(0usize, |depth, (index, character)| match character {
+                '{' => {
+                    *depth += 1;
+                    Some(None)
+                }
+                '}' => {
+                    *depth -= 1;
+                    Some((*depth == 0).then_some(open + index + character.len_utf8()))
+                }
+                _ => Some(None),
+            })
+            .flatten()
+            .next()
+            .map(|end| Self { end })
+    }
+
+    fn end(self) -> usize {
+        self.end
+    }
 }

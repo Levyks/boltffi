@@ -251,6 +251,13 @@ impl KotlinHost {
         self.api_style
     }
 
+    fn generated_type(&self, name: TypeName) -> TypeName {
+        match self.api_layout() {
+            KotlinApiStyle::TopLevel => name,
+            KotlinApiStyle::ModuleObject => TypeName::qualified(self.file(), name),
+        }
+    }
+
     fn factory_layout(&self) -> KotlinFactoryStyle {
         self.factory_style
     }

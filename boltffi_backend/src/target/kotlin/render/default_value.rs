@@ -29,7 +29,7 @@ impl DefaultExpression {
                 variant_name,
             } => Ok(Expression::property(
                 Name::new(enum_name).type_name(),
-                Name::new(variant_name).variant()?,
+                Name::new(variant_name).enum_entry()?,
             )),
             DefaultValue::Null => Ok(Expression::null()),
             _ => Err(KotlinHost::unsupported("unknown default literal")),

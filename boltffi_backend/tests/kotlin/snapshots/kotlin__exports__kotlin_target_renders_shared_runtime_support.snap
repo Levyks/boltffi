@@ -1,3 +1,12 @@
+---
+source: boltffi_backend/tests/kotlin/exports.rs
+expression: "rendered_fixture_with_runtime(\"exports/primitive_functions\")"
+---
+===== com/boltffi/demo/Demo.kt =====
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
+package com.boltffi.demo
+
 private object Utf8Codec {
     fun maxBytes(value: String): Int = value.length * 3
 }
@@ -16,30 +25,6 @@ private object DirectVectorCodec {
         ByteArray(values.size) { index -> if (values[index]) 1.toByte() else 0.toByte() }
 
     fun writeByteArray(values: ByteArray): ByteArray = values
-
-{%- if record_vectors %}
-
-    fun <T> readRecordList(
-        bytes: ByteArray,
-        width: Int,
-        read: (java.nio.ByteBuffer, Int) -> T
-    ): List<T> {
-        val count = elementCount(bytes, width)
-        val buffer = nativeBuffer(bytes)
-        return List(count) { index -> read(buffer, index * width) }
-    }
-
-    fun <T> writeRecordList(
-        values: List<T>,
-        width: Int,
-        write: (T, java.nio.ByteBuffer, Int) -> Unit
-    ): ByteArray {
-        val bytes = ByteArray(values.size * width)
-        val buffer = nativeBuffer(bytes)
-        values.forEachIndexed { index, value -> write(value, buffer, index * width) }
-        return bytes
-    }
-{%- endif %}
 
     fun readShortArray(bytes: ByteArray): ShortArray {
         val values = ShortArray(elementCount(bytes, 2))
@@ -626,3 +611,167 @@ private inline fun <K, V> Map<K, V>.wireSize(
     keySize: (K) -> Int,
     valueSize: (V) -> Int,
 ): Int = 4 + entries.sumOf { entry -> keySize(entry.key) + valueSize(entry.value) }
+
+@Suppress("FunctionName")
+private object Native {
+    init {
+        val androidLibrary = "boltffi"
+        val desktopPreferredLibrary = "boltffi_jni"
+        val desktopFallbackLibrary = "boltffi"
+        val vmName = System.getProperty("java.vm.name").orEmpty()
+        val isAndroidRuntime =
+            vmName.contains("dalvik", ignoreCase = true) ||
+            vmName.contains("art", ignoreCase = true)
+        if (isAndroidRuntime) {
+            System.loadLibrary(androidLibrary)
+        } else {
+            loadDesktopLibraries(desktopPreferredLibrary, desktopFallbackLibrary)
+        }
+    }
+
+    @Volatile
+    private var bundledLibraryDirectory: java.io.File? = null
+
+    private fun loadDesktopLibraries(preferredLibrary: String, fallbackLibrary: String) {
+        var preferredFailure = tryLoadDesktopLibrary(preferredLibrary)
+        if (preferredFailure == null) {
+            return
+        }
+
+        if (tryLoadOptionalDesktopLibrary(fallbackLibrary)) {
+            preferredFailure = tryLoadDesktopLibrary(preferredLibrary)
+            if (preferredFailure == null) {
+                return
+            }
+        }
+
+        throw preferredFailure
+    }
+
+    private fun tryLoadDesktopLibrary(libraryName: String): UnsatisfiedLinkError? {
+        try {
+            if (loadBundledLibraryIfPresent(libraryName) || loadExternalLibraryIfPresent(libraryName)) {
+                return null
+            }
+            return UnsatisfiedLinkError("Could not load native library '$libraryName'")
+        } catch (error: UnsatisfiedLinkError) {
+            return error
+        }
+    }
+
+    private fun tryLoadOptionalDesktopLibrary(libraryName: String): Boolean {
+        return try {
+            loadBundledLibraryIfPresent(libraryName) || loadExternalLibraryIfPresent(libraryName)
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    private fun loadExternalLibraryIfPresent(libraryName: String): Boolean {
+        return try {
+            System.loadLibrary(libraryName)
+            true
+        } catch (_: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    private fun loadBundledLibraryIfPresent(libraryName: String): Boolean {
+        val mappedName = System.mapLibraryName(libraryName)
+        for (resourcePath in bundledLibraryResourceCandidates(mappedName)) {
+            Native::class.java.getResourceAsStream(resourcePath)?.use { input ->
+                val extracted = extractBundledLibrary(resourcePath, input)
+                System.load(extracted.absolutePath)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun extractBundledLibrary(
+        resourcePath: String,
+        input: java.io.InputStream,
+    ): java.io.File {
+        val fileName = resourcePath.substringAfterLast('/')
+        val extracted = java.io.File(bundledLibraryDirectory(), fileName)
+        if (!extracted.isFile) {
+            java.io.FileOutputStream(extracted).use { output ->
+                input.copyTo(output)
+            }
+            extracted.deleteOnExit()
+        }
+        return extracted
+    }
+
+    private fun bundledLibraryDirectory(): java.io.File {
+        bundledLibraryDirectory?.let { return it }
+        synchronized(this) {
+            bundledLibraryDirectory?.let { return it }
+            val created = java.io.File.createTempFile("boltffi-native-", "")
+            if (!created.delete() || !created.mkdir()) {
+                throw java.io.IOException("failed to create temp directory for bundled native extraction")
+            }
+            created.deleteOnExit()
+            bundledLibraryDirectory = created
+            return created
+        }
+    }
+
+    private fun bundledLibraryResourceCandidates(mappedName: String): List<String> {
+        val candidates = mutableListOf<String>()
+        for (directory in desktopNativeDirectories()) {
+            candidates += "/$directory/$mappedName"
+            candidates += "/native/$directory/$mappedName"
+        }
+        candidates += "/$mappedName"
+        return candidates
+    }
+
+    private fun desktopNativeDirectories(): List<String> {
+        val osName = System.getProperty("os.name").orEmpty().lowercase()
+        val osArch = System.getProperty("os.arch").orEmpty().lowercase()
+        return when {
+            (osName.contains("mac") || osName.contains("darwin")) &&
+                (osArch == "aarch64" || osArch == "arm64") ->
+                listOf("darwin-arm64", "darwin-aarch64")
+            (osName.contains("mac") || osName.contains("darwin")) && osArch == "x86_64" ->
+                listOf("darwin-x86_64", "darwin-x86-64")
+            osName.contains("linux") && (osArch == "x86_64" || osArch == "amd64") ->
+                listOf("linux-x86_64", "linux-x86-64")
+            osName.contains("linux") && (osArch == "aarch64" || osArch == "arm64") ->
+                listOf("linux-aarch64", "linux-arm64")
+            osName.contains("windows") && (osArch == "x86_64" || osArch == "amd64") ->
+                listOf("windows-x86_64", "windows-x86-64", "win32-x86_64")
+            else -> emptyList()
+        }
+    }
+    @JvmStatic external fun boltffi_function_demo_add(left: Int, right: Int): Int
+    @JvmStatic external fun boltffi_function_demo_enabled(flag: Boolean): Boolean
+    @JvmStatic external fun boltffi_function_demo_refresh(): Unit
+    @JvmStatic external fun boltffi_function_demo_echo_bytes(bytes: ByteArray): ByteArray?
+}
+
+fun add(left: Int, right: Int): Int {
+    return Native.boltffi_function_demo_add(left, right)
+}
+
+fun enabled(flag: Boolean): Boolean {
+    return Native.boltffi_function_demo_enabled(flag)
+}
+
+fun refresh() {
+    Native.boltffi_function_demo_refresh()
+}
+
+fun echoBytes(bytes: ByteArray): ByteArray {
+    val __boltffi_bytes_wire = WireWriterPool.acquire(4 + bytes.size)
+    val __boltffi_bytes_writer = __boltffi_bytes_wire.writer
+    __boltffi_bytes_writer.writeBytes(bytes)
+    try {
+        val __boltffi_result = Native.boltffi_function_demo_echo_bytes(__boltffi_bytes_wire.bytes()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_reader = WireReader(__boltffi_result)
+        return __boltffi_reader.readBytes()
+    } finally {
+        __boltffi_bytes_wire.close()
+    }
+}

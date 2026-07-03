@@ -39,7 +39,26 @@ fn kotlin_target_renders_callback_optional_scalar_returns() {
 
 #[test]
 fn kotlin_target_renders_callback_result_returns() {
-    insta::assert_snapshot!(rendered_fixture("callback/callback_status_result"));
+    let rendered = rendered_fixture("callback/callback_status_result");
+
+    assert!(rendered.contains("catch (__boltffi_mapStatus_error: Throwable)"));
+    assert!(!rendered.contains("catch (__boltffi_mapStatus_error: String)"));
+    assert!(rendered.contains("val __boltffi_mapStatus_result = impl.mapStatus(status)"));
+    assert_eq!(rendered.matches("impl.mapStatus(status)").count(), 1);
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
+fn kotlin_target_renders_callback_encoded_result_returns() {
+    let rendered = rendered_fixture("callback/callback_encoded_status_result");
+
+    assert!(rendered.contains("catch (__boltffi_mapMessage_error: Throwable)"));
+    assert!(!rendered.contains("catch (__boltffi_mapMessage_error: String)"));
+    assert!(rendered.contains("val __boltffi_mapMessage_result = impl.mapMessage(key)"));
+    assert_eq!(rendered.matches("impl.mapMessage(key)").count(), 1);
+
+    insta::assert_snapshot!(rendered);
 }
 
 #[test]

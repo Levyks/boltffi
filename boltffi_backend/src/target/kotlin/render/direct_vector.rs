@@ -31,6 +31,7 @@ enum DirectVectorCodec {
     Primitive {
         decoder: Identifier,
         encoder: Identifier,
+        native_argument: Option<Identifier>,
     },
     Record {
         name: TypeName,
@@ -81,7 +82,11 @@ impl DirectVector {
 
     pub fn native_argument(&self, value: Expression) -> Result<Expression> {
         match &self.codec {
-            DirectVectorCodec::Primitive { .. } => Ok(value),
+            DirectVectorCodec::Primitive {
+                native_argument, ..
+            } => Ok(native_argument
+                .as_ref()
+                .map_or(value.clone(), |method| value.convert(method.clone()))),
             DirectVectorCodec::Record { .. } => self.byte_array_expression(value),
         }
     }
@@ -143,6 +148,9 @@ impl DirectVector {
             codec: DirectVectorCodec::Primitive {
                 decoder: Identifier::parse(Self::decoder_name(primitive)?)?,
                 encoder: Identifier::parse(Self::encoder_name(primitive)?)?,
+                native_argument: Self::native_argument_name(primitive)
+                    .map(Identifier::parse)
+                    .transpose()?,
             },
         })
     }
@@ -205,9 +213,9 @@ impl DirectVector {
             Primitive::F32 => Ok("readFloatArray"),
             Primitive::F64 => Ok("readDoubleArray"),
             Primitive::U8 => Ok("readByteArray"),
-            Primitive::U16 => Ok("readShortArray"),
-            Primitive::U32 => Ok("readIntArray"),
-            Primitive::U64 | Primitive::USize => Ok("readLongArray"),
+            Primitive::U16 => Ok("readUShortArray"),
+            Primitive::U32 => Ok("readUIntArray"),
+            Primitive::U64 | Primitive::USize => Ok("readULongArray"),
             _ => Err(KotlinHost::unsupported("unknown direct-vector primitive")),
         }
     }
@@ -216,15 +224,25 @@ impl DirectVector {
         match primitive {
             Primitive::Bool => Ok("writeBooleanArray"),
             Primitive::I8 => Ok("writeByteArray"),
-            Primitive::I16 | Primitive::U16 => Ok("writeShortArray"),
-            Primitive::I32 | Primitive::U32 => Ok("writeIntArray"),
-            Primitive::I64 | Primitive::U64 | Primitive::ISize | Primitive::USize => {
-                Ok("writeLongArray")
-            }
+            Primitive::I16 => Ok("writeShortArray"),
+            Primitive::U16 => Ok("writeUShortArray"),
+            Primitive::I32 => Ok("writeIntArray"),
+            Primitive::U32 => Ok("writeUIntArray"),
+            Primitive::I64 | Primitive::ISize => Ok("writeLongArray"),
+            Primitive::U64 | Primitive::USize => Ok("writeULongArray"),
             Primitive::F32 => Ok("writeFloatArray"),
             Primitive::F64 => Ok("writeDoubleArray"),
             Primitive::U8 => Ok("writeByteArray"),
             _ => Err(KotlinHost::unsupported("unknown direct-vector primitive")),
+        }
+    }
+
+    fn native_argument_name(primitive: Primitive) -> Option<&'static str> {
+        match primitive {
+            Primitive::U16 => Some("asShortArray"),
+            Primitive::U32 => Some("asIntArray"),
+            Primitive::U64 | Primitive::USize => Some("asLongArray"),
+            _ => None,
         }
     }
 }
