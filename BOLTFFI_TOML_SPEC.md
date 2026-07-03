@@ -240,6 +240,10 @@ Generates a Kotlin Multiplatform module with `commonMain` declarations and JVM/A
   - Default: same as `[targets.android.kotlin].package`
 - `module_name` (string, optional): Kotlin source/module class name.
   - Default: same as `[targets.android.kotlin].module_name`
+- `preview_prune_unsupported` (bool): Experimental diagnostic mode that omits unsupported KMP APIs instead of failing generation.
+  - Default: `false`
+  - When `false`, any unsupported exported API for the selected KMP platform matrix fails generation.
+  - When `true`, unsupported APIs are omitted, `boltffi-kmp-support.json` records the admitted and pruned surface, and `boltffi pack kmp` may package the pruned module only when the generated report matches the effective config.
 
 Desktop JVM native resources for `boltffi pack kmp` use `[targets.java.jvm].host_targets`.
 `targets.java.jvm.enabled` does not need to be true for KMP packaging to read this shared JVM

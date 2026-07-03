@@ -669,6 +669,11 @@ impl Config {
         self.targets.kotlin_multiplatform.output.clone()
     }
 
+    /// Returns whether KMP generation may emit a pruned diagnostic surface.
+    pub fn kotlin_multiplatform_preview_prune_unsupported(&self) -> bool {
+        self.targets.kotlin_multiplatform.preview_prune_unsupported
+    }
+
     pub fn kotlin_multiplatform_package(&self) -> String {
         self.targets
             .kotlin_multiplatform
@@ -2157,6 +2162,21 @@ module_name = "AndroidBindings"
         );
 
         assert_eq!(config.kotlin_multiplatform_module_name(), "AndroidBindings");
+    }
+
+    #[test]
+    fn kotlin_multiplatform_preview_prune_unsupported_defaults_to_false() {
+        let config = parse_config(
+            r#"
+[package]
+name = "mylib"
+
+[targets.kotlin_multiplatform]
+enabled = true
+"#,
+        );
+
+        assert!(!config.kotlin_multiplatform_preview_prune_unsupported());
     }
 
     #[test]

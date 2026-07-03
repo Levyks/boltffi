@@ -5,29 +5,122 @@ use crate::ir::definitions::{EnumRepr, VariantPayload};
 use crate::ir::{self, AbiContract, FfiContract};
 use crate::render::jni::{JniEmitter, JniLowerer, JvmBindingStyle};
 use crate::render::kotlin::{KotlinEmitter, KotlinLowerer, KotlinOptions, NamingConvention};
+use serde::{Deserialize, Serialize};
 
 const KMP_COMMON_RUNTIME_TYPE_NAMES: &[&str] = &["FfiException", "BoltFFIResult"];
 
+/// Relative path of the generated KMP support metadata file.
+pub const KMP_SUPPORT_REPORT_FILE: &str = "boltffi-kmp-support.json";
+
+/// Schema version for `boltffi-kmp-support.json`.
+pub const KMP_SUPPORT_REPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Platform matrix currently emitted by the production KMP generator.
+pub const KMP_SELECTED_PLATFORMS: &[&str] = &["jvm", "android"];
+
 #[derive(Debug, Clone)]
 pub struct KMPOptions {
+    /// Kotlin package used for common and platform source sets.
     pub package_name: String,
+    /// Kotlin source/module class name.
     pub module_name: String,
+    /// Android minimum SDK written into the generated Gradle module.
     pub min_sdk: u32,
+    /// Options forwarded to the delegated Kotlin/JNI generator.
     pub kotlin_options: KotlinOptions,
+    /// Effective support policy for unsupported KMP declarations.
+    pub support_policy: KmpSupportPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KMPOutputFile {
+    /// Path relative to the generated KMP module root.
     pub relative_path: PathBuf,
+    /// Complete file contents.
     pub contents: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KMPOutput {
+    /// Files emitted under the generated KMP module root.
     pub files: Vec<KMPOutputFile>,
+    /// Parsed support report also written to [`KMP_SUPPORT_REPORT_FILE`].
+    pub support_report: KmpSupportReport,
 }
 
 pub struct KMPEmitter;
+
+/// Controls how KMP generation handles exported APIs outside the supported
+/// commonMain surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KmpSupportPolicy {
+    /// Unsupported APIs fail generation before source files are emitted.
+    Strict,
+    /// Unsupported APIs are omitted and recorded in the support report.
+    PreviewPruneUnsupported,
+}
+
+impl KmpSupportPolicy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::PreviewPruneUnsupported => "preview_prune_unsupported",
+        }
+    }
+}
+
+/// Generated metadata describing the effective KMP support policy and surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KmpSupportReport {
+    /// Version of the JSON report schema.
+    pub schema_version: u32,
+    /// Effective policy used when the module was generated.
+    pub mode: KmpSupportPolicy,
+    /// KMP platforms that the generated commonMain surface was checked against.
+    pub selected_platforms: Vec<String>,
+    /// Kotlin package used in generated common/platform sources.
+    pub package_name: String,
+    /// Kotlin source/module class name used in generated files.
+    pub module_name: String,
+    /// Android minimum SDK used in the generated Gradle module.
+    pub min_sdk: u32,
+    /// APIs emitted into the generated KMP module.
+    pub admitted_apis: Vec<KmpSupportApi>,
+    /// APIs rejected in strict mode or pruned in preview mode.
+    pub rejected_apis: Vec<KmpSupportApi>,
+    /// Version of `boltffi_bindgen` that generated the report.
+    pub generator_version: String,
+}
+
+/// One API entry in a generated KMP support report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KmpSupportApi {
+    /// API kind, such as `function`, `record`, or `class`.
+    pub kind: String,
+    /// Stable display name for the API.
+    pub name: String,
+    /// Rejection or pruning reason. Admitted APIs leave this empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum KMPError {
+    #[error(
+        "unsupported KMP APIs in {mode} mode: {apis}. Set targets.kotlin_multiplatform.preview_prune_unsupported = true to emit a pruned diagnostic surface"
+    )]
+    UnsupportedApis {
+        /// Effective support mode used for the failed generation.
+        mode: &'static str,
+        /// Short human-readable summary of rejected APIs.
+        apis: String,
+        /// Full support report for diagnostics and tests.
+        report: Box<KmpSupportReport>,
+    },
+    #[error("serialize KMP support report: {0}")]
+    SupportReport(#[from] serde_json::Error),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KmpActualBackend {
@@ -144,18 +237,39 @@ impl KMPEmitter {
         package_name.split('.').collect()
     }
 
-    pub fn emit(contract: &FfiContract, abi: &AbiContract, options: KMPOptions) -> KMPOutput {
+    pub fn emit(
+        contract: &FfiContract,
+        abi: &AbiContract,
+        options: KMPOptions,
+    ) -> Result<KMPOutput, KMPError> {
         let KMPOptions {
             package_name,
             module_name,
             min_sdk,
             kotlin_options,
+            support_policy,
         } = options;
         let internal_package = format!("{package_name}.jvm");
         let common_package_path = Self::package_path(&package_name);
         let internal_package_path = Self::package_path(&internal_package);
         let platform_adapters = Self::default_platform_adapters();
         let support = KmpSurfaceSupport::for_contract(contract);
+        let support_report = build_support_report(
+            contract,
+            &support,
+            &package_name,
+            &module_name,
+            min_sdk,
+            support_policy,
+        );
+
+        if support_policy == KmpSupportPolicy::Strict && !support_report.rejected_apis.is_empty() {
+            return Err(KMPError::UnsupportedApis {
+                mode: support_policy.label(),
+                apis: summarize_rejected_apis(&support_report),
+                report: Box::new(support_report),
+            });
+        }
 
         let rendered = Self::render_surfaces_with_support(
             contract,
@@ -202,6 +316,10 @@ impl KMPEmitter {
                 relative_path: common_dir.join(format!("{module_name}.kt")),
                 contents: rendered.common,
             },
+            KMPOutputFile {
+                relative_path: PathBuf::from(KMP_SUPPORT_REPORT_FILE),
+                contents: format!("{}\n", serde_json::to_string_pretty(&support_report)?),
+            },
         ];
 
         rendered.platform_actuals.into_iter().for_each(|actual| {
@@ -241,7 +359,10 @@ impl KMPEmitter {
                 });
             });
 
-        KMPOutput { files }
+        Ok(KMPOutput {
+            files,
+            support_report,
+        })
     }
 
     fn default_platform_adapters() -> Vec<KmpPlatformAdapter> {
@@ -306,8 +427,6 @@ impl KMPEmitter {
         common_sections.push(format!("package {package_name}"));
         common_sections.push(Self::render_common_result_runtime());
 
-        let mut unsupported = Vec::new();
-
         contract
             .catalog
             .all_custom_types()
@@ -332,17 +451,8 @@ impl KMPEmitter {
         contract.functions.iter().for_each(|function| {
             if function_supported(function, contract, support) {
                 common_sections.push(Self::render_common_function(function));
-            } else {
-                unsupported.push(function.id.as_str().to_string());
             }
         });
-
-        if !unsupported.is_empty() {
-            common_sections.push(format!(
-                "// Unsupported in the initial KMP generator slice: {}",
-                unsupported.join(", ")
-            ));
-        }
 
         join_kotlin_sections(common_sections)
     }
@@ -904,6 +1014,307 @@ fn kdoc_block(doc: &Option<String>) -> String {
             result
         })
         .unwrap_or_default()
+}
+
+fn build_support_report(
+    contract: &ir::FfiContract,
+    support: &KmpSurfaceSupport,
+    package_name: &str,
+    module_name: &str,
+    min_sdk: u32,
+    mode: KmpSupportPolicy,
+) -> KmpSupportReport {
+    let mut admitted_apis = Vec::new();
+    let mut rejected_apis = Vec::new();
+
+    contract.catalog.all_custom_types().for_each(|custom| {
+        if support.custom_types.contains(custom.id.as_str()) {
+            admitted_apis.push(support_api("custom_type", custom.id.as_str(), None));
+        } else {
+            rejected_apis.push(support_api(
+                "custom_type",
+                custom.id.as_str(),
+                Some(custom_type_rejection_reason(custom, support)),
+            ));
+        }
+    });
+
+    contract.catalog.all_records().for_each(|record| {
+        if support.records.contains(record.id.as_str()) {
+            admitted_apis.push(support_api("record", record.id.as_str(), None));
+        } else {
+            rejected_apis.push(support_api(
+                "record",
+                record.id.as_str(),
+                Some(record_rejection_reason(record, contract, support)),
+            ));
+        }
+        push_record_member_rejections(record, &mut rejected_apis);
+    });
+
+    contract.catalog.all_enums().for_each(|enumeration| {
+        if support.enums.contains(enumeration.id.as_str()) {
+            admitted_apis.push(support_api("enum", enumeration.id.as_str(), None));
+        } else {
+            rejected_apis.push(support_api(
+                "enum",
+                enumeration.id.as_str(),
+                Some(enum_rejection_reason(enumeration, contract, support)),
+            ));
+        }
+        push_enum_member_rejections(enumeration, &mut rejected_apis);
+    });
+
+    contract.catalog.all_classes().for_each(|class| {
+        rejected_apis.push(support_api(
+            "class",
+            class.id.as_str(),
+            Some("class APIs are not supported by the current KMP generator".to_string()),
+        ));
+    });
+
+    contract.catalog.all_callbacks().for_each(|callback| {
+        rejected_apis.push(support_api(
+            "callback",
+            callback.id.as_str(),
+            Some("callback APIs are not supported by the current KMP generator".to_string()),
+        ));
+    });
+
+    contract.functions.iter().for_each(|function| {
+        if function_supported(function, contract, support) {
+            admitted_apis.push(support_api("function", function.id.as_str(), None));
+        } else {
+            rejected_apis.push(support_api(
+                "function",
+                function.id.as_str(),
+                Some(function_rejection_reason(function, support)),
+            ));
+        }
+    });
+
+    KmpSupportReport {
+        schema_version: KMP_SUPPORT_REPORT_SCHEMA_VERSION,
+        mode,
+        selected_platforms: KMP_SELECTED_PLATFORMS
+            .iter()
+            .map(|platform| (*platform).to_string())
+            .collect(),
+        package_name: package_name.to_string(),
+        module_name: module_name.to_string(),
+        min_sdk,
+        admitted_apis,
+        rejected_apis,
+        generator_version: env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
+fn support_api(kind: &str, name: &str, reason: Option<String>) -> KmpSupportApi {
+    KmpSupportApi {
+        kind: kind.to_string(),
+        name: name.to_string(),
+        reason,
+    }
+}
+
+fn push_record_member_rejections(
+    record: &ir::definitions::RecordDef,
+    rejected_apis: &mut Vec<KmpSupportApi>,
+) {
+    record
+        .constructors
+        .iter()
+        .enumerate()
+        .for_each(|(index, _)| {
+            rejected_apis.push(support_api(
+                "record_constructor",
+                &format!("{}#{index}", record.id.as_str()),
+                Some(
+                    "value-type constructors are not supported by the current KMP generator"
+                        .to_string(),
+                ),
+            ));
+        });
+    record.methods.iter().for_each(|method| {
+        rejected_apis.push(support_api(
+            "record_method",
+            &format!("{}.{}", record.id.as_str(), method.id.as_str()),
+            Some("value-type methods are not supported by the current KMP generator".to_string()),
+        ));
+    });
+}
+
+fn push_enum_member_rejections(
+    enumeration: &ir::definitions::EnumDef,
+    rejected_apis: &mut Vec<KmpSupportApi>,
+) {
+    enumeration
+        .constructors
+        .iter()
+        .enumerate()
+        .for_each(|(index, _)| {
+            rejected_apis.push(support_api(
+                "enum_constructor",
+                &format!("{}#{index}", enumeration.id.as_str()),
+                Some(
+                    "value-type constructors are not supported by the current KMP generator"
+                        .to_string(),
+                ),
+            ));
+        });
+    enumeration.methods.iter().for_each(|method| {
+        rejected_apis.push(support_api(
+            "enum_method",
+            &format!("{}.{}", enumeration.id.as_str(), method.id.as_str()),
+            Some("value-type methods are not supported by the current KMP generator".to_string()),
+        ));
+    });
+}
+
+fn summarize_rejected_apis(report: &KmpSupportReport) -> String {
+    report
+        .rejected_apis
+        .iter()
+        .take(5)
+        .map(|api| format!("{} {}", api.kind, api.name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn custom_type_rejection_reason(
+    custom: &ir::definitions::CustomTypeDef,
+    support: &KmpSurfaceSupport,
+) -> String {
+    if has_reserved_common_runtime_type_name(custom.id.as_str()) {
+        return "name conflicts with KMP common runtime support type".to_string();
+    }
+
+    type_rejection_reason(&custom.repr, support).unwrap_or_else(|| {
+        "custom type is not admitted by the current KMP capability set".to_string()
+    })
+}
+
+fn record_rejection_reason(
+    record: &ir::definitions::RecordDef,
+    contract: &ir::FfiContract,
+    support: &KmpSurfaceSupport,
+) -> String {
+    if has_reserved_common_runtime_type_name(record.id.as_str()) {
+        return "name conflicts with KMP common runtime support type".to_string();
+    }
+
+    if error_record_has_incompatible_message_field(record, contract) {
+        return "error record has a message field that cannot override kotlin.Throwable.message"
+            .to_string();
+    }
+
+    record
+        .fields
+        .iter()
+        .find_map(|field| {
+            type_rejection_reason(&field.type_expr, support)
+                .map(|reason| format!("field {}: {reason}", field.name.as_str()))
+        })
+        .unwrap_or_else(|| "record is not admitted by the current KMP capability set".to_string())
+}
+
+fn enum_rejection_reason(
+    enumeration: &ir::definitions::EnumDef,
+    contract: &ir::FfiContract,
+    support: &KmpSurfaceSupport,
+) -> String {
+    if has_reserved_common_runtime_type_name(enumeration.id.as_str()) {
+        return "name conflicts with KMP common runtime support type".to_string();
+    }
+
+    if error_enum_has_incompatible_message_field(enumeration, contract) {
+        return "error enum has a message field that cannot override kotlin.Throwable.message"
+            .to_string();
+    }
+
+    enum_variants(enumeration)
+        .iter()
+        .find_map(|variant| {
+            enum_variant_fields(&variant.payload)
+                .iter()
+                .find_map(|field| {
+                    type_rejection_reason(&field.type_expr, support).map(|reason| {
+                        format!(
+                            "variant {} field {}: {reason}",
+                            variant.name,
+                            field.kotlin_name()
+                        )
+                    })
+                })
+        })
+        .unwrap_or_else(|| "enum is not admitted by the current KMP capability set".to_string())
+}
+
+fn function_rejection_reason(
+    function: &ir::definitions::FunctionDef,
+    support: &KmpSurfaceSupport,
+) -> String {
+    if let Some(reason) = return_rejection_reason(&function.returns, support) {
+        return format!("return type: {reason}");
+    }
+
+    function
+        .params
+        .iter()
+        .find_map(|param| {
+            type_rejection_reason(&param.type_expr, support)
+                .map(|reason| format!("parameter {}: {reason}", param.name.as_str()))
+        })
+        .unwrap_or_else(|| "function is not admitted by the current KMP capability set".to_string())
+}
+
+fn return_rejection_reason(
+    returns: &ir::definitions::ReturnDef,
+    support: &KmpSurfaceSupport,
+) -> Option<String> {
+    match returns {
+        ir::definitions::ReturnDef::Void => None,
+        ir::definitions::ReturnDef::Value(ty) => type_rejection_reason(ty, support),
+        ir::definitions::ReturnDef::Result { ok, err } => type_rejection_reason(ok, support)
+            .map(|reason| format!("result ok: {reason}"))
+            .or_else(|| {
+                type_rejection_reason(err, support).map(|reason| format!("result err: {reason}"))
+            }),
+    }
+}
+
+fn type_rejection_reason(ty: &ir::types::TypeExpr, support: &KmpSurfaceSupport) -> Option<String> {
+    match ty {
+        ir::types::TypeExpr::Void
+        | ir::types::TypeExpr::Primitive(_)
+        | ir::types::TypeExpr::String => None,
+        ir::types::TypeExpr::Vec(inner) => {
+            type_rejection_reason(inner, support).map(|reason| format!("Vec element: {reason}"))
+        }
+        ir::types::TypeExpr::Option(inner) => {
+            type_rejection_reason(inner, support).map(|reason| format!("Option inner: {reason}"))
+        }
+        ir::types::TypeExpr::Result { ok, err } => type_rejection_reason(ok, support)
+            .map(|reason| format!("Result ok: {reason}"))
+            .or_else(|| {
+                type_rejection_reason(err, support).map(|reason| format!("Result err: {reason}"))
+            }),
+        ir::types::TypeExpr::Record(id) => (!support.records.contains(id.as_str()))
+            .then(|| format!("record {} is not admitted", id.as_str())),
+        ir::types::TypeExpr::Enum(id) => (!support.enums.contains(id.as_str()))
+            .then(|| format!("enum {} is not admitted", id.as_str())),
+        ir::types::TypeExpr::Custom(id) => (!support.custom_types.contains(id.as_str()))
+            .then(|| format!("custom type {} is not admitted", id.as_str())),
+        ir::types::TypeExpr::Builtin(id) => {
+            Some(format!("builtin type {} is not supported", id.as_str()))
+        }
+        ir::types::TypeExpr::Callback(id) => {
+            Some(format!("callback type {} is not supported", id.as_str()))
+        }
+        ir::types::TypeExpr::Handle(id) => {
+            Some(format!("handle type {} is not supported", id.as_str()))
+        }
+    }
 }
 
 fn filter_contract_for_kmp_surface(
@@ -1685,6 +2096,28 @@ mod tests {
         }
     }
 
+    fn default_constructor() -> ir::definitions::ConstructorDef {
+        ir::definitions::ConstructorDef::Default {
+            params: Vec::new(),
+            is_fallible: false,
+            is_optional: false,
+            doc: None,
+            deprecated: None,
+        }
+    }
+
+    fn sync_method(id: &str) -> ir::definitions::MethodDef {
+        ir::definitions::MethodDef {
+            id: id.into(),
+            receiver: ir::definitions::Receiver::RefSelf,
+            params: Vec::new(),
+            returns: ir::definitions::ReturnDef::Void,
+            execution_kind: boltffi_ffi_rules::callable::ExecutionKind::Sync,
+            doc: None,
+            deprecated: None,
+        }
+    }
+
     fn custom_type(id: &str, repr: ir::types::TypeExpr) -> ir::definitions::CustomTypeDef {
         ir::definitions::CustomTypeDef {
             id: id.into(),
@@ -1771,7 +2204,7 @@ mod tests {
         assert!(!common.contains("data class FfiException("));
         assert!(!common.contains("typealias BoltFFIResult"));
         assert!(!common.contains("expect fun load"));
-        assert!(common.contains("Unsupported in the initial KMP generator slice: load"));
+        assert!(!common.contains("Unsupported in the initial KMP generator slice"));
         assert_eq!(internal_contract.catalog.all_records().count(), 0);
         assert_eq!(internal_contract.catalog.all_custom_types().count(), 0);
         assert!(internal_contract.functions.is_empty());
@@ -1958,7 +2391,114 @@ mod tests {
         assert_eq!(direct, "data class ServiceError(val message: Int)");
         assert!(!common.contains("data class ServiceError("));
         assert!(!common.contains("expect fun load"));
-        assert!(common.contains("Unsupported in the initial KMP generator slice: load"));
+        assert!(!common.contains("Unsupported in the initial KMP generator slice"));
+    }
+
+    #[test]
+    fn emit_rejects_unsupported_kmp_surface_in_strict_mode() {
+        let mut contract = empty_contract();
+        let mut record = error_record("ServiceError");
+        record.fields = vec![field(
+            "message",
+            ir::types::TypeExpr::Primitive(ir::types::PrimitiveType::I32),
+        )];
+        contract.catalog.insert_record(record);
+        contract.functions.push(sync_function(
+            "load",
+            ir::definitions::ReturnDef::Result {
+                ok: ir::types::TypeExpr::String,
+                err: ir::types::TypeExpr::Record("ServiceError".into()),
+            },
+        ));
+        let abi = ir::Lowerer::new(&contract).to_abi_contract();
+
+        let error = KMPEmitter::emit(
+            &contract,
+            &abi,
+            KMPOptions {
+                package_name: "com.example.demo".to_string(),
+                module_name: "Demo".to_string(),
+                min_sdk: 23,
+                support_policy: KmpSupportPolicy::Strict,
+                kotlin_options: KotlinOptions::default(),
+            },
+        )
+        .expect_err("strict mode should reject unsupported KMP APIs");
+
+        match error {
+            KMPError::UnsupportedApis { report, .. } => {
+                assert_eq!(report.mode, KmpSupportPolicy::Strict);
+                assert!(
+                    report
+                        .rejected_apis
+                        .iter()
+                        .any(|api| api.kind == "function" && api.name == "load")
+                );
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn support_report_lists_members_when_parent_type_is_rejected() {
+        let mut contract = empty_contract();
+        let mut record = empty_record();
+        record.id = "BadRecord".into();
+        record.fields = vec![field(
+            "callback",
+            ir::types::TypeExpr::Callback("Listener".into()),
+        )];
+        record.constructors = vec![default_constructor()];
+        record.methods = vec![sync_method("describe")];
+        contract.catalog.insert_record(record);
+
+        let enumeration = ir::definitions::EnumDef {
+            id: "BadEnum".into(),
+            repr: EnumRepr::Data {
+                tag_type: ir::types::PrimitiveType::I32,
+                variants: vec![ir::definitions::DataVariant {
+                    name: "WithCallback".into(),
+                    discriminant: 0,
+                    payload: VariantPayload::Tuple(vec![ir::types::TypeExpr::Callback(
+                        "Listener".into(),
+                    )]),
+                    doc: None,
+                }],
+            },
+            is_error: false,
+            constructors: vec![default_constructor()],
+            methods: vec![sync_method("code")],
+            doc: None,
+            deprecated: None,
+        };
+        contract.catalog.insert_enum(enumeration);
+
+        let support = KmpSurfaceSupport::for_contract(&contract);
+        let report = build_support_report(
+            &contract,
+            &support,
+            "com.example.demo",
+            "Demo",
+            23,
+            KmpSupportPolicy::PreviewPruneUnsupported,
+        );
+
+        for (kind, name) in [
+            ("record", "BadRecord"),
+            ("record_constructor", "BadRecord#0"),
+            ("record_method", "BadRecord.describe"),
+            ("enum", "BadEnum"),
+            ("enum_constructor", "BadEnum#0"),
+            ("enum_method", "BadEnum.code"),
+        ] {
+            assert!(
+                report
+                    .rejected_apis
+                    .iter()
+                    .any(|api| api.kind == kind && api.name == name),
+                "missing rejected API {kind} {name}"
+            );
+        }
     }
 
     #[test]
@@ -1986,8 +2526,27 @@ mod tests {
                 package_name: "com.example.demo".to_string(),
                 module_name: "Demo".to_string(),
                 min_sdk: 23,
+                support_policy: KmpSupportPolicy::PreviewPruneUnsupported,
                 kotlin_options: KotlinOptions::default(),
             },
+        )
+        .expect("preview pruning should emit supported KMP subset");
+        assert_eq!(
+            output.support_report.mode,
+            KmpSupportPolicy::PreviewPruneUnsupported
+        );
+        assert!(
+            output
+                .support_report
+                .rejected_apis
+                .iter()
+                .any(|api| api.kind == "function" && api.name == "load")
+        );
+        assert!(
+            output
+                .files
+                .iter()
+                .any(|file| file.relative_path.as_path() == Path::new(KMP_SUPPORT_REPORT_FILE))
         );
         let common = output
             .files
@@ -2014,9 +2573,9 @@ mod tests {
         assert!(!common.contents.contains("data class ServiceError("));
         assert!(!common.contents.contains("expect fun load"));
         assert!(
-            common
+            !common
                 .contents
-                .contains("Unsupported in the initial KMP generator slice: load")
+                .contains("Unsupported in the initial KMP generator slice")
         );
         assert!(!internal_jvm.contents.contains("data class ServiceError("));
         assert!(!internal_jvm.contents.contains("fun load("));
@@ -2106,9 +2665,11 @@ mod tests {
                 package_name: "com.example.demo".to_string(),
                 module_name: "Demo".to_string(),
                 min_sdk: 23,
+                support_policy: KmpSupportPolicy::Strict,
                 kotlin_options: KotlinOptions::default(),
             },
-        );
+        )
+        .expect("strict mode should emit fully supported KMP surface");
         let common = output
             .files
             .iter()
@@ -2180,7 +2741,7 @@ mod tests {
         assert!(!direct.contains("override val message: Int"));
         assert!(!common.contains("sealed class DomainError"));
         assert!(!common.contains("expect fun load"));
-        assert!(common.contains("Unsupported in the initial KMP generator slice: load"));
+        assert!(!common.contains("Unsupported in the initial KMP generator slice"));
     }
 
     #[test]
@@ -2300,9 +2861,11 @@ mod tests {
                 package_name: "com.example.demo".to_string(),
                 module_name: "Demo".to_string(),
                 min_sdk: 23,
+                support_policy: KmpSupportPolicy::Strict,
                 kotlin_options: KotlinOptions::default(),
             },
-        );
+        )
+        .expect("strict mode should emit fully supported KMP surface");
         let common = output
             .files
             .iter()

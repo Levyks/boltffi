@@ -446,9 +446,13 @@ enabled = true
 output = "dist/kotlin-multiplatform"
 package = "com.mycompany.mylib"
 module_name = "MyLib"
+# Experimental diagnostic mode. Default is false.
+preview_prune_unsupported = false
 ```
 
 Generated output is a Kotlin Multiplatform Gradle module with `commonMain` declarations and `jvmMain`/`androidMain` actuals backed by the existing Kotlin/JNI generator. Kotlin/Native `cinterop` actuals for iOS/macOS are not generated yet.
+
+KMP generation is strict by default. Unsupported exported APIs fail generation so `commonMain` never silently exposes a partial contract. Setting `preview_prune_unsupported = true` omits unsupported APIs, writes `boltffi-kmp-support.json`, and marks the generated module as pruned for diagnostic iteration.
 
 If `package` or `module_name` is omitted, BoltFFI reuses the corresponding Android Kotlin defaults.
 

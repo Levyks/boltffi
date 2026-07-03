@@ -197,6 +197,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use boltffi_bindgen::render::kmp::{
+        KMP_SUPPORT_REPORT_FILE, KmpSupportPolicy, KmpSupportReport,
+    };
+
     use super::generator::{GenerateRequest, LanguageGenerator, SourceCrate};
     use super::languages::{KMPGenerator, KotlinGenerator};
     use crate::config::Config;
@@ -300,6 +304,15 @@ package = "com.boltffi.demo"
     #[test]
     fn kotlin_multiplatform_generate_writes_kmp_sources() {
         let output_directory = unique_temp_dir("boltffi-kmp-generate-test");
+        let stale_common_path = output_directory.join("src/commonMain/kotlin/com/old/Stale.kt");
+        let staged_native_path =
+            output_directory.join("src/jvmMain/resources/native/current/libdemo.so");
+        fs::create_dir_all(stale_common_path.parent().expect("stale path has parent"))
+            .expect("create stale source directory");
+        fs::write(&stale_common_path, "package com.old\n").expect("write stale source");
+        fs::create_dir_all(staged_native_path.parent().expect("native path has parent"))
+            .expect("create native resource directory");
+        fs::write(&staged_native_path, []).expect("write native resource");
         let config = parse_config(
             r#"
 experimental = ["kotlin_multiplatform"]
@@ -311,6 +324,7 @@ version = "0.1.0"
 [targets.kotlin_multiplatform]
 enabled = true
 package = "com.boltffi.demo"
+preview_prune_unsupported = true
 
 [targets.android.kotlin.type_mappings]
 Email = { type = "java.net.URI", conversion = "url_string" }
@@ -336,6 +350,7 @@ Email = { type = "java.net.URI", conversion = "url_string" }
         let jni_glue_path = output_directory.join("src/jvmMain/c/jni_glue.c");
         let build_gradle_path = output_directory.join("build.gradle.kts");
         let settings_gradle_path = output_directory.join("settings.gradle.kts");
+        let support_report_path = output_directory.join(KMP_SUPPORT_REPORT_FILE);
 
         let common = fs::read_to_string(&common_path).expect("common source should be readable");
         let jvm_actual =
@@ -349,6 +364,10 @@ Email = { type = "java.net.URI", conversion = "url_string" }
             fs::read_to_string(&build_gradle_path).expect("gradle file should be readable");
         let settings_gradle =
             fs::read_to_string(&settings_gradle_path).expect("settings file should be readable");
+        let support_report: KmpSupportReport = serde_json::from_str(
+            &fs::read_to_string(&support_report_path).expect("support report should be readable"),
+        )
+        .expect("support report should be valid JSON");
 
         assert!(common.contains("package com.boltffi.demo"));
         assert!(common.contains("typealias Email = String"));
@@ -369,7 +388,12 @@ Email = { type = "java.net.URI", conversion = "url_string" }
         assert!(
             common.contains("expect fun resultToString(v: BoltFFIResult<Int, String>): String")
         );
-        assert!(common.contains("Unsupported in the initial KMP generator slice"));
+        assert!(!common.contains("Unsupported in the initial KMP generator slice"));
+        assert_eq!(
+            support_report.mode,
+            KmpSupportPolicy::PreviewPruneUnsupported
+        );
+        assert!(!support_report.rejected_apis.is_empty());
         assert!(jvm_actual.contains("actual fun echoBytes"));
         assert!(jvm_actual.contains("actual fun checkedDivide(a: Int, b: Int): Int"));
         assert!(jvm_actual.contains("catch (err: com.boltffi.demo.jvm.MathError)"));
@@ -397,8 +421,47 @@ Email = { type = "java.net.URI", conversion = "url_string" }
         assert!(settings_gradle.contains("pluginManagement"));
         assert!(settings_gradle.contains("gradlePluginPortal()"));
         assert!(settings_gradle.contains("RepositoriesMode.FAIL_ON_PROJECT_REPOS"));
+        assert!(!stale_common_path.exists());
+        assert!(staged_native_path.exists());
 
         fs::remove_dir_all(output_directory).expect("cleanup generated output");
+    }
+
+    #[test]
+    fn kotlin_multiplatform_generate_fails_unsupported_surface_by_default() {
+        let output_directory = unique_temp_dir("boltffi-kmp-strict-generate-test");
+        let config = parse_config(
+            r#"
+experimental = ["kotlin_multiplatform"]
+
+[package]
+name = "demo"
+version = "0.1.0"
+
+[targets.kotlin_multiplatform]
+enabled = true
+package = "com.boltffi.demo"
+"#,
+        );
+
+        let error =
+            KMPGenerator::generate_from_source_directory_with_desktop_fallback_library_name(
+                &config,
+                Some(output_directory.clone()),
+                &demo_source_directory(),
+                "demo",
+                None,
+            )
+            .expect_err("strict KMP generation should reject unsupported demo APIs");
+
+        assert!(
+            matches!(error, crate::cli::CliError::CommandFailed { command, status: None }
+                if command.contains("unsupported KMP APIs in strict mode"))
+        );
+
+        if output_directory.exists() {
+            fs::remove_dir_all(output_directory).expect("cleanup generated output");
+        }
     }
 
     #[test]
@@ -419,6 +482,7 @@ library_name = "configured-library"
 enabled = true
 package = "com.boltffi.demo"
 module_name = "Demo"
+preview_prune_unsupported = true
 "#,
         );
 

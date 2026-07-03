@@ -397,6 +397,8 @@ boltffi pack kmp --experimental --release
 
 This generates the KMP sources, builds Android `jniLibs`, and writes JVM desktop native resources to `dist/kotlin-multiplatform/src/jvmMain/resources/native/<host-target>/`.
 
+`pack kmp` verifies `boltffi-kmp-support.json` before packaging. The report must match the current KMP package, module, min SDK, selected platforms, and pruning policy. A module generated with `preview_prune_unsupported = true` cannot be packaged under strict config.
+
 KMP reuses the Java JVM host matrix:
 
 ```toml
