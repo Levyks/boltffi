@@ -4,7 +4,7 @@ use boltffi_binding::{CanonicalName, NamePart};
 
 use crate::{
     core::{Error, Result},
-    target::swift::syntax::Identifier,
+    target::swift::syntax::{Identifier, TypeName},
 };
 
 /// A Swift module name.
@@ -98,6 +98,23 @@ impl Name {
 
     pub fn parameter(&self) -> Result<Identifier> {
         Identifier::escape(self.lower_camel())
+    }
+
+    pub fn field(&self) -> Result<Identifier> {
+        Identifier::escape(self.lower_camel())
+    }
+
+    pub fn variant(&self) -> Result<Identifier> {
+        Identifier::escape(self.lower_camel())
+    }
+
+    pub fn type_name(&self) -> TypeName {
+        TypeName::new(
+            self.parts
+                .iter()
+                .map(|part| Self::capitalized(part.as_str()))
+                .collect::<String>(),
+        )
     }
 
     fn lower_camel(&self) -> String {

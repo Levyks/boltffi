@@ -94,7 +94,10 @@ impl host::HostBackend for SwiftHost {
     }
 
     fn binding_capabilities(&self) -> HostCapabilities {
-        HostCapabilities::new().stable(BindingCapability::Functions)
+        HostCapabilities::new()
+            .stable(BindingCapability::Records)
+            .stable(BindingCapability::Enums)
+            .stable(BindingCapability::Functions)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -103,29 +106,29 @@ impl host::HostBackend for SwiftHost {
 
     fn record(
         &self,
-        _decl: &RecordDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
+        decl: &RecordDecl<Self::Surface>,
+        bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("record declaration"))
+        render::Record::from_declaration(decl, bridge)?.render()
     }
 
     fn enumeration(
         &self,
-        _decl: &EnumDecl<Self::Surface>,
+        decl: &EnumDecl<Self::Surface>,
         _bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("enum declaration"))
+        render::Enumeration::from_declaration(decl)?.render()
     }
 
     fn function(
         &self,
         decl: &FunctionDecl<Self::Surface>,
         bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::Function::from_declaration(decl, bridge)?.render()
+        render::Function::from_declaration(decl, bridge, context)?.render()
     }
 
     fn class(

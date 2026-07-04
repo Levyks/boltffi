@@ -130,6 +130,10 @@ impl Identifier {
         }
     }
 
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     fn valid(identifier: &str) -> bool {
         let mut characters = identifier.chars();
         characters
@@ -150,6 +154,10 @@ impl fmt::Display for TypeName {
 impl TypeName {
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 
     pub fn void() -> Self {
@@ -244,6 +252,18 @@ impl fmt::Display for Expression {
 impl Expression {
     pub fn new(expression: impl Into<String>) -> Self {
         Self(expression.into())
+    }
+
+    pub fn member(base: impl fmt::Display, member: impl fmt::Display) -> Self {
+        Self::new(format!("{base}.{member}"))
+    }
+
+    pub fn call(callee: impl fmt::Display, arguments: ArgumentList) -> Self {
+        Self::new(format!("{callee}({arguments})"))
+    }
+
+    pub fn labeled(label: impl fmt::Display, value: impl fmt::Display) -> Self {
+        Self::new(format!("{label}: {value}"))
     }
 }
 

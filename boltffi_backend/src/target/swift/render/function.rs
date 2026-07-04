@@ -8,17 +8,18 @@ use boltffi_binding::{
 
 use crate::{
     bridge::c::CBridgeContract,
-    core::{Emitted, Error, Result},
+    core::{Emitted, Error, RenderContext, Result},
     target::swift::{
         SwiftHost,
         name_style::Name,
-        render::SwiftType,
-        syntax::{Expression, Identifier, TypeName},
+        render::{Documentation, SwiftType},
+        syntax::{ArgumentList, Expression, Identifier, TypeName},
     },
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Function {
+    documentation: Documentation,
     name: Identifier,
     symbol: String,
     parameters: Vec<Parameter>,
@@ -35,6 +36,13 @@ struct Parameter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Return {
     ty: Option<TypeName>,
+    conversion: ReturnConversion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ReturnConversion {
+    Direct,
+    FromC(TypeName),
 }
 
 #[derive(Template)]
@@ -44,7 +52,11 @@ struct FunctionTemplate<'a> {
 }
 
 impl Function {
-    pub fn from_declaration(decl: &FunctionDecl<Native>, bridge: &CBridgeContract) -> Result<Self> {
+    pub fn from_declaration(
+        decl: &FunctionDecl<Native>,
+        bridge: &CBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
         let symbol = decl.symbol().name().as_str();
         let c_function = bridge
             .functions()
@@ -69,10 +81,14 @@ impl Function {
         let parameters = callable
             .params()
             .iter()
-            .map(Parameter::from_decl)
+            .map(|parameter| Parameter::from_decl(parameter, context))
             .collect::<Result<Vec<_>>>()?;
-        let returns = callable.returns().plan().render_with(&mut ReturnPlan)?;
+        let returns = callable
+            .returns()
+            .plan()
+            .render_with(&mut ReturnPlan { context })?;
         Ok(Self {
+            documentation: Documentation::new(decl.meta().doc(), ""),
             name: Name::new(decl.name()).function()?,
             symbol: c_function.name().to_owned(),
             parameters,
@@ -81,14 +97,17 @@ impl Function {
     }
 
     pub fn render(&self) -> Result<Emitted> {
-        FunctionTemplate { function: self }
-            .render()
-            .map(Emitted::primary)
-            .map_err(Error::from)
+        let mut source = FunctionTemplate { function: self }.render()?;
+        source.push_str("\n\n");
+        Ok(Emitted::primary(source))
     }
 
     fn name(&self) -> &Identifier {
         &self.name
+    }
+
+    fn documentation(&self) -> &Documentation {
+        &self.documentation
     }
 
     fn symbol(&self) -> &str {
@@ -105,12 +124,16 @@ impl Function {
 }
 
 impl Parameter {
-    fn from_decl(decl: &ParamDecl<Native, IntoRust>) -> Result<Self> {
+    fn from_decl(
+        decl: &ParamDecl<Native, IntoRust>,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
         decl.payload()
             .as_value()
             .ok_or(SwiftHost::unsupported("closure parameter"))?
             .render_with(&mut ParameterPlan {
                 name: Name::new(decl.name()).parameter()?,
+                context,
             })
     }
 
@@ -123,11 +146,14 @@ impl Parameter {
     }
 }
 
-struct ParameterPlan {
+struct ParameterPlan<'context, 'bindings> {
     name: Identifier,
+    context: &'context RenderContext<'bindings, Native>,
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterPlan {
+impl<'plan, 'context, 'bindings> ParamPlanRender<'plan, Native, IntoRust>
+    for ParameterPlan<'context, 'bindings>
+{
     type Output = Result<Parameter>;
 
     fn direct(&mut self, ty: &'plan DirectValueType, receive: Receive) -> Self::Output {
@@ -136,11 +162,19 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterPlan {
         }
         let ty = match ty {
             DirectValueType::Primitive(primitive) => SwiftType::primitive(*primitive)?,
-            DirectValueType::Record(_) => {
-                return Err(SwiftHost::unsupported("direct record parameter"));
+            DirectValueType::Record(record) => {
+                return Ok(Parameter {
+                    name: self.name.clone(),
+                    ty: SwiftType::record(*record, self.context)?,
+                    argument: Expression::member(&self.name, "cValue"),
+                });
             }
-            DirectValueType::Enum(_) => {
-                return Err(SwiftHost::unsupported("direct enum parameter"));
+            DirectValueType::Enum(enumeration) => {
+                return Ok(Parameter {
+                    name: self.name.clone(),
+                    ty: SwiftType::enumeration(*enumeration, self.context)?,
+                    argument: Expression::member(&self.name, "cValue"),
+                });
             }
             _ => return Err(SwiftHost::unsupported("unknown direct parameter")),
         };
@@ -164,7 +198,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterPlan {
     fn handle(
         &mut self,
         _target: &'plan HandleTarget,
-        _carrier: <Native as boltffi_binding::Surface>::HandleCarrier,
+        _carrier: <Native as Surface>::HandleCarrier,
         _presence: HandlePresence,
         _receive: Receive,
     ) -> Self::Output {
@@ -189,26 +223,35 @@ impl Return {
     }
 
     fn call_body(&self, symbol: &str, arguments: &[Parameter]) -> String {
-        let arguments = arguments
+        let arguments: ArgumentList = arguments
             .iter()
-            .map(|parameter| parameter.argument().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let call = format!("{symbol}({arguments})");
+            .map(|parameter| parameter.argument().clone())
+            .collect();
+        let call = Expression::call(symbol, arguments);
         match self.ty {
-            Some(_) => format!("    return {call}"),
+            Some(_) => match &self.conversion {
+                ReturnConversion::Direct => format!("    return {call}"),
+                ReturnConversion::FromC(ty) => format!("    return {}(fromC: {call})", ty),
+            },
             None => format!("    {call}"),
         }
     }
 }
 
-struct ReturnPlan;
+struct ReturnPlan<'context, 'bindings> {
+    context: &'context RenderContext<'bindings, Native>,
+}
 
-impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnPlan {
+impl<'plan, 'context, 'bindings> ReturnPlanRender<'plan, Native, OutOfRust>
+    for ReturnPlan<'context, 'bindings>
+{
     type Output = Result<Return>;
 
     fn void(&mut self) -> Self::Output {
-        Ok(Return { ty: None })
+        Ok(Return {
+            ty: None,
+            conversion: ReturnConversion::Direct,
+        })
     }
 
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
@@ -217,13 +260,26 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnPlan {
         }
         let ty = match ty {
             DirectValueType::Primitive(primitive) => SwiftType::primitive(*primitive)?,
-            DirectValueType::Record(_) => {
-                return Err(SwiftHost::unsupported("direct record return"));
+            DirectValueType::Record(record) => {
+                let ty = SwiftType::record(*record, self.context)?;
+                return Ok(Return {
+                    ty: Some(ty.clone()),
+                    conversion: ReturnConversion::FromC(ty),
+                });
             }
-            DirectValueType::Enum(_) => return Err(SwiftHost::unsupported("direct enum return")),
+            DirectValueType::Enum(enumeration) => {
+                let ty = SwiftType::enumeration(*enumeration, self.context)?;
+                return Ok(Return {
+                    ty: Some(ty.clone()),
+                    conversion: ReturnConversion::FromC(ty),
+                });
+            }
             _ => return Err(SwiftHost::unsupported("unknown direct return")),
         };
-        Ok(Return { ty: Some(ty) })
+        Ok(Return {
+            ty: Some(ty),
+            conversion: ReturnConversion::Direct,
+        })
     }
 
     fn encoded(
@@ -240,7 +296,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnPlan {
         &mut self,
         _slot: ReturnValueSlot,
         _target: &'plan HandleTarget,
-        _carrier: <Native as boltffi_binding::Surface>::HandleCarrier,
+        _carrier: <Native as Surface>::HandleCarrier,
         _presence: HandlePresence,
     ) -> Self::Output {
         Err(SwiftHost::unsupported("handle return"))

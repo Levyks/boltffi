@@ -27,10 +27,11 @@ impl<'host, 'decl> Module<'host, 'decl> {
     }
 
     pub fn render(self) -> Result<GeneratedOutput> {
-        let preamble = ModuleTemplate {
+        let mut preamble = ModuleTemplate {
             module: self.host.module().as_str(),
         }
         .render()?;
+        preamble.push('\n');
         let file =
             FilePlan::all(FilePath::new(self.host.file_name().path())?).with_preamble(preamble);
         FileLayout::new()

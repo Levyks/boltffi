@@ -49,3 +49,8 @@ fn fixture_path(name: &str) -> PathBuf {
 fn swift_target_renders_primitive_function_stack() {
     insta::assert_snapshot!(rendered_fixture("exports/single_function"));
 }
+
+#[test]
+fn swift_target_renders_direct_records_and_c_style_enums() {
+    insta::assert_snapshot!(rendered_fixture("exports/direct_records_and_c_style_enums"));
+}
