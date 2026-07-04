@@ -1,12 +1,17 @@
 use std::collections::BTreeSet;
 
+#[cfg(not(miri))]
 use boltffi_ast::PackageInfo;
+#[cfg(not(miri))]
 use boltffi_backend::bridge::c::CBridge;
+#[cfg(not(miri))]
 use boltffi_backend::core::bridge::BridgeBackend;
+#[cfg(not(miri))]
 use boltffi_binding::{
     Bindings, Decl, EnumDecl, ErrorDecl, ExportedCallable, IncomingParam, IntoRust, Native,
     OutOfRust, ParamPlan, Receive, RecordDecl, ReturnPlan, TypeRef, lower,
 };
+#[cfg(not(miri))]
 use boltffi_scan::{ScanInput, scan_package};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -39,6 +44,7 @@ const PENDING_EXPANSIONS: &[PendingExpansion] = &[
     },
 ];
 
+#[cfg(not(miri))]
 fn source_contract() -> boltffi_ast::SourceContract {
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source = manifest.join("src").join("lib.rs");
@@ -50,6 +56,7 @@ fn source_contract() -> boltffi_ast::SourceContract {
     .root_with_support()
 }
 
+#[cfg(not(miri))]
 fn c_published_function_symbols() -> BTreeSet<String> {
     let bindings = native_bindings();
     let bridge = CBridge::default_header().expect("C bridge");
@@ -67,6 +74,7 @@ fn c_published_function_symbols() -> BTreeSet<String> {
         .collect()
 }
 
+#[cfg(not(miri))]
 fn native_symbol_names() -> BTreeSet<String> {
     native_bindings()
         .symbols()
@@ -76,6 +84,7 @@ fn native_symbol_names() -> BTreeSet<String> {
         .collect()
 }
 
+#[cfg(not(miri))]
 fn native_bindings() -> Bindings<Native> {
     let source = source_contract();
     lower::<Native>(&source).expect("lower test package")
@@ -102,6 +111,7 @@ fn signature_only_c_symbol(symbol: &str) -> bool {
             == "boltffi_async_method_class_boltffi_tests_results_cancellable_task_long_running_task_complete"
 }
 
+#[cfg(not(miri))]
 fn assert_symbol_sets_eq(
     actual_name: &str,
     actual: BTreeSet<String>,
@@ -123,6 +133,7 @@ fn assert_symbol_sets_eq(
 }
 
 #[test]
+#[cfg(not(miri))]
 fn generated_signature_assertions_cover_every_c_contract_function() {
     assert_symbol_sets_eq(
         "asserted symbols",
@@ -133,6 +144,7 @@ fn generated_signature_assertions_cover_every_c_contract_function() {
 }
 
 #[test]
+#[cfg(not(miri))]
 fn generated_signature_assertions_cover_every_native_symbol() {
     assert_symbol_sets_eq(
         "asserted symbols",
@@ -143,6 +155,7 @@ fn generated_signature_assertions_cover_every_native_symbol() {
 }
 
 #[test]
+#[cfg(not(miri))]
 fn c_contract_functions_name_native_symbols() {
     assert_symbol_sets_eq(
         "C published functions",
@@ -220,6 +233,7 @@ fn generated_signature_assertions_cover_mutable_byte_fixture() {
 }
 
 #[test]
+#[cfg(not(miri))]
 fn mutable_byte_fixture_lowers_to_encoded_mutable_receive() {
     let bindings = native_bindings();
     let function_names = bindings
@@ -251,6 +265,7 @@ fn mutable_byte_fixture_lowers_to_encoded_mutable_receive() {
 }
 
 #[test]
+#[cfg(not(miri))]
 fn lowering_produces_the_claimed_crossing_matrix() {
     let actual = crossing_rows(&native_bindings());
     let expected = [
@@ -293,6 +308,7 @@ fn lowering_produces_the_claimed_crossing_matrix() {
     assert_eq!(actual, expected);
 }
 
+#[cfg(not(miri))]
 fn crossing_rows(bindings: &Bindings<Native>) -> BTreeSet<&'static str> {
     let mut rows = BTreeSet::new();
     bindings
@@ -302,6 +318,7 @@ fn crossing_rows(bindings: &Bindings<Native>) -> BTreeSet<&'static str> {
     rows
 }
 
+#[cfg(not(miri))]
 fn collect_decl_rows(decl: &Decl<Native>, rows: &mut BTreeSet<&'static str>) {
     match decl {
         Decl::Record(record) => collect_record_rows(record, rows),
@@ -337,6 +354,7 @@ fn collect_decl_rows(decl: &Decl<Native>, rows: &mut BTreeSet<&'static str>) {
     }
 }
 
+#[cfg(not(miri))]
 fn collect_record_rows(record: &RecordDecl<Native>, rows: &mut BTreeSet<&'static str>) {
     match record {
         RecordDecl::Direct(record) => {
@@ -365,6 +383,7 @@ fn collect_record_rows(record: &RecordDecl<Native>, rows: &mut BTreeSet<&'static
     }
 }
 
+#[cfg(not(miri))]
 fn collect_enum_rows(enumeration: &EnumDecl<Native>, rows: &mut BTreeSet<&'static str>) {
     match enumeration {
         EnumDecl::CStyle(enumeration) => {
@@ -393,6 +412,7 @@ fn collect_enum_rows(enumeration: &EnumDecl<Native>, rows: &mut BTreeSet<&'stati
     }
 }
 
+#[cfg(not(miri))]
 fn collect_callable_rows(callable: &ExportedCallable<Native>, rows: &mut BTreeSet<&'static str>) {
     match callable.receiver() {
         Some(Receive::ByValue) => {
@@ -415,6 +435,7 @@ fn collect_callable_rows(callable: &ExportedCallable<Native>, rows: &mut BTreeSe
     collect_error_rows(callable.error(), rows);
 }
 
+#[cfg(not(miri))]
 fn collect_param_rows(param: &IncomingParam<Native>, rows: &mut BTreeSet<&'static str>) {
     match param {
         IncomingParam::Value(plan) => collect_value_param_rows(plan, rows),
@@ -424,6 +445,7 @@ fn collect_param_rows(param: &IncomingParam<Native>, rows: &mut BTreeSet<&'stati
     }
 }
 
+#[cfg(not(miri))]
 fn collect_value_param_rows(plan: &ParamPlan<Native, IntoRust>, rows: &mut BTreeSet<&'static str>) {
     match plan {
         ParamPlan::Direct { receive, .. } => {
@@ -445,6 +467,7 @@ fn collect_value_param_rows(plan: &ParamPlan<Native, IntoRust>, rows: &mut BTree
     }
 }
 
+#[cfg(not(miri))]
 fn collect_return_rows(plan: &ReturnPlan<Native, OutOfRust>, rows: &mut BTreeSet<&'static str>) {
     rows.insert(match plan {
         ReturnPlan::Void => "return:void",
@@ -461,6 +484,7 @@ fn collect_return_rows(plan: &ReturnPlan<Native, OutOfRust>, rows: &mut BTreeSet
     });
 }
 
+#[cfg(not(miri))]
 fn collect_error_rows(error: &ErrorDecl<Native, OutOfRust>, rows: &mut BTreeSet<&'static str>) {
     rows.insert(match error {
         ErrorDecl::None(_) => "error:none",
@@ -472,6 +496,7 @@ fn collect_error_rows(error: &ErrorDecl<Native, OutOfRust>, rows: &mut BTreeSet<
     });
 }
 
+#[cfg(not(miri))]
 fn receive_row(prefix: &'static str, receive: Receive) -> &'static str {
     match (prefix, receive) {
         ("param:direct", Receive::ByValue) => "param:direct:by-value",
