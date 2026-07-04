@@ -1651,7 +1651,7 @@ impl<'a> SwiftLowerer<'a> {
 
     fn swift_error_type(&self, returns: &ReturnDef) -> String {
         match returns {
-            ReturnDef::Result { err, .. } => self.swift_type(err),
+            ReturnDef::Result { err, .. } => self.swift_result_error_type(err),
             _ => "FfiError".to_string(),
         }
     }
@@ -1834,8 +1834,17 @@ impl<'a> SwiftLowerer<'a> {
                 result_decode,
                 err_decode,
                 err_is_string,
-                err_encode: err_encode
-                    .map(|seq| remap_root_in_seq(&seq, ValueExpr::Var("error".to_string()))),
+                err_encode: err_encode.map(|seq| {
+                    let error = if err_is_string {
+                        ValueExpr::Field(
+                            Box::new(ValueExpr::Var("error".to_string())),
+                            FieldName::new("message"),
+                        )
+                    } else {
+                        ValueExpr::Var("error".to_string())
+                    };
+                    remap_root_in_seq(&seq, error)
+                }),
             },
             other => other,
         }

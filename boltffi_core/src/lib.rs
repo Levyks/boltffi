@@ -82,6 +82,12 @@ impl std::fmt::Display for UnexpectedFfiCallbackError {
 
 impl std::error::Error for UnexpectedFfiCallbackError {}
 
+impl From<UnexpectedFfiCallbackError> for String {
+    fn from(error: UnexpectedFfiCallbackError) -> Self {
+        error.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CustomTypeConversionError;
 

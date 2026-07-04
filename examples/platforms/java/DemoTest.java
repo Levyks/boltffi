@@ -1852,6 +1852,12 @@ public final class DemoTest {
             }
             return "message:" + key;
         };
+        StringResultMessageCallback stringResultMessageCallback = key -> {
+            if (key < 0) {
+                throw new IllegalArgumentException("invalid callback key " + key);
+            }
+            return "string-message:" + key;
+        };
 
         assert Demo.invokeValueCallback(doubler, 4) == 8 : "invokeValueCallback";
         assert Demo.invokeValueCallbackTwice(doubler, 3, 4) == 14 : "invokeValueCallbackTwice";
@@ -1884,6 +1890,15 @@ public final class DemoTest {
             assert false : "invokeResultMessageCallback should throw";
         } catch (MathError.Exception e) {
             assert e.getError() == MathError.NEGATIVE_INPUT : "invokeResultMessageCallback error type";
+        }
+        assert Demo.invokeStringResultMessageCallback(stringResultMessageCallback, 11).equals("string-message:11")
+            : "case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success";
+        try {
+            Demo.invokeStringResultMessageCallback(stringResultMessageCallback, -1);
+            assert false : "case:callbacks.sync_traits.string_result_message_callback.should_report_string_error";
+        } catch (RuntimeException e) {
+            assert e.getMessage().contains("invalid callback key -1")
+                : "case:callbacks.sync_traits.string_result_message_callback.should_report_string_error";
         }
 
         int[] processed = Demo.processVec(vecProcessor, new int[]{1, 2, 3});

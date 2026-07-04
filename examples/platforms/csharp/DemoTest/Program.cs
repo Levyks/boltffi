@@ -2882,6 +2882,20 @@ public static class DemoTest
         {
             Require(e.Error == MathError.NegativeInput, "InvokeResultCallback Err type");
         }
+        Require(
+            InvokeStringResultMessageCallback(new StringResultMessageCallbackImpl(), 11) == "string-message:11",
+            "case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success");
+        try
+        {
+            InvokeStringResultMessageCallback(new StringResultMessageCallbackImpl(), -1);
+            Require(false, "case:callbacks.sync_traits.string_result_message_callback.should_report_string_error");
+        }
+        catch (BoltException e)
+        {
+            Require(
+                e.Message.Contains("invalid callback key -1"),
+                "case:callbacks.sync_traits.string_result_message_callback.should_report_string_error");
+        }
 
         Require(InvokeOffsetCallback(new OffsetCallbackImpl(), (nint)(-5), (nuint)8) == (nint)3,
             "InvokeOffsetCallback pointer-sized params");
@@ -3193,6 +3207,15 @@ public static class DemoTest
         {
             if (value < 0) throw new MathErrorException(MathError.NegativeInput);
             return value * 10;
+        }
+    }
+
+    private sealed class StringResultMessageCallbackImpl : StringResultMessageCallback
+    {
+        public string RenderMessage(int key)
+        {
+            if (key < 0) throw new BoltException($"invalid callback key {key}");
+            return $"string-message:{key}";
         }
     }
 

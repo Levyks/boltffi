@@ -1,5 +1,5 @@
 import { wireErr, wireOk } from "@boltffi/runtime";
-import { assert, assertArrayEqual, assertPoint, assertThrowsWithCode, demo } from "../support/index.mjs";
+import { assert, assertArrayEqual, assertPoint, assertThrowsWithCode, assertThrowsWithMessage, demo } from "../support/index.mjs";
 
 export async function run() {
   const doubler = { onValue: (value) => value * 2 };
@@ -18,6 +18,9 @@ export async function run() {
   };
   const resultMessageCallback = {
     renderMessage: (key) => (key >= 0 ? `message:${key}` : wireErr(demo.MathError.NegativeInput)),
+  };
+  const stringResultMessageCallback = {
+    renderMessage: (key) => (key >= 0 ? `string-message:${key}` : wireErr(`invalid callback key ${key}`)),
   };
   const multiMethodCallback = {
     methodA: (value) => value + 1,
@@ -76,6 +79,16 @@ export async function run() {
     () => demo.invokeResultMessageCallback(resultMessageCallback, -1),
     demo.MathErrorException,
     demo.MathError.NegativeInput,
+  );
+  globalThis.demoCase("case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success");
+  assert.equal(
+    demo.invokeStringResultMessageCallback(stringResultMessageCallback, 11),
+    "string-message:11",
+  );
+  globalThis.demoCase("case:callbacks.sync_traits.string_result_message_callback.should_report_string_error");
+  assertThrowsWithMessage(
+    () => demo.invokeStringResultMessageCallback(stringResultMessageCallback, -1),
+    "invalid callback key -1",
   );
   assertPoint(demo.transformPoint(pointTransformer, { x: 1, y: 2 }), { x: 11, y: 22 });
   assertPoint(demo.transformPointBoxed(pointTransformer, { x: 3, y: 4 }), { x: 13, y: 24 });
