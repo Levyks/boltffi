@@ -5,6 +5,7 @@ mod closure_return;
 mod continuation;
 mod direct_vector;
 mod direct_writeback;
+mod encoded_writeback;
 mod group;
 
 use crate::core::Result;
@@ -20,6 +21,7 @@ pub use closure_return::ClosureReturnParameter;
 pub use continuation::ContinuationParameter;
 pub use direct_vector::{DirectVectorElementAbi, DirectVectorParameter};
 pub use direct_writeback::DirectWritebackParameter;
+pub use encoded_writeback::EncodedWritebackParameter;
 pub use group::ParameterGroup;
 
 /// A C function parameter.
@@ -48,6 +50,9 @@ enum ParameterRole {
         element: DirectVectorElementAbi,
     },
     DirectVectorLength(Identifier),
+    EncodedWriteback(Identifier),
+    SuccessOut,
+    CompletionStatusOut,
     CallbackCompletionCallback(Identifier),
     CallbackCompletionContext(Identifier),
     ContinuationData(Identifier),
@@ -109,6 +114,29 @@ impl Parameter {
             element.length_name(name),
             Type::PointerWidth,
             ParameterRole::DirectVectorLength(Identifier::escape(name)?),
+        )
+    }
+
+    /// Creates caller-owned storage for a fallible success value.
+    pub fn success_out(name: &str, ty: Type) -> Result<Self> {
+        Self::with_role(name, ty, ParameterRole::SuccessOut)
+    }
+
+    /// Creates caller-owned storage for an encoded mutation result.
+    pub fn encoded_writeback(name: &str) -> Result<Self> {
+        Self::with_role(
+            format!("{name}_out"),
+            Type::MutPointer(Box::new(Type::Buffer)),
+            ParameterRole::EncodedWriteback(Identifier::escape(name)?),
+        )
+    }
+
+    /// Creates caller-owned status storage.
+    pub fn completion_status_out(name: &str) -> Result<Self> {
+        Self::with_role(
+            name,
+            Type::MutPointer(Box::new(Type::Status)),
+            ParameterRole::CompletionStatusOut,
         )
     }
 
@@ -246,6 +274,10 @@ impl ParameterRole {
 
     fn is_direct_vector_length(&self, expected: &Identifier) -> bool {
         matches!(self, Self::DirectVectorLength(name) if name == expected)
+    }
+
+    fn is_encoded_writeback(&self, expected: &Identifier) -> bool {
+        matches!(self, Self::EncodedWriteback(name) if name == expected)
     }
 
     fn is_callback_completion_context(&self, expected: &Identifier) -> bool {

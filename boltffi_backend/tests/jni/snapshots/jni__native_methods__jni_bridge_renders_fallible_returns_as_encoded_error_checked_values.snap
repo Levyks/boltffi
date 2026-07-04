@@ -1,0 +1,110 @@
+---
+source: boltffi_backend/tests/jni/native_methods.rs
+expression: "rendered_fixture(\"exports/fallible_returns\")"
+---
+===== jni/demo.h =====
+<c abi support declarations>
+typedef struct {
+    int32_t x;
+    int32_t y;
+} ___Point;
+typedef int32_t ___MathError;
+#define MATH_ERROR_INVALID_INPUT ((___MathError)0)
+FfiBuf_u8 boltffi_function_demo_checked_add(int32_t left, int32_t right, int32_t *return_out);
+FfiBuf_u8 boltffi_function_demo_parse_point(const uint8_t *text_ptr, uintptr_t text_len, ___Point *return_out);
+FfiBuf_u8 boltffi_function_demo_validate_name(const uint8_t *name_ptr, uintptr_t name_len, FfiBuf_u8 *return_out);
+
+===== jni/jni_glue.c =====
+<jni source includes>
+<jni exception helpers>
+<jni error-buffer helper>
+<jni byte-array helpers>
+<jni record helpers>
+JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1checked_1add(JNIEnv *env, jclass cls, jint left, jint right) {
+    (void)cls;
+
+    int32_t __boltffi_return = (int32_t){0};
+
+    FfiBuf_u8 error = boltffi_function_demo_checked_add(left, right, &__boltffi_return);
+
+    if (error.ptr != NULL || error.len != 0) {
+        boltffi_jni_throw_error_buffer(env, error);
+        return 0;
+    }
+
+    return (jint)__boltffi_return;
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1parse_1point(JNIEnv *env, jclass cls, jbyteArray text) {
+    (void)cls;
+
+    jbyte *__boltffi_text_ptr = NULL;
+    jsize __boltffi_text_len = 0;
+    ___Point __boltffi_return = (___Point){0};
+
+    if (text == NULL) {
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
+        goto __boltffi_error;
+    }
+    __boltffi_text_len = (*env)->GetArrayLength(env, text);
+    __boltffi_text_ptr = (*env)->GetByteArrayElements(env, text, NULL);
+    if (__boltffi_text_ptr == NULL) {
+        goto __boltffi_error;
+    }
+
+    FfiBuf_u8 error = boltffi_function_demo_parse_point((const uint8_t *)__boltffi_text_ptr, (uintptr_t)__boltffi_text_len, &__boltffi_return);
+
+    if (__boltffi_text_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, text, __boltffi_text_ptr, JNI_ABORT);
+        __boltffi_text_ptr = NULL;
+    }
+    if (error.ptr != NULL || error.len != 0) {
+        boltffi_jni_throw_error_buffer(env, error);
+        return NULL;
+    }
+
+    return boltffi_jni_record_to_byte_array(env, &__boltffi_return, (uintptr_t)sizeof(__boltffi_return));
+__boltffi_error:
+    if (__boltffi_text_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, text, __boltffi_text_ptr, JNI_ABORT);
+        __boltffi_text_ptr = NULL;
+    }
+    return NULL;
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1validate_1name(JNIEnv *env, jclass cls, jbyteArray name) {
+    (void)cls;
+
+    jbyte *__boltffi_name_ptr = NULL;
+    jsize __boltffi_name_len = 0;
+    FfiBuf_u8 __boltffi_return = (FfiBuf_u8){0};
+
+    if (name == NULL) {
+        boltffi_jni_throw_illegal_argument(env, "BoltFFI array argument was null");
+        goto __boltffi_error;
+    }
+    __boltffi_name_len = (*env)->GetArrayLength(env, name);
+    __boltffi_name_ptr = (*env)->GetByteArrayElements(env, name, NULL);
+    if (__boltffi_name_ptr == NULL) {
+        goto __boltffi_error;
+    }
+
+    FfiBuf_u8 error = boltffi_function_demo_validate_name((const uint8_t *)__boltffi_name_ptr, (uintptr_t)__boltffi_name_len, &__boltffi_return);
+
+    if (__boltffi_name_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
+        __boltffi_name_ptr = NULL;
+    }
+    if (error.ptr != NULL || error.len != 0) {
+        boltffi_jni_throw_error_buffer(env, error);
+        return NULL;
+    }
+
+    return boltffi_jni_buffer_to_byte_array(env, __boltffi_return);
+__boltffi_error:
+    if (__boltffi_name_ptr != NULL) {
+        (*env)->ReleaseByteArrayElements(env, name, __boltffi_name_ptr, JNI_ABORT);
+        __boltffi_name_ptr = NULL;
+    }
+    return NULL;
+}

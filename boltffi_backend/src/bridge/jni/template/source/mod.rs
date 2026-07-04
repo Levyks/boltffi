@@ -13,5 +13,7 @@
 
 mod features;
 mod file;
+mod success_out;
 
 pub use file::SourceFile;
+pub use success_out::SuccessOutWriterView;

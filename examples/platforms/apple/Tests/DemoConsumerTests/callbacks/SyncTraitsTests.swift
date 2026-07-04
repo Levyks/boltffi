@@ -39,6 +39,15 @@ final class SyncTraitsTests: DemoTestCase {
         }
     }
 
+    final class SwiftStringResultMessageCallback: StringResultMessageCallback {
+        func renderMessage(key: Int32) throws -> String {
+            if key < 0 {
+                throw FfiError(message: "invalid callback key \(key)")
+            }
+            return "string-message:\(key)"
+        }
+    }
+
     final class SwiftMultiMethodCallback: MultiMethodCallback {
         func methodA(x: Int32) -> Int32 { x + 1 }
         func methodB(x: Int32, y: Int32) -> Int32 { x * y }
@@ -102,6 +111,7 @@ final class SyncTraitsTests: DemoTestCase {
         let messageFormatter = SwiftMessageFormatter()
         let optionalMessageCallback = SwiftOptionalMessageCallback()
         let resultMessageCallback = SwiftResultMessageCallback()
+        let stringResultMessageCallback = SwiftStringResultMessageCallback()
         let incrementer = makeIncrementingCallback(delta: 5)
 
         XCTAssertEqual(invokeValueCallback(callback: doubler, input: 4), 8)
@@ -138,6 +148,15 @@ final class SyncTraitsTests: DemoTestCase {
         XCTAssertEqual(try invokeResultMessageCallback(callback: resultMessageCallback, key: 8), "message:8")
         XCTAssertThrowsError(try invokeResultMessageCallback(callback: resultMessageCallback, key: -1)) { error in
             XCTAssertEqual(error as? MathError, .negativeInput)
+        }
+        demoCase("case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success")
+        XCTAssertEqual(
+            try invokeStringResultMessageCallback(callback: stringResultMessageCallback, key: 11),
+            "string-message:11"
+        )
+        demoCase("case:callbacks.sync_traits.string_result_message_callback.should_report_string_error")
+        XCTAssertThrowsError(try invokeStringResultMessageCallback(callback: stringResultMessageCallback, key: -1)) { error in
+            XCTAssertEqual((error as? FfiError)?.message, "invalid callback key -1")
         }
         XCTAssertEqual(transformPoint(transformer: pointTransformer, point: Point(x: 1.0, y: 2.0)), Point(x: 11.0, y: 22.0))
         XCTAssertEqual(transformPointBoxed(transformer: pointTransformer, point: Point(x: 3.0, y: 4.0)), Point(x: 13.0, y: 24.0))

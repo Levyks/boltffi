@@ -1,0 +1,440 @@
+//! Kotlin target rendered through the JNI bridge.
+
+mod codec;
+mod name_style;
+mod primitive;
+mod render;
+mod syntax;
+
+use std::{collections::BTreeMap, path::PathBuf};
+
+use boltffi_binding::{
+    Bindings, CallbackDecl, ClassDecl, ConstantDecl, CustomTypeDecl, CustomTypeId, EnumDecl,
+    FunctionDecl, Native, RecordDecl, StreamDecl,
+};
+
+use crate::{
+    bridge::{
+        c::CBridge,
+        jni::{JniBridge, JniBridgeContract},
+    },
+    core::{
+        BindingCapability, BridgeCapability, BridgeLayer, CapabilityRequirements, Emitted, Error,
+        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
+        contract::sealed, host,
+    },
+};
+
+use name_style::Name;
+pub use name_style::{KotlinFile, KotlinLibrary, KotlinPackage};
+use syntax::{ArgumentList, Expression, Identifier, Syntax, TypeName};
+
+/// Desktop native-library loading policy for the generated Kotlin module.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum KotlinDesktopLoader {
+    /// Load bundled native resources first, then fall back to the system loader.
+    #[default]
+    Bundled,
+    /// Load the desktop fallback library through `System.loadLibrary`.
+    System,
+    /// Do not emit a desktop native-library load path.
+    None,
+}
+
+/// Public API layout for generated Kotlin declarations.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum KotlinApiStyle {
+    /// Render declarations directly in the Kotlin package.
+    #[default]
+    TopLevel,
+    /// Render declarations inside the configured module object.
+    ModuleObject,
+}
+
+/// Factory layout for generated Kotlin class initializers.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum KotlinFactoryStyle {
+    /// Render initializer overloads as Kotlin constructors when signatures allow it.
+    #[default]
+    Constructors,
+    /// Render initializers only as companion object methods.
+    CompanionMethods,
+}
+
+/// Conversion used by a Kotlin custom type mapping.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum KotlinCustomConversion {
+    /// Convert a string representation to and from `java.util.UUID`.
+    UuidString,
+    /// Convert a string representation to and from `java.net.URI`.
+    UrlString,
+}
+
+/// Public Kotlin type and conversion for one BoltFFI custom type.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub struct KotlinCustomMapping {
+    ty: TypeName,
+    conversion: KotlinCustomConversion,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct NativeLibraries {
+    android: KotlinLibrary,
+    desktop_jni: KotlinLibrary,
+    desktop_fallback: KotlinLibrary,
+    desktop_loader: KotlinDesktopLoader,
+}
+
+/// Kotlin host renderer for a generated JNI owner class.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub struct KotlinHost {
+    package: KotlinPackage,
+    file: KotlinFile,
+    c_header: PathBuf,
+    jni_source: PathBuf,
+    native_libraries: NativeLibraries,
+    api_style: KotlinApiStyle,
+    factory_style: KotlinFactoryStyle,
+    custom_mappings: BTreeMap<String, KotlinCustomMapping>,
+}
+
+impl KotlinCustomMapping {
+    /// Creates a mapping whose FFI representation is a UUID string.
+    pub fn uuid_string(ty: impl Into<String>) -> Self {
+        Self {
+            ty: TypeName::new(ty),
+            conversion: KotlinCustomConversion::UuidString,
+        }
+    }
+
+    /// Creates a mapping whose FFI representation is a URL string.
+    pub fn url_string(ty: impl Into<String>) -> Self {
+        Self {
+            ty: TypeName::new(ty),
+            conversion: KotlinCustomConversion::UrlString,
+        }
+    }
+
+    fn ty(&self) -> TypeName {
+        self.ty.clone()
+    }
+
+    fn decode(&self, representation: Expression) -> Result<Expression> {
+        match self.conversion {
+            KotlinCustomConversion::UuidString => Ok(Expression::invoke(
+                "java.util.UUID.fromString",
+                [representation].into_iter().collect::<ArgumentList>(),
+            )),
+            KotlinCustomConversion::UrlString => Ok(Expression::invoke(
+                "java.net.URI.create",
+                [representation].into_iter().collect::<ArgumentList>(),
+            )),
+        }
+    }
+
+    fn encode(&self, value: Expression) -> Result<Expression> {
+        Ok(Expression::call(
+            value,
+            Identifier::parse("toString")?,
+            ArgumentList::default(),
+        ))
+    }
+}
+
+impl KotlinHost {
+    const TARGET: &'static str = "kotlin";
+
+    /// Creates a Kotlin host renderer.
+    pub fn new(package: impl Into<String>, file: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            package: KotlinPackage::parse(package)?,
+            file: KotlinFile::parse(file)?,
+            c_header: PathBuf::from("jni/boltffi.h"),
+            jni_source: PathBuf::from("jni/jni_glue.c"),
+            native_libraries: NativeLibraries::default()?,
+            api_style: KotlinApiStyle::default(),
+            factory_style: KotlinFactoryStyle::default(),
+            custom_mappings: BTreeMap::new(),
+        })
+    }
+
+    /// Selects the generated C header path.
+    pub fn c_header(mut self, path: impl Into<PathBuf>) -> Self {
+        self.c_header = path.into();
+        self
+    }
+
+    /// Selects the generated JNI source path.
+    pub fn jni_source(mut self, path: impl Into<PathBuf>) -> Self {
+        self.jni_source = path.into();
+        self
+    }
+
+    /// Selects the Android native library load name.
+    pub fn android_library(mut self, library: impl Into<String>) -> Result<Self> {
+        self.native_libraries.android = KotlinLibrary::parse(library)?;
+        Ok(self)
+    }
+
+    /// Selects the desktop JNI wrapper library load name.
+    pub fn desktop_jni_library(mut self, library: impl Into<String>) -> Result<Self> {
+        self.native_libraries.desktop_jni = KotlinLibrary::parse(library)?;
+        Ok(self)
+    }
+
+    /// Selects the desktop fallback library load name.
+    pub fn desktop_fallback_library(mut self, library: impl Into<String>) -> Result<Self> {
+        self.native_libraries.desktop_fallback = KotlinLibrary::parse(library)?;
+        Ok(self)
+    }
+
+    /// Selects the desktop native-library loading policy.
+    pub fn desktop_loader(mut self, loader: KotlinDesktopLoader) -> Self {
+        self.native_libraries.desktop_loader = loader;
+        self
+    }
+
+    /// Selects the generated Kotlin API layout.
+    pub fn api_style(mut self, style: KotlinApiStyle) -> Self {
+        self.api_style = style;
+        self
+    }
+
+    /// Selects the generated Kotlin class factory layout.
+    pub fn factory_style(mut self, style: KotlinFactoryStyle) -> Self {
+        self.factory_style = style;
+        self
+    }
+
+    /// Registers a Kotlin API mapping for one custom type id.
+    pub fn custom_mapping(
+        mut self,
+        custom_type: impl Into<String>,
+        mapping: KotlinCustomMapping,
+    ) -> Self {
+        self.custom_mappings.insert(custom_type.into(), mapping);
+        self
+    }
+
+    /// Creates the backend target stack for this Kotlin host.
+    pub fn into_target(self) -> Result<Target<Self, BridgeLayer<CBridge, JniBridge>>> {
+        Ok(Target::new(
+            self.clone(),
+            BridgeLayer::new(
+                CBridge::new(self.c_header.clone())?,
+                JniBridge::new(self.package.as_str(), "Native", self.jni_source.clone())?,
+            ),
+        ))
+    }
+
+    /// Returns the Kotlin package name.
+    pub fn package(&self) -> &KotlinPackage {
+        &self.package
+    }
+
+    /// Returns the generated Kotlin file name.
+    pub fn file(&self) -> &KotlinFile {
+        &self.file
+    }
+
+    fn native_libraries(&self) -> &NativeLibraries {
+        &self.native_libraries
+    }
+
+    fn api_layout(&self) -> KotlinApiStyle {
+        self.api_style
+    }
+
+    fn generated_type(&self, name: TypeName) -> TypeName {
+        match self.api_layout() {
+            KotlinApiStyle::TopLevel => name,
+            KotlinApiStyle::ModuleObject => TypeName::qualified(self.file(), name),
+        }
+    }
+
+    fn factory_layout(&self) -> KotlinFactoryStyle {
+        self.factory_style
+    }
+
+    fn custom_type_mapping(
+        &self,
+        id: CustomTypeId,
+        context: &RenderContext<Native>,
+    ) -> Option<&KotlinCustomMapping> {
+        let declaration = context.custom_type(id)?;
+        let kotlin_name = Name::new(declaration.name()).type_name().to_string();
+        self.custom_mappings.get(&kotlin_name).or_else(|| {
+            self.custom_mappings
+                .get(&declaration.name().as_path_string())
+        })
+    }
+
+    fn unsupported(shape: &'static str) -> Error {
+        Error::UnsupportedTarget {
+            target: Self::TARGET,
+            shape,
+        }
+    }
+
+    fn broken_bridge_contract(invariant: &'static str) -> Error {
+        Error::BrokenBridgeContract {
+            bridge: Self::TARGET,
+            invariant,
+        }
+    }
+}
+
+impl NativeLibraries {
+    fn default() -> Result<Self> {
+        Ok(Self {
+            android: KotlinLibrary::parse("boltffi")?,
+            desktop_jni: KotlinLibrary::parse("boltffi_jni")?,
+            desktop_fallback: KotlinLibrary::parse("boltffi")?,
+            desktop_loader: KotlinDesktopLoader::default(),
+        })
+    }
+
+    fn android(&self) -> &KotlinLibrary {
+        &self.android
+    }
+
+    fn desktop_jni(&self) -> &KotlinLibrary {
+        &self.desktop_jni
+    }
+
+    fn desktop_fallback(&self) -> &KotlinLibrary {
+        &self.desktop_fallback
+    }
+
+    fn bundled_desktop_loader(&self) -> bool {
+        matches!(self.desktop_loader, KotlinDesktopLoader::Bundled)
+    }
+
+    fn system_desktop_loader(&self) -> bool {
+        matches!(self.desktop_loader, KotlinDesktopLoader::System)
+    }
+}
+
+impl host::HostBackend for KotlinHost {
+    type Surface = Native;
+    type Bridge = JniBridgeContract;
+    type Syntax = Syntax;
+
+    fn name(&self) -> &'static str {
+        Self::TARGET
+    }
+
+    fn binding_capabilities(&self) -> HostCapabilities {
+        HostCapabilities::new()
+            .stable(BindingCapability::Records)
+            .stable(BindingCapability::Enums)
+            .stable(BindingCapability::Classes)
+            .stable(BindingCapability::Functions)
+            .stable(BindingCapability::Callbacks)
+            .stable(BindingCapability::Streams)
+            .stable(BindingCapability::Constants)
+            .stable(BindingCapability::CustomTypes)
+    }
+
+    fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
+        CapabilityRequirements::new().require(BridgeCapability::Jni)
+    }
+
+    fn record(
+        &self,
+        decl: &RecordDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Record::from_declaration(decl, self, bridge, context)?.render()
+    }
+
+    fn enumeration(
+        &self,
+        decl: &EnumDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Enumeration::from_declaration_with_package(
+            decl,
+            self,
+            bridge,
+            context,
+            Some(self.package()),
+        )?
+        .render()
+    }
+
+    fn function(
+        &self,
+        decl: &FunctionDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Function::from_declaration(decl, self, bridge, context)?.render()
+    }
+
+    fn class(
+        &self,
+        decl: &ClassDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Class::from_declaration(decl, self, self.factory_layout(), bridge, context)?
+            .render()
+    }
+
+    fn callback(
+        &self,
+        decl: &CallbackDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Callback::from_declaration(decl, self, bridge, context)?.render()
+    }
+
+    fn stream(
+        &self,
+        decl: &StreamDecl<Self::Surface>,
+        _bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Stream::from_declaration(decl, self, context)?.render()
+    }
+
+    fn constant(
+        &self,
+        decl: &ConstantDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::Constant::from_declaration(decl, self, bridge, context)?.render()
+    }
+
+    fn custom_type(
+        &self,
+        decl: &CustomTypeDecl,
+        _bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+    ) -> Result<Emitted> {
+        render::CustomType::from_declaration(decl, self, context)?.render()
+    }
+
+    fn assemble<'decl>(
+        &self,
+        _bindings: &Bindings<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
+        declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
+    ) -> Result<GeneratedOutput> {
+        render::Module::new(self, bridge, context, declarations).render()
+    }
+}
+
+impl sealed::HostBackend for KotlinHost {}

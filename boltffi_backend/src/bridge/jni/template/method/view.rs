@@ -15,7 +15,7 @@ use crate::{
     bridge::{
         c::{ArgumentList, Expression, Identifier, TypeFragment},
         jni::{
-            NativeMethod, NativeParameter,
+            NativeMethod, SuccessOutReturn,
             template::method::{
                 BorrowedArrayParameterView, NativeParameterView, RecordParameterView,
             },
@@ -41,6 +41,9 @@ pub struct NativeMethodView {
     pub returns_callback: bool,
     pub return_value: Expression,
     pub checks_status: bool,
+    pub checks_completion_status: bool,
+    pub checks_error_buffer: bool,
+    pub success_out: Option<SuccessOutReturn>,
     pub uses_continuations: bool,
     pub has_error_label: bool,
 }
@@ -70,28 +73,23 @@ impl NativeMethodView {
             has_error_label: !borrowed_arrays.is_empty() || !record_arrays.is_empty(),
             borrowed_arrays,
             record_arrays,
-            arguments: ArgumentList::from_iter(
-                method
-                    .parameters()
-                    .iter()
-                    .map(NativeParameter::c_arguments)
-                    .collect::<Result<Vec<_>>>()?
-                    .into_iter()
-                    .flatten(),
-            ),
+            arguments: method.arguments()?,
             returns_void: method.returns_void(),
             returns_boolean: method.returns_boolean(),
             returns_bytes: method.returns_bytes(),
             returns_record: method.returns_record(),
             returns_callback: method.returns_callback(),
-            return_value: method
-                .returns()
-                .return_expression(Expression::identifier(Identifier::parse("result")?))?,
+            return_value: method.returns().return_expression(Expression::identifier(
+                Identifier::parse("__boltffi_result")?,
+            ))?,
             checks_status: method.checks_status(),
+            checks_completion_status: method.checks_completion_status(),
+            checks_error_buffer: method.checks_error_buffer(),
+            success_out: method.success_out().cloned(),
             uses_continuations: method
                 .parameters()
                 .iter()
-                .any(NativeParameter::is_continuation),
+                .any(|parameter| parameter.is_continuation()),
         })
     }
 }

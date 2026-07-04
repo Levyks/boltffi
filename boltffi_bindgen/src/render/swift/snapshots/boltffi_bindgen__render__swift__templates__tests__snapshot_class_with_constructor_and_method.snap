@@ -3,15 +3,15 @@ source: boltffi_bindgen/src/render/swift/templates.rs
 expression: "render_class(&cls, \"boltffi\")"
 ---
 public final class Database {
-    let handle: UnsafeMutableRawPointer
+    let handle: OpaquePointer
 
-    init(handle: UnsafeMutableRawPointer) {
+    init(handle: OpaquePointer) {
         self.handle = handle
     }
 
     public init(path: String) {
         var path = path
-        let ptr = path.withUTF8 { pathBuf -> UnsafeMutableRawPointer? in boltffi_database_open(pathBuf.baseAddress!, UInt(pathBuf.count)) }!
+        let ptr = path.withUTF8 { pathBuf -> OpaquePointer? in boltffi_database_open(pathBuf.baseAddress!, UInt(pathBuf.count)) }!
         self.handle = ptr
     }
 

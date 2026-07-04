@@ -43,12 +43,10 @@ impl RootModuleTypes {
             .functions
             .iter_mut()
             .for_each(|function| self.function(function));
-        source.classes.iter_mut().for_each(|class| {
-            class
-                .methods
-                .iter_mut()
-                .for_each(|method| self.method(method))
-        });
+        source
+            .classes
+            .iter_mut()
+            .for_each(|class| self.class(class));
         source
             .traits
             .iter_mut()
@@ -71,14 +69,22 @@ impl RootModuleTypes {
 
 impl RootModuleTypes {
     fn record(&self, record: &mut RecordDef) {
+        let self_type = TypeExpr::record(
+            record.id.clone(),
+            self.declaration_path(record.id.as_str(), record.name.spelling()),
+        );
         record.fields.iter_mut().for_each(|field| self.field(field));
         record
             .methods
             .iter_mut()
-            .for_each(|method| self.method(method));
+            .for_each(|method| self.method_with_self(method, &self_type));
     }
 
     fn enumeration(&self, enumeration: &mut EnumDef) {
+        let self_type = TypeExpr::enumeration(
+            enumeration.id.clone(),
+            self.declaration_path(enumeration.id.as_str(), enumeration.name.spelling()),
+        );
         enumeration
             .variants
             .iter_mut()
@@ -94,7 +100,18 @@ impl RootModuleTypes {
         enumeration
             .methods
             .iter_mut()
-            .for_each(|method| self.method(method));
+            .for_each(|method| self.method_with_self(method, &self_type));
+    }
+
+    fn class(&self, class: &mut boltffi_ast::ClassDef) {
+        let self_type = TypeExpr::class(
+            class.id.clone(),
+            self.declaration_path(class.id.as_str(), class.name.spelling()),
+        );
+        class
+            .methods
+            .iter_mut()
+            .for_each(|method| self.method_with_self(method, &self_type));
     }
 
     fn function(&self, function: &mut FunctionDef) {
@@ -127,11 +144,19 @@ impl RootModuleTypes {
     }
 
     fn method(&self, method: &mut MethodDef) {
+        self.method_with_optional_self(method, None);
+    }
+
+    fn method_with_self(&self, method: &mut MethodDef, self_type: &TypeExpr) {
+        self.method_with_optional_self(method, Some(self_type));
+    }
+
+    fn method_with_optional_self(&self, method: &mut MethodDef, self_type: Option<&TypeExpr>) {
         method
             .parameters
             .iter_mut()
-            .for_each(|parameter| self.parameter(parameter));
-        self.return_def(&mut method.returns);
+            .for_each(|parameter| self.parameter_with_self(parameter, self_type));
+        self.return_def_with_self(&mut method.returns, self_type);
     }
 
     fn field(&self, field: &mut FieldDef) {
@@ -142,37 +167,62 @@ impl RootModuleTypes {
         self.type_expr(&mut parameter.type_expr);
     }
 
+    fn parameter_with_self(
+        &self,
+        parameter: &mut boltffi_ast::ParameterDef,
+        self_type: Option<&TypeExpr>,
+    ) {
+        self.type_expr_with_self(&mut parameter.type_expr, self_type);
+    }
+
     fn return_def(&self, return_def: &mut ReturnDef) {
+        self.return_def_with_self(return_def, None);
+    }
+
+    fn return_def_with_self(&self, return_def: &mut ReturnDef, self_type: Option<&TypeExpr>) {
         if let ReturnDef::Value(type_expr) = return_def {
-            self.type_expr(type_expr);
+            self.type_expr_with_self(type_expr, self_type);
         }
     }
 
     fn type_expr(&self, type_expr: &mut TypeExpr) {
+        self.type_expr_with_self(type_expr, None);
+    }
+
+    fn type_expr_with_self(&self, type_expr: &mut TypeExpr, self_type: Option<&TypeExpr>) {
+        if matches!(type_expr, TypeExpr::SelfType) {
+            if let Some(self_type) = self_type {
+                *type_expr = self_type.clone();
+            }
+            return;
+        }
+
         match type_expr {
             TypeExpr::Record { id, path } => self.root_declaration_path(id.as_str(), path),
             TypeExpr::Enum { id, path } => self.root_declaration_path(id.as_str(), path),
             TypeExpr::Class { id, path } => self.root_declaration_path(id.as_str(), path),
             TypeExpr::Custom { id, path } => self.custom_path(id.as_str(), path),
-            TypeExpr::Dyn(bounds) | TypeExpr::ImplTrait(bounds) => self.trait_bounds(bounds),
+            TypeExpr::Dyn(bounds) | TypeExpr::ImplTrait(bounds) => {
+                self.trait_bounds_with_self(bounds, self_type)
+            }
             TypeExpr::Boxed(inner)
             | TypeExpr::Arc(inner)
             | TypeExpr::Vec(inner)
             | TypeExpr::Slice(inner)
-            | TypeExpr::Option(inner) => self.type_expr(inner),
-            TypeExpr::FnPtr(signature) => self.signature(signature),
+            | TypeExpr::Option(inner) => self.type_expr_with_self(inner, self_type),
+            TypeExpr::FnPtr(signature) => self.signature_with_self(signature, self_type),
             TypeExpr::Result { ok, err } => {
-                self.type_expr(ok);
-                self.type_expr(err);
+                self.type_expr_with_self(ok, self_type);
+                self.type_expr_with_self(err, self_type);
             }
             TypeExpr::Tuple(elements) => {
                 elements
                     .iter_mut()
-                    .for_each(|element| self.type_expr(element));
+                    .for_each(|element| self.type_expr_with_self(element, self_type));
             }
             TypeExpr::Map { key, value, .. } => {
-                self.type_expr(key);
-                self.type_expr(value);
+                self.type_expr_with_self(key, self_type);
+                self.type_expr_with_self(value, self_type);
             }
             TypeExpr::Primitive(_)
             | TypeExpr::Unit
@@ -185,18 +235,34 @@ impl RootModuleTypes {
     }
 
     fn trait_bounds(&self, bounds: &mut TraitBounds) {
+        self.trait_bounds_with_self(bounds, None);
+    }
+
+    fn trait_bounds_with_self(&self, bounds: &mut TraitBounds, self_type: Option<&TypeExpr>) {
         match &mut bounds.base {
             BaseTrait::Named { id, path } => self.root_declaration_path(id.as_str(), path),
-            BaseTrait::Function(function) => self.signature(&mut function.signature),
+            BaseTrait::Function(function) => {
+                self.signature_with_self(&mut function.signature, self_type)
+            }
         }
     }
 
     fn signature(&self, signature: &mut FnSig) {
+        self.signature_with_self(signature, None);
+    }
+
+    fn signature_with_self(&self, signature: &mut FnSig, self_type: Option<&TypeExpr>) {
         signature
             .parameters
             .iter_mut()
-            .for_each(|parameter| self.type_expr(parameter));
-        self.return_def(&mut signature.returns);
+            .for_each(|parameter| self.type_expr_with_self(parameter, self_type));
+        self.return_def_with_self(&mut signature.returns, self_type);
+    }
+
+    fn declaration_path(&self, id: &str, spelling: &str) -> Path {
+        let mut path = Path::single(spelling);
+        self.root_declaration_path(id, &mut path);
+        path
     }
 
     fn root_declaration_path(&self, id: &str, path: &mut Path) {

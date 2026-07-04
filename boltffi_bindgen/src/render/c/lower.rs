@@ -49,6 +49,7 @@ impl<'a> CHeaderLowerer<'a> {
         .render()
         .unwrap();
 
+        out.push_str(&self.forward_declarations());
         out.push_str(&self.composite_struct_typedefs());
         out.push_str(&self.enum_typedefs());
         out.push_str(&self.callback_vtables());
@@ -58,6 +59,21 @@ impl<'a> CHeaderLowerer<'a> {
         out.push_str(&self.free_functions());
 
         out
+    }
+
+    fn forward_declarations(&self) -> String {
+        let declarations: String = self
+            .contract
+            .catalog
+            .all_classes()
+            .map(|class_def| format!("{};\n", emit::class_handle_c_type(class_def.id.as_str())))
+            .collect();
+
+        if declarations.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}\n", declarations)
+        }
     }
 
     fn composite_struct_typedefs(&self) -> String {
@@ -281,7 +297,7 @@ impl<'a> CHeaderLowerer<'a> {
             out.push_str(
                 &ClassDestructorTemplate {
                     symbol: &format!("{}_free", class_prefix),
-                    class_name: class_id.as_str(),
+                    handle_type: &emit::class_handle_c_type(class_id.as_str()),
                 }
                 .render()
                 .unwrap(),
@@ -351,21 +367,21 @@ impl<'a> CHeaderLowerer<'a> {
             ),
         };
         StreamTemplate {
-            class_name: stream.class_id.as_str(),
             subscribe: stream.subscribe.as_str(),
             pop_batch_decl: &pop_batch_decl,
             wait: stream.wait.as_str(),
             poll: stream.poll.as_str(),
             unsubscribe: stream.unsubscribe.as_str(),
             free: stream.free.as_str(),
+            handle_type: &emit::class_handle_c_type(stream.class_id.as_str()),
         }
         .render()
         .unwrap()
     }
 
     fn return_c_type(&self, returns: &ReturnShape, error: &ErrorTransport) -> String {
-        if matches!(returns.transport, Some(Transport::Handle { .. })) {
-            return "void*".to_string();
+        if let Some(Transport::Handle { class_id, .. }) = &returns.transport {
+            return format!("{} *", emit::class_handle_c_type(class_id.as_str()));
         }
 
         if matches!(returns.transport, Some(Transport::Callback { .. })) {
@@ -397,7 +413,9 @@ impl<'a> CHeaderLowerer<'a> {
             Some(Transport::Scalar(origin)) => emit::primitive_c_type(origin.primitive()),
             Some(Transport::Composite(layout)) => format!("___{}", layout.record_id.as_str()),
             Some(Transport::Span(_)) => "FfiBuf_u8".to_string(),
-            Some(Transport::Handle { .. }) => "void*".to_string(),
+            Some(Transport::Handle { class_id, .. }) => {
+                format!("{} *", emit::class_handle_c_type(class_id.as_str()))
+            }
             Some(Transport::Callback { .. }) => "BoltFFICallbackHandle".to_string(),
         }
     }
@@ -543,10 +561,12 @@ mod tests {
                 ),
         );
         let header = generate_header(&mut module);
-        assert!(!header.contains("struct Player"));
-        assert!(header.contains("void* boltffi_player_new("));
-        assert!(header.contains("void boltffi_player_free(void* handle);"));
-        assert!(header.contains("int32_t boltffi_player_get_score(const void* self);"));
+        assert!(header.contains("struct BoltFFIPlayerHandle;"));
+        assert!(header.contains("struct BoltFFIPlayerHandle * boltffi_player_new("));
+        assert!(header.contains("void boltffi_player_free(struct BoltFFIPlayerHandle *handle);"));
+        assert!(header.contains(
+            "int32_t boltffi_player_get_score(const struct BoltFFIPlayerHandle * self);"
+        ));
     }
 
     #[test]

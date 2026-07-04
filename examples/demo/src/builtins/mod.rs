@@ -50,11 +50,6 @@ pub fn duration_as_millis(d: Duration) -> u64 {
         details = "Swift has no assertion for pre-epoch SystemTime values in the demo suite yet; add the marker at the scenario-specific test when coverage lands."
     ),
     exclude(
-        kotlin,
-        reason = ExclusionReason::CoverageGap,
-        details = "Kotlin has no assertion for pre-epoch SystemTime values in the demo suite yet; add the marker at the scenario-specific test when coverage lands."
-    ),
-    exclude(
         typescript,
         reason = ExclusionReason::CoverageGap,
         details = "TypeScript has no assertion for pre-epoch SystemTime values in the demo suite yet; add the marker at the scenario-specific test when coverage lands."

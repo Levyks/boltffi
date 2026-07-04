@@ -13,6 +13,7 @@ use crate::bridge::jni::template::{
     callback::{CallbackCompletionInvokerView, CallbackRegistrationView},
     closure::{CallbackClosureHandleView, ClosureRegistrationView},
     method::NativeMethodView,
+    source::SuccessOutWriterView,
     stream::DirectStreamBatchView,
 };
 
@@ -24,6 +25,7 @@ use super::{
 pub struct SourceFeatures {
     pub uses_limits: bool,
     pub checks_status: bool,
+    pub checks_error_buffer: bool,
     pub uses_byte_arrays: bool,
     pub uses_record_arrays: bool,
     pub uses_exceptions: bool,
@@ -39,12 +41,19 @@ impl SourceFeatures {
         direct_stream_batches: &[DirectStreamBatchView],
         callbacks: &[CallbackRegistrationView],
         callback_completions: &[CallbackCompletionInvokerView],
+        success_out_writers: &[SuccessOutWriterView],
         closures: &[ClosureRegistrationView],
         closure_handles: &[CallbackClosureHandleView],
     ) -> Self {
         let methods = MethodFeatures::from_methods(methods);
         let callbacks = CallbackFeatures::from_registrations(callbacks);
         let completions = CompletionFeatures::from_invokers(callback_completions);
+        let success_writers_use_byte_arrays = success_out_writers
+            .iter()
+            .any(|writer| writer.writes_bytes || writer.writes_record);
+        let success_writers_use_record_arrays = success_out_writers
+            .iter()
+            .any(|writer| writer.writes_record);
         let closures = ClosureFeatures::from_registrations(closures);
         let streams = StreamFeatures::from_direct_batches(direct_stream_batches);
         let uses_closure_handles = !closure_handles.is_empty();
@@ -54,19 +63,24 @@ impl SourceFeatures {
             || closures.returns_byte_arrays
             || methods.returns_byte_arrays
             || completions.uses_byte_arrays
+            || success_writers_use_byte_arrays
             || streams.returns_direct_batches;
         let uses_record_arrays = methods.uses_record_arrays
             || callbacks.uses_record_arrays
             || closures.returns_records
             || callbacks.returns_records
-            || completions.uses_record_arrays;
+            || completions.uses_record_arrays
+            || success_writers_use_record_arrays;
 
         Self {
             uses_limits: uses_byte_arrays
                 || uses_record_arrays
                 || callbacks.uses_direct_vectors
-                || closures.uses_direct_vectors,
+                || closures.uses_direct_vectors
+                || methods.checks_error_buffer
+                || callbacks.checks_error_buffer,
             checks_status: methods.checks_status || callbacks.checks_status,
+            checks_error_buffer: methods.checks_error_buffer || callbacks.checks_error_buffer,
             uses_byte_arrays,
             uses_record_arrays,
             uses_exceptions: callbacks.uses_byte_arrays
@@ -74,6 +88,7 @@ impl SourceFeatures {
                 || callbacks.uses_record_arrays
                 || callbacks.uses_handles
                 || callbacks.has_handle_methods
+                || callbacks.checks_error_buffer
                 || uses_closure_handles
                 || closures.uses_byte_arrays
                 || closures.uses_direct_vectors
@@ -82,6 +97,7 @@ impl SourceFeatures {
                 || callbacks.returns_callback_handles
                 || closures.returns_callback_handles
                 || completions.uses_byte_arrays
+                || !success_out_writers.is_empty()
                 || streams.returns_direct_batches
                 || methods.uses_exceptions,
             uses_continuations: methods.uses_continuations,

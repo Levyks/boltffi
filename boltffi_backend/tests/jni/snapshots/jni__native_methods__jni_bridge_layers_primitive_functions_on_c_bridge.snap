@@ -3,212 +3,42 @@ source: boltffi_backend/tests/jni/native_methods.rs
 expression: "rendered_fixture(\"exports/primitive_functions\")"
 ---
 ===== jni/demo.h =====
-#pragma once
-
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct {
-    int32_t code;
-} FfiStatus;
-
-#define FFI_STATUS_OK ((FfiStatus){0})
-#define FFI_STATUS_NULL_POINTER ((FfiStatus){1})
-#define FFI_STATUS_BUFFER_TOO_SMALL ((FfiStatus){2})
-#define FFI_STATUS_INVALID_ARG ((FfiStatus){3})
-#define FFI_STATUS_CANCELLED ((FfiStatus){4})
-#define FFI_STATUS_INTERNAL_ERROR ((FfiStatus){100})
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-    uintptr_t align;
-} FfiBuf_u8;
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-} FfiString;
-
-typedef struct {
-    FfiString message;
-} FfiError;
-
-typedef struct {
-    const uint8_t *ptr;
-    uintptr_t len;
-} FfiSpan;
-
-typedef const void *RustFutureHandle;
-typedef int8_t StreamPollResult;
-typedef int32_t WaitResult;
-typedef void (*RustFutureContinuationCallback)(uint64_t callback_data, int8_t poll_result);
-typedef void (*StreamContinuationCallback)(uint64_t callback_data, StreamPollResult result);
-
-typedef struct {
-    uint64_t handle;
-    const void *vtable;
-} BoltFFICallbackHandle;
-
-void boltffi_free_string(FfiString string);
-void boltffi_free_buf(FfiBuf_u8 buf);
-FfiBuf_u8 boltffi_buf_from_bytes(const uint8_t *ptr, uintptr_t len);
-FfiStatus boltffi_last_error_message(FfiString *out);
-void boltffi_clear_last_error(void);
+<c abi support declarations>
 int32_t boltffi_function_demo_add(int32_t left, int32_t right);
 bool boltffi_function_demo_enabled(bool flag);
 FfiStatus boltffi_function_demo_refresh(void);
 FfiBuf_u8 boltffi_function_demo_echo_bytes(const uint8_t *bytes_ptr, uintptr_t bytes_len);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
-#include <jni.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <limits.h>
-#include <stdlib.h>
-#if defined(__ANDROID__)
-#include <pthread.h>
-#endif
-
-#include "demo.h"
-static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
-    jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
-    if (exception_class == NULL) {
-        return;
-    }
-    (*env)->ThrowNew(env, exception_class, message);
-    (*env)->DeleteLocalRef(env, exception_class);
-}
-
-static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message) {
-    jclass exception_class = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
-    if (exception_class == NULL) {
-        return;
-    }
-    (*env)->ThrowNew(env, exception_class, message);
-    (*env)->DeleteLocalRef(env, exception_class);
-}
-
-static void boltffi_jni_throw_status(JNIEnv *env, FfiStatus status) {
-    if (status.code != 0) {
-        boltffi_jni_throw_runtime(env, "BoltFFI call failed");
-    }
-}
-
-static jbyteArray boltffi_jni_buffer_to_byte_array(JNIEnv *env, FfiBuf_u8 buffer) {
-    if (buffer.ptr == NULL) {
-        if (buffer.len != 0) {
-            boltffi_jni_throw_runtime(env, "BoltFFI buffer pointer was null with non-zero length");
-            return NULL;
-        }
-        return (*env)->NewByteArray(env, 0);
-    }
-    if (buffer.len > (uintptr_t)INT32_MAX) {
-        boltffi_free_buf(buffer);
-        boltffi_jni_throw_runtime(env, "BoltFFI buffer too large for Java byte array");
-        return NULL;
-    }
-    jbyteArray array = (*env)->NewByteArray(env, (jsize)buffer.len);
-    if (array == NULL) {
-        boltffi_free_buf(buffer);
-        return NULL;
-    }
-    (*env)->SetByteArrayRegion(env, array, 0, (jsize)buffer.len, (const jbyte *)buffer.ptr);
-    boltffi_free_buf(buffer);
-    if ((*env)->ExceptionCheck(env)) {
-        (*env)->DeleteLocalRef(env, array);
-        return NULL;
-    }
-    return array;
-}
-
-static jbyteArray boltffi_jni_bytes_to_byte_array(JNIEnv *env, const uint8_t *bytes, uintptr_t len) {
-    if (bytes == NULL && len != 0) {
-        boltffi_jni_throw_runtime(env, "BoltFFI byte slice pointer was null with non-zero length");
-        return NULL;
-    }
-    if (len > (uintptr_t)INT32_MAX) {
-        boltffi_jni_throw_runtime(env, "BoltFFI byte slice too large for Java byte array");
-        return NULL;
-    }
-    jbyteArray array = (*env)->NewByteArray(env, (jsize)len);
-    if (array == NULL) {
-        return NULL;
-    }
-    if (len != 0) {
-        (*env)->SetByteArrayRegion(env, array, 0, (jsize)len, (const jbyte *)bytes);
-        if ((*env)->ExceptionCheck(env)) {
-            (*env)->DeleteLocalRef(env, array);
-            return NULL;
-        }
-    }
-    return array;
-}
-
-static FfiBuf_u8 boltffi_jni_byte_array_to_buffer(JNIEnv *env, jbyteArray array) {
-    FfiBuf_u8 empty = {0};
-    if (array == NULL) {
-        boltffi_jni_throw_runtime(env, "BoltFFI byte array return was null");
-        return empty;
-    }
-    jsize len = (*env)->GetArrayLength(env, array);
-    if (len == 0) {
-        return empty;
-    }
-    uint8_t *bytes = (uint8_t *)malloc((size_t)len);
-    if (bytes == NULL) {
-        boltffi_jni_throw_runtime(env, "failed to allocate BoltFFI byte array return");
-        return empty;
-    }
-    (*env)->GetByteArrayRegion(env, array, 0, len, (jbyte *)bytes);
-    if ((*env)->ExceptionCheck(env)) {
-        free(bytes);
-        return empty;
-    }
-    FfiBuf_u8 buffer = {
-        .ptr = bytes,
-        .len = (uintptr_t)len,
-        .cap = (uintptr_t)len,
-        .align = 1,
-    };
-    return buffer;
-}
-
+<jni source includes>
+<jni exception helpers>
+<jni status helper>
+<jni byte-array helpers>
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1add(JNIEnv *env, jclass cls, jint left, jint right) {
     (void)cls;
 
     (void)env;
-    int32_t result = boltffi_function_demo_add(left, right);
+    int32_t __boltffi_result = boltffi_function_demo_add(left, right);
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1enabled(JNIEnv *env, jclass cls, jboolean flag) {
     (void)cls;
 
     (void)env;
-    bool result = boltffi_function_demo_enabled(flag);
+    bool __boltffi_result = boltffi_function_demo_enabled(flag);
 
-    return (jboolean)result;
+    return (jboolean)__boltffi_result;
 }
 
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1refresh(JNIEnv *env, jclass cls) {
     (void)cls;
 
-    FfiStatus status = boltffi_function_demo_refresh();
+    FfiStatus __boltffi_status = boltffi_function_demo_refresh();
 
-    if (status.code != 0) {
-        boltffi_jni_throw_status(env, status);
+    if (__boltffi_status.code != 0) {
+        boltffi_jni_throw_status(env, __boltffi_status);
         return;
     }
 
@@ -232,14 +62,14 @@ JNIEXPORT jbyteArray JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1dem
     }
 
     (void)env;
-    FfiBuf_u8 result = boltffi_function_demo_echo_bytes((const uint8_t *)__boltffi_bytes_ptr, (uintptr_t)__boltffi_bytes_len);
+    FfiBuf_u8 __boltffi_result = boltffi_function_demo_echo_bytes((const uint8_t *)__boltffi_bytes_ptr, (uintptr_t)__boltffi_bytes_len);
 
     if (__boltffi_bytes_ptr != NULL) {
         (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);
         __boltffi_bytes_ptr = NULL;
     }
 
-    return boltffi_jni_buffer_to_byte_array(env, result);
+    return boltffi_jni_buffer_to_byte_array(env, __boltffi_result);
 __boltffi_error:
     if (__boltffi_bytes_ptr != NULL) {
         (*env)->ReleaseByteArrayElements(env, bytes, __boltffi_bytes_ptr, JNI_ABORT);

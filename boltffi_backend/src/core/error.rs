@@ -132,6 +132,12 @@ pub enum BackendError {
         /// Invalid module name text.
         name: String,
     },
+    /// A generated Kotlin identifier was invalid.
+    #[error("invalid Kotlin identifier `{identifier}`")]
+    InvalidKotlinIdentifier {
+        /// Invalid identifier text.
+        identifier: String,
+    },
     /// Two generated Python declarations require the same name in one scope.
     #[error("python name collision in {scope}: `{name}` is used by {existing} and {colliding}")]
     PythonNameCollision {
@@ -143,6 +149,14 @@ pub enum BackendError {
         existing: String,
         /// Declaration that collided with the existing name.
         colliding: String,
+    },
+    /// Two generated Kotlin declarations require the same name in one scope.
+    #[error("kotlin name collision in {scope}: `{name}` is already used")]
+    KotlinNameCollision {
+        /// Kotlin scope where the collision was found.
+        scope: String,
+        /// Generated Kotlin name used more than once.
+        name: String,
     },
     /// A backend template failed to render.
     #[error("template rendering failed: {message}")]

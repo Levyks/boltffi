@@ -35,15 +35,17 @@ mod record;
 mod return_value;
 mod scalar;
 mod stream;
+mod success_out;
 
 pub use bridge::JniBridgeContract;
-pub use bytes::BytesParameter;
+pub use bytes::{BytesParameter, BytesWriteback};
 pub use callback::{
     CallbackArgument, CallbackBytesArgument, CallbackCParameter, CallbackClosureArgument,
     CallbackClosureReturn, CallbackCompletionArgument, CallbackCompletionInvoker,
-    CallbackCompletionPayload, CallbackDirectVectorArgument, CallbackHandleArgument,
-    CallbackHandleClosureReturn, CallbackHandleCompletion, CallbackHandleMethod, CallbackMethod,
-    CallbackParameter, CallbackRecordArgument, CallbackRegistration, CallbackReturn,
+    CallbackCompletionPayload, CallbackCompletionPayloadValue, CallbackDirectVectorArgument,
+    CallbackHandleArgument, CallbackHandleClosureReturn, CallbackHandleCompletion,
+    CallbackHandleLifecycle, CallbackHandleMethod, CallbackMethod, CallbackParameter,
+    CallbackRecordArgument, CallbackRegistration, CallbackReturn,
 };
 pub use closure::{
     CallbackClosureHandle, ClosureArgument, ClosureBytesArgument, ClosureCParameter,
@@ -56,6 +58,7 @@ pub use jvm::JvmMethodReturn;
 pub use method::NativeMethod;
 pub use parameter::{NativeParameter, NativeParameterKind};
 pub use record::{RecordParameter, RecordValue};
-pub use return_value::NativeReturn;
+pub use return_value::{EncodedErrorReturn, NativeReturn, SuccessOutReturn};
 pub use scalar::{ScalarParameter, ScalarReturn};
 pub use stream::{DirectStreamBatchMethod, StreamProtocolMethods};
+pub use success_out::{SuccessOutArgument, SuccessOutValue, SuccessOutWriter};

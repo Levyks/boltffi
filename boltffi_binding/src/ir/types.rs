@@ -61,6 +61,20 @@ pub enum TypeRef {
     },
 }
 
+impl TypeRef {
+    /// Returns whether this type tree contains the given builtin value.
+    pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Builtin(builtin) => *builtin == kind,
+            Self::Optional(inner) | Self::Sequence(inner) => inner.uses_builtin(kind),
+            Self::Tuple(elements) => elements.iter().any(|element| element.uses_builtin(kind)),
+            Self::Result { ok, err } => ok.uses_builtin(kind) || err.uses_builtin(kind),
+            Self::Map { key, value } => key.uses_builtin(kind) || value.uses_builtin(kind),
+            _ => false,
+        }
+    }
+}
+
 /// A primitive that can cross through direct-vector transport.
 ///
 /// `Vec<u8>` is reserved for byte-buffer transport, so `u8` is not a

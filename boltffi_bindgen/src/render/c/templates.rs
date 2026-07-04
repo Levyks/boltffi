@@ -57,7 +57,7 @@ pub struct CallbackVtableTemplate<'a> {
 #[derive(Template)]
 #[template(path = "c_stream.txt", escape = "none")]
 pub struct StreamTemplate<'a> {
-    pub class_name: &'a str,
+    pub handle_type: &'a str,
     pub subscribe: &'a str,
     pub pop_batch_decl: &'a str,
     pub wait: &'a str,
@@ -70,5 +70,5 @@ pub struct StreamTemplate<'a> {
 #[template(path = "c_class_destructor.txt", escape = "none")]
 pub struct ClassDestructorTemplate<'a> {
     pub symbol: &'a str,
-    pub class_name: &'a str,
+    pub handle_type: &'a str,
 }

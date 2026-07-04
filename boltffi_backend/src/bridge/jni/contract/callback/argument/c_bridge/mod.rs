@@ -13,6 +13,7 @@ mod bytes;
 mod closure;
 mod completion;
 mod direct_vector;
+mod success_out;
 mod value;
 
 use crate::{
@@ -38,6 +39,17 @@ impl CallbackArgument {
             c::ParameterGroup::DirectWriteback(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "callback method argument cannot be a direct-record writeback",
+            }),
+            c::ParameterGroup::EncodedWriteback(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback method argument cannot be an encoded writeback",
+            }),
+            c::ParameterGroup::SuccessOut(index) => {
+                success_out::from_parameter(slot.parameter(*index))
+            }
+            c::ParameterGroup::CompletionStatusOut(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "callback method argument cannot be a status out-pointer",
             }),
             c::ParameterGroup::CallbackCompletion(completion) => {
                 completion::from_group(slot, completion, callbacks)

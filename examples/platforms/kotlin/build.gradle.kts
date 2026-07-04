@@ -25,6 +25,7 @@ sourceSets {
 val repoRoot = projectDir.resolve("../../..").canonicalFile
 val demoDir = repoRoot.resolve("examples/demo")
 val workspaceManifest = repoRoot.resolve("Cargo.toml")
+val demoSource = demoDir.resolve("src/lib.rs")
 val generatedDir = projectDir.resolve("generated")
 val generatedJniDir = generatedDir.resolve("jni")
 val rustLibraryPath = demoDir.resolve("target/debug/libdemo.dylib")
@@ -61,6 +62,10 @@ val generateKotlinBindings = tasks.register<Exec>("generateKotlinBindings") {
 val buildDemoLibrary = tasks.register<Exec>("buildDemoLibrary") {
     workingDir = demoDir
     commandLine("cargo", "build", "-q")
+    environment("BOLTFFI_BINDING_EXPANSION", "1")
+    environment("BOLTFFI_BINDING_EXPANSION_ROOT", demoDir.absolutePath)
+    environment("BOLTFFI_BINDING_EXPANSION_SOURCE", demoSource.absolutePath)
+    environment("BOLTFFI_BINDING_EXPANSION_SURFACE", "native")
 }
 
 val buildJvmJniBridge = tasks.register("buildJvmJniBridge") {

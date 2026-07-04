@@ -240,7 +240,7 @@ where
             .iter()
             .map(|segment| {
                 if !segment.arguments.is_empty() {
-                    return Err(Error::UnsupportedExpansion("generic callback trait path"));
+                    return Err(Error::UnsupportedExpansion("generic visible path"));
                 }
                 syn::parse_str::<syn::Ident>(segment.name.as_str()).map_err(|_| {
                     Error::SourceSyntaxMismatch("callback trait path is not Rust syntax")
@@ -276,12 +276,16 @@ where
     }
 
     fn classes(&self) -> Result<Vec<TokenStream>, Error> {
-        self.source
+        self.support
             .classes
             .iter()
             .map(|source| {
-                wrapper::class::Renderer::new(self.expansion.class(source)?, self.expansion)
-                    .render()
+                let renderer =
+                    wrapper::class::Renderer::new(self.expansion.class(source)?, self.expansion);
+                match self.visible_paths.get(source.id.as_str()) {
+                    Some(path) => renderer.with_rust_type(Self::path_tokens(path)?).render(),
+                    None => renderer.render(),
+                }
             })
             .collect()
     }
@@ -339,7 +343,7 @@ where
             .owner
             .as_ref()
             .map(|owner| {
-                self.source
+                self.support
                     .classes
                     .iter()
                     .find(|class| &class.id == owner)

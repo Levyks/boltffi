@@ -661,7 +661,7 @@ impl Config {
         &self.targets.apple.swift.type_mappings
     }
 
-    pub fn kotlin_type_mappings(&self) -> &HashMap<String, TypeMapping> {
+    pub fn android_kotlin_type_mappings(&self) -> &HashMap<String, TypeMapping> {
         &self.targets.android.kotlin.type_mappings
     }
 

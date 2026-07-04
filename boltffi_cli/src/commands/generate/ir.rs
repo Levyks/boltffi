@@ -1,22 +1,31 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
+use boltffi_backend::target::kotlin::{
+    KotlinApiStyle as BackendKotlinApiStyle, KotlinCustomMapping as BackendKotlinCustomMapping,
+    KotlinDesktopLoader as BackendKotlinDesktopLoader,
+    KotlinFactoryStyle as BackendKotlinFactoryStyle,
+};
 use boltffi_backend::{CoverageMode, GeneratedOutput};
 use boltffi_bindgen::generate::{Generation, GenerationError};
 use boltffi_bindgen::target::Target;
 
 use crate::cargo::Cargo;
 use crate::cli::{CliError, Result};
-use crate::config::Config;
+use crate::config::{
+    Config, KotlinFactoryStyle, TypeConversion, TypeMapping,
+    targets::kotlin::{KotlinApiStyle, KotlinDesktopLoader},
+};
 
 use super::{GenerateOptions, GenerateTarget};
 
 pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<()> {
     match &options.target {
         GenerateTarget::Python => generate_python(config, options),
+        GenerateTarget::Kotlin => generate_kotlin(config, options),
         GenerateTarget::KotlinMultiplatform => generate_kmp(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
-                "--ir is only available for python and kmp, not {}",
+                "--ir is only available for python, kotlin, and kmp, not {}",
                 target_label(other)
             ),
             status: None,
@@ -32,19 +41,7 @@ fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let cargo_args = config
-        .cargo_args_for_command("generate")
-        .into_iter()
-        .chain(options.cargo_args.iter().cloned())
-        .collect::<Vec<_>>();
-    let cargo = Cargo::current(&cargo_args)?;
-    let metadata = cargo.metadata()?;
-    let cargo_manifest_path = cargo.manifest_path()?;
-    let package_selector =
-        cargo.effective_package_selector(config, &metadata, &cargo_manifest_path);
-    let package = metadata.find_package(&cargo_manifest_path, package_selector.as_deref())?;
-    let library_target =
-        package.resolve_library_target(&config.crate_artifact_name(), &cargo_manifest_path)?;
+    let selected = SelectedCrate::resolve(config, options)?;
     let output_directory = options
         .output
         .clone()
@@ -53,10 +50,55 @@ fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
     write_python(
         config,
         output_directory,
-        package.manifest_path.clone(),
-        library_target.name.clone(),
-        cargo.probe_command_arguments(),
+        selected.manifest_path,
+        selected.artifact_name,
+        selected.cargo_args,
     )
+}
+
+fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
+    let target = Target::Kotlin;
+    let target_name = target.name();
+
+    if !config.is_enabled(target) {
+        return Err(CliError::CommandFailed {
+            command: "targets.android.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
+    let selected = SelectedCrate::resolve(config, options)?;
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.android_kotlin_output());
+
+    Generation::new(selected.manifest_path)
+        .cargo_args(selected.cargo_args)
+        .kotlin_package(config.android_kotlin_package())
+        .kotlin_file(config.android_kotlin_module_name())
+        .kotlin_api_style(kotlin_api_style(config.android_kotlin_api_style()))
+        .kotlin_factory_style(kotlin_factory_style(config.android_kotlin_factory_style()))
+        .kotlin_custom_mappings(kotlin_custom_mappings(
+            config.android_kotlin_type_mappings(),
+        ))
+        .kotlin_android_library(config.resolved_android_kotlin_library_name())
+        .kotlin_desktop_jni_library(format!(
+            "{}_jni",
+            config.resolved_android_kotlin_desktop_library_name()
+        ))
+        .kotlin_desktop_fallback_library(config.resolved_android_kotlin_desktop_library_name())
+        .kotlin_desktop_loader(kotlin_desktop_loader(
+            config.android_kotlin_desktop_loader(),
+        ))
+        .kotlin_c_header(PathBuf::from("jni").join(format!("{}.h", config.library_name())))
+        .render(target)
+        .and_then(|output| {
+            print_coverage(target_name, &output);
+            Generation::write_output(output, &output_directory)
+        })
+        .map(drop)
+        .map_err(|error| generation_error(target_name, error))
 }
 
 fn generate_kmp(config: &Config, options: &GenerateOptions) -> Result<()> {
@@ -101,6 +143,48 @@ fn generate_kmp(config: &Config, options: &GenerateOptions) -> Result<()> {
     )
 }
 
+fn kotlin_desktop_loader(loader: KotlinDesktopLoader) -> BackendKotlinDesktopLoader {
+    match loader {
+        KotlinDesktopLoader::Bundled => BackendKotlinDesktopLoader::Bundled,
+        KotlinDesktopLoader::System => BackendKotlinDesktopLoader::System,
+        KotlinDesktopLoader::None => BackendKotlinDesktopLoader::None,
+    }
+}
+
+fn kotlin_api_style(style: KotlinApiStyle) -> BackendKotlinApiStyle {
+    match style {
+        KotlinApiStyle::TopLevel => BackendKotlinApiStyle::TopLevel,
+        KotlinApiStyle::ModuleObject => BackendKotlinApiStyle::ModuleObject,
+    }
+}
+
+fn kotlin_factory_style(style: KotlinFactoryStyle) -> BackendKotlinFactoryStyle {
+    match style {
+        KotlinFactoryStyle::Constructors => BackendKotlinFactoryStyle::Constructors,
+        KotlinFactoryStyle::CompanionMethods => BackendKotlinFactoryStyle::CompanionMethods,
+    }
+}
+
+fn kotlin_custom_mappings(
+    mappings: &HashMap<String, TypeMapping>,
+) -> Vec<(String, BackendKotlinCustomMapping)> {
+    mappings
+        .iter()
+        .map(|(name, mapping)| (name.clone(), kotlin_custom_mapping(mapping)))
+        .collect()
+}
+
+fn kotlin_custom_mapping(mapping: &TypeMapping) -> BackendKotlinCustomMapping {
+    match mapping.conversion {
+        TypeConversion::UuidString => {
+            BackendKotlinCustomMapping::uuid_string(mapping.native_type.clone())
+        }
+        TypeConversion::UrlString => {
+            BackendKotlinCustomMapping::url_string(mapping.native_type.clone())
+        }
+    }
+}
+
 pub fn run_python_generation(
     config: &Config,
     output: Option<PathBuf>,
@@ -142,7 +226,7 @@ fn write_python(
         .python_native_library(artifact_name)
         .render(Target::Python)
         .and_then(|output| {
-            print_coverage(&output);
+            print_coverage("python", &output);
             Generation::write_output(output, &output_directory)
         })
         .map(drop)
@@ -162,13 +246,42 @@ fn write_kmp(
         .map_err(|error| generation_error("kmp", error))
 }
 
-fn print_coverage(output: &GeneratedOutput) {
+struct SelectedCrate {
+    manifest_path: PathBuf,
+    artifact_name: String,
+    cargo_args: Vec<String>,
+}
+
+impl SelectedCrate {
+    fn resolve(config: &Config, options: &GenerateOptions) -> Result<Self> {
+        let cargo_args = config
+            .cargo_args_for_command("generate")
+            .into_iter()
+            .chain(options.cargo_args.iter().cloned())
+            .collect::<Vec<_>>();
+        let cargo = Cargo::current(&cargo_args)?;
+        let metadata = cargo.metadata()?;
+        let cargo_manifest_path = cargo.manifest_path()?;
+        let package_selector =
+            cargo.effective_package_selector(config, &metadata, &cargo_manifest_path);
+        let package = metadata.find_package(&cargo_manifest_path, package_selector.as_deref())?;
+        let library_target =
+            package.resolve_library_target(&config.crate_artifact_name(), &cargo_manifest_path)?;
+        Ok(Self {
+            manifest_path: package.manifest_path.clone(),
+            artifact_name: library_target.name.clone(),
+            cargo_args: cargo.probe_command_arguments(),
+        })
+    }
+}
+
+fn print_coverage(target: &str, output: &GeneratedOutput) {
     let unsupported = output.coverage().unsupported();
     if unsupported.is_empty() {
         return;
     }
 
-    eprintln!("python generation skipped unsupported declarations");
+    eprintln!("{target} generation skipped unsupported declarations");
     eprintln!("{:<12} {:<48} reason", "kind", "name");
     unsupported.iter().for_each(|item| {
         eprintln!(
@@ -180,9 +293,9 @@ fn print_coverage(output: &GeneratedOutput) {
     });
 }
 
-fn generation_error(language: &'static str, error: GenerationError) -> CliError {
+fn generation_error(target: &str, error: GenerationError) -> CliError {
     CliError::CommandFailed {
-        command: format!("generate {language}: {error}"),
+        command: format!("generate {target}: {error}"),
         status: None,
     }
 }
@@ -190,7 +303,7 @@ fn generation_error(language: &'static str, error: GenerationError) -> CliError 
 fn target_label(target: &GenerateTarget) -> &'static str {
     match target {
         GenerateTarget::Swift => "swift",
-        GenerateTarget::Kotlin => "kotlin",
+        GenerateTarget::Kotlin => Target::Kotlin.name(),
         GenerateTarget::KotlinMultiplatform => "kmp",
         GenerateTarget::Java => "java",
         GenerateTarget::Header => "header",

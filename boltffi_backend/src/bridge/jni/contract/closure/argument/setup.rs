@@ -12,7 +12,20 @@ use super::{
     ClosureHandleArgument,
 };
 
+use crate::bridge::jni::SuccessOutArgument;
+
 impl ClosureArgument {
+    /// Returns the success out argument when this closure argument carries one.
+    pub fn success_out(&self) -> Option<SuccessOutArgument> {
+        match &self.kind {
+            ClosureArgumentKind::SuccessOut(argument) => Some(argument.argument().clone()),
+            ClosureArgumentKind::Scalar(_)
+            | ClosureArgumentKind::Bytes(_)
+            | ClosureArgumentKind::DirectVector(_)
+            | ClosureArgumentKind::Closure(_) => None,
+        }
+    }
+
     /// Returns the byte-array argument when the JVM receives encoded bytes.
     pub fn call_bytes(&self) -> Option<&ClosureBytesArgument> {
         match &self.kind {
@@ -20,6 +33,7 @@ impl ClosureArgument {
             ClosureArgumentKind::Bytes(argument) => Some(argument),
             ClosureArgumentKind::DirectVector(_) => None,
             ClosureArgumentKind::Closure(_) => None,
+            ClosureArgumentKind::SuccessOut(_) => None,
         }
     }
 
@@ -34,7 +48,8 @@ impl ClosureArgument {
             ClosureArgumentKind::DirectVector(argument) => Some(argument),
             ClosureArgumentKind::Scalar(_)
             | ClosureArgumentKind::Bytes(_)
-            | ClosureArgumentKind::Closure(_) => None,
+            | ClosureArgumentKind::Closure(_)
+            | ClosureArgumentKind::SuccessOut(_) => None,
         }
     }
 
@@ -44,7 +59,8 @@ impl ClosureArgument {
             ClosureArgumentKind::Closure(argument) => Some(argument),
             ClosureArgumentKind::Scalar(_)
             | ClosureArgumentKind::Bytes(_)
-            | ClosureArgumentKind::DirectVector(_) => None,
+            | ClosureArgumentKind::DirectVector(_)
+            | ClosureArgumentKind::SuccessOut(_) => None,
         }
     }
 

@@ -56,8 +56,10 @@ impl CallbackSlot {
         ) {
             return Self::async_method(method, &signature);
         }
-        let return_parameters =
-            signature.callback_return_params(method.callable().returns().plan())?;
+        let return_parameters = signature.callback_return_params(
+            method.callable().returns().plan(),
+            method.callable().error(),
+        )?;
         let method_parameters = signature.imported_params(method.callable().params())?;
         let parameters = std::iter::once(Parameter::new("handle", Type::Uint64)?)
             .chain(return_parameters)

@@ -3,8 +3,8 @@ use crate::core::{Error, Result};
 use super::super::C_BRIDGE_CONTRACT;
 use super::{
     ByteSliceParameter, CallbackCompletionParameter, ClosureParameter, ClosureReturnParameter,
-    ContinuationParameter, DirectVectorParameter, DirectWritebackParameter, Parameter,
-    ParameterIndex, ParameterRole,
+    ContinuationParameter, DirectVectorParameter, DirectWritebackParameter,
+    EncodedWritebackParameter, Parameter, ParameterIndex, ParameterRole,
 };
 
 /// Source-level parameter group represented by one or more C ABI parameters.
@@ -17,6 +17,12 @@ pub enum ParameterGroup {
     ByteSlice(ByteSliceParameter),
     /// One source parameter maps to a borrowed direct-vector pointer and length.
     DirectVector(DirectVectorParameter),
+    /// One mutable encoded source parameter maps to bytes and an output buffer.
+    EncodedWriteback(EncodedWritebackParameter),
+    /// One fallible success value maps to caller-owned output storage.
+    SuccessOut(ParameterIndex),
+    /// One status output value maps to bridge-owned status storage.
+    CompletionStatusOut(ParameterIndex),
     /// One mutable direct record maps to an input value and output pointer.
     DirectWriteback(DirectWritebackParameter),
     /// One async callback completion maps to callback and context parameters.
@@ -51,7 +57,15 @@ impl ParameterGroup {
         match &params[index].role {
             ParameterRole::Value => Ok(Self::Value(ParameterIndex::new(index))),
             ParameterRole::BytePointer(name) => {
-                ByteSliceParameter::from_params(params, index, name).map(Self::ByteSlice)
+                EncodedWritebackParameter::from_params(params, index, name)?
+                    .map(Self::EncodedWriteback)
+                    .map_or_else(
+                        || {
+                            ByteSliceParameter::from_params(params, index, name)
+                                .map(Self::ByteSlice)
+                        },
+                        Ok,
+                    )
             }
             ParameterRole::ByteLength(_) => Err(Error::BrokenBridgeContract {
                 bridge: C_BRIDGE_CONTRACT,
@@ -65,6 +79,14 @@ impl ParameterGroup {
                 bridge: C_BRIDGE_CONTRACT,
                 invariant: "direct-vector parameter group does not start with pointer parameter",
             }),
+            ParameterRole::EncodedWriteback(_) => Err(Error::BrokenBridgeContract {
+                bridge: C_BRIDGE_CONTRACT,
+                invariant: "encoded writeback parameter group does not start with pointer parameter",
+            }),
+            ParameterRole::SuccessOut => Ok(Self::SuccessOut(ParameterIndex::new(index))),
+            ParameterRole::CompletionStatusOut => {
+                Ok(Self::CompletionStatusOut(ParameterIndex::new(index)))
+            }
             ParameterRole::CallbackCompletionCallback(name) => {
                 CallbackCompletionParameter::from_params(params, index, name)
                     .map(Self::CallbackCompletion)
@@ -109,6 +131,9 @@ impl ParameterGroup {
             Self::Value(_) => 1,
             Self::ByteSlice(_) => 2,
             Self::DirectVector(_) => 2,
+            Self::EncodedWriteback(_) => 3,
+            Self::SuccessOut(_) => 1,
+            Self::CompletionStatusOut(_) => 1,
             Self::DirectWriteback(_) => 2,
             Self::CallbackCompletion(_) => 2,
             Self::Continuation(_) => 2,

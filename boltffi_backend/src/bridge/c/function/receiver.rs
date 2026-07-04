@@ -34,10 +34,7 @@ impl ReceiverAbi {
                 Parameter::byte_pointer(name)?,
                 Parameter::byte_length(name)?,
             ],
-            writeback: Some(Parameter::new(
-                format!("{name}_out"),
-                Type::MutPointer(Box::new(Type::Buffer)),
-            )?),
+            writeback: Some(Parameter::encoded_writeback(name)?),
         })
     }
 

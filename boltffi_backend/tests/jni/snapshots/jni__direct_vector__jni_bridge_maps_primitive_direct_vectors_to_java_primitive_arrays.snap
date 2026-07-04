@@ -3,97 +3,12 @@ source: boltffi_backend/tests/jni/direct_vector.rs
 expression: "rendered_fixture(\"direct_vector/primitive_vector_parameter\")"
 ---
 ===== jni/demo.h =====
-#pragma once
-
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct {
-    int32_t code;
-} FfiStatus;
-
-#define FFI_STATUS_OK ((FfiStatus){0})
-#define FFI_STATUS_NULL_POINTER ((FfiStatus){1})
-#define FFI_STATUS_BUFFER_TOO_SMALL ((FfiStatus){2})
-#define FFI_STATUS_INVALID_ARG ((FfiStatus){3})
-#define FFI_STATUS_CANCELLED ((FfiStatus){4})
-#define FFI_STATUS_INTERNAL_ERROR ((FfiStatus){100})
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-    uintptr_t align;
-} FfiBuf_u8;
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-} FfiString;
-
-typedef struct {
-    FfiString message;
-} FfiError;
-
-typedef struct {
-    const uint8_t *ptr;
-    uintptr_t len;
-} FfiSpan;
-
-typedef const void *RustFutureHandle;
-typedef int8_t StreamPollResult;
-typedef int32_t WaitResult;
-typedef void (*RustFutureContinuationCallback)(uint64_t callback_data, int8_t poll_result);
-typedef void (*StreamContinuationCallback)(uint64_t callback_data, StreamPollResult result);
-
-typedef struct {
-    uint64_t handle;
-    const void *vtable;
-} BoltFFICallbackHandle;
-
-void boltffi_free_string(FfiString string);
-void boltffi_free_buf(FfiBuf_u8 buf);
-FfiBuf_u8 boltffi_buf_from_bytes(const uint8_t *ptr, uintptr_t len);
-FfiStatus boltffi_last_error_message(FfiString *out);
-void boltffi_clear_last_error(void);
+<c abi support declarations>
 int32_t boltffi_function_demo_sum(const int32_t *values_ptr, uintptr_t values_len);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
-#include <jni.h>
-#include <stdint.h>
-#include <stdbool.h>
-#if defined(__ANDROID__)
-#include <pthread.h>
-#endif
-
-#include "demo.h"
-static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
-    jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
-    if (exception_class == NULL) {
-        return;
-    }
-    (*env)->ThrowNew(env, exception_class, message);
-    (*env)->DeleteLocalRef(env, exception_class);
-}
-
-static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message) {
-    jclass exception_class = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
-    if (exception_class == NULL) {
-        return;
-    }
-    (*env)->ThrowNew(env, exception_class, message);
-    (*env)->DeleteLocalRef(env, exception_class);
-}
-
+<jni source includes>
+<jni exception helpers>
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1sum(JNIEnv *env, jclass cls, jintArray values) {
     (void)cls;
 
@@ -122,7 +37,7 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1sum
     }
 
     (void)env;
-    int32_t result = boltffi_function_demo_sum((const int32_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);
+    int32_t __boltffi_result = boltffi_function_demo_sum((const int32_t *)__boltffi_values_ptr, (uintptr_t)__boltffi_values_len);
 
     if (__boltffi_values_ptr != NULL) {
         if (__boltffi_values_needs_release) {
@@ -131,7 +46,7 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1sum
         __boltffi_values_ptr = NULL;
     }
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 __boltffi_error:
     if (__boltffi_values_ptr != NULL) {
         if (__boltffi_values_needs_release) {

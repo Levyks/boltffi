@@ -1,0 +1,122 @@
+---
+source: boltffi_backend/tests/kotlin/exports.rs
+expression: "rendered_fixture(\"exports/encoded_functions\")"
+---
+===== com/boltffi/demo/Demo.kt =====
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
+package com.boltffi.demo
+@Suppress("FunctionName")
+private object Native {
+    @JvmStatic external fun boltffi_function_demo_keep_person(person: ByteArray): ByteArray?
+    @JvmStatic external fun boltffi_function_demo_keep_shape(shape: ByteArray): ByteArray?
+}
+
+
+data class Person(
+    val name: String
+) {
+    internal fun wireSize(): Int {
+        return 4 + Utf8Codec.maxBytes(this.name)
+    }
+
+    internal fun writeTo(writer: WireWriter) {
+        writer.writeString(this.name)
+    }
+
+    internal fun toByteArray(): ByteArray {
+        val buffer = WireWriterPool.acquire(wireSize())
+        val writer = buffer.writer
+        try {
+            writeTo(writer)
+            return buffer.bytes()
+        } finally {
+            buffer.close()
+        }
+    }
+
+    companion object {
+        internal fun fromReader(reader: WireReader): Person {
+            return Person(
+                reader.readString()
+            )
+        }
+
+        internal fun fromByteArray(bytes: ByteArray): Person {
+            val reader = WireReader(bytes)
+            return fromReader(reader)
+        }
+    }
+}
+
+
+sealed class Shape {
+    internal abstract fun wireSize(): Int
+
+    internal abstract fun writeTo(writer: WireWriter)
+
+    internal fun toByteArray(): ByteArray {
+        val buffer = WireWriterPool.acquire(wireSize())
+        val writer = buffer.writer
+        try {
+            writeTo(writer)
+            return buffer.bytes()
+        } finally {
+            buffer.close()
+        }
+    }
+
+    data class Label(
+        val field0: String
+    ) : Shape() {
+        internal override fun wireSize(): Int {
+            return 4 + 4 + Utf8Codec.maxBytes(this.field0)
+        }
+
+        internal override fun writeTo(writer: WireWriter) {
+            writer.writeU32(0.toUInt())
+            writer.writeString(this.field0)
+        }
+    }
+
+    companion object {
+        internal fun fromReader(reader: WireReader): Shape {
+            val tag = reader.readU32()
+            return when (tag) {
+                0.toUInt() -> Label(reader.readString())
+                else -> throw IllegalArgumentException("unknown Shape tag: $tag")
+            }
+        }
+
+        internal fun fromByteArray(bytes: ByteArray): Shape {
+            val reader = WireReader(bytes)
+            return fromReader(reader)
+        }
+    }
+}
+
+fun keepPerson(person: Person): Person {
+    val __boltffi_person_wire = WireWriterPool.acquire(person.wireSize())
+    val __boltffi_person_writer = __boltffi_person_wire.writer
+    person.writeTo(__boltffi_person_writer)
+    try {
+        val __boltffi_result = Native.boltffi_function_demo_keep_person(__boltffi_person_wire.bytes()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_reader = WireReader(__boltffi_result)
+        return Person.fromReader(__boltffi_reader)
+    } finally {
+        __boltffi_person_wire.close()
+    }
+}
+
+fun keepShape(shape: Shape): Shape {
+    val __boltffi_shape_wire = WireWriterPool.acquire(shape.wireSize())
+    val __boltffi_shape_writer = __boltffi_shape_wire.writer
+    shape.writeTo(__boltffi_shape_writer)
+    try {
+        val __boltffi_result = Native.boltffi_function_demo_keep_shape(__boltffi_shape_wire.bytes()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_reader = WireReader(__boltffi_result)
+        return Shape.fromReader(__boltffi_reader)
+    } finally {
+        __boltffi_shape_wire.close()
+    }
+}

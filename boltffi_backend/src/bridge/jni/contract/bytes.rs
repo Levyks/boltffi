@@ -26,6 +26,7 @@ pub struct BytesParameter {
     name: Identifier,
     pointer: Identifier,
     length: Identifier,
+    writeback: Option<BytesWriteback>,
 }
 
 impl BytesParameter {
@@ -44,12 +45,49 @@ impl BytesParameter {
         &self.length
     }
 
+    /// Returns the encoded mutation output written by the C bridge.
+    pub fn writeback(&self) -> Option<&BytesWriteback> {
+        self.writeback.as_ref()
+    }
+
     /// Creates a byte-array parameter from a C byte-slice parameter group.
     pub fn from_c_group(bytes: &c::ByteSliceParameter) -> Result<Self> {
         Ok(Self {
             pointer: Identifier::parse(format!("__boltffi_{}_ptr", bytes.name()))?,
             length: Identifier::parse(format!("__boltffi_{}_len", bytes.name()))?,
             name: Identifier::escape(bytes.name())?,
+            writeback: None,
+        })
+    }
+
+    /// Creates a byte-array parameter from an encoded writeback C group.
+    pub fn from_c_writeback(writeback: &c::EncodedWritebackParameter) -> Result<Self> {
+        Ok(Self {
+            pointer: Identifier::parse(format!("__boltffi_{}_ptr", writeback.name()))?,
+            length: Identifier::parse(format!("__boltffi_{}_len", writeback.name()))?,
+            name: Identifier::escape(writeback.name())?,
+            writeback: Some(BytesWriteback::from_c_writeback(writeback)?),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+/// Native storage for an encoded mutation result returned to the JVM.
+pub struct BytesWriteback {
+    local: Identifier,
+}
+
+impl BytesWriteback {
+    /// Returns the local `FfiBuf_u8` that receives the mutation bytes.
+    pub fn local(&self) -> &Identifier {
+        &self.local
+    }
+
+    /// Creates mutation output storage from a C encoded writeback group.
+    pub fn from_c_writeback(writeback: &c::EncodedWritebackParameter) -> Result<Self> {
+        Ok(Self {
+            local: Identifier::parse(format!("__boltffi_{}_out", writeback.name()))?,
         })
     }
 }

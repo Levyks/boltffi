@@ -4,9 +4,9 @@ assertion_line: 1765
 expression: "render_class(&cls, \"boltffi\")"
 ---
 public final class Cache {
-    let handle: UnsafeMutableRawPointer
+    let handle: OpaquePointer
 
-    init(handle: UnsafeMutableRawPointer) {
+    init(handle: OpaquePointer) {
         self.handle = handle
     }
 

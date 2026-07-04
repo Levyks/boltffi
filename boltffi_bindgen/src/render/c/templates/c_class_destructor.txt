@@ -1,1 +1,1 @@
-void {{ symbol }}(void* handle);
+void {{ symbol }}({{ handle_type }} *handle);

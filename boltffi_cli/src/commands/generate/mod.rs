@@ -9,7 +9,7 @@ use boltffi_bindgen::CHeaderLowerer;
 use generator::{GenerateRequest, ScanPointerWidth, run_generator};
 use header::HeaderGenerator;
 use languages::{
-    CSharpGenerator, DartGenerator, JavaGenerator, KMPGenerator, KotlinGenerator, SwiftGenerator,
+    CSharpGenerator, DartGenerator, JavaGenerator, KMPGenerator, SwiftGenerator,
     TypeScriptGenerator,
 };
 
@@ -50,9 +50,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::Swift => {
             run_generator::<SwiftGenerator>(&legacy_request(), options.experimental)
         }
-        GenerateTarget::Kotlin => {
-            run_generator::<KotlinGenerator>(&legacy_request(), options.experimental)
-        }
+        GenerateTarget::Kotlin => ir::run_ir_generation(config, &options),
         GenerateTarget::KotlinMultiplatform => {
             run_generator::<KMPGenerator>(&legacy_request(), options.experimental)
         }
@@ -80,7 +78,16 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             }
 
             if config.should_process(Target::Kotlin, options.experimental) {
-                run_generator::<KotlinGenerator>(&request, options.experimental)?;
+                ir::run_ir_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::Kotlin,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        ir: true,
+                        cargo_args: options.cargo_args.clone(),
+                    },
+                )?;
             }
 
             if config.should_process(Target::KotlinMultiplatform, options.experimental) {
@@ -201,8 +208,7 @@ mod tests {
         KMP_SUPPORT_REPORT_FILE, KmpSupportPolicy, KmpSupportReport,
     };
 
-    use super::generator::{GenerateRequest, LanguageGenerator, SourceCrate};
-    use super::languages::{KMPGenerator, KotlinGenerator};
+    use super::languages::KMPGenerator;
     use crate::config::Config;
 
     fn parse_config(input: &str) -> Config {
@@ -259,44 +265,6 @@ enabled = true
 
         assert!(header.contains("boltffi"));
         assert!(header.contains("BoltFFICallbackHandle"));
-
-        fs::remove_dir_all(output_directory).expect("cleanup generated output");
-    }
-
-    #[test]
-    fn kotlin_generate_writes_jni_header_and_glue() {
-        let output_directory = unique_temp_dir("boltffi-kotlin-generate-test");
-        let config = parse_config(
-            r#"
-[package]
-name = "demo"
-version = "0.1.0"
-
-[targets.android]
-enabled = true
-
-[targets.android.kotlin]
-package = "com.boltffi.demo"
-"#,
-        );
-        let request = GenerateRequest::new(
-            &config,
-            Some(output_directory.clone()),
-            SourceCrate::new(demo_source_directory(), "demo"),
-        );
-
-        KotlinGenerator::generate(&request).expect("kotlin generate should succeed");
-
-        let header_path = output_directory.join("jni/demo.h");
-        let jni_glue_path = output_directory.join("jni/jni_glue.c");
-        let kotlin_path = output_directory.join("com/boltffi/demo/Demo.kt");
-        let header = fs::read_to_string(&header_path).expect("header should be readable");
-        let jni_glue = fs::read_to_string(&jni_glue_path).expect("jni glue should be readable");
-        let kotlin = fs::read_to_string(&kotlin_path).expect("kotlin source should be readable");
-
-        assert!(header.contains("BoltFFICallbackHandle"));
-        assert!(jni_glue.contains("#include <demo.h>"));
-        assert!(kotlin.contains("package com.boltffi.demo"));
 
         fs::remove_dir_all(output_directory).expect("cleanup generated output");
     }

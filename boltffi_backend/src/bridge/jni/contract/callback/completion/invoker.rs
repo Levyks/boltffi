@@ -12,7 +12,10 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use crate::{
-    bridge::jni::{CallbackCompletionPayload, CallbackRegistration, JniSymbolName, JvmClassPath},
+    bridge::{
+        c::Identifier,
+        jni::{CallbackCompletionPayload, CallbackRegistration, JniSymbolName, JvmClassPath},
+    },
     core::Result,
 };
 
@@ -20,8 +23,12 @@ use crate::{
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct CallbackCompletionInvoker {
+    success_method: Identifier,
     success: JniSymbolName,
+    failure_method: Identifier,
     failure: JniSymbolName,
+    error_method: Option<Identifier>,
+    error: Option<JniSymbolName>,
     payload: Option<CallbackCompletionPayload>,
 }
 
@@ -56,9 +63,29 @@ impl CallbackCompletionInvoker {
         &self.success
     }
 
+    /// Returns the JVM success native method name.
+    pub fn success_method(&self) -> &Identifier {
+        &self.success_method
+    }
+
     /// Returns the failure native method symbol.
     pub fn failure(&self) -> &JniSymbolName {
         &self.failure
+    }
+
+    /// Returns the JVM failure native method name.
+    pub fn failure_method(&self) -> &Identifier {
+        &self.failure_method
+    }
+
+    /// Returns the native method symbol that completes with a user error payload.
+    pub fn error(&self) -> Option<&JniSymbolName> {
+        self.error.as_ref()
+    }
+
+    /// Returns the JVM error native method name.
+    pub fn error_method(&self) -> Option<&Identifier> {
+        self.error_method.as_ref()
     }
 
     /// Returns the successful completion payload shape.
@@ -71,15 +98,24 @@ impl CallbackCompletionInvoker {
         suffix: &str,
         payload: Option<CallbackCompletionPayload>,
     ) -> Result<Self> {
+        let success_method =
+            Identifier::parse(format!("boltffi_async_callback_complete_{suffix}"))?;
+        let failure_method =
+            Identifier::parse(format!("boltffi_async_callback_complete_{suffix}_failure"))?;
+        let error_method = payload
+            .as_ref()
+            .map(|_| Identifier::parse(format!("boltffi_async_callback_complete_{suffix}_error")))
+            .transpose()?;
         Ok(Self {
-            success: JniSymbolName::native_method(
-                class,
-                &format!("boltffi_async_callback_complete_{suffix}"),
-            )?,
-            failure: JniSymbolName::native_method(
-                class,
-                &format!("boltffi_async_callback_complete_{suffix}_failure"),
-            )?,
+            success: JniSymbolName::native_method(class, success_method.as_str())?,
+            failure: JniSymbolName::native_method(class, failure_method.as_str())?,
+            error: error_method
+                .as_ref()
+                .map(|method| JniSymbolName::native_method(class, method.as_str()))
+                .transpose()?,
+            success_method,
+            failure_method,
+            error_method,
             payload,
         })
     }

@@ -3,97 +3,29 @@ source: boltffi_backend/tests/jni/associated.rs
 expression: "rendered_fixture(\"associated/enum_callables\")"
 ---
 ===== jni/demo.h =====
-#pragma once
-
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct {
-    int32_t code;
-} FfiStatus;
-
-#define FFI_STATUS_OK ((FfiStatus){0})
-#define FFI_STATUS_NULL_POINTER ((FfiStatus){1})
-#define FFI_STATUS_BUFFER_TOO_SMALL ((FfiStatus){2})
-#define FFI_STATUS_INVALID_ARG ((FfiStatus){3})
-#define FFI_STATUS_CANCELLED ((FfiStatus){4})
-#define FFI_STATUS_INTERNAL_ERROR ((FfiStatus){100})
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-    uintptr_t align;
-} FfiBuf_u8;
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-} FfiString;
-
-typedef struct {
-    FfiString message;
-} FfiError;
-
-typedef struct {
-    const uint8_t *ptr;
-    uintptr_t len;
-} FfiSpan;
-
-typedef const void *RustFutureHandle;
-typedef int8_t StreamPollResult;
-typedef int32_t WaitResult;
-typedef void (*RustFutureContinuationCallback)(uint64_t callback_data, int8_t poll_result);
-typedef void (*StreamContinuationCallback)(uint64_t callback_data, StreamPollResult result);
-
-typedef struct {
-    uint64_t handle;
-    const void *vtable;
-} BoltFFICallbackHandle;
-
-void boltffi_free_string(FfiString string);
-void boltffi_free_buf(FfiBuf_u8 buf);
-FfiBuf_u8 boltffi_buf_from_bytes(const uint8_t *ptr, uintptr_t len);
-FfiStatus boltffi_last_error_message(FfiString *out);
-void boltffi_clear_last_error(void);
+<c abi support declarations>
 typedef uint8_t ___Mode;
 #define MODE_FAST ((___Mode)1)
 #define MODE_SLOW ((___Mode)2)
 ___Mode boltffi_init_enum_demo_mode_default(void);
 uint8_t boltffi_method_enum_demo_mode_code(___Mode receiver);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
-#include <jni.h>
-#include <stdint.h>
-#include <stdbool.h>
-#if defined(__ANDROID__)
-#include <pthread.h>
-#endif
-
-#include "demo.h"
+<jni source includes>
 JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1enum_1demo_1mode_1default(JNIEnv *env, jclass cls) {
     (void)cls;
 
     (void)env;
-    ___Mode result = boltffi_init_enum_demo_mode_default();
+    ___Mode __boltffi_result = boltffi_init_enum_demo_mode_default();
 
-    return (jbyte)result;
+    return (jbyte)__boltffi_result;
 }
 
 JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1enum_1demo_1mode_1code(JNIEnv *env, jclass cls, jbyte receiver) {
     (void)cls;
 
     (void)env;
-    uint8_t result = boltffi_method_enum_demo_mode_code((___Mode)receiver);
+    uint8_t __boltffi_result = boltffi_method_enum_demo_mode_code((___Mode)receiver);
 
-    return (jbyte)result;
+    return (jbyte)__boltffi_result;
 }

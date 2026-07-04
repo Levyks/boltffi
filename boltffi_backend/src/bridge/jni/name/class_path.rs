@@ -50,6 +50,11 @@ impl JvmClassPath {
             .join(".")
     }
 
+    /// Returns the unqualified JVM class name.
+    pub fn class_name(&self) -> &str {
+        self.class.as_str()
+    }
+
     /// Returns the slash-separated class name used by JNI class lookup.
     pub fn as_jni_class_name(&self) -> String {
         self.package
@@ -73,6 +78,14 @@ impl JvmClassPath {
         Ok(Self {
             package: self.package.clone(),
             class: JvmNameSegment::closure_class(signature)?,
+        })
+    }
+
+    /// Creates a class in the same JVM package.
+    pub fn sibling_class(&self, class: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            package: self.package.clone(),
+            class: JvmNameSegment::class(class)?,
         })
     }
 

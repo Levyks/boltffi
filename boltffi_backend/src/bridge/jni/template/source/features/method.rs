@@ -13,6 +13,7 @@ use crate::bridge::jni::template::method::NativeMethodView;
 
 pub struct MethodFeatures {
     pub checks_status: bool,
+    pub checks_error_buffer: bool,
     pub uses_continuations: bool,
     pub returns_byte_arrays: bool,
     pub uses_record_arrays: bool,
@@ -23,7 +24,10 @@ pub struct MethodFeatures {
 impl MethodFeatures {
     pub fn from_methods(methods: &[NativeMethodView]) -> Self {
         Self {
-            checks_status: methods.iter().any(|method| method.checks_status),
+            checks_status: methods
+                .iter()
+                .any(|method| method.checks_status || method.checks_completion_status),
+            checks_error_buffer: methods.iter().any(|method| method.checks_error_buffer),
             uses_continuations: methods.iter().any(|method| method.uses_continuations),
             returns_byte_arrays: methods.iter().any(|method| method.returns_bytes),
             uses_record_arrays: methods
@@ -31,6 +35,8 @@ impl MethodFeatures {
                 .any(|method| method.returns_record || !method.record_arrays.is_empty()),
             uses_exceptions: methods.iter().any(|method| {
                 method.checks_status
+                    || method.checks_completion_status
+                    || method.checks_error_buffer
                     || method.returns_bytes
                     || method.returns_record
                     || method.returns_callback

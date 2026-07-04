@@ -3,65 +3,7 @@ source: boltffi_backend/tests/jni/native_methods.rs
 expression: "rendered_fixture(\"exports/class_handles_and_methods\")"
 ---
 ===== jni/demo.h =====
-#pragma once
-
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct {
-    int32_t code;
-} FfiStatus;
-
-#define FFI_STATUS_OK ((FfiStatus){0})
-#define FFI_STATUS_NULL_POINTER ((FfiStatus){1})
-#define FFI_STATUS_BUFFER_TOO_SMALL ((FfiStatus){2})
-#define FFI_STATUS_INVALID_ARG ((FfiStatus){3})
-#define FFI_STATUS_CANCELLED ((FfiStatus){4})
-#define FFI_STATUS_INTERNAL_ERROR ((FfiStatus){100})
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-    uintptr_t align;
-} FfiBuf_u8;
-
-typedef struct {
-    uint8_t *ptr;
-    uintptr_t len;
-    uintptr_t cap;
-} FfiString;
-
-typedef struct {
-    FfiString message;
-} FfiError;
-
-typedef struct {
-    const uint8_t *ptr;
-    uintptr_t len;
-} FfiSpan;
-
-typedef const void *RustFutureHandle;
-typedef int8_t StreamPollResult;
-typedef int32_t WaitResult;
-typedef void (*RustFutureContinuationCallback)(uint64_t callback_data, int8_t poll_result);
-typedef void (*StreamContinuationCallback)(uint64_t callback_data, StreamPollResult result);
-
-typedef struct {
-    uint64_t handle;
-    const void *vtable;
-} BoltFFICallbackHandle;
-
-void boltffi_free_string(FfiString string);
-void boltffi_free_buf(FfiBuf_u8 buf);
-FfiBuf_u8 boltffi_buf_from_bytes(const uint8_t *ptr, uintptr_t len);
-FfiStatus boltffi_last_error_message(FfiString *out);
-void boltffi_clear_last_error(void);
+<c abi support declarations>
 typedef struct {
     int32_t x;
     int32_t y;
@@ -72,74 +14,11 @@ uint32_t boltffi_method_class_demo_engine_version(void);
 uint32_t boltffi_method_class_demo_engine_score(uint64_t receiver, ___Point point);
 FfiStatus boltffi_method_class_demo_engine_advance(uint64_t receiver, uint32_t delta);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
-#include <jni.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <limits.h>
-#if defined(__ANDROID__)
-#include <pthread.h>
-#endif
-
-#include "demo.h"
-static void boltffi_jni_throw_runtime(JNIEnv *env, const char *message) {
-    jclass exception_class = (*env)->FindClass(env, "java/lang/RuntimeException");
-    if (exception_class == NULL) {
-        return;
-    }
-    (*env)->ThrowNew(env, exception_class, message);
-    (*env)->DeleteLocalRef(env, exception_class);
-}
-
-static void boltffi_jni_throw_illegal_argument(JNIEnv *env, const char *message) {
-    jclass exception_class = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
-    if (exception_class == NULL) {
-        return;
-    }
-    (*env)->ThrowNew(env, exception_class, message);
-    (*env)->DeleteLocalRef(env, exception_class);
-}
-
-static void boltffi_jni_throw_status(JNIEnv *env, FfiStatus status) {
-    if (status.code != 0) {
-        boltffi_jni_throw_runtime(env, "BoltFFI call failed");
-    }
-}
-
-static bool boltffi_jni_read_record(JNIEnv *env, jbyteArray array, uintptr_t expected_len, void *output) {
-    if (array == NULL) {
-        boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array argument was null");
-        return false;
-    }
-    jsize len = (*env)->GetArrayLength(env, array);
-    if ((uintptr_t)len != expected_len) {
-        boltffi_jni_throw_illegal_argument(env, "BoltFFI record byte array length did not match the C record size");
-        return false;
-    }
-    (*env)->GetByteArrayRegion(env, array, 0, len, (jbyte *)output);
-    return !(*env)->ExceptionCheck(env);
-}
-
-static jbyteArray boltffi_jni_record_to_byte_array(JNIEnv *env, const void *record, uintptr_t len) {
-    if (len > (uintptr_t)INT32_MAX) {
-        boltffi_jni_throw_runtime(env, "BoltFFI record too large for Java byte array");
-        return NULL;
-    }
-    jbyteArray array = (*env)->NewByteArray(env, (jsize)len);
-    if (array == NULL) {
-        return NULL;
-    }
-    (*env)->SetByteArrayRegion(env, array, 0, (jsize)len, (const jbyte *)record);
-    if ((*env)->ExceptionCheck(env)) {
-        (*env)->DeleteLocalRef(env, array);
-        return NULL;
-    }
-    return array;
-}
-
+<jni source includes>
+<jni exception helpers>
+<jni status helper>
+<jni record helpers>
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1release_1class_1demo_1engine(JNIEnv *env, jclass cls, jlong handle) {
     (void)cls;
 
@@ -153,18 +32,18 @@ JNIEXPORT jlong JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1class_1demo_
     (void)cls;
 
     (void)env;
-    uint64_t result = boltffi_init_class_demo_engine_new(seed);
+    uint64_t __boltffi_result = boltffi_init_class_demo_engine_new(seed);
 
-    return (jlong)result;
+    return (jlong)__boltffi_result;
 }
 
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1version(JNIEnv *env, jclass cls) {
     (void)cls;
 
     (void)env;
-    uint32_t result = boltffi_method_class_demo_engine_version();
+    uint32_t __boltffi_result = boltffi_method_class_demo_engine_version();
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 }
 
 JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1score(JNIEnv *env, jclass cls, jlong receiver, jbyteArray point) {
@@ -177,9 +56,9 @@ JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo
     }
 
     (void)env;
-    uint32_t result = boltffi_method_class_demo_engine_score(receiver, __boltffi_point_value);
+    uint32_t __boltffi_result = boltffi_method_class_demo_engine_score(receiver, __boltffi_point_value);
 
-    return (jint)result;
+    return (jint)__boltffi_result;
 __boltffi_error:
     return 0;
 }
@@ -187,10 +66,10 @@ __boltffi_error:
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1method_1class_1demo_1engine_1advance(JNIEnv *env, jclass cls, jlong receiver, jint delta) {
     (void)cls;
 
-    FfiStatus status = boltffi_method_class_demo_engine_advance(receiver, delta);
+    FfiStatus __boltffi_status = boltffi_method_class_demo_engine_advance(receiver, delta);
 
-    if (status.code != 0) {
-        boltffi_jni_throw_status(env, status);
+    if (__boltffi_status.code != 0) {
+        boltffi_jni_throw_status(env, __boltffi_status);
         return;
     }
 

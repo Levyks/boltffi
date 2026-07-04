@@ -63,6 +63,7 @@ impl PackageScan {
                 enumeration
             })
             .collect();
+        source.classes = self.complete.classes.clone();
         source.traits = self.complete.traits.clone();
         source.customs = self.complete.customs.clone();
         source.functions = self
@@ -957,10 +958,17 @@ mod tests {
                 #[export] pub fn keep(value: Thing) -> Thing { value } \
             }",
         );
-        let session = source_tree("session", "pub use model::{Thing, model_echo_kind};");
+        let session = source_tree(
+            "session",
+            "pub use model::{Counter, Thing, model_echo_kind};",
+        );
         let model = source_tree(
             "model",
             "#[data] pub struct Thing { pub value: u32 } \
+             pub struct Counter { value: u32 } \
+             #[export] impl Counter { \
+                 pub fn new(value: u32) -> Self { Self { value } } \
+             } \
              #[export] pub fn model_echo_kind(kind: u32) -> u32 { kind }",
         );
         let complete = SourceTree::combine([model, session, root]);
@@ -987,6 +995,19 @@ mod tests {
         );
 
         let path = paths
+            .get("model::Counter")
+            .expect("reexported model class is visible through session");
+
+        assert_eq!(path.root, PathRoot::Relative);
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session", "Counter"]
+        );
+
+        let path = paths
             .get("model::model_echo_kind")
             .expect("reexported model function is visible through session");
 
@@ -998,6 +1019,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["session", "model_echo_kind"]
         );
+    }
+
+    #[test]
+    fn root_with_support_keeps_dependency_classes() {
+        let root = source_tree("demo", "");
+        let model = source_tree(
+            "model",
+            "pub struct ForeignCounter { value: i32 } \
+             #[export] impl ForeignCounter { \
+                 pub fn new(initial: i32) -> Self { Self { value: initial } } \
+                 pub fn add(&self, amount: i32) -> i32 { self.value + amount } \
+             }",
+        );
+        let complete = SourceTree::combine([model, root.clone()]);
+        let scan = PackageScan {
+            root: scan_tree(root, PackageInfo::new("demo", None)).expect("root scans"),
+            complete: scan_tree(complete, PackageInfo::new("demo", None)).expect("complete scans"),
+            root_visible_paths: HashMap::new(),
+        };
+        let source = scan.root_with_support();
+        let counter = source
+            .classes
+            .iter()
+            .find(|class| class.id == ClassId::new("model::ForeignCounter"))
+            .expect("dependency class stays in root support contract");
+
+        assert_eq!(counter.methods.len(), 2);
     }
 
     #[test]

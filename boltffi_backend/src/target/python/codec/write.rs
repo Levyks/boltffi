@@ -184,16 +184,22 @@ impl<'package> CodecWrite for Writer<'package> {
         })]
     }
 
-    fn custom(
+    fn custom<F>(
         &mut self,
         id: CustomTypeId,
         value: &ValueRef,
-        representation: Vec<Self::Stmt>,
-    ) -> Vec<Self::Stmt> {
-        vec![self.value(value).and_then(|_| {
-            self.package.custom_type(id)?;
-            Self::single(representation)
-        })]
+        representation: F,
+    ) -> Vec<Self::Stmt>
+    where
+        F: FnOnce(&mut Self, &ValueRef) -> Vec<Self::Stmt>,
+    {
+        match self.package.custom_type(id) {
+            Ok(_) => {
+                let representation = representation(self, value);
+                vec![Self::single(representation)]
+            }
+            Err(error) => vec![Err(error)],
+        }
     }
 
     fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt> {

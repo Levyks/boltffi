@@ -1,10 +1,17 @@
 use std::path::Path;
 
-use super::{bridge_fixture, rendered_fixture};
+use super::{bridge_fixture, rendered_fixture, rendered_fixture_with_support};
 
 #[test]
 fn jni_bridge_layers_primitive_functions_on_c_bridge() {
     insta::assert_snapshot!(rendered_fixture("exports/primitive_functions"));
+}
+
+#[test]
+fn jni_bridge_renders_shared_support_fragments() {
+    insta::assert_snapshot!(rendered_fixture_with_support(
+        "exports/closure_result_return"
+    ));
 }
 
 #[test]
@@ -33,6 +40,11 @@ fn jni_bridge_renders_direct_records_and_c_style_enums() {
 #[test]
 fn jni_bridge_renders_encoded_functions_as_byte_arrays() {
     insta::assert_snapshot!(rendered_fixture("exports/encoded_functions"));
+}
+
+#[test]
+fn jni_bridge_renders_fallible_returns_as_encoded_error_checked_values() {
+    insta::assert_snapshot!(rendered_fixture("exports/fallible_returns"));
 }
 
 #[test]
@@ -93,6 +105,11 @@ fn jni_bridge_renders_c_style_enum_closure_returns_as_scalars() {
 #[test]
 fn jni_bridge_renders_direct_vector_closure_parameters_from_contract_group() {
     insta::assert_snapshot!(rendered_fixture("exports/direct_vector_closure_parameter"));
+}
+
+#[test]
+fn jni_bridge_renders_closure_result_returns_from_contract_group() {
+    insta::assert_snapshot!(rendered_fixture("exports/closure_result_return"));
 }
 
 #[test]

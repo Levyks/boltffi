@@ -1,7 +1,7 @@
 {{ self::swift_doc_block(cls.doc, "") }}public final class {{ cls.name }} {
-    let handle: UnsafeMutableRawPointer
+    let handle: OpaquePointer
 
-    init(handle: UnsafeMutableRawPointer) {
+    init(handle: OpaquePointer) {
         self.handle = handle
     }
 {%- for ctor in cls.constructors %}

@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+
 package com.boltffi.demo
 
 import java.net.URI
@@ -27,6 +29,9 @@ class DemoValueTypesTest {
         val instant = Instant.ofEpochMilli(1_701_234_567_890L)
         demoCase("case:builtins.system_time.should_roundtrip_value")
         assertEquals(instant, echoSystemTime(instant))
+        demoCase("case:builtins.system_time.should_roundtrip_pre_epoch_value")
+        val preEpoch = Instant.ofEpochSecond(-1, 500_000_000)
+        assertEquals(preEpoch, echoSystemTime(preEpoch))
         demoCase("case:builtins.system_time.should_convert_to_epoch_milliseconds")
         assertEquals(1_701_234_567_890uL, systemTimeToMillis(instant))
         demoCase("case:builtins.system_time.should_construct_from_epoch_milliseconds")
@@ -123,17 +128,17 @@ class DemoValueTypesTest {
         assertContentEquals(byteArrayOf(-1, 0, 7), echoVecI8(byteArrayOf(-1, 0, 7)), "case:primitives.vecs.i8.should_roundtrip_values")
         assertContentEquals(byteArrayOf(0, 1, 2, 3), echoVecU8(byteArrayOf(0, 1, 2, 3)), "case:primitives.vecs.u8.should_roundtrip_values")
         assertContentEquals(shortArrayOf(-3, 0, 9), echoVecI16(shortArrayOf(-3, 0, 9)), "case:primitives.vecs.i16.should_roundtrip_values")
-        assertContentEquals(shortArrayOf(0, 10, 20), echoVecU16(shortArrayOf(0, 10, 20)), "case:primitives.vecs.u16.should_roundtrip_values")
-        assertContentEquals(intArrayOf(0, 10, 20), echoVecU32(intArrayOf(0, 10, 20)), "case:primitives.vecs.u32.should_roundtrip_values")
+        assertContentEquals(ushortArrayOf(0u, 10u, 20u), echoVecU16(ushortArrayOf(0u, 10u, 20u)), "case:primitives.vecs.u16.should_roundtrip_values")
+        assertContentEquals(uintArrayOf(0u, 10u, 20u), echoVecU32(uintArrayOf(0u, 10u, 20u)), "case:primitives.vecs.u32.should_roundtrip_values")
         assertContentEquals(longArrayOf(-5L, 0L, 8L), echoVecI64(longArrayOf(-5L, 0L, 8L)), "case:primitives.vecs.i64.should_roundtrip_values")
-        assertContentEquals(longArrayOf(0L, 1L, 2L), echoVecU64(longArrayOf(0L, 1L, 2L)), "case:primitives.vecs.u64.should_roundtrip_values")
+        assertContentEquals(ulongArrayOf(0uL, 1uL, 2uL), echoVecU64(ulongArrayOf(0uL, 1uL, 2uL)), "case:primitives.vecs.u64.should_roundtrip_values")
         assertContentEquals(longArrayOf(-2L, 0L, 5L), echoVecIsize(longArrayOf(-2L, 0L, 5L)), "case:primitives.vecs.isize.should_roundtrip_values")
-        assertContentEquals(longArrayOf(0L, 2L, 4L), echoVecUsize(longArrayOf(0L, 2L, 4L)), "case:primitives.vecs.usize.should_roundtrip_values")
+        assertContentEquals(ulongArrayOf(0uL, 2uL, 4uL), echoVecUsize(ulongArrayOf(0uL, 2uL, 4uL)), "case:primitives.vecs.usize.should_roundtrip_values")
         assertContentEquals(floatArrayOf(1.25f, -2.5f), echoVecF32(floatArrayOf(1.25f, -2.5f)), "case:primitives.vecs.f32.should_roundtrip_values_with_tolerance")
         assertContentEquals(doubleArrayOf(1.5, 2.5), echoVecF64(doubleArrayOf(1.5, 2.5)), "case:primitives.vecs.f64.should_roundtrip_values")
         assertContentEquals(booleanArrayOf(true, false, true), echoVecBool(booleanArrayOf(true, false, true)), "case:primitives.vecs.bool.should_roundtrip_values")
         assertContentEquals(listOf("hello", "world"), echoVecString(listOf("hello", "world")), "case:primitives.vecs.string.should_roundtrip_values")
-        assertContentEquals(intArrayOf(2, 5), vecStringLengths(listOf("hi", "café")), "case:primitives.vecs.string.should_report_utf8_byte_lengths")
+        assertContentEquals(uintArrayOf(2u, 5u), vecStringLengths(listOf("hi", "café")), "case:primitives.vecs.string.should_report_utf8_byte_lengths")
         assertEquals(60L, sumVecI32(intArrayOf(10, 20, 30)), "case:primitives.vecs.i32.should_sum_values")
         assertContentEquals(intArrayOf(0, 1, 2, 3, 4), makeRange(0, 5), "case:primitives.vecs.i32.should_make_range")
         assertContentEquals(intArrayOf(3, 2, 1), reverseVecI32(intArrayOf(1, 2, 3)), "case:primitives.vecs.i32.should_reverse_values")
@@ -146,10 +151,10 @@ class DemoValueTypesTest {
         demoCase("case:primitives.vecs.f64.should_sum_values")
         assertDoubleEquals(7.5, sumF64Vec(doubleArrayOf(1.5, 2.5, 3.5)))
 
-        val u64Values = longArrayOf(5L, 9L, 11L)
+        val u64Values = ulongArrayOf(5uL, 9uL, 11uL)
         demoCase("case:primitives.vecs.u64.should_increment_first_value_in_place")
         incU64(u64Values)
-        assertEquals(6L, u64Values[0])
+        assertEquals(6uL, u64Values[0])
         demoCase("case:primitives.vecs.u64.should_increment_value")
         assertEquals(43uL, incU64Value(42uL))
     }
@@ -182,7 +187,7 @@ class DemoValueTypesTest {
             assertContentEquals(isizes[i], roundTrippedIsizes[i])
         }
 
-        val usizes = listOf(longArrayOf(0L, 2L, 4L), longArrayOf(), longArrayOf(8L))
+        val usizes = listOf(ulongArrayOf(0uL, 2uL, 4uL), ulongArrayOf(), ulongArrayOf(8uL))
         demoCase("case:primitives.vecs.nested_usize.should_roundtrip_values")
         val roundTrippedUsizes = echoVecVecUsize(usizes)
         assertEquals(usizes.size, roundTrippedUsizes.size)
@@ -632,6 +637,10 @@ class DemoValueTypesTest {
         assertIs<Shape.Rectangle>(Shape.square(3.0))
         demoCase("case:enums.data_enum.shape.try_circle.should_return_circle_for_positive_radius")
         assertIs<Shape.Circle>(Shape.tryCircle(2.0))
+        demoCase("case:enums.data_enum.shape.maybe_circle.should_return_some_for_positive_radius")
+        assertIs<Shape.Circle>(Shape.maybeCircle(2.0))
+        demoCase("case:enums.data_enum.shape.maybe_circle.should_return_none_for_non_positive_radius")
+        assertNull(Shape.maybeCircle(-1.0))
 
         demoCase("case:enums.data_enum.shape.should_reject_non_positive_circle_radius")
         assertMessageContains(assertFailsWith<FfiException> { Shape.tryCircle(-1.0) }, "radius must be positive")
@@ -941,5 +950,16 @@ class DemoValueTypesTest {
         assertEquals("borrowed:3:standard:none:https://default", ServiceConfig.fromBorrowedName("borrowed").describe())
         demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config")
         assertEquals("stringref:3:standard:none:https://default", ServiceConfig.fromStringRefName("stringref").describe())
+        demoCase("case:records.default_values.service_config.try_with_retries.should_return_config")
+        assertEquals("generated:5:standard:none:https://default", ServiceConfig.tryWithRetries(5).describe())
+        demoCase("case:records.default_values.service_config.try_with_retries.should_reject_negative_retries")
+        assertMessageContains(
+            assertFailsWith<FfiException> { ServiceConfig.tryWithRetries(-1) },
+            "retries must be non-negative",
+        )
+        demoCase("case:records.default_values.service_config.maybe_with_retries.should_return_some")
+        assertEquals("generated:5:standard:none:https://default", ServiceConfig.maybeWithRetries(5)?.describe())
+        demoCase("case:records.default_values.service_config.maybe_with_retries.should_return_none")
+        assertNull(ServiceConfig.maybeWithRetries(-1))
     }
 }

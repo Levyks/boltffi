@@ -2,8 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use boltffi_backend::core::{CoverageMode, bridge, host};
-use boltffi_backend::target::kmp::KmpHost;
-use boltffi_backend::target::python::PythonCExtHost;
+use boltffi_backend::target::{
+    kmp::KmpHost,
+    kotlin::{
+        KotlinApiStyle, KotlinCustomMapping, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost,
+    },
+    python::PythonCExtHost,
+};
 use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
 use thiserror::Error;
@@ -29,6 +34,16 @@ pub struct Generation {
     python_distribution_name: Option<String>,
     python_package_version: Option<String>,
     python_native_library: Option<String>,
+    kotlin_package: Option<String>,
+    kotlin_file: Option<String>,
+    kotlin_android_library: Option<String>,
+    kotlin_desktop_jni_library: Option<String>,
+    kotlin_desktop_fallback_library: Option<String>,
+    kotlin_c_header: Option<PathBuf>,
+    kotlin_desktop_loader: KotlinDesktopLoader,
+    kotlin_api_style: KotlinApiStyle,
+    kotlin_factory_style: KotlinFactoryStyle,
+    kotlin_custom_mappings: Vec<(String, KotlinCustomMapping)>,
 }
 
 impl Generation {
@@ -43,6 +58,16 @@ impl Generation {
             python_distribution_name: None,
             python_package_version: None,
             python_native_library: None,
+            kotlin_package: None,
+            kotlin_file: None,
+            kotlin_android_library: None,
+            kotlin_desktop_jni_library: None,
+            kotlin_desktop_fallback_library: None,
+            kotlin_c_header: None,
+            kotlin_desktop_loader: KotlinDesktopLoader::default(),
+            kotlin_api_style: KotlinApiStyle::default(),
+            kotlin_factory_style: KotlinFactoryStyle::default(),
+            kotlin_custom_mappings: Vec::new(),
         }
     }
 
@@ -88,13 +113,76 @@ impl Generation {
         self
     }
 
+    /// Sets the generated Kotlin package name.
+    pub fn kotlin_package(mut self, package: impl Into<String>) -> Self {
+        self.kotlin_package = Some(package.into());
+        self
+    }
+
+    /// Sets the generated Kotlin owner file name.
+    pub fn kotlin_file(mut self, file: impl Into<String>) -> Self {
+        self.kotlin_file = Some(file.into());
+        self
+    }
+
+    /// Sets the Android native library load name used by Kotlin.
+    pub fn kotlin_android_library(mut self, library: impl Into<String>) -> Self {
+        self.kotlin_android_library = Some(library.into());
+        self
+    }
+
+    /// Sets the desktop JNI wrapper library load name used by Kotlin.
+    pub fn kotlin_desktop_jni_library(mut self, library: impl Into<String>) -> Self {
+        self.kotlin_desktop_jni_library = Some(library.into());
+        self
+    }
+
+    /// Sets the desktop fallback native library load name used by Kotlin.
+    pub fn kotlin_desktop_fallback_library(mut self, library: impl Into<String>) -> Self {
+        self.kotlin_desktop_fallback_library = Some(library.into());
+        self
+    }
+
+    /// Sets the generated C header included by the JNI bridge.
+    pub fn kotlin_c_header(mut self, path: impl Into<PathBuf>) -> Self {
+        self.kotlin_c_header = Some(path.into());
+        self
+    }
+
+    /// Sets how the generated Kotlin module loads desktop native libraries.
+    pub fn kotlin_desktop_loader(mut self, loader: KotlinDesktopLoader) -> Self {
+        self.kotlin_desktop_loader = loader;
+        self
+    }
+
+    /// Sets the generated Kotlin API layout.
+    pub fn kotlin_api_style(mut self, style: KotlinApiStyle) -> Self {
+        self.kotlin_api_style = style;
+        self
+    }
+
+    /// Sets the generated Kotlin class factory layout.
+    pub fn kotlin_factory_style(mut self, style: KotlinFactoryStyle) -> Self {
+        self.kotlin_factory_style = style;
+        self
+    }
+
+    /// Registers Kotlin API mappings for custom types.
+    pub fn kotlin_custom_mappings(
+        mut self,
+        mappings: impl IntoIterator<Item = (String, KotlinCustomMapping)>,
+    ) -> Self {
+        self.kotlin_custom_mappings = mappings.into_iter().collect();
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python => self.render_python(),
+            Target::Kotlin => self.render_kotlin(),
             Target::KotlinMultiplatform => self.render_kmp(),
             Target::Swift
-            | Target::Kotlin
             | Target::Java
             | Target::TypeScript
             | Target::Header
@@ -120,6 +208,57 @@ impl Generation {
             .into_target(&bindings)
             .map_err(GenerationError::Render)?;
         self.render_backend(&target, &bindings)
+    }
+
+    fn render_kotlin(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Native>()?;
+        let package = self
+            .kotlin_package
+            .as_deref()
+            .unwrap_or("com.example.boltffi");
+        let file = self.kotlin_file.as_deref().unwrap_or("BoltFfi");
+        let target = self
+            .kotlin_host(package, file)?
+            .into_target()
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, &bindings)
+    }
+
+    fn kotlin_host(&self, package: &str, file: &str) -> Result<KotlinHost, GenerationError> {
+        let host = KotlinHost::new(package, file)
+            .map_err(GenerationError::Render)?
+            .desktop_loader(self.kotlin_desktop_loader)
+            .api_style(self.kotlin_api_style)
+            .factory_style(self.kotlin_factory_style);
+        let host = self
+            .kotlin_custom_mappings
+            .iter()
+            .fold(host, |host, (custom_type, mapping)| {
+                host.custom_mapping(custom_type.clone(), mapping.clone())
+            });
+        let host = self
+            .kotlin_android_library
+            .iter()
+            .try_fold(host, |host, library| host.android_library(library.clone()))
+            .map_err(GenerationError::Render)?;
+        let host = self
+            .kotlin_desktop_jni_library
+            .iter()
+            .try_fold(host, |host, library| {
+                host.desktop_jni_library(library.clone())
+            })
+            .map_err(GenerationError::Render)?;
+        let host = self
+            .kotlin_desktop_fallback_library
+            .iter()
+            .try_fold(host, |host, library| {
+                host.desktop_fallback_library(library.clone())
+            })
+            .map_err(GenerationError::Render)?;
+        Ok(self
+            .kotlin_c_header
+            .iter()
+            .fold(host, |host, header| host.c_header(header.clone())))
     }
 
     fn render_kmp(&self) -> Result<GeneratedOutput, GenerationError> {

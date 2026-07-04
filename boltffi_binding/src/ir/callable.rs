@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use boltffi_ast::FnTraitKind;
 
 use crate::{
-    AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, CallableScope,
-    CanonicalName, ClosureRegistrationIntrospect, ClosureSignature, DirectValueType,
+    AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, BuiltinType,
+    CallableScope, CanonicalName, ClosureRegistrationIntrospect, ClosureSignature, DirectValueType,
     DirectVectorElementType, Direction, ElementMeta, ForeignBody, HandlePresence, HandleTarget,
     IntegerRepr, IntoRust, NativeSymbol, OutOfRust, Primitive, RustBody, Surface, TypeRef,
 };
@@ -146,6 +146,33 @@ where
         };
         Box::new(param_symbols.chain(return_symbols).chain(execution_symbols))
     }
+
+    /// Returns whether any value crossing in this callable uses a result codec.
+    pub fn uses_result_codec(&self) -> bool {
+        self.params.iter().any(ParamDecl::uses_result_codec)
+            || self.returns.uses_result_codec()
+            || self.error.uses_result_codec()
+    }
+
+    /// Returns whether any value crossing in this callable uses the given builtin codec.
+    pub fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.params
+            .iter()
+            .any(|param| param.uses_builtin_codec(kind))
+            || self.returns.uses_builtin_codec(kind)
+            || self.error.uses_builtin_codec(kind)
+    }
+
+    /// Returns whether any value crossing in this callable uses a direct record vector.
+    pub fn uses_direct_record_vector(&self) -> bool {
+        self.params.iter().any(ParamDecl::uses_direct_record_vector)
+            || self.returns.uses_direct_record_vector()
+    }
+
+    /// Returns whether this callable uses an asynchronous execution protocol.
+    pub fn uses_async_execution(&self) -> bool {
+        self.execution.uses_async_execution()
+    }
 }
 
 /// A callable whose body is implemented in Rust. Foreign code calls
@@ -171,6 +198,15 @@ pub trait ParamDirection<S: Surface>: Direction {
 
     /// Iterates over native symbols referenced by the payload.
     fn native_symbols(payload: &Self::Payload) -> Box<dyn Iterator<Item = &NativeSymbol> + '_>;
+
+    /// Returns whether the payload carries a result codec.
+    fn uses_result_codec(payload: &Self::Payload) -> bool;
+
+    /// Returns whether the payload carries the given builtin codec.
+    fn uses_builtin_codec(payload: &Self::Payload, kind: BuiltinType) -> bool;
+
+    /// Returns whether the payload carries a direct record vector.
+    fn uses_direct_record_vector(payload: &Self::Payload) -> bool;
 }
 
 /// One incoming parameter crossing.
@@ -262,6 +298,27 @@ impl<S: Surface> ParamDirection<S> for IntoRust {
             IncomingParam::Closure(closure) => closure.native_symbols(),
         }
     }
+
+    fn uses_result_codec(payload: &Self::Payload) -> bool {
+        match payload {
+            IncomingParam::Value(plan) => plan.uses_result_codec(),
+            IncomingParam::Closure(closure) => closure.uses_result_codec(),
+        }
+    }
+
+    fn uses_builtin_codec(payload: &Self::Payload, kind: BuiltinType) -> bool {
+        match payload {
+            IncomingParam::Value(plan) => plan.uses_builtin_codec(kind),
+            IncomingParam::Closure(closure) => closure.uses_builtin_codec(kind),
+        }
+    }
+
+    fn uses_direct_record_vector(payload: &Self::Payload) -> bool {
+        match payload {
+            IncomingParam::Value(plan) => plan.uses_direct_record_vector(),
+            IncomingParam::Closure(closure) => closure.uses_direct_record_vector(),
+        }
+    }
 }
 
 impl<S: Surface> ParamDirection<S> for OutOfRust {
@@ -282,6 +339,27 @@ impl<S: Surface> ParamDirection<S> for OutOfRust {
         match payload {
             OutgoingParam::Value(_) => Box::new(std::iter::empty()),
             OutgoingParam::Closure(closure) => closure.native_symbols(),
+        }
+    }
+
+    fn uses_result_codec(payload: &Self::Payload) -> bool {
+        match payload {
+            OutgoingParam::Value(plan) => plan.uses_result_codec(),
+            OutgoingParam::Closure(closure) => closure.uses_result_codec(),
+        }
+    }
+
+    fn uses_builtin_codec(payload: &Self::Payload, kind: BuiltinType) -> bool {
+        match payload {
+            OutgoingParam::Value(plan) => plan.uses_builtin_codec(kind),
+            OutgoingParam::Closure(closure) => closure.uses_builtin_codec(kind),
+        }
+    }
+
+    fn uses_direct_record_vector(payload: &Self::Payload) -> bool {
+        match payload {
+            OutgoingParam::Value(plan) => plan.uses_direct_record_vector(),
+            OutgoingParam::Closure(closure) => closure.uses_direct_record_vector(),
         }
     }
 }
@@ -328,6 +406,18 @@ impl<S: Surface, D: ParamDirection<S>> ParamDecl<S, D> {
 
     pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
         D::native_symbols(&self.payload)
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        D::uses_result_codec(&self.payload)
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        D::uses_builtin_codec(&self.payload, kind)
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        D::uses_direct_record_vector(&self.payload)
     }
 }
 
@@ -432,6 +522,18 @@ where
     pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
         self.crossing.native_symbols()
     }
+
+    fn uses_result_codec(&self) -> bool {
+        self.crossing.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.crossing.uses_builtin_codec(kind)
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        self.crossing.uses_direct_record_vector()
+    }
 }
 
 /// Closure payload at a return slot.
@@ -490,6 +592,18 @@ where
 
     pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
         self.crossing.native_symbols()
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.crossing.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.crossing.uses_builtin_codec(kind)
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        self.crossing.uses_direct_record_vector()
     }
 }
 
@@ -555,6 +669,18 @@ where
                 .native_symbols()
                 .chain(self.invoke.native_symbols()),
         )
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.invoke.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.invoke.uses_builtin_codec(kind)
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        self.invoke.uses_direct_record_vector()
     }
 }
 
@@ -712,6 +838,29 @@ impl<S: Surface, D: Direction> ParamPlan<S, D> {
             _ => None,
         }
     }
+
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::Encoded { codec, .. } => D::codec_uses_result(codec),
+            _ => false,
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::Encoded { codec, .. } => D::codec_uses_builtin(codec, kind),
+            _ => false,
+        }
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        matches!(
+            self,
+            Self::DirectVec {
+                element: DirectVectorElementType::Record(_)
+            }
+        )
+    }
 }
 
 /// Target-language rendering for parameter plans.
@@ -791,6 +940,18 @@ where
 
     pub(crate) fn native_symbols(&self) -> Box<dyn Iterator<Item = &NativeSymbol> + '_> {
         self.plan.native_symbols()
+    }
+
+    fn uses_result_codec(&self) -> bool {
+        self.plan.uses_result_codec()
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        self.plan.uses_builtin_codec(kind)
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        self.plan.uses_direct_record_vector()
     }
 }
 
@@ -1012,6 +1173,36 @@ where
         }
     }
 
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::EncodedViaReturnSlot { codec, .. } | Self::EncodedViaOutPointer { codec, .. } => {
+                D::codec_uses_result(codec)
+            }
+            Self::ClosureViaOutPointer(closure) => closure.uses_result_codec(),
+            _ => false,
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::EncodedViaReturnSlot { codec, .. } | Self::EncodedViaOutPointer { codec, .. } => {
+                D::codec_uses_builtin(codec, kind)
+            }
+            Self::ClosureViaOutPointer(closure) => closure.uses_builtin_codec(kind),
+            _ => false,
+        }
+    }
+
+    fn uses_direct_record_vector(&self) -> bool {
+        match self {
+            Self::DirectVecViaReturnSlot {
+                element: DirectVectorElementType::Record(_),
+            } => true,
+            Self::ClosureViaOutPointer(closure) => closure.uses_direct_record_vector(),
+            _ => false,
+        }
+    }
+
     /// Switches a `*ViaReturnSlot` variant to its `*ViaOutPointer`
     /// counterpart. Called when the matching error channel takes the
     /// return slot.
@@ -1161,6 +1352,24 @@ impl<S: Surface, D: Direction> ErrorDecl<S, D> {
             _ => None,
         }
     }
+
+    fn uses_result_codec(&self) -> bool {
+        match self {
+            Self::EncodedViaReturnSlot { codec, .. } | Self::EncodedViaOutPointer { codec, .. } => {
+                D::codec_uses_result(codec)
+            }
+            _ => false,
+        }
+    }
+
+    fn uses_builtin_codec(&self, kind: BuiltinType) -> bool {
+        match self {
+            Self::EncodedViaReturnSlot { codec, .. } | Self::EncodedViaOutPointer { codec, .. } => {
+                D::codec_uses_builtin(codec, kind)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Whether a callable returns immediately or through an async protocol.
@@ -1191,6 +1400,11 @@ impl<S: Surface> ExecutionDecl<S> {
     /// protocol value.
     pub fn asynchronous(protocol: S::AsyncProtocol) -> Self {
         Self::Asynchronous(protocol)
+    }
+
+    /// Returns whether control returns through an asynchronous protocol.
+    pub fn uses_async_execution(&self) -> bool {
+        matches!(self, Self::Asynchronous(_))
     }
 }
 

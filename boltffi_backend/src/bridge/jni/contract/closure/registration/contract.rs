@@ -18,7 +18,9 @@ use boltffi_binding::ClosureSignature;
 
 use crate::bridge::{
     c::{self, Identifier, TypeFragment},
-    jni::{CallbackClosureHandle, ClosureArgument, JvmClassPath, JvmMethodReturn},
+    jni::{
+        CallbackClosureHandle, ClosureArgument, JvmClassPath, JvmMethodReturn, SuccessOutArgument,
+    },
 };
 
 /// A JNI trampoline registration for one inline closure signature.
@@ -165,5 +167,10 @@ impl ClosureRegistration {
     /// Returns generated C closure arguments.
     pub fn arguments(&self) -> &[ClosureArgument] {
         &self.arguments
+    }
+
+    /// Returns the success out argument for fallible closure success values.
+    pub fn success_out(&self) -> Option<SuccessOutArgument> {
+        self.arguments.iter().find_map(ClosureArgument::success_out)
     }
 }

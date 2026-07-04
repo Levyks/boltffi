@@ -177,6 +177,29 @@ pub fn invoke_result_message_callback(
 }
 
 #[export]
+pub trait StringResultMessageCallback {
+    fn render_message(&self, key: i32) -> Result<String, String>;
+}
+
+#[demo_bench_macros::demo_case(
+    "case:callbacks.sync_traits.string_result_message_callback.should_return_encoded_success",
+    justification = "Ensure a callback method returning Result<String, String> returns its encoded success payload.",
+    directions = "Call `callbacks::sync_traits::invoke_string_result_message_callback` through the generated binding and assert a callback Result<String, String> returns its encoded success payload."
+)]
+#[demo_bench_macros::demo_case(
+    "case:callbacks.sync_traits.string_result_message_callback.should_report_string_error",
+    justification = "Ensure a callback method returning Result<String, String> reports its encoded String error payload.",
+    directions = "Call `callbacks::sync_traits::invoke_string_result_message_callback` through the generated binding with a failing callback and assert the String error is reported by the target language."
+)]
+#[export]
+pub fn invoke_string_result_message_callback(
+    callback: impl StringResultMessageCallback,
+    key: i32,
+) -> Result<String, String> {
+    callback.render_message(key)
+}
+
+#[export]
 pub trait MultiMethodCallback {
     fn method_a(&self, x: i32) -> i32;
     fn method_b(&self, x: i32, y: i32) -> i32;

@@ -20,6 +20,7 @@ impl ClosureArgument {
             ClosureArgumentKind::Bytes(argument) => argument.jvm_arguments(),
             ClosureArgumentKind::DirectVector(argument) => argument.jvm_arguments(),
             ClosureArgumentKind::Closure(argument) => argument.jvm_arguments(),
+            ClosureArgumentKind::SuccessOut(argument) => argument.jvm_arguments(),
         }
     }
 
@@ -35,6 +36,7 @@ impl ClosureArgument {
             ClosureArgumentKind::Bytes(argument) => argument.rust_arguments(),
             ClosureArgumentKind::DirectVector(argument) => argument.rust_arguments(),
             ClosureArgumentKind::Closure(argument) => argument.rust_arguments(),
+            ClosureArgumentKind::SuccessOut(argument) => argument.rust_arguments(),
         }
     }
 
@@ -50,6 +52,7 @@ impl ClosureArgument {
             ClosureArgumentKind::Bytes(argument) => argument.jni_signature(),
             ClosureArgumentKind::DirectVector(argument) => argument.jni_signature(),
             ClosureArgumentKind::Closure(argument) => argument.jni_signature(),
+            ClosureArgumentKind::SuccessOut(argument) => argument.jni_signature(),
         }
     }
 }

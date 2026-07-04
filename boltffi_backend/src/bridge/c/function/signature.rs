@@ -8,7 +8,7 @@ use boltffi_binding::{
 
 use crate::core::{Error, Result};
 
-use super::{Function, poll::PollHandleSymbols};
+use super::{Function, ReturnChannel, poll::PollHandleSymbols};
 use crate::bridge::c::{
     C_BRIDGE_LAYER, DirectVectorElementAbi, Parameter, Type, name, names::Names,
 };
@@ -26,6 +26,7 @@ struct ValueParameter {
 
 struct ReturnParameters {
     signature: Signature,
+    success_out: bool,
 }
 
 struct CallableReturnType {
@@ -163,10 +164,7 @@ where
                     Parameter::byte_length(&self.name)?,
                 ];
                 if receive.needs_encoded_writeback() {
-                    parameters.push(Parameter::new(
-                        format!("{}_out", self.name),
-                        Type::MutPointer(Box::new(Type::Buffer)),
-                    )?);
+                    parameters.push(Parameter::encoded_writeback(&self.name)?);
                 }
                 Ok(parameters)
             }
@@ -222,10 +220,10 @@ where
 
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         match slot {
-            ReturnValueSlot::OutPointer => Ok(vec![Parameter::new(
-                "return_out",
-                Type::MutPointer(Box::new(self.signature.names.direct_value(ty)?)),
-            )?]),
+            ReturnValueSlot::OutPointer => {
+                let ty = Type::MutPointer(Box::new(self.signature.names.direct_value(ty)?));
+                self.out_parameter(ty).map(|parameter| vec![parameter])
+            }
             ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
             _ => Err(Error::UnexpectedBindingShape {
                 layer: C_BRIDGE_LAYER,
@@ -242,7 +240,10 @@ where
         shape: native::BufferShape,
     ) -> Self::Output {
         match slot {
-            ReturnValueSlot::OutPointer => self.signature.encoded_out("return_out", shape),
+            ReturnValueSlot::OutPointer => match self.success_out {
+                true => self.signature.encoded_return_out(shape),
+                false => self.signature.encoded_out("return_out", shape),
+            },
             ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
             _ => Err(Error::UnexpectedBindingShape {
                 layer: C_BRIDGE_LAYER,
@@ -259,10 +260,10 @@ where
         _: HandlePresence,
     ) -> Self::Output {
         match slot {
-            ReturnValueSlot::OutPointer => Ok(vec![Parameter::new(
-                "return_out",
-                Type::MutPointer(Box::new(Type::handle_target(target, carrier)?)),
-            )?]),
+            ReturnValueSlot::OutPointer => {
+                let ty = Type::MutPointer(Box::new(Type::handle_target(target, carrier)?));
+                self.out_parameter(ty).map(|parameter| vec![parameter])
+            }
             ReturnValueSlot::ReturnSlot => Ok(Vec::new()),
             _ => Err(Error::UnexpectedBindingShape {
                 layer: C_BRIDGE_LAYER,
@@ -283,6 +284,15 @@ where
         self.signature
             .closure_return_out(closure)
             .map(|param| vec![param])
+    }
+}
+
+impl ReturnParameters {
+    fn out_parameter(&self, ty: Type) -> Result<Parameter> {
+        match self.success_out {
+            true => Parameter::success_out("return_out", ty),
+            false => Parameter::new("return_out", ty),
+        }
     }
 }
 
@@ -620,11 +630,11 @@ impl Signature {
             .clone()
             .into_iter()
             .chain(self.exported_params(callable.params())?)
-            .chain(self.return_params(callable.returns().plan())?)
+            .chain(self.return_params(callable.returns().plan(), callable.error())?)
             .chain(self.error_params(callable.error())?)
             .collect();
         let returns = self.return_type(callable.returns().plan(), callable.error())?;
-        Function::new(name, params, returns)
+        Function::with_return_channel(name, params, returns, self.return_channel(callable.error()))
     }
 
     fn async_poll_handle(
@@ -642,11 +652,8 @@ impl Signature {
             Type::FutureHandle,
         )?;
         let complete_params = std::iter::once(Parameter::new("handle", Type::FutureHandle)?)
-            .chain([Parameter::new(
-                "out_status",
-                Type::MutPointer(Box::new(Type::Status)),
-            )?])
-            .chain(self.return_params(callable.returns().plan())?)
+            .chain([Parameter::completion_status_out("out_status")?])
+            .chain(self.return_params(callable.returns().plan(), callable.error())?)
             .collect();
         Ok(vec![
             start,
@@ -659,10 +666,11 @@ impl Signature {
                 ],
                 Type::Void,
             )?,
-            Function::new(
+            Function::with_return_channel(
                 symbols.complete.name().as_str(),
                 complete_params,
                 self.async_complete_return(callable.returns().plan(), callable.error())?,
+                self.return_channel(callable.error()),
             )?,
             Function::new(
                 symbols.panic_message.name().as_str(),
@@ -782,7 +790,12 @@ impl Signature {
         D::InvokeScope: ClosureInvokeScope,
     {
         let call_params = params;
-        let return_params = self.callback_return_params(returns)?;
+        let return_params = self.callback_return_params(returns, error)?;
+        let closure_params = call_params
+            .iter()
+            .chain(return_params.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         Ok(vec![
             Parameter::closure_call(
                 name,
@@ -794,7 +807,7 @@ impl Signature {
                         .chain(return_params.iter().map(|parameter| parameter.ty().clone()))
                         .collect(),
                 },
-                call_params,
+                closure_params,
             )?,
             Parameter::closure_context(name)?,
             Parameter::closure_release(name)?,
@@ -809,7 +822,12 @@ impl Signature {
     {
         let invoke = closure.invoke();
         let call_params = D::InvokeScope::parameters(self, invoke.params())?;
-        let return_params = self.callback_return_params(invoke.returns().plan())?;
+        let return_params = self.callback_return_params(invoke.returns().plan(), invoke.error())?;
+        let closure_params = call_params
+            .iter()
+            .chain(return_params.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         let call_type = Type::FunctionPointer {
             returns: Box::new(self.callback_return_type(invoke.returns().plan(), invoke.error())?),
             params: std::iter::once(Type::MutPointer(Box::new(Type::Void)))
@@ -817,10 +835,33 @@ impl Signature {
                 .chain(return_params.iter().map(|parameter| parameter.ty().clone()))
                 .collect(),
         };
-        Parameter::closure_return("return_out", closure.signature(), call_type, call_params)
+        Parameter::closure_return("return_out", closure.signature(), call_type, closure_params)
     }
 
-    fn return_params<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Vec<Parameter>>
+    fn return_params<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Vec<Parameter>>
+    where
+        D: Direction,
+        D::Opposite: ParamDirection<Native>,
+        D::InvokeScope: ClosureInvokeScope,
+    {
+        self.return_params_with(
+            plan,
+            matches!(
+                error,
+                ErrorDecl::StatusViaReturnSlot { .. } | ErrorDecl::EncodedViaReturnSlot { .. }
+            ),
+        )
+    }
+
+    fn return_params_with<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        success_out: bool,
+    ) -> Result<Vec<Parameter>>
     where
         D: Direction,
         D::Opposite: ParamDirection<Native>,
@@ -828,6 +869,7 @@ impl Signature {
     {
         plan.render_with(&mut ReturnParameters {
             signature: self.clone(),
+            success_out,
         })
     }
 
@@ -870,6 +912,16 @@ impl Signature {
                 layer: C_BRIDGE_LAYER,
                 shape: "unknown error declaration",
             }),
+        }
+    }
+
+    fn return_channel<D>(&self, error: &ErrorDecl<Native, D>) -> ReturnChannel
+    where
+        D: Direction,
+    {
+        match error {
+            ErrorDecl::EncodedViaReturnSlot { .. } => ReturnChannel::EncodedError,
+            _ => ReturnChannel::Value,
         }
     }
 
@@ -944,13 +996,36 @@ impl Signature {
         }
     }
 
-    pub fn callback_return_params<D>(&self, plan: &ReturnPlan<Native, D>) -> Result<Vec<Parameter>>
+    fn encoded_return_out(&self, shape: native::BufferShape) -> Result<Vec<Parameter>> {
+        match shape {
+            native::BufferShape::Buffer => Ok(vec![Parameter::success_out(
+                "return_out",
+                Type::MutPointer(Box::new(Type::Buffer)),
+            )?]),
+            native::BufferShape::Slice | native::BufferShape::BufferPointer => {
+                Err(Error::UnexpectedBindingShape {
+                    layer: C_BRIDGE_LAYER,
+                    shape: "native encoded return out-pointer shape",
+                })
+            }
+            _ => Err(Error::UnexpectedBindingShape {
+                layer: C_BRIDGE_LAYER,
+                shape: "unknown native encoded return out-pointer shape",
+            }),
+        }
+    }
+
+    pub fn callback_return_params<D>(
+        &self,
+        plan: &ReturnPlan<Native, D>,
+        error: &ErrorDecl<Native, D>,
+    ) -> Result<Vec<Parameter>>
     where
         D: Direction,
         D::Opposite: ParamDirection<Native>,
         D::InvokeScope: ClosureInvokeScope,
     {
-        self.return_params(plan)
+        self.return_params(plan, error)
     }
 
     pub fn callback_return_type<D>(

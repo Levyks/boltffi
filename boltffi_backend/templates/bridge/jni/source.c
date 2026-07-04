@@ -16,6 +16,10 @@
 {% include "bridge/jni/source/status.c" %}
 {%- endif %}
 
+{%- if checks_error_buffer %}
+{% include "bridge/jni/source/error_buffer.c" %}
+{%- endif %}
+
 {%- if uses_byte_arrays %}
 {% include "bridge/jni/source/byte_arrays.c" %}
 {%- endif %}
@@ -46,6 +50,10 @@
 
 {%- for invoker in callback_completions %}
 {% include "bridge/jni/callback_completion.c" %}
+{%- endfor %}
+
+{%- for writer in success_out_writers %}
+{% include "bridge/jni/success_out.c" %}
 {%- endfor %}
 
 {%- if uses_lifecycle %}

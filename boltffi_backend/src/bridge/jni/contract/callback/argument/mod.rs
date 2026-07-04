@@ -15,7 +15,7 @@ mod jvm_setup;
 
 use crate::bridge::{
     c::Identifier,
-    jni::{CallbackCParameter, CallbackCompletionPayload, JniType},
+    jni::{CallbackCParameter, CallbackCompletionPayload, JniType, SuccessOutArgument},
 };
 
 /// One callback vtable argument forwarded to a JVM callback method.
@@ -30,6 +30,10 @@ enum CallbackArgumentKind {
     Value {
         parameter: CallbackCParameter,
         jni_type: JniType,
+    },
+    SuccessOut {
+        parameter: CallbackCParameter,
+        argument: SuccessOutArgument,
     },
     Bytes {
         name: Identifier,

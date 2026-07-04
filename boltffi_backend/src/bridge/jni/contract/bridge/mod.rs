@@ -25,8 +25,8 @@ use crate::{
 };
 
 use super::{
-    CallbackCompletionInvoker, CallbackRegistration, ClosureRegistration, NativeMethod,
-    StreamProtocolMethods,
+    CallbackCompletionInvoker, CallbackHandleLifecycle, CallbackRegistration, ClosureRegistration,
+    NativeMethod, StreamProtocolMethods, SuccessOutWriter,
 };
 
 /// A complete JNI bridge contract for one generated C source file.
@@ -43,8 +43,10 @@ pub struct JniBridgeContract {
     source_path: FilePath,
     c_header: HeaderInclude,
     free_buffer: Identifier,
+    callback_handle_lifecycle: Option<CallbackHandleLifecycle>,
     callbacks: Vec<CallbackRegistration>,
     callback_completions: Vec<CallbackCompletionInvoker>,
+    success_out_writers: Vec<SuccessOutWriter>,
     closures: Vec<ClosureRegistration>,
     methods: Vec<NativeMethod>,
     streams: Vec<StreamProtocolMethods>,
@@ -71,6 +73,11 @@ impl JniBridgeContract {
         &self.free_buffer
     }
 
+    /// Returns callback handle lifecycle methods when Rust-owned callback handles are exposed.
+    pub fn callback_handle_lifecycle(&self) -> Option<&CallbackHandleLifecycle> {
+        self.callback_handle_lifecycle.as_ref()
+    }
+
     /// Returns generated callback registrations.
     pub fn callbacks(&self) -> &[CallbackRegistration] {
         &self.callbacks
@@ -79,6 +86,11 @@ impl JniBridgeContract {
     /// Returns async callback completion invokers.
     pub fn callback_completions(&self) -> &[CallbackCompletionInvoker] {
         &self.callback_completions
+    }
+
+    /// Returns helper methods that write fallible success values.
+    pub fn success_out_writers(&self) -> &[SuccessOutWriter] {
+        &self.success_out_writers
     }
 
     /// Returns generated closure trampoline registrations.

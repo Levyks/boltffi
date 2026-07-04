@@ -19,6 +19,10 @@ pub fn primitive_c_type(p: PrimitiveType) -> String {
     }
 }
 
+pub fn class_handle_c_type(class_name: &str) -> String {
+    format!("struct BoltFFI{}Handle", class_name)
+}
+
 pub fn abi_type_c(abi_type: &AbiType) -> String {
     match abi_type {
         AbiType::Void => "void".to_string(),
@@ -49,7 +53,7 @@ pub fn abi_type_c(abi_type: &AbiType) -> String {
             let c_return = abi_type_c(return_type);
             format!("{} (*)({})", c_return, param_types.join(", "))
         }
-        AbiType::Handle(_) => "const void*".to_string(),
+        AbiType::Handle(class_id) => format!("const {} *", class_handle_c_type(class_id.as_str())),
         AbiType::CallbackHandle => "BoltFFICallbackHandle".to_string(),
         AbiType::Struct(record_id) => format!("___{}", record_id.as_str()),
     }
@@ -108,5 +112,11 @@ mod tests {
             return_type: Box::new(AbiType::Bool),
         };
         assert_eq!(abi_type_c(&ty), "bool (*)(void*)");
+    }
+
+    #[test]
+    fn handle_emits_named_opaque_struct_pointer() {
+        let ty = AbiType::Handle("Player".into());
+        assert_eq!(abi_type_c(&ty), "const struct BoltFFIPlayerHandle *");
     }
 }

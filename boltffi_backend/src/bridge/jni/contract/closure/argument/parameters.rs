@@ -19,6 +19,7 @@ impl ClosureArgument {
             ClosureArgumentKind::Bytes(argument) => argument.c_parameters(),
             ClosureArgumentKind::DirectVector(argument) => argument.c_parameters(),
             ClosureArgumentKind::Closure(argument) => argument.c_parameters(),
+            ClosureArgumentKind::SuccessOut(argument) => argument.c_parameters(),
         }
     }
 
@@ -29,6 +30,7 @@ impl ClosureArgument {
             ClosureArgumentKind::Bytes(argument) => argument.handle_parameters(),
             ClosureArgumentKind::DirectVector(argument) => argument.handle_parameters(),
             ClosureArgumentKind::Closure(argument) => argument.handle_parameters(),
+            ClosureArgumentKind::SuccessOut(argument) => argument.handle_parameters(),
         }
     }
 }

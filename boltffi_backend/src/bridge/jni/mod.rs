@@ -26,16 +26,17 @@ mod template;
 
 pub use bridge::JniBridge;
 pub use contract::{
-    BytesParameter, CallbackArgument, CallbackBytesArgument, CallbackCParameter,
+    BytesParameter, BytesWriteback, CallbackArgument, CallbackBytesArgument, CallbackCParameter,
     CallbackClosureArgument, CallbackClosureHandle, CallbackClosureReturn,
     CallbackCompletionArgument, CallbackCompletionInvoker, CallbackCompletionPayload,
-    CallbackDirectVectorArgument, CallbackHandleArgument, CallbackHandleClosureReturn,
-    CallbackHandleCompletion, CallbackHandleMethod, CallbackMethod, CallbackParameter,
-    CallbackRecordArgument, CallbackRegistration, CallbackReturn, ClosureArgument,
-    ClosureBytesArgument, ClosureCParameter, ClosureDirectVectorArgument, ClosureHandleArgument,
-    ClosureParameter, ClosureRegistration, ContinuationParameter, DirectStreamBatchMethod,
-    DirectVectorParameter, DirectVectorStackCopy, JniBridgeContract, JniType, JvmMethodReturn,
-    NativeMethod, NativeParameter, NativeParameterKind, NativeReturn, RecordParameter, RecordValue,
-    ScalarParameter, ScalarReturn,
+    CallbackCompletionPayloadValue, CallbackDirectVectorArgument, CallbackHandleArgument,
+    CallbackHandleClosureReturn, CallbackHandleCompletion, CallbackHandleLifecycle,
+    CallbackHandleMethod, CallbackMethod, CallbackParameter, CallbackRecordArgument,
+    CallbackRegistration, CallbackReturn, ClosureArgument, ClosureBytesArgument, ClosureCParameter,
+    ClosureDirectVectorArgument, ClosureHandleArgument, ClosureParameter, ClosureRegistration,
+    ContinuationParameter, DirectStreamBatchMethod, DirectVectorParameter, DirectVectorStackCopy,
+    EncodedErrorReturn, JniBridgeContract, JniType, JvmMethodReturn, NativeMethod, NativeParameter,
+    NativeParameterKind, NativeReturn, RecordParameter, RecordValue, ScalarParameter, ScalarReturn,
+    SuccessOutArgument, SuccessOutReturn, SuccessOutValue, SuccessOutWriter,
 };
 pub use name::{JniSymbolName, JvmClassPath, JvmNameSegment};

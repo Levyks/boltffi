@@ -17,12 +17,14 @@ mod jvm;
 mod parameters;
 mod scalar;
 mod setup;
+mod success_out;
 
 pub use bytes::ClosureBytesArgument;
 pub use c_abi::ClosureCParameter;
 pub use direct_vector::ClosureDirectVectorArgument;
 pub use handle::ClosureHandleArgument;
 pub use scalar::ClosureScalarArgument;
+pub use success_out::ClosureSuccessOutArgument;
 
 /// One inline-closure argument crossing the JNI bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,4 +39,5 @@ enum ClosureArgumentKind {
     Bytes(ClosureBytesArgument),
     DirectVector(ClosureDirectVectorArgument),
     Closure(ClosureHandleArgument),
+    SuccessOut(ClosureSuccessOutArgument),
 }

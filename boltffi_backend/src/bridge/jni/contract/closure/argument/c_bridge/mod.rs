@@ -13,6 +13,7 @@ mod bytes;
 mod direct_vector;
 mod nested_closure;
 mod scalar;
+mod success_out;
 
 use crate::{
     bridge::{c, jni::JvmClassPath},
@@ -65,6 +66,19 @@ impl ClosureArgument {
             c::ParameterGroup::DirectWriteback(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,
                 invariant: "closure call argument cannot be a direct-record writeback",
+            }),
+            c::ParameterGroup::EncodedWriteback(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "closure call argument cannot be an encoded writeback",
+            }),
+            c::ParameterGroup::SuccessOut(index) => Ok(Self {
+                kind: ClosureArgumentKind::SuccessOut(success_out::from_parameter(
+                    call.parameter(*index),
+                )?),
+            }),
+            c::ParameterGroup::CompletionStatusOut(_) => Err(Error::BrokenBridgeContract {
+                bridge: JNI_BRIDGE,
+                invariant: "closure call argument cannot be a status out-pointer",
             }),
             c::ParameterGroup::CallbackCompletion(_) => Err(Error::BrokenBridgeContract {
                 bridge: JNI_BRIDGE,

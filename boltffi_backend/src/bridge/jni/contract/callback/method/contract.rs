@@ -15,7 +15,10 @@ mod slot;
 
 use crate::bridge::{
     c::{self, Identifier, TypeFragment},
-    jni::{CallbackArgument, CallbackCParameter, CallbackClosureReturn, JvmMethodReturn},
+    jni::{
+        CallbackArgument, CallbackCParameter, CallbackClosureReturn, JvmMethodReturn,
+        SuccessOutArgument,
+    },
 };
 
 /// JNI method dispatch for one callback vtable slot.
@@ -106,5 +109,12 @@ impl CallbackMethod {
     /// Returns the C value returned when dispatch fails.
     pub fn failure_value(&self) -> Option<c::Expression> {
         self.returns.failure_value()
+    }
+
+    /// Returns the hidden success pointer argument for fallible callback methods.
+    pub fn success_out(&self) -> Option<SuccessOutArgument> {
+        self.arguments
+            .iter()
+            .find_map(CallbackArgument::success_out)
     }
 }

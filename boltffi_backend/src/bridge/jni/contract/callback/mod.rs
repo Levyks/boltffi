@@ -21,6 +21,7 @@ mod completion;
 mod direct_vector;
 mod handle;
 mod handle_method;
+mod lifecycle;
 mod method;
 mod parameter;
 mod record;
@@ -33,12 +34,14 @@ pub use c_parameter::CallbackCParameter;
 pub use closure::CallbackClosureArgument;
 pub use completion::{
     CallbackCompletionArgument, CallbackCompletionInvoker, CallbackCompletionPayload,
+    CallbackCompletionPayloadValue,
 };
 pub use direct_vector::CallbackDirectVectorArgument;
 pub use handle::CallbackHandleArgument;
 pub use handle_method::{
     CallbackHandleClosureReturn, CallbackHandleCompletion, CallbackHandleMethod,
 };
+pub use lifecycle::CallbackHandleLifecycle;
 pub use method::{CallbackClosureReturn, CallbackMethod};
 pub use parameter::CallbackParameter;
 pub use record::CallbackRecordArgument;
