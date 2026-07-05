@@ -7,7 +7,7 @@ mod write;
 
 pub use argument_buffer::ArgumentBuffer;
 pub use owned_buffer::OwnedBuffer;
-pub use read::Reader;
+pub use read::{ReadExpression, Reader};
 pub use scalar_option::ScalarOption;
 pub use value::ValueScope;
-pub use write::Writer;
+pub use write::{WriteStatement, Writer};

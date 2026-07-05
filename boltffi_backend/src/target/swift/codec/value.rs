@@ -17,8 +17,17 @@ pub struct ValueExpression {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ValueScope {
-    Current(Expression),
+    Current {
+        expression: Expression,
+        positions: PositionAccess,
+    },
     Fields(Vec<(FieldKey, Expression)>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PositionAccess {
+    RecordFields,
+    TupleElements,
 }
 
 impl ValueExpression {
@@ -34,36 +43,76 @@ impl ValueExpression {
     }
 
     pub fn render(self) -> Result<Expression> {
-        let root = match self.value.root() {
-            ValueRoot::SelfValue => return self.scope.render(self.value.path()),
-            ValueRoot::Named(name) | ValueRoot::Local(name) => {
-                Expression::identifier(Name::new(name).parameter()?)
-            }
-            ValueRoot::Binder(binder) => Expression::identifier(Self::binder(*binder)?),
-            _ => return Err(SwiftHost::unsupported("unknown codec value root")),
-        };
-        self.value.path().iter().try_fold(root, Self::field)
+        match self.value.root() {
+            ValueRoot::SelfValue => self.scope.render(self.value.path()),
+            ValueRoot::Named(name) | ValueRoot::Local(name) => Self::render_path(
+                Expression::identifier(Name::new(name).parameter()?),
+                self.value.path(),
+                PositionAccess::TupleElements,
+            ),
+            ValueRoot::Binder(binder) => Self::render_path(
+                Expression::identifier(Self::binder(*binder)?),
+                self.value.path(),
+                PositionAccess::TupleElements,
+            ),
+            _ => Err(SwiftHost::unsupported("unknown codec value root")),
+        }
     }
 
-    fn field(expression: Expression, field: &FieldKey) -> Result<Expression> {
+    fn render_path(
+        expression: Expression,
+        path: &[FieldKey],
+        positions: PositionAccess,
+    ) -> Result<Expression> {
+        path.iter()
+            .enumerate()
+            .try_fold(expression, |expression, (index, field)| {
+                Self::field(expression, field, positions, index)
+            })
+    }
+
+    fn field(
+        expression: Expression,
+        field: &FieldKey,
+        positions: PositionAccess,
+        index: usize,
+    ) -> Result<Expression> {
         match field {
             FieldKey::Named(name) => Ok(Expression::member(expression, Name::new(name).field()?)),
-            FieldKey::Position(position) => {
-                Ok(Expression::member(expression, format!("field{position}")))
-            }
+            FieldKey::Position(position) => Ok(Expression::member(
+                expression,
+                Self::position_field(*position, positions, index),
+            )),
             _ => Err(SwiftHost::unsupported("unknown codec value field")),
+        }
+    }
+
+    fn position_field(position: u32, positions: PositionAccess, index: usize) -> String {
+        match (positions, index) {
+            (PositionAccess::RecordFields, 0) => format!("field{position}"),
+            _ => position.to_string(),
         }
     }
 }
 
 impl ValueScope {
+    pub fn record(expression: Expression) -> Self {
+        Self::Current {
+            expression,
+            positions: PositionAccess::RecordFields,
+        }
+    }
+
     pub fn fields(fields: Vec<(FieldKey, Expression)>) -> Self {
         Self::Fields(fields)
     }
 
     fn render(self, path: &[FieldKey]) -> Result<Expression> {
         match self {
-            Self::Current(current) => path.iter().try_fold(current, ValueExpression::field),
+            Self::Current {
+                expression,
+                positions,
+            } => ValueExpression::render_path(expression, path, positions),
             Self::Fields(fields) => Self::render_field(fields, path),
         }
     }
@@ -74,7 +123,9 @@ impl ValueScope {
                 .into_iter()
                 .find_map(|(key, value)| (key == *field).then_some(value))
                 .ok_or(SwiftHost::unsupported("unknown codec payload field"))
-                .and_then(|value| rest.iter().try_fold(value, ValueExpression::field)),
+                .and_then(|value| {
+                    ValueExpression::render_path(value, rest, PositionAccess::TupleElements)
+                }),
             None => Err(SwiftHost::unsupported("whole payload value")),
         }
     }
@@ -82,6 +133,9 @@ impl ValueScope {
 
 impl From<Expression> for ValueScope {
     fn from(expression: Expression) -> Self {
-        Self::Current(expression)
+        Self::Current {
+            expression,
+            positions: PositionAccess::TupleElements,
+        }
     }
 }

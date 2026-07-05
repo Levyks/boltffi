@@ -90,6 +90,39 @@
         return data[start..<(start + length)]
     }
 
+    @inlinable mutating func readDuration() -> TimeInterval {
+        let seconds = readU64()
+        let nanoseconds = readU32()
+        return Double(seconds) + (Double(nanoseconds) / 1.0e9)
+    }
+
+    @inlinable mutating func readTimestamp() -> Date {
+        let seconds = readI64()
+        let nanoseconds = readU32()
+        let delta = seconds >= 0
+            ? (Double(seconds) + (Double(nanoseconds) / 1.0e9))
+            : (Double(seconds) - (Double(nanoseconds) / 1.0e9))
+        return Date(timeIntervalSince1970: delta)
+    }
+
+    @inlinable mutating func readUuid() -> UUID {
+        let hi = readU64()
+        let lo = readU64()
+        var uuid: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        var hiBe = hi.bigEndian
+        var loBe = lo.bigEndian
+        withUnsafeMutableBytes(of: &uuid) { uuidBytes in
+            Swift.withUnsafeBytes(of: &hiBe) { uuidBytes[0..<8].copyBytes(from: $0) }
+            Swift.withUnsafeBytes(of: &loBe) { uuidBytes[8..<16].copyBytes(from: $0) }
+        }
+        return UUID(uuid: uuid)
+    }
+
+    @inlinable mutating func readUrl() -> URL {
+        guard let url = URL(string: readString()) else { fatalError("Invalid URL") }
+        return url
+    }
+
     @inlinable mutating func readOptional<T>(_ body: (inout WireReader) -> T) -> T? {
         switch readU8() {
         case 0:
@@ -103,7 +136,48 @@
 
     @inlinable mutating func readSequence<T>(_ body: (inout WireReader) -> T) -> [T] {
         let count = Int(readU32())
-        return (0..<count).map { _ in body(&self) }
+        guard count > 0 else { return [] }
+        var result = [T]()
+        result.reserveCapacity(count)
+        for _ in 0..<count {
+            result.append(body(&self))
+        }
+        return result
+    }
+
+    @inlinable mutating func readArray<T>(_ body: (inout WireReader) -> T) -> [T] {
+        readSequence(body)
+    }
+
+    @inlinable mutating func readResult<Success, Failure: Swift.Error>(
+        _ success: (inout WireReader) -> Success,
+        _ failure: (inout WireReader) -> Failure
+    ) -> Swift.Result<Success, Failure> {
+        switch readU8() {
+        case 0:
+            return .success(success(&self))
+        case 1:
+            return .failure(failure(&self))
+        default:
+            fatalError("Invalid result wire tag")
+        }
+    }
+
+    @inlinable mutating func readMap<K: Hashable, V>(
+        _ key: (inout WireReader) -> K,
+        _ value: (inout WireReader) -> V
+    ) -> [K: V] {
+        let count = Int(readU32())
+        var result = [K: V]()
+        result.reserveCapacity(count)
+        for _ in 0..<count {
+            let decodedKey = key(&self)
+            let decodedValue = value(&self)
+            if result.updateValue(decodedValue, forKey: decodedKey) != nil {
+                fatalError("Duplicate map key")
+            }
+        }
+        return result
     }
 }
 
@@ -180,6 +254,44 @@
         data.append(contentsOf: value)
     }
 
+    @inlinable mutating func writeDuration(_ value: TimeInterval) {
+        if value.rounded(.down) > Double(Int64.max) { fatalError("Duration overflow") }
+        if value < 0 { fatalError("Invalid duration") }
+        let seconds = UInt64(value)
+        let nanoseconds = UInt32((value - Double(seconds)) * 1.0e9)
+        writeU64(seconds)
+        writeU32(nanoseconds)
+    }
+
+    @inlinable mutating func writeTimestamp(_ value: Date) {
+        var delta = value.timeIntervalSince1970
+        var sign: Int64 = 1
+        if delta < 0 {
+            sign = -1
+            delta = -delta
+        }
+        if delta.rounded(.down) > Double(Int64.max) { fatalError("Timestamp overflow") }
+        let seconds = Int64(delta)
+        let nanoseconds = UInt32((delta - Double(seconds)) * 1.0e9)
+        writeI64(sign * seconds)
+        writeU32(nanoseconds)
+    }
+
+    @inlinable mutating func writeUuid(_ value: UUID) {
+        var uuid = value.uuid
+        let (hi, lo) = Swift.withUnsafeBytes(of: &uuid) { raw -> (UInt64, UInt64) in
+            let hiBe = raw.loadUnaligned(fromByteOffset: 0, as: UInt64.self)
+            let loBe = raw.loadUnaligned(fromByteOffset: 8, as: UInt64.self)
+            return (UInt64(bigEndian: hiBe), UInt64(bigEndian: loBe))
+        }
+        writeU64(hi)
+        writeU64(lo)
+    }
+
+    @inlinable mutating func writeUrl(_ value: URL) {
+        writeString(value.absoluteString)
+    }
+
     @inlinable mutating func writeOptional<T>(_ value: T?, _ body: (inout WireWriter, T) -> Void) {
         switch value {
         case .some(let value):
@@ -192,7 +304,40 @@
 
     @inlinable mutating func writeSequence<T>(_ value: [T], _ body: (inout WireWriter, T) -> Void) {
         writeU32(UInt32(value.count))
-        value.forEach { body(&self, $0) }
+        for item in value {
+            body(&self, item)
+        }
+    }
+
+    @inlinable mutating func writeArray<T>(_ value: [T], _ body: (inout WireWriter, T) -> Void) {
+        writeSequence(value, body)
+    }
+
+    @inlinable mutating func writeResult<Success, Failure: Swift.Error>(
+        _ value: Swift.Result<Success, Failure>,
+        _ success: (inout WireWriter, Success) -> Void,
+        _ failure: (inout WireWriter, Failure) -> Void
+    ) {
+        switch value {
+        case .success(let value):
+            writeU8(0)
+            success(&self, value)
+        case .failure(let value):
+            writeU8(1)
+            failure(&self, value)
+        }
+    }
+
+    @inlinable mutating func writeMap<K: Hashable, V>(
+        _ value: [K: V],
+        _ key: (inout WireWriter, K) -> Void,
+        _ writeValue: (inout WireWriter, V) -> Void
+    ) {
+        writeU32(UInt32(value.count))
+        for entry in value {
+            key(&self, entry.key)
+            writeValue(&self, entry.value)
+        }
     }
 
     @inlinable func finalize() -> Data {

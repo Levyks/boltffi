@@ -1,0 +1,21 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture(\"direct_vector/primitive_vector_parameter\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public func sum(values: [Int32]) -> Int32 {
+    return values.withUnsafeBufferPointer { __boltffi_values_buffer in
+        return boltffi_function_demo_sum(__boltffi_values_buffer.baseAddress, UInt(__boltffi_values_buffer.count))
+    }
+}

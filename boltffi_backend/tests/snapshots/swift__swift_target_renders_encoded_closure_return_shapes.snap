@@ -1,0 +1,56 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture(\"exports/encoded_closure_return_shapes\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public func installVec(callback: @escaping () -> [UInt32]) {
+    final class __BoltffiCallbackClosure {
+        let invoke: () -> [UInt32]
+        init(_ invoke: @escaping () -> [UInt32]) { self.invoke = invoke }
+    }
+    let __boltffi_callback_box = __BoltffiCallbackClosure(callback)
+    let __boltffi_callback_context = Unmanaged.passRetained(__boltffi_callback_box).toOpaque()
+    let __boltffi_callback_call: @convention(c) (UnsafeMutableRawPointer?) -> FfiBuf_u8 = { context in
+        let __boltffi_result = Unmanaged<__BoltffiCallbackClosure>.fromOpaque(context!).takeUnretainedValue().invoke()
+        return __boltffi_result.withUnsafeBufferPointer { __boltffi_result_buffer in
+            return boltffi_buf_from_bytes(UnsafeRawPointer(__boltffi_result_buffer.baseAddress)?.assumingMemoryBound(to: UInt8.self), UInt(__boltffi_result_buffer.count * MemoryLayout<UInt32>.stride))
+        }
+    }
+    let __boltffi_callback_release: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
+        guard let context = context else { return }
+        Unmanaged<__BoltffiCallbackClosure>.fromOpaque(context).release()
+    }
+    boltffi_function_demo_install_vec(__boltffi_callback_call, __boltffi_callback_context, __boltffi_callback_release)
+}
+
+public func installOption(callback: @escaping () -> Int32?) {
+    final class __BoltffiCallbackClosure {
+        let invoke: () -> Int32?
+        init(_ invoke: @escaping () -> Int32?) { self.invoke = invoke }
+    }
+    let __boltffi_callback_box = __BoltffiCallbackClosure(callback)
+    let __boltffi_callback_context = Unmanaged.passRetained(__boltffi_callback_box).toOpaque()
+    let __boltffi_callback_call: @convention(c) (UnsafeMutableRawPointer?) -> FfiBuf_u8 = { context in
+        let __boltffi_closure_result = Unmanaged<__BoltffiCallbackClosure>.fromOpaque(context!).takeUnretainedValue().invoke()
+        let __boltffi_closure_result_bytes = boltffiEncode { __boltffi_closure_result_writer in __boltffi_closure_result_writer.writeOptional(__boltffi_closure_result) { writer, value in writer.writeI32(value) } }
+        return __boltffi_closure_result_bytes.withUnsafeBufferPointer { __boltffi_closure_result_buffer in
+            boltffi_buf_from_bytes(__boltffi_closure_result_buffer.baseAddress, UInt(__boltffi_closure_result_buffer.count))
+        }
+    }
+    let __boltffi_callback_release: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
+        guard let context = context else { return }
+        Unmanaged<__BoltffiCallbackClosure>.fromOpaque(context).release()
+    }
+    boltffi_function_demo_install_option(__boltffi_callback_call, __boltffi_callback_context, __boltffi_callback_release)
+}

@@ -6,14 +6,17 @@ use boltffi_binding::{
 
 use crate::{
     bridge::c::CBridgeContract,
-    core::{Emitted, RenderContext, Result},
+    core::{Diagnostic, Emitted, RenderContext, Result},
     target::swift::{
         SwiftHost,
-        codec::{Reader, ValueScope, Writer},
+        codec::{ReadExpression, Reader, ValueScope, WriteStatement, Writer},
         name_style::Name,
         render::{
             Documentation, SwiftType,
-            function::{AssociatedFunction, Receiver},
+            function::{
+                AssociatedFunction, AssociatedFunctions, Initializer, Receiver, ValueFunctions,
+                ValueType,
+            },
         },
         syntax::{Expression, Identifier, Statement, TypeName},
     },
@@ -31,9 +34,10 @@ pub struct Enumeration {
     name: TypeName,
     conforms_to_error: bool,
     body: Body,
-    initializers: Vec<AssociatedFunction>,
+    initializers: Vec<Initializer>,
     static_methods: Vec<AssociatedFunction>,
     instance_methods: Vec<AssociatedFunction>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,12 +88,8 @@ impl Enumeration {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         match declaration {
-            EnumDecl::CStyle(enumeration) => enumeration.map_role(|enumeration, error| {
-                Self::from_c_style(enumeration, bridge, context, error)
-            }),
-            EnumDecl::Data(enumeration) => enumeration.map_role(|enumeration, error| {
-                Self::from_data(enumeration, bridge, context, error)
-            }),
+            EnumDecl::CStyle(enumeration) => Self::from_c_style(enumeration, bridge, context),
+            EnumDecl::Data(enumeration) => Self::from_data(enumeration, bridge, context),
             _ => Err(SwiftHost::unsupported("unknown enum declaration")),
         }
     }
@@ -97,11 +97,16 @@ impl Enumeration {
     pub fn render(&self) -> Result<Emitted> {
         let mut source = EnumerationTemplate { enumeration: self }.render()?;
         source.push_str("\n\n");
-        let emitted = Emitted::primary(source);
-        match self.requires_wire_runtime() {
-            true => Ok(emitted.with_aux(AssociatedFunction::wire_helper()?)),
-            false => Ok(emitted),
-        }
+        let emitted = Emitted::primary(source).with_diagnostics(self.diagnostics.clone());
+        let emitted = match self.requires_wire_runtime() {
+            true => emitted.with_aux(AssociatedFunction::wire_helper()?),
+            false => emitted,
+        };
+        let emitted = match self.requires_async_runtime() {
+            true => emitted.with_aux(AssociatedFunction::async_helper()?),
+            false => emitted,
+        };
+        Ok(emitted)
     }
 
     fn name(&self) -> &TypeName {
@@ -148,7 +153,7 @@ impl Enumeration {
         }
     }
 
-    fn initializers(&self) -> &[AssociatedFunction] {
+    fn initializers(&self) -> &[Initializer] {
         &self.initializers
     }
 
@@ -165,21 +170,50 @@ impl Enumeration {
             || self
                 .initializers
                 .iter()
-                .chain(self.static_methods.iter())
+                .any(Initializer::requires_wire_runtime)
+            || self
+                .static_methods
+                .iter()
                 .chain(self.instance_methods.iter())
                 .any(AssociatedFunction::requires_wire_runtime)
+    }
+
+    fn requires_async_runtime(&self) -> bool {
+        self.static_methods
+            .iter()
+            .chain(self.instance_methods.iter())
+            .any(AssociatedFunction::requires_async_runtime)
     }
 
     fn from_c_style(
         enumeration: &CStyleEnumDecl<Native>,
         bridge: &CBridgeContract,
         context: &RenderContext<Native>,
-        conforms_to_error: bool,
     ) -> Result<Self> {
+        let (mut initializers, mut diagnostics) =
+            Initializer::from_enum_declarations(enumeration.initializers(), bridge, context)?
+                .into_parts();
+        let (value_initializers, static_methods, static_diagnostics) = Self::value_methods(
+            enumeration.methods(),
+            ValueType::enumeration(enumeration.id()),
+            bridge,
+            context,
+        )?
+        .into_parts();
+        let (instance_methods, instance_diagnostics) = Self::methods(
+            enumeration.methods(),
+            Some(Receiver::direct()),
+            bridge,
+            context,
+        )?
+        .into_parts();
+        initializers.extend(value_initializers);
+        diagnostics.extend(static_diagnostics);
+        diagnostics.extend(instance_diagnostics);
         Ok(Self {
             documentation: Documentation::new(enumeration.meta().doc(), ""),
             name: Name::new(enumeration.name()).type_name(),
-            conforms_to_error,
+            conforms_to_error: enumeration.is_error_payload(),
             body: Body::CStyle {
                 raw_type: SwiftType::primitive(enumeration.repr().primitive())?,
                 variants: enumeration
@@ -188,20 +222,10 @@ impl Enumeration {
                     .map(CStyleVariant::from_declaration)
                     .collect::<Result<Vec<_>>>()?,
             },
-            initializers: enumeration
-                .initializers()
-                .iter()
-                .map(|initializer| {
-                    AssociatedFunction::from_initializer(initializer, bridge, context)
-                })
-                .collect::<Result<Vec<_>>>()?,
-            static_methods: Self::methods(enumeration.methods(), None, bridge, context)?,
-            instance_methods: Self::methods(
-                enumeration.methods(),
-                Some(Receiver::direct()),
-                bridge,
-                context,
-            )?,
+            initializers,
+            static_methods,
+            instance_methods,
+            diagnostics,
         })
     }
 
@@ -209,12 +233,37 @@ impl Enumeration {
         enumeration: &DataEnumDecl<Native>,
         bridge: &CBridgeContract,
         context: &RenderContext<Native>,
-        conforms_to_error: bool,
     ) -> Result<Self> {
+        let (mut initializers, mut diagnostics) =
+            Initializer::from_enum_declarations(enumeration.initializers(), bridge, context)?
+                .into_parts();
+        let (value_initializers, static_methods, static_diagnostics) = Self::value_methods(
+            enumeration.methods(),
+            ValueType::enumeration(enumeration.id()),
+            bridge,
+            context,
+        )?
+        .into_parts();
+        let (instance_methods, instance_diagnostics) = Self::methods(
+            enumeration.methods(),
+            Some(Receiver::encoded(
+                enumeration.name(),
+                enumeration.read(),
+                enumeration.write(),
+                bridge,
+                context,
+            )?),
+            bridge,
+            context,
+        )?
+        .into_parts();
+        initializers.extend(value_initializers);
+        diagnostics.extend(static_diagnostics);
+        diagnostics.extend(instance_diagnostics);
         Ok(Self {
             documentation: Documentation::new(enumeration.meta().doc(), ""),
             name: Name::new(enumeration.name()).type_name(),
-            conforms_to_error,
+            conforms_to_error: enumeration.is_error_payload(),
             body: Body::Data {
                 variants: enumeration
                     .variants()
@@ -222,24 +271,10 @@ impl Enumeration {
                     .map(|variant| DataVariant::from_declaration(variant, context))
                     .collect::<Result<Vec<_>>>()?,
             },
-            initializers: enumeration
-                .initializers()
-                .iter()
-                .map(|initializer| {
-                    AssociatedFunction::from_initializer(initializer, bridge, context)
-                })
-                .collect::<Result<Vec<_>>>()?,
-            static_methods: Self::methods(enumeration.methods(), None, bridge, context)?,
-            instance_methods: Self::methods(
-                enumeration.methods(),
-                Some(Receiver::encoded(
-                    enumeration.name(),
-                    enumeration.write(),
-                    context,
-                )?),
-                bridge,
-                context,
-            )?,
+            initializers,
+            static_methods,
+            instance_methods,
+            diagnostics,
         })
     }
 
@@ -248,14 +283,17 @@ impl Enumeration {
         receiver: Option<Receiver>,
         bridge: &CBridgeContract,
         context: &RenderContext<Native>,
-    ) -> Result<Vec<AssociatedFunction>> {
-        methods
-            .iter()
-            .filter(|method| method.callable().receiver().is_some() == receiver.is_some())
-            .map(|method| {
-                AssociatedFunction::from_method(method, receiver.clone(), bridge, context)
-            })
-            .collect()
+    ) -> Result<AssociatedFunctions> {
+        AssociatedFunction::from_methods(methods, receiver, bridge, context)
+    }
+
+    fn value_methods(
+        methods: &[ExportedMethodDecl<Native, NativeSymbol>],
+        value_type: ValueType,
+        bridge: &CBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<ValueFunctions> {
+        AssociatedFunction::from_value_methods(methods, value_type, None, bridge, context)
     }
 }
 
@@ -408,14 +446,18 @@ impl DataField {
             .write()
             .render_with(&mut Writer::new(writer, scope, context))
             .into_iter()
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(WriteStatement::into_statement)
+            .collect::<Vec<_>>();
         match write.as_slice() {
             [write] => Ok(Self {
                 name,
                 ty: SwiftType::type_ref(field.ty(), context)?,
                 read: field
                     .read()
-                    .render_with(&mut Reader::new(reader, context))?,
+                    .render_with(&mut Reader::new(reader, context))
+                    .map(ReadExpression::into_expression)?,
                 write: write.clone(),
             }),
             _ => Err(SwiftHost::unsupported("multi-statement data enum field")),

@@ -1,0 +1,132 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture(\"callback/async_callback_return_shapes\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public struct Point: Hashable, Equatable, Sendable {
+    public var x: Int32
+    public var y: Int32
+
+    public init(x: Int32, y: Int32) {
+        self.x = x
+        self.y = y
+    }
+
+    @usableFromInline init(fromC c: ___Point) {
+        self.init(x: c.x, y: c.y)
+    }
+
+    @usableFromInline var cValue: ___Point {
+        ___Point(x: x, y: y)
+    }
+}
+
+public enum LoadError: Int32, Hashable, Sendable, CaseIterable, Error {
+    case bad = 1
+
+    @usableFromInline init(fromC c: Int32) {
+        self = LoadError(rawValue: c)!
+    }
+
+    @usableFromInline var cValue: Int32 {
+        rawValue
+    }
+}
+
+public protocol Listener: AnyObject {
+    func value(key: UInt32) async -> UInt32
+    func point(point: Point) async -> Point
+    func values(count: UInt32) async -> [UInt32]
+    func tryLoad(key: UInt32) async throws -> String
+}
+
+private final class ListenerWrapper {
+    let impl: Listener
+
+    init(_ impl: Listener) {
+        self.impl = impl
+    }
+}
+
+private var __boltffi_listener_vtable: ___ListenerVTable = {
+    ___ListenerVTable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        value: { handle, key, complete, complete_context in
+            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), 0); return }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            _Concurrency.Task {
+                let __boltffi_result = await wrapper.impl.value(key: key)
+                complete?(complete_context, FfiStatus(code: 0), __boltffi_result)
+            }
+        },
+        point: { handle, point, complete, complete_context in
+            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), ___Point()); return }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            _Concurrency.Task {
+                let __boltffi_result = await wrapper.impl.point(point: Point(fromC: point))
+                complete?(complete_context, FfiStatus(code: 0), __boltffi_result.cValue)
+            }
+        },
+        values: { handle, count, complete, complete_context in
+            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), FfiBuf_u8()); return }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            _Concurrency.Task {
+                let __boltffi_result = await wrapper.impl.values(count: count)
+                _ = __boltffi_result.withUnsafeBufferPointer { __boltffi_result_buffer in
+                    complete?(complete_context, FfiStatus(code: 0), boltffi_buf_from_bytes(UnsafeRawPointer(__boltffi_result_buffer.baseAddress)?.assumingMemoryBound(to: UInt8.self), UInt(__boltffi_result_buffer.count * MemoryLayout<UInt32>.stride)))
+                }
+            }
+        },
+        try_load: { handle, key, complete, complete_context in
+            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), FfiBuf_u8()); return }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            _Concurrency.Task {
+                do {
+                    let __boltffi_result = try await wrapper.impl.tryLoad(key: key)
+                    let __boltffi_result_bytes = boltffiEncode { __boltffi_result_writer in __boltffi_result_writer.writeString(__boltffi_result) }
+                    __boltffi_result_bytes.withUnsafeBufferPointer { __boltffi_result_buffer in
+                        complete?(complete_context, FfiStatus(code: 0), boltffi_buf_from_bytes(__boltffi_result_buffer.baseAddress, UInt(__boltffi_result_buffer.count)))
+                    }
+                } catch {
+                    let __boltffi_error_bytes = boltffiEncode { __boltffi_error_writer in __boltffi_error_writer.writeI32((error as? LoadError)!.rawValue) }
+                    __boltffi_error_bytes.withUnsafeBufferPointer { __boltffi_error_buffer in
+                        complete?(complete_context, FfiStatus(code: 1), boltffi_buf_from_bytes(__boltffi_error_buffer.baseAddress, UInt(__boltffi_error_buffer.count)))
+                    }
+                }
+            }
+        }
+    )
+}()
+
+private enum ListenerBridge {
+    private static let register: Void = {
+        boltffi_register_callback_demo_listener(&__boltffi_listener_vtable)
+    }()
+
+    static func create(_ impl: Listener) -> BoltFFICallbackHandle {
+        _ = register
+        let wrapper = ListenerWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return boltffi_create_callback_demo_listener(handle)
+    }
+}

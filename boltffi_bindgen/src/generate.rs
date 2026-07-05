@@ -8,6 +8,7 @@ use boltffi_backend::target::{
         KotlinApiStyle, KotlinCustomMapping, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost,
     },
     python::PythonCExtHost,
+    swift::SwiftHost,
 };
 use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
@@ -44,6 +45,9 @@ pub struct Generation {
     kotlin_api_style: KotlinApiStyle,
     kotlin_factory_style: KotlinFactoryStyle,
     kotlin_custom_mappings: Vec<(String, KotlinCustomMapping)>,
+    swift_ffi_module: Option<String>,
+    swift_file: Option<String>,
+    swift_c_header: Option<PathBuf>,
 }
 
 impl Generation {
@@ -68,6 +72,9 @@ impl Generation {
             kotlin_api_style: KotlinApiStyle::default(),
             kotlin_factory_style: KotlinFactoryStyle::default(),
             kotlin_custom_mappings: Vec::new(),
+            swift_ffi_module: None,
+            swift_file: None,
+            swift_c_header: None,
         }
     }
 
@@ -176,18 +183,34 @@ impl Generation {
         self
     }
 
+    /// Sets the C FFI module imported by the generated Swift source.
+    pub fn swift_ffi_module(mut self, module: impl Into<String>) -> Self {
+        self.swift_ffi_module = Some(module.into());
+        self
+    }
+
+    /// Sets the generated Swift source file.
+    pub fn swift_file(mut self, file: impl Into<String>) -> Self {
+        self.swift_file = Some(file.into());
+        self
+    }
+
+    /// Sets the C bridge header path generated with the Swift source.
+    pub fn swift_c_header(mut self, path: impl Into<PathBuf>) -> Self {
+        self.swift_c_header = Some(path.into());
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python => self.render_python(),
             Target::Kotlin => self.render_kotlin(),
             Target::KotlinMultiplatform => self.render_kmp(),
-            Target::Swift
-            | Target::Java
-            | Target::TypeScript
-            | Target::Header
-            | Target::Dart
-            | Target::CSharp => Err(GenerationError::UnsupportedTarget { target }),
+            Target::Swift => self.render_swift(),
+            Target::Java | Target::TypeScript | Target::Header | Target::Dart | Target::CSharp => {
+                Err(GenerationError::UnsupportedTarget { target })
+            }
         }
     }
 
@@ -267,6 +290,15 @@ impl Generation {
         self.render_backend(&target, &bindings)
     }
 
+    fn render_swift(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Native>()?;
+        let target = self
+            .swift_host()?
+            .into_target()
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, &bindings)
+    }
+
     fn render_backend<H, S>(
         &self,
         target: &BackendTarget<H, S>,
@@ -298,6 +330,20 @@ impl Generation {
             .iter()
             .fold(host, |host, library| host.native_library(library.clone()));
         Ok(host.version(self.python_package_version.clone()))
+    }
+
+    fn swift_host(&self) -> Result<SwiftHost, GenerationError> {
+        let module = self.swift_ffi_module.as_deref().unwrap_or("BoltFFI");
+        let host = SwiftHost::new(module).map_err(GenerationError::Render)?;
+        let host = self
+            .swift_file
+            .iter()
+            .try_fold(host, |host, file| host.file(file.clone()))
+            .map_err(GenerationError::Render)?;
+        Ok(self
+            .swift_c_header
+            .iter()
+            .fold(host, |host, header| host.c_header(header.clone())))
     }
 
     /// Writes generated output to a directory.

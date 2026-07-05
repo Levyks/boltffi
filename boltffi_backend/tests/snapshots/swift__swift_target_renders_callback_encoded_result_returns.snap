@@ -1,0 +1,72 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_partial_fixture(\"callback/callback_encoded_status_result\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public protocol MessageMapper: AnyObject {
+    func mapMessage(key: Int32) throws -> String
+}
+
+private final class MessageMapperWrapper {
+    let impl: MessageMapper
+
+    init(_ impl: MessageMapper) {
+        self.impl = impl
+    }
+}
+
+private var __boltffi_message_mapper_vtable: ___MessageMapperVTable = {
+    ___MessageMapperVTable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<MessageMapperWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<MessageMapperWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        map_message: { handle, return_out, key in
+            guard handle != 0 else { fatalError("invalid callback handle") }
+            let wrapper = Unmanaged<MessageMapperWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            do {
+                let __boltffi_result = try wrapper.impl.mapMessage(key: key)
+                let __boltffi_result_bytes = boltffiEncode { __boltffi_result_writer in __boltffi_result_writer.writeString(__boltffi_result) }
+                __boltffi_result_bytes.withUnsafeBufferPointer { __boltffi_result_buffer in
+                    return_out?.pointee = boltffi_buf_from_bytes(__boltffi_result_buffer.baseAddress, UInt(__boltffi_result_buffer.count))
+                }
+                return FfiBuf_u8()
+            } catch {
+                let __boltffi_error_bytes = boltffiEncode { __boltffi_error_writer in __boltffi_error_writer.writeString((error as? FfiError)?.message ?? String(describing: error)) }
+                return __boltffi_error_bytes.withUnsafeBufferPointer { __boltffi_error_buffer in
+                    boltffi_buf_from_bytes(__boltffi_error_buffer.baseAddress, UInt(__boltffi_error_buffer.count))
+                }
+            }
+        }
+    )
+}()
+
+private enum MessageMapperBridge {
+    private static let register: Void = {
+        boltffi_register_callback_demo_message_mapper(&__boltffi_message_mapper_vtable)
+    }()
+
+    static func create(_ impl: MessageMapper) -> BoltFFICallbackHandle {
+        _ = register
+        let wrapper = MessageMapperWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return boltffi_create_callback_demo_message_mapper(handle)
+    }
+}

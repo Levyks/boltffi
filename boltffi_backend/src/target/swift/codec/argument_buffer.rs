@@ -24,6 +24,15 @@ impl ArgumentBuffer {
         })
     }
 
+    pub fn from_parts(bytes: Identifier, buffer: Identifier, writer: Identifier) -> Self {
+        Self {
+            bytes,
+            buffer,
+            writer,
+            statements: Vec::new(),
+        }
+    }
+
     pub fn with_statements(mut self, statements: Vec<Statement>) -> Self {
         self.statements = statements;
         self
@@ -54,24 +63,58 @@ impl ArgumentBuffer {
         Statement::let_value(&self.bytes, self.encode_call())
     }
 
-    pub fn with_buffer_scope(&self, body: String, indent: &str, returns_value: bool) -> String {
-        let prefix = if returns_value { "return " } else { "" };
-        format!(
-            "{indent}{prefix}{}.withUnsafeBufferPointer {{ {} in\n{}\n{indent}}}",
-            self.bytes, self.buffer, body
+    pub fn effect_scope(&self, body: Statement, indent: &str) -> String {
+        Statement::discarding_unsafe_buffer_scope(&self.bytes, &self.buffer, body, indent)
+    }
+
+    pub fn unsafe_buffer_scope(&self, body: Statement, indent: &str) -> String {
+        Statement::unsafe_buffer_scope(&self.bytes, &self.buffer, body, indent)
+    }
+
+    pub fn returning_scope(&self, body: Statement, indent: &str, throwing: bool) -> String {
+        Statement::returning_unsafe_buffer_scope(&self.bytes, &self.buffer, body, indent, throwing)
+    }
+
+    pub fn binding_scope(
+        &self,
+        binding: &Identifier,
+        body: Statement,
+        indent: &str,
+        throwing: bool,
+    ) -> String {
+        Statement::binding_unsafe_buffer_scope(
+            &self.bytes,
+            &self.buffer,
+            binding,
+            body,
+            indent,
+            throwing,
+        )
+    }
+
+    pub fn copy_expression(&self, copy: &Identifier) -> Expression {
+        Expression::call(
+            copy,
+            [
+                Expression::member(&self.buffer, "baseAddress"),
+                Expression::call(
+                    TypeName::uint(),
+                    [Expression::member(&self.buffer, "count")]
+                        .into_iter()
+                        .collect::<ArgumentList>(),
+                ),
+            ]
+            .into_iter()
+            .collect::<ArgumentList>(),
         )
     }
 
     fn encode_call(&self) -> Expression {
-        Expression::trailing_closure(
+        Expression::trailing_closure_statements(
             "boltffiEncode",
             ArgumentList::default(),
             &self.writer,
-            self.statements
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; "),
+            self.statements.clone(),
         )
     }
 }

@@ -1,0 +1,49 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture(\"exports/result_values\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public struct Response: Hashable, Equatable, Sendable {
+    public var result: Swift.Result<Int32, FfiError>
+
+    public init(result: Swift.Result<Int32, FfiError>) {
+        self.result = result
+    }
+
+    @inlinable static func decode(from reader: inout WireReader) -> Response {
+        Response(result: reader.readResult({ reader in reader.readI32() }, { reader in FfiError(message: reader.readString()) }))
+    }
+
+    @inlinable func encode(to writer: inout WireWriter) {
+        writer.writeResult(self.result, { writer, __boltffi_value_0 in writer.writeI32(__boltffi_value_0) }, { writer, __boltffi_value_0 in writer.writeString(__boltffi_value_0.message) })
+    }
+}
+
+public func resultToString(value: Swift.Result<Int32, FfiError>) -> String {
+    let __boltffi_value_bytes = boltffiEncode { __boltffi_value_writer in __boltffi_value_writer.writeResult(value, { __boltffi_value_writer, __boltffi_value_0 in __boltffi_value_writer.writeI32(__boltffi_value_0) }, { __boltffi_value_writer, __boltffi_value_0 in __boltffi_value_writer.writeString(__boltffi_value_0.message) }) }
+    return __boltffi_value_bytes.withUnsafeBufferPointer { __boltffi_value_buffer in
+        let __boltffi_result = boltffi_function_demo_result_to_string(__boltffi_value_buffer.baseAddress!, UInt(__boltffi_value_buffer.count))
+        defer { boltffi_free_buf(__boltffi_result) }
+        return boltffiDecodeOwnedBuf(__boltffi_result.ptr, Int(__boltffi_result.len)) { __boltffi_reader in __boltffi_reader.readString() }
+    }
+}
+
+public func echoResponse(response: Response) -> Response {
+    let __boltffi_response_bytes = boltffiEncode { __boltffi_response_writer in response.encode(to: &__boltffi_response_writer) }
+    return __boltffi_response_bytes.withUnsafeBufferPointer { __boltffi_response_buffer in
+        let __boltffi_result = boltffi_function_demo_echo_response(__boltffi_response_buffer.baseAddress!, UInt(__boltffi_response_buffer.count))
+        defer { boltffi_free_buf(__boltffi_result) }
+        return boltffiDecodeOwnedBuf(__boltffi_result.ptr, Int(__boltffi_result.len)) { __boltffi_reader in Response.decode(from: &__boltffi_reader) }
+    }
+}

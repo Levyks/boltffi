@@ -31,6 +31,11 @@ pub enum GeneratedLocal {
     ErrorBuffer,
     WireReader,
     ErrorReader,
+    FutureHandle,
+    FutureStatus,
+    StreamSubscription,
+    StreamBatch,
+    StreamBatchCount,
 }
 
 impl SwiftModule {
@@ -162,6 +167,10 @@ impl GeneratedLocal {
         Identifier::parse(format!("__boltffi_{}", self.role()))
     }
 
+    pub fn suffixed(self, suffix: &str) -> Result<Identifier> {
+        Identifier::parse(format!("__boltffi_{}_{}", self.role(), suffix))
+    }
+
     fn role(self) -> &'static str {
         match self {
             Self::ReturnBuffer => "result",
@@ -169,6 +178,11 @@ impl GeneratedLocal {
             Self::ErrorBuffer => "error",
             Self::WireReader => "reader",
             Self::ErrorReader => "error_reader",
+            Self::FutureHandle => "future",
+            Self::FutureStatus => "status",
+            Self::StreamSubscription => "subscription",
+            Self::StreamBatch => "stream_batch",
+            Self::StreamBatchCount => "stream_count",
         }
     }
 }

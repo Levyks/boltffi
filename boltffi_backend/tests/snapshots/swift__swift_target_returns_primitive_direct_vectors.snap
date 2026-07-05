@@ -1,0 +1,46 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture(\"direct_vector/primitive_vector_return\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public func echoValues(values: [Int32]) -> [Int32] {
+    return values.withUnsafeBufferPointer { __boltffi_values_buffer in
+        let __boltffi_result = boltffi_function_demo_echo_values(__boltffi_values_buffer.baseAddress, UInt(__boltffi_values_buffer.count))
+        defer { boltffi_free_buf(__boltffi_result) }
+        guard __boltffi_result.len > 0, let __boltffi_result_ptr = __boltffi_result.ptr else { return [] }
+        let __boltffi_result_count = Int(__boltffi_result.len) / MemoryLayout<Int32>.stride
+        let __boltffi_result_raw = UnsafeRawPointer(__boltffi_result_ptr).assumingMemoryBound(to: Int32.self)
+        return Array(UnsafeBufferPointer(start: __boltffi_result_raw, count: __boltffi_result_count))
+    }
+}
+
+public func echoWords(values: [UInt32]) -> [UInt32] {
+    return values.withUnsafeBufferPointer { __boltffi_values_buffer in
+        let __boltffi_result = boltffi_function_demo_echo_words(__boltffi_values_buffer.baseAddress, UInt(__boltffi_values_buffer.count))
+        defer { boltffi_free_buf(__boltffi_result) }
+        guard __boltffi_result.len > 0, let __boltffi_result_ptr = __boltffi_result.ptr else { return [] }
+        let __boltffi_result_count = Int(__boltffi_result.len) / MemoryLayout<UInt32>.stride
+        let __boltffi_result_raw = UnsafeRawPointer(__boltffi_result_ptr).assumingMemoryBound(to: UInt32.self)
+        return Array(UnsafeBufferPointer(start: __boltffi_result_raw, count: __boltffi_result_count))
+    }
+}
+
+public func makeRatios() -> [Double] {
+    let __boltffi_result = boltffi_function_demo_make_ratios()
+    defer { boltffi_free_buf(__boltffi_result) }
+    guard __boltffi_result.len > 0, let __boltffi_result_ptr = __boltffi_result.ptr else { return [] }
+    let __boltffi_result_count = Int(__boltffi_result.len) / MemoryLayout<Double>.stride
+    let __boltffi_result_raw = UnsafeRawPointer(__boltffi_result_ptr).assumingMemoryBound(to: Double.self)
+    return Array(UnsafeBufferPointer(start: __boltffi_result_raw, count: __boltffi_result_count))
+}

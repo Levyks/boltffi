@@ -49,19 +49,21 @@
 {%- endif %}
 {%- for initializer in enumeration.initializers() %}
 
-{{ initializer.documentation() }}    public static func {{ initializer.name() }}({% for parameter in initializer.parameters() %}{{ parameter.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){{ initializer.returns().signature() }} {
+{{ initializer.documentation() }}{% if initializer.factory() %}    public static func {{ initializer.name() }}({{ initializer.parameter_list() }}){{ initializer.throwing_keyword() }} -> {{ initializer.factory_return() }} {
+{% else %}    public init{{ initializer.failable_marker() }}({{ initializer.parameter_list() }}){{ initializer.throwing_keyword() }} {
+{% endif -%}
 {{ initializer.body() }}
     }
 {%- endfor %}
 {%- for method in enumeration.static_methods() %}
 
-{{ method.documentation() }}    public {{ method.static_keyword() }}func {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){{ method.returns().signature() }} {
+{{ method.documentation() }}    public {{ method.static_keyword() }}{{ method.mutating_keyword() }}func {{ method.name() }}({{ method.parameter_list() }}){{ method.async_keyword() }}{{ method.returns().signature() }} {
 {{ method.body() }}
     }
 {%- endfor %}
 {%- for method in enumeration.instance_methods() %}
 
-{{ method.documentation() }}    public {{ method.static_keyword() }}func {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){{ method.returns().signature() }} {
+{{ method.documentation() }}    public {{ method.static_keyword() }}{{ method.mutating_keyword() }}func {{ method.name() }}({{ method.parameter_list() }}){{ method.async_keyword() }}{{ method.returns().signature() }} {
 {{ method.body() }}
     }
 {%- endfor %}

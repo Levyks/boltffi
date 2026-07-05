@@ -47,7 +47,7 @@ impl ScalarOption {
         SwiftPrimitive::new(self.primitive).read_expression(reader)
     }
 
-    fn write_statement(self, writer: Identifier, value: Expression) -> Result<Statement> {
+    pub fn write_statement(self, writer: Identifier, value: Expression) -> Result<Statement> {
         let parameter_writer = Identifier::parse("writer")?;
         let parameter_value = Identifier::parse("value")?;
         Ok(Statement::expression(

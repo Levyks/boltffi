@@ -1,0 +1,64 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_partial_fixture(\"callback/callback_optional_scalar_return\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public protocol Listener: AnyObject {
+    func next() -> UInt32?
+}
+
+private final class ListenerWrapper {
+    let impl: Listener
+
+    init(_ impl: Listener) {
+        self.impl = impl
+    }
+}
+
+private var __boltffi_listener_vtable: ___ListenerVTable = {
+    ___ListenerVTable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        next: { handle in
+            guard handle != 0 else { fatalError("invalid callback handle") }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            let __boltffi_result = wrapper.impl.next()
+            let __boltffi_result_bytes = boltffiEncode { __boltffi_result_writer in __boltffi_result_writer.writeOptional(__boltffi_result) { writer, value in writer.writeU32(value) } }
+            return __boltffi_result_bytes.withUnsafeBufferPointer { __boltffi_result_buffer in
+                boltffi_buf_from_bytes(__boltffi_result_buffer.baseAddress, UInt(__boltffi_result_buffer.count))
+            }
+        }
+    )
+}()
+
+private enum ListenerBridge {
+    private static let register: Void = {
+        boltffi_register_callback_demo_listener(&__boltffi_listener_vtable)
+    }()
+
+    static func create(_ impl: Listener) -> BoltFFICallbackHandle {
+        _ = register
+        let wrapper = ListenerWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return boltffi_create_callback_demo_listener(handle)
+    }
+}

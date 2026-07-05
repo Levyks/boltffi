@@ -1,0 +1,65 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_partial_fixture(\"callback/callback_direct_vector_parameter\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public protocol Listener: AnyObject {
+    func process(values: [Int32]) -> [Int32]
+}
+
+private final class ListenerWrapper {
+    let impl: Listener
+
+    init(_ impl: Listener) {
+        self.impl = impl
+    }
+}
+
+private var __boltffi_listener_vtable: ___ListenerVTable = {
+    ___ListenerVTable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        process: { handle, values_ptr, values_len in
+            guard handle != 0 else { fatalError("invalid callback handle") }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            let __boltffi_values_count = Int(values_len)
+            let __boltffi_values_value = __boltffi_values_count == 0 ? [] : Array(UnsafeBufferPointer(start: values_ptr!, count: __boltffi_values_count))
+            let __boltffi_result = wrapper.impl.process(values: __boltffi_values_value)
+            return __boltffi_result.withUnsafeBufferPointer { __boltffi_result_buffer in
+                return boltffi_buf_from_bytes(UnsafeRawPointer(__boltffi_result_buffer.baseAddress)?.assumingMemoryBound(to: UInt8.self), UInt(__boltffi_result_buffer.count * MemoryLayout<Int32>.stride))
+            }
+        }
+    )
+}()
+
+private enum ListenerBridge {
+    private static let register: Void = {
+        boltffi_register_callback_demo_listener(&__boltffi_listener_vtable)
+    }()
+
+    static func create(_ impl: Listener) -> BoltFFICallbackHandle {
+        _ = register
+        let wrapper = ListenerWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return boltffi_create_callback_demo_listener(handle)
+    }
+}

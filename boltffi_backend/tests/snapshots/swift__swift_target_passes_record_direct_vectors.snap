@@ -1,0 +1,44 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture(\"direct_vector/record_vector_parameter\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public struct Point: Hashable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+
+    @usableFromInline init(fromC c: ___Point) {
+        self.init(x: c.x, y: c.y)
+    }
+
+    @usableFromInline var cValue: ___Point {
+        ___Point(x: x, y: y)
+    }
+}
+
+public func count(values: [Point]) -> UInt32 {
+    var __boltffi_values_storage: [___Point] = []
+    __boltffi_values_storage.reserveCapacity(values.count)
+    for item in values {
+        __boltffi_values_storage.append(item.cValue)
+    }
+    return __boltffi_values_storage.withUnsafeBytes { __boltffi_values_buffer in
+        return boltffi_function_demo_count(__boltffi_values_buffer.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt(__boltffi_values_buffer.count))
+    }
+}

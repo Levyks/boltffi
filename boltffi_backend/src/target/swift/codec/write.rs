@@ -19,6 +19,18 @@ pub struct Writer<'context, 'bindings> {
     context: &'context RenderContext<'bindings, Native>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WriteStatement {
+    statement: Statement,
+    value: WriteValue,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WriteValue {
+    String,
+    Other,
+}
+
 impl<'context, 'bindings> Writer<'context, 'bindings> {
     pub fn new(
         name: Identifier,
@@ -36,25 +48,27 @@ impl<'context, 'bindings> Writer<'context, 'bindings> {
         Err(SwiftHost::unsupported(shape))
     }
 
-    fn write(&self, method: &str, value: &ValueRef) -> Result<Statement> {
-        Ok(Statement::expression(Expression::call(
-            Expression::member(&self.name, method),
-            [ValueExpression::new(value, self.scope.clone()).render()?]
-                .into_iter()
-                .collect::<ArgumentList>(),
+    fn write(&self, method: &str, value: &ValueRef) -> Result<WriteStatement> {
+        Ok(WriteStatement::new(Statement::expression(
+            Expression::call(
+                Expression::member(&self.name, method),
+                [ValueExpression::new(value, self.scope.clone()).render()?]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+            ),
         )))
     }
 
-    fn write_encodable(&self, value: &ValueRef) -> Result<Statement> {
+    fn write_encodable(&self, value: &ValueRef) -> Result<WriteStatement> {
         ValueExpression::new(value, self.scope.clone())
             .render()
             .map(|value| {
-                Statement::expression(Expression::call(
+                WriteStatement::new(Statement::expression(Expression::call(
                     Expression::member(value, "encode"),
                     [Expression::labeled("to", Expression::address(&self.name))]
                         .into_iter()
                         .collect::<ArgumentList>(),
-                ))
+                )))
             })
     }
 
@@ -62,7 +76,7 @@ impl<'context, 'bindings> Writer<'context, 'bindings> {
         ValueExpression::new(value, self.scope.clone()).render()
     }
 
-    fn single_statement(statements: Vec<Result<Statement>>) -> Result<Statement> {
+    fn single_statement(statements: Vec<Result<WriteStatement>>) -> Result<WriteStatement> {
         let statements = statements.into_iter().collect::<Result<Vec<_>>>()?;
         match statements.as_slice() {
             [statement] => Ok(statement.clone()),
@@ -72,13 +86,13 @@ impl<'context, 'bindings> Writer<'context, 'bindings> {
 
     fn c_style_enum_repr(&self, id: EnumId) -> Result<Primitive> {
         match self.context.enumeration(id) {
-            Some(EnumDecl::CStyle(enumeration)) => {
-                enumeration.map(|enumeration| Ok(enumeration.repr().primitive()))
-            }
-            Some(EnumDecl::Data(_)) => {
-                self.unsupported("data enum where C-style enum was expected")
-            }
-            Some(_) => self.unsupported("unknown enum where C-style enum was expected"),
+            Some(EnumDecl::CStyle(enumeration)) => Ok(enumeration.repr().primitive()),
+            Some(EnumDecl::Data(_)) => Err(SwiftHost::unsupported(
+                "data enum where C-style enum was expected",
+            )),
+            Some(_) => Err(SwiftHost::unsupported(
+                "unknown enum where C-style enum was expected",
+            )),
             None => Err(Error::BrokenBridgeContract {
                 bridge: SwiftHost::TARGET,
                 invariant: "missing enum type in Swift codec writer",
@@ -88,24 +102,26 @@ impl<'context, 'bindings> Writer<'context, 'bindings> {
 }
 
 impl CodecWrite for Writer<'_, '_> {
-    type Stmt = Result<Statement>;
+    type Stmt = Result<WriteStatement>;
 
     fn primitive(&mut self, primitive: Primitive, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            SwiftPrimitive::new(primitive).write_statement(self.name.clone(), value)
+            SwiftPrimitive::new(primitive)
+                .write_statement(self.name.clone(), value)
+                .map(WriteStatement::new)
         })]
     }
 
     fn string(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
-        vec![self.write("writeString", value)]
+        vec![self.write("writeString", value).map(WriteStatement::string)]
     }
 
     fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![self.write("writeBytes", value)]
     }
 
-    fn direct_record(&mut self, _: RecordId, _: &ValueRef) -> Vec<Self::Stmt> {
-        vec![self.unsupported("direct record codec write")]
+    fn direct_record(&mut self, _: RecordId, value: &ValueRef) -> Vec<Self::Stmt> {
+        vec![self.write_encodable(value)]
     }
 
     fn encoded_record(&mut self, _: RecordId, value: &ValueRef) -> Vec<Self::Stmt> {
@@ -116,6 +132,7 @@ impl CodecWrite for Writer<'_, '_> {
         vec![self.value(value).and_then(|value| {
             SwiftPrimitive::new(self.c_style_enum_repr(id)?)
                 .write_statement(self.name.clone(), Expression::member(value, "rawValue"))
+                .map(WriteStatement::new)
         })]
     }
 
@@ -131,15 +148,24 @@ impl CodecWrite for Writer<'_, '_> {
         vec![self.unsupported("callback handle codec write")]
     }
 
-    fn custom<F>(&mut self, _: CustomTypeId, _: &ValueRef, _: F) -> Vec<Self::Stmt>
+    fn custom<F>(&mut self, _: CustomTypeId, value: &ValueRef, representation: F) -> Vec<Self::Stmt>
     where
         F: FnOnce(&mut Self, &ValueRef) -> Vec<Self::Stmt>,
     {
-        vec![self.unsupported("custom codec write")]
+        representation(self, value)
+            .into_iter()
+            .map(|statement| statement.map(WriteStatement::custom_representation))
+            .collect()
     }
 
-    fn builtin(&mut self, _: BuiltinType, _: &ValueRef) -> Vec<Self::Stmt> {
-        vec![self.unsupported("builtin codec write")]
+    fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt> {
+        let method = match kind {
+            BuiltinType::Duration => "writeDuration",
+            BuiltinType::SystemTime => "writeTimestamp",
+            BuiltinType::Uuid => "writeUuid",
+            BuiltinType::Url => "writeUrl",
+        };
+        vec![self.write(method, value)]
     }
 
     fn optional(
@@ -149,14 +175,14 @@ impl CodecWrite for Writer<'_, '_> {
         inner: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            Ok(Statement::expression(
+            Ok(WriteStatement::new(Statement::expression(
                 Expression::trailing_closure_parameters(
                     Expression::member(self.name.clone(), "writeOptional"),
                     [value].into_iter().collect::<ArgumentList>(),
                     [self.name.clone(), ValueExpression::binder(binder)?],
-                    Self::single_statement(inner)?,
+                    Self::single_statement(inner)?.statement,
                 ),
-            ))
+            )))
         })]
     }
 
@@ -168,40 +194,118 @@ impl CodecWrite for Writer<'_, '_> {
         element: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
         vec![self.value(value).and_then(|value| {
-            Ok(Statement::expression(
+            Ok(WriteStatement::new(Statement::expression(
                 Expression::trailing_closure_parameters(
-                    Expression::member(self.name.clone(), "writeSequence"),
+                    Expression::member(self.name.clone(), "writeArray"),
                     [value].into_iter().collect::<ArgumentList>(),
                     [self.name.clone(), ValueExpression::binder(binder)?],
-                    Self::single_statement(element)?,
+                    Self::single_statement(element)?.statement,
                 ),
-            ))
+            )))
         })]
     }
 
-    fn tuple(&mut self, _: &ValueRef, _: Vec<Vec<Self::Stmt>>) -> Vec<Self::Stmt> {
-        vec![self.unsupported("tuple codec write")]
+    fn tuple(&mut self, _: &ValueRef, elements: Vec<Vec<Self::Stmt>>) -> Vec<Self::Stmt> {
+        elements.into_iter().flatten().collect()
     }
 
     fn result(
         &mut self,
-        _: &ValueRef,
-        _: BinderId,
-        _: Vec<Self::Stmt>,
-        _: Vec<Self::Stmt>,
+        value: &ValueRef,
+        binder: BinderId,
+        ok: Vec<Self::Stmt>,
+        err: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
-        vec![self.unsupported("result codec write")]
+        vec![self.value(value).and_then(|value| {
+            let ok = Self::single_statement(ok)?.statement;
+            let err = Self::single_statement(err)?;
+            Ok(WriteStatement::new(Statement::expression(
+                Expression::call(
+                    Expression::member(self.name.clone(), "writeResult"),
+                    [
+                        value,
+                        Expression::closure(
+                            [self.name.clone(), ValueExpression::binder(binder)?],
+                            ok,
+                        ),
+                        Expression::closure(
+                            [self.name.clone(), ValueExpression::binder(binder)?],
+                            err.result_error(self.name.clone(), binder)?,
+                        ),
+                    ]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+                ),
+            )))
+        })]
     }
 
     fn map(
         &mut self,
         _: MapKind,
-        _: &ValueRef,
-        _: BinderId,
-        _: Vec<Self::Stmt>,
-        _: BinderId,
-        _: Vec<Self::Stmt>,
+        value: &ValueRef,
+        key_binder: BinderId,
+        key: Vec<Self::Stmt>,
+        value_binder: BinderId,
+        map_value: Vec<Self::Stmt>,
     ) -> Vec<Self::Stmt> {
-        vec![self.unsupported("map codec write")]
+        vec![self.value(value).and_then(|value| {
+            Ok(WriteStatement::new(Statement::expression(
+                Expression::call(
+                    Expression::member(self.name.clone(), "writeMap"),
+                    [
+                        value,
+                        Expression::closure(
+                            [self.name.clone(), ValueExpression::binder(key_binder)?],
+                            Self::single_statement(key)?.statement,
+                        ),
+                        Expression::closure(
+                            [self.name.clone(), ValueExpression::binder(value_binder)?],
+                            Self::single_statement(map_value)?.statement,
+                        ),
+                    ]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+                ),
+            )))
+        })]
+    }
+}
+
+impl WriteStatement {
+    pub fn into_statement(self) -> Statement {
+        self.statement
+    }
+
+    fn new(statement: Statement) -> Self {
+        Self {
+            statement,
+            value: WriteValue::Other,
+        }
+    }
+
+    fn string(mut self) -> Self {
+        self.value = WriteValue::String;
+        self
+    }
+
+    fn custom_representation(mut self) -> Self {
+        self.value = WriteValue::Other;
+        self
+    }
+
+    fn result_error(&self, writer: Identifier, binder: BinderId) -> Result<Statement> {
+        match self.value {
+            WriteValue::String => Ok(Statement::expression(Expression::call(
+                Expression::member(writer, "writeString"),
+                [Expression::member(
+                    ValueExpression::binder(binder)?,
+                    "message",
+                )]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            ))),
+            WriteValue::Other => Ok(self.statement.clone()),
+        }
     }
 }

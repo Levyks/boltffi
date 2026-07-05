@@ -1,0 +1,45 @@
+---
+source: boltffi_backend/tests/swift.rs
+assertion_line: 238
+expression: "rendered_fixture(\"exports/returned_closure_function\")"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public func makeCounter() -> (UInt32) -> UInt32 {
+    struct __BoltffiReturnedClosureU32ToU32 {
+        var invoke: (@convention(c) (UnsafeMutableRawPointer?, UInt32) -> UInt32)? = nil
+        var context: UnsafeMutableRawPointer? = nil
+        var release: (@convention(c) (UnsafeMutableRawPointer?) -> Void)? = nil
+    }
+    final class __BoltffiReturnedClosureU32ToU32Owner {
+        var storage: __BoltffiReturnedClosureU32ToU32
+        init(_ storage: __BoltffiReturnedClosureU32ToU32) {
+            self.storage = storage
+        }
+        deinit {
+            storage.release?(storage.context)
+        }
+    }
+    var __boltffi_result: __BoltffiReturnedClosureU32ToU32 = __BoltffiReturnedClosureU32ToU32()
+    let __boltffi_status = boltffi_function_demo_make_counter(&__boltffi_result)
+    guard __boltffi_status.code == 0 else {
+        fatalError("returned closure registration failed with code \(__boltffi_status.code)")
+    }
+    let __boltffi_result_owner = __BoltffiReturnedClosureU32ToU32Owner(__boltffi_result)
+    return { arg0 in
+        guard let __boltffi_invoke = __boltffi_result_owner.storage.invoke else {
+            fatalError("returned closure was released")
+        }
+        return __boltffi_invoke(__boltffi_result_owner.storage.context, arg0)
+    }
+}

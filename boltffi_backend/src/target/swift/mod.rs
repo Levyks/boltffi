@@ -1,6 +1,8 @@
 //! Swift target rendered through the C ABI bridge.
 
+mod c_abi;
 mod codec;
+mod default_value;
 mod name_style;
 mod primitive;
 mod render;
@@ -100,6 +102,10 @@ impl host::HostBackend for SwiftHost {
             .stable(BindingCapability::Enums)
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Classes)
+            .stable(BindingCapability::Streams)
+            .stable(BindingCapability::Constants)
+            .stable(BindingCapability::CustomTypes)
+            .stable(BindingCapability::Callbacks)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -144,38 +150,38 @@ impl host::HostBackend for SwiftHost {
 
     fn callback(
         &self,
-        _decl: &CallbackDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        decl: &CallbackDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("callback declaration"))
+        render::Callback::from_declaration(decl, bridge, context)?.render()
     }
 
     fn stream(
         &self,
-        _decl: &StreamDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        decl: &StreamDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("stream declaration"))
+        render::Stream::from_declaration(decl, bridge, context)?.render()
     }
 
     fn constant(
         &self,
-        _decl: &ConstantDecl<Self::Surface>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        decl: &ConstantDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("constant declaration"))
+        render::Constant::from_declaration(decl, bridge, context)?.render()
     }
 
     fn custom_type(
         &self,
-        _decl: &CustomTypeDecl,
+        decl: &CustomTypeDecl,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("custom type declaration"))
+        render::CustomType::from_declaration(decl, context)?.render()
     }
 
     fn assemble<'decl>(
