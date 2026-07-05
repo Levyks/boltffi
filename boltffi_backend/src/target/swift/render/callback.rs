@@ -325,7 +325,7 @@ impl CallbackHandle {
             bridge: TypeName::new(format!("{ty}Bridge")),
             ty,
             presence,
-            optional_callback: Identifier::parse("__boltffi_callback")?,
+            optional_callback: Identifier::parse("boltffiCallback")?,
         })
     }
 

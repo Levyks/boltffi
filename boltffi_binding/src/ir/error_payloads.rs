@@ -4,8 +4,8 @@ use super::{
     CallbackDecl, CallbackProtocolIntrospect, ClassDecl, CodecNode, ConstantValueDecl, Decl,
     DeclarationRef, EnumDecl, EnumId, ErrorChannel, ExportedCallable, ExportedMethodDecl,
     FunctionDecl, ImportedCallable, IncomingParam, InitializerDecl, IntoRust, NativeSymbol,
-    OutOfRust, OutgoingParam, ParamPlan, ReadPlan, RecordDecl, RecordId, ReturnPlan, Surface,
-    TypeRef, WritePlan,
+    OutOfRust, OutgoingParam, ParamPlan, ReadPlan, RecordDecl, RecordId, ReturnPlan, StreamDecl,
+    StreamItemPlan, Surface, TypeRef, WritePlan,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -55,7 +55,8 @@ impl ErrorPayloadTypes {
                 }
             }
             DeclarationRef::Callback(callback) => self.insert_callback(callback),
-            DeclarationRef::Stream(_) | DeclarationRef::CustomType(_) => {}
+            DeclarationRef::Stream(stream) => self.insert_stream(stream),
+            DeclarationRef::CustomType(_) => {}
         }
     }
 
@@ -93,6 +94,17 @@ impl ErrorPayloadTypes {
                 .methods()
                 .iter()
                 .for_each(|method| self.insert_exported_callable(method.callable()));
+        }
+    }
+
+    fn insert_stream<S: Surface>(&mut self, stream: &StreamDecl<S>) {
+        self.insert_stream_item(stream.item());
+    }
+
+    fn insert_stream_item<S: Surface>(&mut self, item: &StreamItemPlan<S>) {
+        if let StreamItemPlan::Encoded { ty, read, .. } = item {
+            self.insert_read_plan(read);
+            self.insert_result_errors(ty);
         }
     }
 

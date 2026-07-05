@@ -132,7 +132,7 @@ impl ClosureArgument {
         Ok(Self {
             source,
             ty,
-            box_type: TypeName::new(format!("__Boltffi{}Closure", source_name.type_name())),
+            box_type: TypeName::new(format!("BoltFFI{}Closure", source_name.type_name())),
             box_binding: source_name.generated("box")?,
             context: source_name.generated("context")?,
             call: source_name.generated("call")?,
@@ -468,7 +468,7 @@ impl ClosureSuccess {
     fn new(ty: TypeName) -> Result<Self> {
         Ok(Self {
             binding: Identifier::parse("return_out")?,
-            value: Identifier::parse("__boltffi_closure_success")?,
+            value: Identifier::parse("boltffiClosureSuccess")?,
             ty,
         })
     }
@@ -527,11 +527,11 @@ impl EncodedClosureError {
         context: &RenderContext<Native>,
     ) -> Result<Self> {
         let buffer = ArgumentBuffer::from_parts(
-            Identifier::parse("__boltffi_closure_error_bytes")?,
-            Identifier::parse("__boltffi_closure_error_buffer")?,
-            Identifier::parse("__boltffi_closure_error_writer")?,
+            Identifier::parse("boltffiClosureErrorBytes")?,
+            Identifier::parse("boltffiClosureErrorBuffer")?,
+            Identifier::parse("boltffiClosureErrorWriter")?,
         );
-        let value = Identifier::parse("__boltffi_closure_error")?;
+        let value = Identifier::parse("boltffiClosureError")?;
         let write = codec
             .render_with(&mut Writer::new(
                 buffer.writer().clone(),
@@ -545,7 +545,7 @@ impl EncodedClosureError {
             .collect::<Vec<_>>();
         Ok(Self {
             public_ty: SwiftType::type_ref(ty, context)?,
-            success: Identifier::parse("__boltffi_closure_success")?,
+            success: Identifier::parse("boltffiClosureSuccess")?,
             value,
             buffer: buffer.with_statements(write),
             copy: Identifier::parse(bridge.support().buffer_from_bytes()?.name())?,
@@ -865,11 +865,11 @@ impl EncodedClosureReturn {
         bridge: &CBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        let result = Identifier::parse("__boltffi_closure_result")?;
+        let result = Identifier::parse("boltffiClosureResult")?;
         let buffer = ArgumentBuffer::from_parts(
-            Identifier::parse("__boltffi_closure_result_bytes")?,
-            Identifier::parse("__boltffi_closure_result_buffer")?,
-            Identifier::parse("__boltffi_closure_result_writer")?,
+            Identifier::parse("boltffiClosureResultBytes")?,
+            Identifier::parse("boltffiClosureResultBuffer")?,
+            Identifier::parse("boltffiClosureResultWriter")?,
         );
         let write = codec
             .render_with(&mut Writer::new(
@@ -890,7 +890,7 @@ impl EncodedClosureReturn {
     }
 
     fn scalar_option(primitive: Primitive, bridge: &CBridgeContract) -> Result<Self> {
-        let result = Identifier::parse("__boltffi_closure_result")?;
+        let result = Identifier::parse("boltffiClosureResult")?;
         let buffer = Self::buffer()?;
         let write = vec![ScalarOption::new(primitive).write_statement(
             buffer.writer().clone(),
@@ -941,9 +941,9 @@ impl EncodedClosureReturn {
 
     fn buffer() -> Result<ArgumentBuffer> {
         Ok(ArgumentBuffer::from_parts(
-            Identifier::parse("__boltffi_closure_result_bytes")?,
-            Identifier::parse("__boltffi_closure_result_buffer")?,
-            Identifier::parse("__boltffi_closure_result_writer")?,
+            Identifier::parse("boltffiClosureResultBytes")?,
+            Identifier::parse("boltffiClosureResultBuffer")?,
+            Identifier::parse("boltffiClosureResultWriter")?,
         ))
     }
 }

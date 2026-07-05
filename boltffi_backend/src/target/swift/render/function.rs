@@ -1953,7 +1953,8 @@ impl AsyncCall {
     ) -> Result<String> {
         let status = GeneratedLocal::FutureStatus.identifier()?;
         let complete_call = self.complete_call(future, &status, returns);
-        let complete_body = returns.body(complete_call, error, &format!("{indent}    "))?;
+        let complete_body =
+            returns.async_body(complete_call, error, &status, &format!("{indent}    "))?;
         Ok(Statement::try_await_returning_trailing_closure(
             "boltffiAsyncCall",
             [
@@ -2191,6 +2192,83 @@ impl Return {
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>()
             .join("\n"))
+    }
+
+    fn async_body(
+        &self,
+        call: Expression,
+        error: &ErrorConversion,
+        status: &Identifier,
+        indent: &str,
+    ) -> Result<String> {
+        let setup = self
+            .success
+            .as_ref()
+            .map(|success| success.statement().indented(indent));
+        let error = error.body(call.clone(), indent)?;
+        let complete = match error.consumes_call() {
+            true => None,
+            false => {
+                let binding = self.async_complete_binding()?;
+                Some((
+                    binding.clone(),
+                    Statement::let_value(&binding, call).indented(indent),
+                ))
+            }
+        };
+        let status = Self::async_status_guard(status, indent);
+        let success = self.success.as_ref().map(SuccessSlot::expression);
+        let value = match (&self.ty, success, complete.as_ref()) {
+            (_, Some(value), _) => Some(value),
+            (Some(_), None, Some((binding, _))) => Some(Expression::identifier(binding.clone())),
+            _ => None,
+        };
+        let result = value
+            .map(|value| self.body_for_success(value, indent))
+            .transpose()?;
+        Ok([
+            setup,
+            Some(error.text),
+            complete.map(|(_, statement)| statement),
+            Some(status),
+            result,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n"))
+    }
+
+    fn async_status_guard(status: &Identifier, indent: &str) -> String {
+        let code = Expression::member(status, "code");
+        Statement::guard_else(
+            Expression::equal(&code, Expression::literal(Literal::integer(0))),
+            [Statement::throwing(Expression::call(
+                "FfiError",
+                [Expression::labeled(
+                    "message",
+                    Expression::literal(Literal::interpolated(
+                        "FFI failed in async completion with code ",
+                        code,
+                        "",
+                    )),
+                )]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            ))],
+        )
+        .indented(indent)
+    }
+
+    fn async_complete_binding(&self) -> Result<Identifier> {
+        if self.success.is_some() {
+            return GeneratedLocal::ReturnBuffer.suffixed("complete");
+        }
+        match &self.conversion {
+            ReturnConversion::Encoded(encoded) => Ok(encoded.buffer.binding().clone()),
+            _ => GeneratedLocal::ReturnBuffer.identifier(),
+        }
     }
 
     fn body_for_value(&self, value: Expression, indent: &str) -> Result<String> {
@@ -2571,7 +2649,7 @@ impl ReturnedClosure {
                 parameter_groups: returned.parameter_groups(),
             })?;
         let storage = TypeName::new(format!(
-            "__BoltffiReturnedClosure{}",
+            "BoltFFIReturnedClosure{}",
             closure.signature().as_str()
         ));
         let owner = TypeName::new(format!("{storage}Owner"));
@@ -2712,7 +2790,7 @@ impl ReturnedClosure {
     }
 
     fn status_check(&self, call: Expression, indent: &str) -> Result<String> {
-        let status = Identifier::parse("__boltffi_status")?;
+        let status = GeneratedLocal::ClosureStatus.identifier()?;
         let code = Expression::member(&status, "code");
         Ok([
             Statement::let_value(&status, call).indented(indent),
@@ -2754,7 +2832,7 @@ impl ReturnedClosure {
     }
 
     fn invoke_body(&self, indent: &str) -> Result<String> {
-        let invoke = Identifier::parse("__boltffi_invoke")?;
+        let invoke = GeneratedLocal::ClosureInvoke.identifier()?;
         let storage = Expression::member(&self.owner_binding, "storage");
         let call = Expression::call(
             Expression::identifier(invoke.clone()),

@@ -39,7 +39,7 @@ impl ValueExpression {
     }
 
     pub fn binder(binder: BinderId) -> Result<Identifier> {
-        Identifier::parse(format!("__boltffi_value_{}", binder.raw()))
+        Identifier::parse(format!("boltffiValue{}", binder.raw()))
     }
 
     pub fn render(self) -> Result<Expression> {

@@ -87,7 +87,7 @@
         guard length > 0 else { return Data() }
         let start = position
         position += length
-        return data[start..<(start + length)]
+        return Data(data[start..<(start + length)])
     }
 
     @inlinable mutating func readDuration() -> TimeInterval {
@@ -99,9 +99,7 @@
     @inlinable mutating func readTimestamp() -> Date {
         let seconds = readI64()
         let nanoseconds = readU32()
-        let delta = seconds >= 0
-            ? (Double(seconds) + (Double(nanoseconds) / 1.0e9))
-            : (Double(seconds) - (Double(nanoseconds) / 1.0e9))
+        let delta = Double(seconds) + (Double(nanoseconds) / 1.0e9)
         return Date(timeIntervalSince1970: delta)
     }
 
@@ -264,16 +262,12 @@
     }
 
     @inlinable mutating func writeTimestamp(_ value: Date) {
-        var delta = value.timeIntervalSince1970
-        var sign: Int64 = 1
-        if delta < 0 {
-            sign = -1
-            delta = -delta
-        }
-        if delta.rounded(.down) > Double(Int64.max) { fatalError("Timestamp overflow") }
-        let seconds = Int64(delta)
-        let nanoseconds = UInt32((delta - Double(seconds)) * 1.0e9)
-        writeI64(sign * seconds)
+        let delta = value.timeIntervalSince1970
+        let secondsDouble = delta.rounded(.down)
+        if secondsDouble < Double(Int64.min) || secondsDouble > Double(Int64.max) { fatalError("Timestamp overflow") }
+        let seconds = Int64(secondsDouble)
+        let nanoseconds = UInt32((delta - secondsDouble) * 1.0e9)
+        writeI64(seconds)
         writeU32(nanoseconds)
     }
 

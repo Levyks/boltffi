@@ -1,3 +1,5 @@
+mod expansion;
+
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -8,6 +10,8 @@ use crate::cli::Result;
 use crate::config::Config;
 use crate::target::{Platform, RustTarget};
 use crate::toolchain::{AndroidToolchain, AndroidToolchainError};
+
+pub use self::expansion::BindingExpansion;
 
 pub type OutputCallback = Box<dyn Fn(&str) + Send>;
 

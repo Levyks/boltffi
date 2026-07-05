@@ -33,6 +33,8 @@ pub enum GeneratedLocal {
     ErrorReader,
     FutureHandle,
     FutureStatus,
+    ClosureStatus,
+    ClosureInvoke,
     StreamSubscription,
     StreamBatch,
     StreamBatchCount,
@@ -123,7 +125,11 @@ impl Name {
     }
 
     pub fn generated(&self, suffix: &str) -> Result<Identifier> {
-        Identifier::parse(format!("__boltffi_{}_{}", self.lower_snake(), suffix))
+        Identifier::parse(format!(
+            "boltffi{}{}",
+            self.upper_camel(),
+            Self::upper_camel_from_snake(suffix)
+        ))
     }
 
     pub fn type_name(&self) -> TypeName {
@@ -146,12 +152,15 @@ impl Name {
             .collect()
     }
 
-    fn lower_snake(&self) -> String {
+    fn upper_camel(&self) -> String {
         self.parts
             .iter()
-            .map(NamePart::as_str)
-            .collect::<Vec<_>>()
-            .join("_")
+            .map(|part| Self::capitalized(part.as_str()))
+            .collect()
+    }
+
+    fn upper_camel_from_snake(name: &str) -> String {
+        name.split('_').map(Self::capitalized).collect()
     }
 
     fn capitalized(part: &str) -> String {
@@ -164,11 +173,18 @@ impl Name {
 
 impl GeneratedLocal {
     pub fn identifier(self) -> Result<Identifier> {
-        Identifier::parse(format!("__boltffi_{}", self.role()))
+        Identifier::parse(format!(
+            "boltffi{}",
+            Name::upper_camel_from_snake(self.role())
+        ))
     }
 
     pub fn suffixed(self, suffix: &str) -> Result<Identifier> {
-        Identifier::parse(format!("__boltffi_{}_{}", self.role(), suffix))
+        Identifier::parse(format!(
+            "boltffi{}{}",
+            Name::upper_camel_from_snake(self.role()),
+            Name::upper_camel_from_snake(suffix)
+        ))
     }
 
     fn role(self) -> &'static str {
@@ -180,6 +196,8 @@ impl GeneratedLocal {
             Self::ErrorReader => "error_reader",
             Self::FutureHandle => "future",
             Self::FutureStatus => "status",
+            Self::ClosureStatus => "closure_status",
+            Self::ClosureInvoke => "closure_invoke",
             Self::StreamSubscription => "subscription",
             Self::StreamBatch => "stream_batch",
             Self::StreamBatchCount => "stream_count",

@@ -361,17 +361,11 @@ impl Config {
     }
 
     pub fn swift_bindings_file_stem(&self) -> String {
-        let mut characters = self.library_name().chars();
-        characters.next().map_or_else(
-            || "BoltFFI".to_string(),
-            |first_character| {
-                format!(
-                    "{}{}BoltFFI",
-                    first_character.to_uppercase(),
-                    characters.as_str()
-                )
-            },
-        )
+        let name = to_pascal_case(self.library_name());
+        match name.is_empty() {
+            true => "BoltFFI".to_string(),
+            false => format!("{name}BoltFFI"),
+        }
     }
 
     pub fn xcframework_name(&self) -> String {
@@ -2288,6 +2282,18 @@ enabled = true
             PathBuf::from("dist/python/wheelhouse")
         );
         assert_eq!(config.python_wheel_interpreters(), None);
+    }
+
+    #[test]
+    fn swift_bindings_file_stem_normalizes_package_name() {
+        let config = parse_config(
+            r#"
+[package]
+name = "my-lib"
+"#,
+        );
+
+        assert_eq!(config.swift_bindings_file_stem(), "MyLibBoltFFI");
     }
 
     #[test]

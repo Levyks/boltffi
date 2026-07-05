@@ -2,20 +2,16 @@ mod names;
 mod spm;
 mod xcframework;
 
-use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use boltffi_backend::GeneratedOutput;
 use boltffi_bindgen::generate::{Generation, GenerationError};
 use boltffi_bindgen::target::Target as BindgenTarget;
-use boltffi_binding::{
-    BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,
-    BINDING_EXPANSION_SURFACE_ENV, BindingMetadataSurface,
-};
 
-use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
-use crate::cargo::Cargo;
+use crate::build::{
+    BindingExpansion, BuildOptions, Builder, OutputCallback, all_successful, failed_targets,
+};
 use crate::cli::{CliError, Result};
 use crate::commands::pack::PackAppleOptions;
 use crate::config::{Config, DebugSymbolsBundle, DebugSymbolsFormat, SpmDistribution, SpmLayout};
@@ -34,8 +30,6 @@ use super::{
 
 pub(crate) use self::spm::SpmPackageGenerator;
 pub(crate) use self::xcframework::{XcframeworkBuilder, compute_checksum};
-
-const BINDING_EXPANSION_CFG: &str = "boltffi_binding_expansion";
 
 pub(crate) fn pack_apple(
     config: &Config,
@@ -63,7 +57,7 @@ pub(crate) fn pack_apple(
     }
 
     let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
-    let selected_crate = AppleCrateSelection::resolve(config, &build_cargo_args)?;
+    let selected_crate = BindingExpansion::resolve(config, &build_cargo_args)?;
     let build_profile =
         crate::build::resolve_build_profile(options.execution.release, &build_cargo_args);
     let apple_targets = config.apple_targets();
@@ -215,7 +209,7 @@ fn build_apple_targets(
     targets: &[crate::target::RustTarget],
     release: bool,
     build_cargo_args: &[String],
-    selected_crate: &AppleCrateSelection,
+    selected_crate: &BindingExpansion,
     step: &crate::reporter::Step,
 ) -> Result<()> {
     let on_output: Option<OutputCallback> = if step.is_verbose() {
@@ -230,7 +224,7 @@ fn build_apple_targets(
         release,
         package: Some(config.library_name().to_string()),
         cargo_args: build_cargo_args.to_vec(),
-        env: selected_crate.expansion_env()?,
+        env: selected_crate.env()?,
         on_output,
     };
     let builder = Builder::new(config, build_options);
@@ -249,7 +243,7 @@ fn generate_apple_bindings(
     layout: SpmLayout,
     package_root: &Path,
     header_output_directory: &Path,
-    selected_crate: &AppleCrateSelection,
+    selected_crate: &BindingExpansion,
 ) -> Result<()> {
     let swift_output_directory = match layout {
         SpmLayout::Bundled => config
@@ -260,8 +254,8 @@ fn generate_apple_bindings(
         SpmLayout::Split => config.apple_swift_output().join("BoltFFI"),
     };
 
-    let output = Generation::new(selected_crate.manifest_path.clone())
-        .cargo_args(selected_crate.cargo_args.clone())
+    let output = Generation::new(selected_crate.manifest_path())
+        .cargo_args(selected_crate.cargo_args())
         .swift_ffi_module(apple_ffi_module_name(config))
         .swift_file(config.swift_bindings_file_stem())
         .swift_custom_mappings(config.apple_swift_custom_mappings())
@@ -271,107 +265,6 @@ fn generate_apple_bindings(
 
     print_coverage(&output);
     write_apple_binding_output(output, &swift_output_directory, header_output_directory)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct AppleCrateSelection {
-    manifest_path: PathBuf,
-    source_path: PathBuf,
-    cargo_args: Vec<String>,
-}
-
-impl AppleCrateSelection {
-    fn resolve(config: &Config, build_cargo_args: &[String]) -> Result<Self> {
-        let cargo = Cargo::current(build_cargo_args)?;
-        let metadata = cargo.metadata()?;
-        let cargo_manifest_path = cargo.manifest_path()?;
-        let package_selector =
-            cargo.effective_package_selector(config, &metadata, &cargo_manifest_path);
-        let package = metadata.find_package(&cargo_manifest_path, package_selector.as_deref())?;
-        let library_target =
-            package.resolve_library_target(&config.crate_artifact_name(), &cargo_manifest_path)?;
-
-        Ok(Self {
-            manifest_path: package.manifest_path.clone(),
-            source_path: library_target.src_path.clone(),
-            cargo_args: cargo.probe_command_arguments(),
-        })
-    }
-
-    fn expansion_env(&self) -> Result<Vec<(OsString, OsString)>> {
-        let root = self
-            .manifest_path
-            .parent()
-            .ok_or_else(|| CliError::CommandFailed {
-                command: format!(
-                    "manifest path '{}' has no parent directory",
-                    self.manifest_path.display()
-                ),
-                status: None,
-            })?;
-
-        Ok(vec![
-            (BINDING_EXPANSION_BUILD_ENV.into(), "1".into()),
-            (
-                BINDING_EXPANSION_ROOT_ENV.into(),
-                root.as_os_str().to_owned(),
-            ),
-            (
-                BINDING_EXPANSION_SOURCE_ENV.into(),
-                self.source_path.as_os_str().to_owned(),
-            ),
-            (
-                BINDING_EXPANSION_SURFACE_ENV.into(),
-                BindingMetadataSurface::Native.as_str().into(),
-            ),
-            ExpansionRustflags::from_env().into_env(),
-        ])
-    }
-}
-
-enum ExpansionRustflags {
-    Encoded(OsString),
-    Plain(OsString),
-}
-
-impl ExpansionRustflags {
-    fn from_env() -> Self {
-        std::env::var_os("CARGO_ENCODED_RUSTFLAGS")
-            .map(Self::encoded)
-            .unwrap_or_else(|| Self::plain(std::env::var_os("RUSTFLAGS")))
-    }
-
-    fn encoded(existing: OsString) -> Self {
-        Self::Encoded(Self::append_encoded(existing))
-    }
-
-    fn plain(existing: Option<OsString>) -> Self {
-        Self::Plain(match existing.filter(|value| !value.is_empty()) {
-            Some(mut value) => {
-                value.push(" --cfg ");
-                value.push(BINDING_EXPANSION_CFG);
-                value
-            }
-            None => OsString::from(format!("--cfg {BINDING_EXPANSION_CFG}")),
-        })
-    }
-
-    fn append_encoded(mut existing: OsString) -> OsString {
-        if !existing.is_empty() {
-            existing.push(OsStr::new("\u{1f}"));
-        }
-        existing.push(OsStr::new("--cfg"));
-        existing.push(OsStr::new("\u{1f}"));
-        existing.push(OsStr::new(BINDING_EXPANSION_CFG));
-        existing
-    }
-
-    fn into_env(self) -> (OsString, OsString) {
-        match self {
-            Self::Encoded(value) => ("CARGO_ENCODED_RUSTFLAGS".into(), value),
-            Self::Plain(value) => ("RUSTFLAGS".into(), value),
-        }
-    }
 }
 
 fn apple_ffi_module_name(config: &Config) -> String {
