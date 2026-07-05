@@ -20,7 +20,7 @@ struct CustomTypeTemplate<'a> {
 pub struct CustomType {
     documentation: Documentation,
     name: TypeName,
-    representation: TypeName,
+    representation: Option<TypeName>,
 }
 
 impl CustomType {
@@ -31,14 +31,22 @@ impl CustomType {
         Ok(Self {
             documentation: Documentation::new(declaration.meta().doc(), ""),
             name: Name::new(declaration.name()).type_name(),
-            representation: SwiftType::type_ref(declaration.representation(), context)?,
+            representation: context
+                .custom_type_mapping(declaration.id())
+                .is_none()
+                .then(|| SwiftType::type_ref(declaration.representation(), context))
+                .transpose()?,
         })
     }
 
     pub fn render(&self) -> Result<Emitted> {
+        if self.representation.is_none() {
+            return Ok(Emitted::primary(String::new()));
+        }
+
         let mut source = CustomTypeTemplate { custom_type: self }
             .render()?
-            .trim_end()
+            .trim()
             .to_owned();
         source.push_str("\n\n");
         Ok(Emitted::primary(source))
@@ -53,6 +61,12 @@ impl CustomType {
     }
 
     fn representation(&self) -> &TypeName {
-        &self.representation
+        self.representation
+            .as_ref()
+            .expect("unmapped custom type has a representation alias")
+    }
+
+    fn has_representation_alias(&self) -> bool {
+        self.representation.is_some()
     }
 }

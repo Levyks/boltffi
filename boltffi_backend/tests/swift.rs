@@ -1,7 +1,7 @@
 use boltffi_ast::PackageInfo;
 use boltffi_backend::{
     core::{GeneratedFile, GeneratedOutput},
-    target::swift::SwiftHost,
+    target::swift::{SwiftCustomMapping, SwiftHost},
 };
 use boltffi_binding::{Native, lower};
 
@@ -20,16 +20,29 @@ fn rendered_fixture(name: &str) -> String {
     rendered_source(SourceFixture::one(name))
 }
 
+fn rendered_fixture_with_host(name: &str, host: SwiftHost) -> String {
+    rendered_source_with_host(SourceFixture::one(name), host)
+}
+
 fn rendered_partial_fixture(name: &str) -> String {
     rendered_partial_source(SourceFixture::one(name))
 }
 
 fn rendered_source(fixture: SourceFixture) -> String {
-    rendered_swift_file(&rendered_output(fixture))
+    let host = SwiftHost::new("DemoFFI").expect("Swift host");
+    rendered_source_with_host(fixture, host)
+}
+
+fn rendered_source_with_host(fixture: SourceFixture, host: SwiftHost) -> String {
+    rendered_swift_file(&rendered_output_with_host(fixture, host))
 }
 
 fn rendered_output(fixture: SourceFixture) -> GeneratedOutput {
     let host = SwiftHost::new("DemoFFI").expect("Swift host");
+    rendered_output_with_host(fixture, host)
+}
+
+fn rendered_output_with_host(fixture: SourceFixture, host: SwiftHost) -> GeneratedOutput {
     let bindings = bindings(&fixture.read());
     let target = host.into_target().expect("Swift target");
     target.render(&bindings).expect("Swift target renders")
@@ -409,4 +422,16 @@ fn swift_target_renders_custom_types_through_representations() {
 #[test]
 fn swift_target_renders_string_custom_types_through_representations() {
     insta::assert_snapshot!(rendered_fixture("exports/custom_string_type_functions"));
+}
+
+#[test]
+fn swift_target_renders_custom_type_mappings() {
+    let host = SwiftHost::new("DemoFFI")
+        .expect("Swift host")
+        .custom_mapping("Email", SwiftCustomMapping::url_string("URL"));
+
+    insta::assert_snapshot!(rendered_fixture_with_host(
+        "exports/custom_string_type_functions",
+        host
+    ));
 }

@@ -264,6 +264,7 @@ fn generate_apple_bindings(
         .cargo_args(selected_crate.cargo_args.clone())
         .swift_ffi_module(apple_ffi_module_name(config))
         .swift_file(config.swift_bindings_file_stem())
+        .swift_custom_mappings(config.apple_swift_custom_mappings())
         .swift_c_header(apple_c_header_path(config))
         .render(BindgenTarget::Swift)
         .map_err(swift_generation_error)?;

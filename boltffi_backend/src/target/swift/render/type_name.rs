@@ -253,6 +253,10 @@ impl TypeRefRender for SwiftTypeRef<'_> {
     }
 
     fn custom(&mut self, id: CustomTypeId) -> Self::Output {
+        if let Some(mapping) = self.context.custom_type_mapping(id) {
+            return Ok(TypeSpelling::value(SwiftHost::custom_type_name(mapping)));
+        }
+
         SwiftType::custom(id, self.context).map(TypeSpelling::value)
     }
 

@@ -19,13 +19,17 @@ use crate::{
     bridge::c::{CBridge, CBridgeContract},
     core::{
         BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, Error,
-        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
-        contract::sealed, host,
+        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration,
+        ResolvedCustomTypeMappings, Result, Target, contract::sealed, host,
     },
 };
 
+pub use crate::core::{
+    CustomTypeConversion as SwiftCustomConversion, CustomTypeMapping as SwiftCustomMapping,
+};
+use name_style::Name;
 pub use name_style::{SwiftFile, SwiftModule};
-use syntax::Syntax;
+use syntax::{ArgumentList, Expression, Syntax, TypeName};
 
 /// Swift host renderer for a generated module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -34,6 +38,7 @@ pub struct SwiftHost {
     module: SwiftModule,
     file: SwiftFile,
     c_header: PathBuf,
+    custom_mappings: crate::core::CustomTypeMappingSet,
 }
 
 impl SwiftHost {
@@ -46,6 +51,7 @@ impl SwiftHost {
             file: SwiftFile::from_module(&module),
             module,
             c_header: PathBuf::from("boltffi.h"),
+            custom_mappings: crate::core::CustomTypeMappingSet::default(),
         })
     }
 
@@ -58,6 +64,16 @@ impl SwiftHost {
     /// Selects the generated C header path.
     pub fn c_header(mut self, path: impl Into<PathBuf>) -> Self {
         self.c_header = path.into();
+        self
+    }
+
+    /// Registers a Swift API mapping for one custom type.
+    pub fn custom_mapping(
+        mut self,
+        custom_type: impl Into<String>,
+        mapping: SwiftCustomMapping,
+    ) -> Self {
+        self.custom_mappings.insert(custom_type, mapping);
         self
     }
 
@@ -77,6 +93,37 @@ impl SwiftHost {
     /// Returns the generated Swift file name.
     pub fn file_name(&self) -> &SwiftFile {
         &self.file
+    }
+
+    fn custom_type_name(mapping: &SwiftCustomMapping) -> TypeName {
+        TypeName::new(mapping.target_type().as_str())
+    }
+
+    fn custom_type_decode(
+        mapping: &SwiftCustomMapping,
+        representation: Expression,
+    ) -> Result<Expression> {
+        Ok(match mapping.conversion() {
+            SwiftCustomConversion::UuidString => Expression::forced(Expression::call(
+                "UUID",
+                [Expression::labeled("uuidString", representation)]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+            )),
+            SwiftCustomConversion::UrlString => Expression::forced(Expression::call(
+                "URL",
+                [Expression::labeled("string", representation)]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+            )),
+        })
+    }
+
+    fn custom_type_encode(mapping: &SwiftCustomMapping, value: Expression) -> Expression {
+        match mapping.conversion() {
+            SwiftCustomConversion::UuidString => Expression::member(value, "uuidString"),
+            SwiftCustomConversion::UrlString => Expression::member(value, "absoluteString"),
+        }
     }
 
     fn unsupported(shape: &'static str) -> Error {
@@ -110,6 +157,16 @@ impl host::HostBackend for SwiftHost {
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
         CapabilityRequirements::new().require(BridgeCapability::CAbi)
+    }
+
+    fn custom_type_mappings(
+        &self,
+        bindings: &Bindings<Self::Surface>,
+    ) -> Result<ResolvedCustomTypeMappings> {
+        self.custom_mappings
+            .resolve(bindings, Self::TARGET, |declaration| {
+                Name::new(declaration.name()).type_name().to_string()
+            })
     }
 
     fn record(

@@ -137,7 +137,8 @@ where
         contract
             .capabilities()
             .require_bridge(self.host.name(), &self.host.bridge_capabilities())?;
-        let context = RenderContext::new(bindings, self.host.name());
+        let context = RenderContext::new(bindings, self.host.name())
+            .with_custom_type_mappings(self.host.custom_type_mappings(bindings)?);
         let (declarations, coverage) = bindings.decls().iter().try_fold(
             (Vec::new(), CoverageReport::new()),
             |accumulator, decl| {

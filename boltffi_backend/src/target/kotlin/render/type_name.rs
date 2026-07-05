@@ -98,22 +98,17 @@ impl KotlinType {
         }
     }
 
-    pub fn type_ref(
-        ty: &TypeRef,
-        host: &KotlinHost,
-        context: &RenderContext<Native>,
-    ) -> Result<TypeName> {
-        ty.render_with(&mut KotlinTypeRef::new(host, context))
+    pub fn type_ref(ty: &TypeRef, context: &RenderContext<Native>) -> Result<TypeName> {
+        ty.render_with(&mut KotlinTypeRef::new(context))
             .map(ApiType::into_type)
     }
 
     pub fn type_ref_with_record_package(
         ty: &TypeRef,
-        host: &KotlinHost,
         context: &RenderContext<Native>,
         package: &KotlinPackage,
     ) -> Result<TypeName> {
-        ty.render_with(&mut KotlinTypeRef::new(host, context).record_package(package))
+        ty.render_with(&mut KotlinTypeRef::new(context).record_package(package))
             .map(ApiType::into_type)
     }
 
@@ -130,7 +125,6 @@ impl KotlinType {
 }
 
 struct KotlinTypeRef<'context> {
-    host: &'context KotlinHost,
     context: &'context RenderContext<'context, Native>,
     record_package: Option<KotlinPackage>,
 }
@@ -141,9 +135,8 @@ struct ApiType {
 }
 
 impl<'context> KotlinTypeRef<'context> {
-    pub fn new(host: &'context KotlinHost, context: &'context RenderContext<Native>) -> Self {
+    pub fn new(context: &'context RenderContext<Native>) -> Self {
         Self {
-            host,
             context,
             record_package: None,
         }
@@ -198,8 +191,8 @@ impl TypeRefRender for KotlinTypeRef<'_> {
     }
 
     fn custom(&mut self, id: CustomTypeId) -> Self::Output {
-        if let Some(mapping) = self.host.custom_type_mapping(id, self.context) {
-            return Ok(ApiType::new(mapping.ty()));
+        if let Some(mapping) = self.context.custom_type_mapping(id) {
+            return Ok(ApiType::new(KotlinHost::custom_type_name(mapping)));
         }
 
         self.context
@@ -255,18 +248,13 @@ impl ApiType {
 }
 
 pub struct ParameterType<'context> {
-    host: &'context KotlinHost,
     context: &'context RenderContext<'context, Native>,
     record_package: Option<KotlinPackage>,
 }
 
 impl<'context> ParameterType<'context> {
-    pub fn new(
-        host: &'context KotlinHost,
-        context: &'context RenderContext<'context, Native>,
-    ) -> Self {
+    pub fn new(context: &'context RenderContext<'context, Native>) -> Self {
         Self {
-            host,
             context,
             record_package: None,
         }
@@ -311,10 +299,8 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterType<'_> {
         _receive: <IntoRust as Direction>::Receive,
     ) -> Self::Output {
         match &self.record_package {
-            Some(package) => {
-                KotlinType::type_ref_with_record_package(ty, self.host, self.context, package)
-            }
-            None => KotlinType::type_ref(ty, self.host, self.context),
+            Some(package) => KotlinType::type_ref_with_record_package(ty, self.context, package),
+            None => KotlinType::type_ref(ty, self.context),
         }
     }
 

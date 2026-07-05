@@ -76,6 +76,14 @@ impl<'context, 'bindings> Writer<'context, 'bindings> {
         ValueExpression::new(value, self.scope.clone()).render()
     }
 
+    fn with_value<F>(&mut self, value: Expression, representation: F) -> Vec<Result<WriteStatement>>
+    where
+        F: FnOnce(&mut Self, &ValueRef) -> Vec<Result<WriteStatement>>,
+    {
+        let mut writer = Self::new(self.name.clone(), value, self.context);
+        representation(&mut writer, &ValueRef::self_value())
+    }
+
     fn single_statement(statements: Vec<Result<WriteStatement>>) -> Result<WriteStatement> {
         let statements = statements.into_iter().collect::<Result<Vec<_>>>()?;
         match statements.as_slice() {
@@ -148,11 +156,26 @@ impl CodecWrite for Writer<'_, '_> {
         vec![self.unsupported("callback handle codec write")]
     }
 
-    fn custom<F>(&mut self, _: CustomTypeId, value: &ValueRef, representation: F) -> Vec<Self::Stmt>
+    fn custom<F>(
+        &mut self,
+        id: CustomTypeId,
+        value: &ValueRef,
+        representation: F,
+    ) -> Vec<Self::Stmt>
     where
         F: FnOnce(&mut Self, &ValueRef) -> Vec<Self::Stmt>,
     {
-        representation(self, value)
+        let representation = match self.context.custom_type_mapping(id) {
+            Some(mapping) => match self.value(value) {
+                Ok(value) => self.with_value(
+                    SwiftHost::custom_type_encode(mapping, value),
+                    representation,
+                ),
+                Err(error) => vec![Err(error)],
+            },
+            None => representation(self, value),
+        };
+        representation
             .into_iter()
             .map(|statement| statement.map(WriteStatement::custom_representation))
             .collect()

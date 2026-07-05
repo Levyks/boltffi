@@ -13,7 +13,8 @@ use boltffi_binding::{
 
 use crate::core::{
     BridgeCapability, BridgeContract, CapabilityRequirements, Emitted, GeneratedOutput,
-    HostCapabilities, LanguageSyntax, RenderContext, RenderedDeclaration, Result, contract::sealed,
+    HostCapabilities, LanguageSyntax, RenderContext, RenderedDeclaration,
+    ResolvedCustomTypeMappings, Result, contract::sealed,
 };
 
 /// Host renderer for one target language.
@@ -34,6 +35,14 @@ pub trait HostBackend: sealed::HostBackend {
 
     /// Returns bridge capabilities this host requires.
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability>;
+
+    /// Resolves configured custom type mappings for this binding contract.
+    fn custom_type_mappings(
+        &self,
+        _bindings: &Bindings<Self::Surface>,
+    ) -> Result<ResolvedCustomTypeMappings> {
+        Ok(ResolvedCustomTypeMappings::default())
+    }
 
     /// Renders a record declaration.
     fn record(

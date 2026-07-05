@@ -4,13 +4,11 @@ use std::path::{Path, PathBuf};
 use boltffi_backend::core::{CoverageMode, bridge, host};
 use boltffi_backend::target::{
     kmp::KmpHost,
-    kotlin::{
-        KotlinApiStyle, KotlinCustomMapping, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost,
-    },
+    kotlin::{KotlinApiStyle, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost},
     python::PythonCExtHost,
     swift::SwiftHost,
 };
-use boltffi_backend::{GeneratedOutput, Target as BackendTarget};
+use boltffi_backend::{CustomTypeMapping, GeneratedOutput, Target as BackendTarget};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
 use thiserror::Error;
 
@@ -44,7 +42,8 @@ pub struct Generation {
     kotlin_desktop_loader: KotlinDesktopLoader,
     kotlin_api_style: KotlinApiStyle,
     kotlin_factory_style: KotlinFactoryStyle,
-    kotlin_custom_mappings: Vec<(String, KotlinCustomMapping)>,
+    kotlin_custom_mappings: Vec<(String, CustomTypeMapping)>,
+    swift_custom_mappings: Vec<(String, CustomTypeMapping)>,
     swift_ffi_module: Option<String>,
     swift_file: Option<String>,
     swift_c_header: Option<PathBuf>,
@@ -72,6 +71,7 @@ impl Generation {
             kotlin_api_style: KotlinApiStyle::default(),
             kotlin_factory_style: KotlinFactoryStyle::default(),
             kotlin_custom_mappings: Vec::new(),
+            swift_custom_mappings: Vec::new(),
             swift_ffi_module: None,
             swift_file: None,
             swift_c_header: None,
@@ -177,9 +177,18 @@ impl Generation {
     /// Registers Kotlin API mappings for custom types.
     pub fn kotlin_custom_mappings(
         mut self,
-        mappings: impl IntoIterator<Item = (String, KotlinCustomMapping)>,
+        mappings: impl IntoIterator<Item = (String, CustomTypeMapping)>,
     ) -> Self {
         self.kotlin_custom_mappings = mappings.into_iter().collect();
+        self
+    }
+
+    /// Registers Swift API mappings for custom types.
+    pub fn swift_custom_mappings(
+        mut self,
+        mappings: impl IntoIterator<Item = (String, CustomTypeMapping)>,
+    ) -> Self {
+        self.swift_custom_mappings = mappings.into_iter().collect();
         self
     }
 
@@ -335,6 +344,12 @@ impl Generation {
     fn swift_host(&self) -> Result<SwiftHost, GenerationError> {
         let module = self.swift_ffi_module.as_deref().unwrap_or("BoltFFI");
         let host = SwiftHost::new(module).map_err(GenerationError::Render)?;
+        let host = self
+            .swift_custom_mappings
+            .iter()
+            .fold(host, |host, (custom_type, mapping)| {
+                host.custom_mapping(custom_type.clone(), mapping.clone())
+            });
         let host = self
             .swift_file
             .iter()

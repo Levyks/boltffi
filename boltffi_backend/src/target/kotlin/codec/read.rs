@@ -148,9 +148,8 @@ impl CodecRead for Reader<'_> {
 
     fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
         let representation = representation?;
-        match self.host.custom_type_mapping(id, self.context) {
-            Some(mapping) => mapping
-                .decode(representation.expression)
+        match self.context.custom_type_mapping(id) {
+            Some(mapping) => KotlinHost::custom_type_decode(mapping, representation.expression)
                 .map(ReadExpression::new),
             None => Ok(ReadExpression::new(representation.expression)),
         }

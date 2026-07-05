@@ -159,8 +159,13 @@ impl CodecRead for Reader<'_, '_> {
         self.unsupported("callback handle codec read")
     }
 
-    fn custom(&mut self, _: CustomTypeId, representation: Self::Expr) -> Self::Expr {
-        representation.map(|representation| ReadExpression::new(representation.expression))
+    fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
+        let representation = representation?;
+        match self.context.custom_type_mapping(id) {
+            Some(mapping) => SwiftHost::custom_type_decode(mapping, representation.expression)
+                .map(ReadExpression::new),
+            None => Ok(ReadExpression::new(representation.expression)),
+        }
     }
 
     fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {

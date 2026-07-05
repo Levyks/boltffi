@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use boltffi_backend::target::python::PackageModule;
+use boltffi_backend::{CustomTypeMapping, target::python::PackageModule};
 use boltffi_bindgen::target::Target;
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +57,15 @@ pub struct TypeMapping {
     #[serde(rename = "type")]
     pub native_type: String,
     pub conversion: TypeConversion,
+}
+
+impl TypeMapping {
+    fn custom_type_mapping(&self) -> CustomTypeMapping {
+        match self.conversion {
+            TypeConversion::UuidString => CustomTypeMapping::uuid_string(self.native_type.clone()),
+            TypeConversion::UrlString => CustomTypeMapping::url_string(self.native_type.clone()),
+        }
+    }
 }
 
 pub fn read_toml_value(path: &Path) -> Result<toml::Value, ConfigError> {
@@ -477,6 +486,17 @@ impl Config {
         self.targets.apple.swift.ffi_module_name.as_deref()
     }
 
+    pub fn apple_swift_custom_mappings(
+        &self,
+    ) -> impl Iterator<Item = (String, CustomTypeMapping)> + '_ {
+        self.targets
+            .apple
+            .swift
+            .type_mappings
+            .iter()
+            .map(|(name, mapping)| (name.clone(), mapping.custom_type_mapping()))
+    }
+
     pub fn apple_header_output(&self) -> PathBuf {
         self.targets.apple.output.join("include")
     }
@@ -671,8 +691,15 @@ impl Config {
         self.targets.apple.spm.skip_package_swift
     }
 
-    pub fn android_kotlin_type_mappings(&self) -> &HashMap<String, TypeMapping> {
-        &self.targets.android.kotlin.type_mappings
+    pub fn android_kotlin_custom_mappings(
+        &self,
+    ) -> impl Iterator<Item = (String, CustomTypeMapping)> + '_ {
+        self.targets
+            .android
+            .kotlin
+            .type_mappings
+            .iter()
+            .map(|(name, mapping)| (name.clone(), mapping.custom_type_mapping()))
     }
 
     pub fn kotlin_multiplatform_output(&self) -> PathBuf {

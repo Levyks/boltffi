@@ -1,8 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use boltffi_backend::target::kotlin::{
-    KotlinApiStyle as BackendKotlinApiStyle, KotlinCustomMapping as BackendKotlinCustomMapping,
-    KotlinDesktopLoader as BackendKotlinDesktopLoader,
+    KotlinApiStyle as BackendKotlinApiStyle, KotlinDesktopLoader as BackendKotlinDesktopLoader,
     KotlinFactoryStyle as BackendKotlinFactoryStyle,
 };
 use boltffi_backend::{CoverageMode, GeneratedOutput};
@@ -12,7 +11,7 @@ use boltffi_bindgen::target::Target;
 use crate::cargo::Cargo;
 use crate::cli::{CliError, Result};
 use crate::config::{
-    Config, KotlinFactoryStyle, SpmLayout, TypeConversion, TypeMapping,
+    Config, KotlinFactoryStyle, SpmLayout,
     targets::kotlin::{KotlinApiStyle, KotlinDesktopLoader},
 };
 
@@ -56,6 +55,7 @@ fn generate_swift(config: &Config, options: &GenerateOptions) -> Result<()> {
         .cargo_args(selected.cargo_args)
         .swift_ffi_module(ffi_module)
         .swift_file(config.swift_bindings_file_stem())
+        .swift_custom_mappings(config.apple_swift_custom_mappings())
         .render(target)
         .and_then(|output| {
             print_coverage(target_name, &output);
@@ -121,9 +121,7 @@ fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
         .kotlin_file(config.android_kotlin_module_name())
         .kotlin_api_style(kotlin_api_style(config.android_kotlin_api_style()))
         .kotlin_factory_style(kotlin_factory_style(config.android_kotlin_factory_style()))
-        .kotlin_custom_mappings(kotlin_custom_mappings(
-            config.android_kotlin_type_mappings(),
-        ))
+        .kotlin_custom_mappings(config.android_kotlin_custom_mappings())
         .kotlin_android_library(config.resolved_android_kotlin_library_name())
         .kotlin_desktop_jni_library(format!(
             "{}_jni",
@@ -204,26 +202,6 @@ fn kotlin_factory_style(style: KotlinFactoryStyle) -> BackendKotlinFactoryStyle 
     match style {
         KotlinFactoryStyle::Constructors => BackendKotlinFactoryStyle::Constructors,
         KotlinFactoryStyle::CompanionMethods => BackendKotlinFactoryStyle::CompanionMethods,
-    }
-}
-
-fn kotlin_custom_mappings(
-    mappings: &HashMap<String, TypeMapping>,
-) -> Vec<(String, BackendKotlinCustomMapping)> {
-    mappings
-        .iter()
-        .map(|(name, mapping)| (name.clone(), kotlin_custom_mapping(mapping)))
-        .collect()
-}
-
-fn kotlin_custom_mapping(mapping: &TypeMapping) -> BackendKotlinCustomMapping {
-    match mapping.conversion {
-        TypeConversion::UuidString => {
-            BackendKotlinCustomMapping::uuid_string(mapping.native_type.clone())
-        }
-        TypeConversion::UrlString => {
-            BackendKotlinCustomMapping::url_string(mapping.native_type.clone())
-        }
     }
 }
 

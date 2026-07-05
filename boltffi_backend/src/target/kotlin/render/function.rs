@@ -342,7 +342,6 @@ impl<'render> ExportedCallRenderer<'render> {
                 .returns()
                 .plan()
                 .render_with(&mut FunctionReturnPlan::new(
-                    self.host,
                     self.context,
                     record_package,
                     callable,
@@ -480,7 +479,7 @@ impl ExportedParameter {
         let name = source_name.parameter()?;
         let (ty, native_argument) = match parameter.payload() {
             IncomingParam::Value(plan) => (
-                Self::type_name(plan, record_package, host, context)?,
+                Self::type_name(plan, record_package, context)?,
                 Self::native_argument_for(source_name, name.clone(), plan, host, context)?,
             ),
             IncomingParam::Closure(closure) => (
@@ -528,10 +527,9 @@ impl ExportedParameter {
     fn type_name(
         plan: &ParamPlan<Native, IntoRust>,
         record_package: Option<&KotlinPackage>,
-        host: &KotlinHost,
         context: &RenderContext<Native>,
     ) -> Result<TypeName> {
-        plan.render_with(&mut ParameterType::new(host, context).record_package(record_package))
+        plan.render_with(&mut ParameterType::new(context).record_package(record_package))
     }
 }
 
@@ -918,7 +916,6 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
 }
 
 struct FunctionReturnPlan<'context> {
-    host: &'context KotlinHost,
     context: &'context RenderContext<'context, Native>,
     record_package: Option<KotlinPackage>,
     fallible_success_out: bool,
@@ -926,14 +923,12 @@ struct FunctionReturnPlan<'context> {
 
 impl<'context> FunctionReturnPlan<'context> {
     fn new(
-        host: &'context KotlinHost,
         context: &'context RenderContext<'context, Native>,
         record_package: Option<&KotlinPackage>,
         callable: &ExportedCallable<Native>,
     ) -> Self {
         let error_channel = callable.error().channel();
         Self {
-            host,
             context,
             record_package: record_package.cloned(),
             fallible_success_out: matches!(
@@ -995,7 +990,6 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_
             ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer => FunctionReturn::encoded(
                 ty,
                 codec.clone(),
-                self.host,
                 self.context,
                 self.record_package.as_ref(),
             ),
@@ -1096,16 +1090,13 @@ impl FunctionReturn {
     fn encoded(
         ty: &TypeRef,
         codec: <OutOfRust as Direction>::Codec,
-        host: &KotlinHost,
         context: &RenderContext<Native>,
         record_package: Option<&KotlinPackage>,
     ) -> Result<Self> {
         Ok(Self {
             ty: Some(match record_package {
-                Some(package) => {
-                    KotlinType::type_ref_with_record_package(ty, host, context, package)?
-                }
-                None => KotlinType::type_ref(ty, host, context)?,
+                Some(package) => KotlinType::type_ref_with_record_package(ty, context, package)?,
+                None => KotlinType::type_ref(ty, context)?,
             }),
             conversion: ReturnConversion::Encoded {
                 codec,

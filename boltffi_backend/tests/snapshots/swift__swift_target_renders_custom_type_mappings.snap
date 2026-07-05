@@ -1,0 +1,24 @@
+---
+source: boltffi_backend/tests/swift.rs
+expression: "rendered_fixture_with_host(\"exports/custom_string_type_functions\", host)"
+---
+===== DemoFFI.swift =====
+import Foundation
+import DemoFFI
+
+public struct FfiError: Error {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public func keepEmail(value: URL) -> URL {
+    let __boltffi_value_bytes = boltffiEncode { __boltffi_value_writer in __boltffi_value_writer.writeString(value.absoluteString) }
+    return __boltffi_value_bytes.withUnsafeBufferPointer { __boltffi_value_buffer in
+        let __boltffi_result = boltffi_function_demo_keep_email(__boltffi_value_buffer.baseAddress!, UInt(__boltffi_value_buffer.count))
+        defer { boltffi_free_buf(__boltffi_result) }
+        return boltffiDecodeOwnedBuf(__boltffi_result.ptr, Int(__boltffi_result.len)) { __boltffi_reader in URL(string: __boltffi_reader.readString())! }
+    }
+}

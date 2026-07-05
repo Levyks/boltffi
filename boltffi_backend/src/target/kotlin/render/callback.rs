@@ -867,10 +867,7 @@ impl<'plan> ParamPlanRender<'plan, Native, OutOfRust> for HandleParameterRender<
         )?;
         let (setup, native_argument, cleanup) = write.into_parts();
         Ok(HandleParameter {
-            public: Parameter::new(
-                self.name.clone(),
-                KotlinType::type_ref(ty, self.host, self.context)?,
-            ),
+            public: Parameter::new(self.name.clone(), KotlinType::type_ref(ty, self.context)?),
             native_argument,
             setup,
             cleanup,
@@ -986,7 +983,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnRender<'_> {
     ) -> Self::Output {
         self.require_supported_slot(slot, "callback method out-pointer encoded return")?;
         Ok(ReturnValue {
-            public_ty: Some(KotlinType::type_ref(ty, self.host, self.context)?),
+            public_ty: Some(KotlinType::type_ref(ty, self.context)?),
             jvm_ty: Some(TypeName::byte_array(false)),
             conversion: ReturnConversion::Encoded {
                 codec: codec.clone(),
@@ -1109,7 +1106,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for HandleReturnRender<'_>
             ));
         }
         Ok(HandleReturn {
-            ty: Some(KotlinType::type_ref(ty, self.host, self.context)?),
+            ty: Some(KotlinType::type_ref(ty, self.context)?),
             conversion: HandleReturnConversion::Encoded(codec.read_plan()),
         })
     }
