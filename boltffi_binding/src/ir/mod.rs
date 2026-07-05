@@ -116,7 +116,7 @@ pub use decl::{
     CStyleEnumDecl, CStyleVariantDecl, CallbackDecl, CallbackLocalFunction,
     CallbackLocalMethodDecl, CallbackLocalProtocol, ClassDecl, ClassThreadSafety, ConstantDecl,
     ConstantValueDecl, CustomTypeDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, Decl,
-    DeclarationRef, Declared, DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl,
+    DeclarationRef, DeclarationRole, DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl,
     EncodedRecordDecl, EnumDecl, ExportedMethodDecl, FieldKey, FunctionDecl, ImportedMethodDecl,
     InitializerDecl, MethodDecl, RecordDecl, StreamDecl, StreamItemPlan, StreamItemPlanRender,
     StreamMode, StreamProtocol, VariantTag,

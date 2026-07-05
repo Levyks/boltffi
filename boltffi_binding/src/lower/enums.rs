@@ -412,14 +412,14 @@ mod tests {
 
     fn c_style_enum<S: SurfaceLower>(bindings: &Bindings<S>) -> &CStyleEnumDecl<S> {
         match enum_decl_at(bindings, 0) {
-            EnumDecl::CStyle(enumeration) => enumeration.payload(),
+            EnumDecl::CStyle(enumeration) => enumeration,
             EnumDecl::Data(_) => panic!("expected c-style enum"),
         }
     }
 
     fn data_enum<S: SurfaceLower>(bindings: &Bindings<S>) -> &DataEnumDecl<S> {
         match enum_decl_at(bindings, 0) {
-            EnumDecl::Data(enumeration) => enumeration.payload().as_ref(),
+            EnumDecl::Data(enumeration) => enumeration.as_ref(),
             EnumDecl::CStyle(_) => panic!("expected data enum"),
         }
     }

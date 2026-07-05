@@ -67,22 +67,18 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
             >,
     {
         match self.pair.binding() {
-            EnumDecl::CStyle(binding) => binding.map(|binding| {
-                CStyle {
-                    source: self.pair.source(),
-                    binding,
-                    expansion: self.expansion,
-                }
-                .render()
-            }),
-            EnumDecl::Data(binding) => binding.map(|binding| {
-                Data {
-                    source: self.pair.source(),
-                    binding: binding.as_ref(),
-                    expansion: self.expansion,
-                }
-                .render()
-            }),
+            EnumDecl::CStyle(binding) => CStyle {
+                source: self.pair.source(),
+                binding,
+                expansion: self.expansion,
+            }
+            .render(),
+            EnumDecl::Data(binding) => Data {
+                source: self.pair.source(),
+                binding: binding.as_ref(),
+                expansion: self.expansion,
+            }
+            .render(),
             _ => Err(Error::UnsupportedExpansion("unknown enum declaration")),
         }
     }

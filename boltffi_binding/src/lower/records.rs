@@ -176,7 +176,7 @@ mod tests {
     fn direct_record(bindings: &Bindings<Native>) -> &DirectRecordDecl<Native> {
         match bindings.decls().first() {
             Some(Decl::Record(record)) => match record.as_ref() {
-                RecordDecl::Direct(record) => record.payload(),
+                RecordDecl::Direct(record) => record,
                 RecordDecl::Encoded(_) => panic!("expected direct record"),
             },
             _ => panic!("expected record declaration"),
@@ -186,7 +186,7 @@ mod tests {
     fn encoded_record(bindings: &Bindings<Native>) -> &EncodedRecordDecl<Native> {
         match bindings.decls().first() {
             Some(Decl::Record(record)) => match record.as_ref() {
-                RecordDecl::Encoded(record) => record.payload(),
+                RecordDecl::Encoded(record) => record,
                 RecordDecl::Direct(_) => panic!("expected encoded record"),
             },
             _ => panic!("expected record declaration"),
