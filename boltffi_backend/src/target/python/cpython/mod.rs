@@ -403,8 +403,12 @@ mod tests {
         assert!(init.contains("PACKAGE_NAME = \"demo\""));
         assert!(init.contains("\"add\","));
         assert!(stub.contains("def add(left: int, right: int) -> int: ..."));
+        assert!(setup.contains(
+            "extension_compile_args = [\"/std:c11\", \"/experimental:c11atomics\"] if sys.platform == \"win32\" else []"
+        ));
         assert!(setup.contains("Extension(\n            \"demo._native\","));
         assert!(setup.contains("sources=[\"_native.c\"]"));
+        assert!(setup.contains("extra_compile_args=extension_compile_args"));
     }
 
     #[test]
