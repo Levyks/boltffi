@@ -60,9 +60,10 @@ public func refresh() async throws {
         cancel: boltffi_async_function_demo_refresh_cancel,
         free: boltffi_async_function_demo_refresh_free
     ) { boltffiFuture, boltffiStatus in
-        let boltffiResult = boltffi_async_function_demo_refresh_complete(boltffiFuture, boltffiStatus)
-        guard boltffiStatus.code == 0 else {
-            throw FfiError(message: "FFI failed in async completion with code \(boltffiStatus.code)")
+        boltffi_async_function_demo_refresh_complete(boltffiFuture, boltffiStatus)
+        let boltffiStatusCode = boltffiStatus!.pointee.code
+        guard boltffiStatusCode == 0 else {
+            throw FfiError(message: "FFI failed in async completion with code \(boltffiStatusCode)")
         }
     }
 }
@@ -76,8 +77,9 @@ public func loadName() async throws -> String {
         free: boltffi_async_function_demo_load_name_free
     ) { boltffiFuture, boltffiStatus in
         let boltffiResult = boltffi_async_function_demo_load_name_complete(boltffiFuture, boltffiStatus)
-        guard boltffiStatus.code == 0 else {
-            throw FfiError(message: "FFI failed in async completion with code \(boltffiStatus.code)")
+        let boltffiStatusCode = boltffiStatus!.pointee.code
+        guard boltffiStatusCode == 0 else {
+            throw FfiError(message: "FFI failed in async completion with code \(boltffiStatusCode)")
         }
         defer { boltffi_free_buf(boltffiResult) }
         return boltffiDecodeOwnedBuf(boltffiResult.ptr, Int(boltffiResult.len)) { boltffiReader in boltffiReader.readString() }
@@ -93,8 +95,9 @@ public func loadPoint() async throws -> Point {
         free: boltffi_async_function_demo_load_point_free
     ) { boltffiFuture, boltffiStatus in
         let boltffiResult = boltffi_async_function_demo_load_point_complete(boltffiFuture, boltffiStatus)
-        guard boltffiStatus.code == 0 else {
-            throw FfiError(message: "FFI failed in async completion with code \(boltffiStatus.code)")
+        let boltffiStatusCode = boltffiStatus!.pointee.code
+        guard boltffiStatusCode == 0 else {
+            throw FfiError(message: "FFI failed in async completion with code \(boltffiStatusCode)")
         }
         return Point(fromC: boltffiResult)
     }

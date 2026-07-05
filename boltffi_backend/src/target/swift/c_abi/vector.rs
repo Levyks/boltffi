@@ -525,47 +525,60 @@ impl ReturnedVector {
         let pointer = GeneratedLocal::ReturnBuffer.suffixed("ptr")?;
         let count = GeneratedLocal::ReturnBuffer.suffixed("count")?;
         let raw = GeneratedLocal::ReturnBuffer.suffixed("raw")?;
+        let buffer_binding = match value == Expression::identifier(buffer.clone()) {
+            true => None,
+            false => Some(Statement::let_value(&buffer, value).indented(indent)),
+        };
         Ok([
-            Statement::let_value(&buffer, value).indented(indent),
-            Statement::defer(Expression::call(
-                free,
-                [Expression::identifier(buffer.clone())]
-                    .into_iter()
-                    .collect::<ArgumentList>(),
-            ))
-            .indented(indent),
-            format!(
-                "{indent}guard {}.len > 0, let {pointer} = {}.ptr else {{ return [] }}",
-                buffer, buffer
-            ),
-            Statement::let_value(
-                &count,
-                Expression::new(format!(
-                    "Int({buffer}.len) / MemoryLayout<{}>.stride",
-                    self.element
-                )),
-            )
-            .indented(indent),
-            Statement::let_value(
-                &raw,
-                Expression::call(
-                    Expression::member(
-                        Expression::call(
-                            "UnsafeRawPointer",
-                            [Expression::identifier(pointer)]
-                                .into_iter()
-                                .collect::<ArgumentList>(),
-                        ),
-                        "assumingMemoryBound",
-                    ),
-                    [Expression::labeled("to", self.element.clone().metatype())]
+            buffer_binding,
+            Some(
+                Statement::defer(Expression::call(
+                    free,
+                    [Expression::identifier(buffer.clone())]
                         .into_iter()
                         .collect::<ArgumentList>(),
-                ),
-            )
-            .indented(indent),
-            self.return_value(Expression::identifier(raw), count, indent)?,
+                ))
+                .indented(indent),
+            ),
+            Some(format!(
+                "{indent}guard {}.len > 0, let {pointer} = {}.ptr else {{ return [] }}",
+                buffer, buffer
+            )),
+            Some(
+                Statement::let_value(
+                    &count,
+                    Expression::new(format!(
+                        "Int({buffer}.len) / MemoryLayout<{}>.stride",
+                        self.element
+                    )),
+                )
+                .indented(indent),
+            ),
+            Some(
+                Statement::let_value(
+                    &raw,
+                    Expression::call(
+                        Expression::member(
+                            Expression::call(
+                                "UnsafeRawPointer",
+                                [Expression::identifier(pointer)]
+                                    .into_iter()
+                                    .collect::<ArgumentList>(),
+                            ),
+                            "assumingMemoryBound",
+                        ),
+                        [Expression::labeled("to", self.element.clone().metatype())]
+                            .into_iter()
+                            .collect::<ArgumentList>(),
+                    ),
+                )
+                .indented(indent),
+            ),
+            Some(self.return_value(Expression::identifier(raw), count, indent)?),
         ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
         .join("\n"))
     }
 

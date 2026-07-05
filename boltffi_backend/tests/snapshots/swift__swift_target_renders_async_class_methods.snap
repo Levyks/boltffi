@@ -42,8 +42,9 @@ public final class Engine {
             free: boltffi_async_method_class_demo_engine_compute_free
         ) { boltffiFuture, boltffiStatus in
             let boltffiResult = boltffi_async_method_class_demo_engine_compute_complete(boltffiFuture, boltffiStatus)
-            guard boltffiStatus.code == 0 else {
-                throw FfiError(message: "FFI failed in async completion with code \(boltffiStatus.code)")
+            let boltffiStatusCode = boltffiStatus!.pointee.code
+            guard boltffiStatusCode == 0 else {
+                throw FfiError(message: "FFI failed in async completion with code \(boltffiStatusCode)")
             }
             return boltffiResult
         }

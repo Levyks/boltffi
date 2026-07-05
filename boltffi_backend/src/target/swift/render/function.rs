@@ -2206,21 +2206,24 @@ impl Return {
             .as_ref()
             .map(|success| success.statement().indented(indent));
         let error = error.body(call.clone(), indent)?;
-        let complete = match error.consumes_call() {
-            true => None,
-            false => {
-                let binding = self.async_complete_binding()?;
-                Some((
-                    binding.clone(),
-                    Statement::let_value(&binding, call).indented(indent),
-                ))
-            }
+        let complete = if error.consumes_call() {
+            None
+        } else if self.ty.is_some() || self.success.is_some() {
+            let binding = self.async_complete_binding()?;
+            Some((
+                Some(binding.clone()),
+                Statement::let_value(&binding, call).indented(indent),
+            ))
+        } else {
+            Some((None, Statement::expression(call).indented(indent)))
         };
-        let status = Self::async_status_guard(status, indent);
+        let status = Self::async_status_guard(status, indent)?;
         let success = self.success.as_ref().map(SuccessSlot::expression);
         let value = match (&self.ty, success, complete.as_ref()) {
             (_, Some(value), _) => Some(value),
-            (Some(_), None, Some((binding, _))) => Some(Expression::identifier(binding.clone())),
+            (Some(_), None, Some((Some(binding), _))) => {
+                Some(Expression::identifier(binding.clone()))
+            }
             _ => None,
         };
         let result = value
@@ -2240,25 +2243,33 @@ impl Return {
         .join("\n"))
     }
 
-    fn async_status_guard(status: &Identifier, indent: &str) -> String {
-        let code = Expression::member(status, "code");
-        Statement::guard_else(
-            Expression::equal(&code, Expression::literal(Literal::integer(0))),
-            [Statement::throwing(Expression::call(
-                "FfiError",
-                [Expression::labeled(
-                    "message",
-                    Expression::literal(Literal::interpolated(
-                        "FFI failed in async completion with code ",
-                        code,
-                        "",
-                    )),
-                )]
-                .into_iter()
-                .collect::<ArgumentList>(),
-            ))],
-        )
-        .indented(indent)
+    fn async_status_guard(status: &Identifier, indent: &str) -> Result<String> {
+        let code = GeneratedLocal::FutureStatus.suffixed("code")?;
+        let pointee_code = Expression::member(
+            Expression::member(Expression::forced(status), "pointee"),
+            "code",
+        );
+        Ok([
+            Statement::let_value(&code, pointee_code).indented(indent),
+            Statement::guard_else(
+                Expression::equal(&code, Expression::literal(Literal::integer(0))),
+                [Statement::throwing(Expression::call(
+                    "FfiError",
+                    [Expression::labeled(
+                        "message",
+                        Expression::literal(Literal::interpolated(
+                            "FFI failed in async completion with code ",
+                            Expression::identifier(code),
+                            "",
+                        )),
+                    )]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+                ))],
+            )
+            .indented(indent),
+        ]
+        .join("\n"))
     }
 
     fn async_complete_binding(&self) -> Result<Identifier> {
