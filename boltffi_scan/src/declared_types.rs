@@ -26,7 +26,7 @@ pub(super) enum SourceType<'a> {
     Unknown,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub(super) struct DeclaredTypes {
     by_path: HashMap<String, DeclaredType>,
     custom_by_remote_exact: HashMap<String, CustomTypeId>,
@@ -204,6 +204,51 @@ impl DeclaredTypes {
     }
 
     pub(super) fn resolve_custom_remote(
+        &self,
+        scope: &ModuleScope,
+        ty: &syn::Type,
+    ) -> Result<Option<&CustomTypeId>, ScanError> {
+        self.resolve_custom_remote_with_aliases(scope, ty, &mut HashSet::new())
+    }
+
+    pub(super) fn resolves_type_alias(
+        &self,
+        scope: &ModuleScope,
+        path: &syn::Path,
+    ) -> Result<bool, ScanError> {
+        match self.source_types.resolve_alias(scope, path) {
+            AliasResolution::Known(_) => Ok(true),
+            AliasResolution::Unknown => Ok(false),
+            AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
+                path: spelling::path(path),
+            }),
+        }
+    }
+
+    fn resolve_custom_remote_with_aliases<'a>(
+        &'a self,
+        scope: &ModuleScope,
+        ty: &syn::Type,
+        visited: &mut HashSet<String>,
+    ) -> Result<Option<&'a CustomTypeId>, ScanError> {
+        if let Some(id) = self.resolve_custom_remote_direct(scope, ty)? {
+            return Ok(Some(id));
+        }
+        let syn::Type::Path(type_path) = crate::type_expr::unwrapped(ty) else {
+            return Ok(None);
+        };
+        match self.source_types.resolve_alias(scope, &type_path.path) {
+            AliasResolution::Known(alias) if visited.insert(alias.path.clone()) => {
+                self.resolve_custom_remote_with_aliases(&alias.scope, &alias.target, visited)
+            }
+            AliasResolution::Known(_) | AliasResolution::Unknown => Ok(None),
+            AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
+                path: spelling::path(&type_path.path),
+            }),
+        }
+    }
+
+    fn resolve_custom_remote_direct(
         &self,
         scope: &ModuleScope,
         ty: &syn::Type,
@@ -389,11 +434,25 @@ impl DeclaredKind {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 struct TypeNamespace {
     by_path: HashMap<String, TypeBinding>,
     by_module: HashMap<String, HashMap<String, TypeBinding>>,
+    aliases: HashMap<String, TypeAlias>,
     scopes: HashMap<String, ModuleScope>,
+}
+
+struct TypeAlias {
+    path: String,
+    scope: ModuleScope,
+    target: syn::Type,
+}
+
+#[derive(Clone, Copy)]
+enum AliasResolution<'a> {
+    Known(&'a TypeAlias),
+    Ambiguous,
+    Unknown,
 }
 
 impl TypeNamespace {
@@ -406,8 +465,7 @@ impl TypeNamespace {
                 module
                     .items()
                     .iter()
-                    .filter_map(Self::item_name)
-                    .for_each(|name| namespace.insert_source(module, name));
+                    .for_each(|item| namespace.insert_item(module, item));
                 namespace
             })
     }
@@ -420,6 +478,18 @@ impl TypeNamespace {
 
     fn contains_path(&self, path: &str) -> bool {
         self.by_path.contains_key(path)
+    }
+
+    fn resolve_alias(&self, scope: &ModuleScope, path: &syn::Path) -> AliasResolution<'_> {
+        match self.resolve(scope, path) {
+            TypeResolution::Known(path) => self
+                .aliases
+                .get(&path)
+                .map(AliasResolution::Known)
+                .unwrap_or(AliasResolution::Unknown),
+            TypeResolution::Ambiguous => AliasResolution::Ambiguous,
+            TypeResolution::Unknown => AliasResolution::Unknown,
+        }
     }
 
     fn resolve(&self, scope: &ModuleScope, path: &syn::Path) -> TypeResolution {
@@ -448,14 +518,12 @@ impl TypeNamespace {
         if self.local_name(scope, local).is_some() {
             return TypeResolution::Ambiguous;
         }
-        match self.by_path.get(&path) {
-            Some(TypeBinding::Ambiguous) => TypeResolution::Ambiguous,
-            Some(TypeBinding::Unique(path)) => TypeResolution::Known(path.clone()),
-            None => match self.resolve_reexported(&path) {
-                TypeResolution::Known(path) => TypeResolution::Known(path),
-                TypeResolution::Ambiguous => TypeResolution::Ambiguous,
-                TypeResolution::Unknown => TypeResolution::Known(path),
-            },
+        match self.resolve_candidate_paths(
+            self.import_candidate_paths(scope, &path),
+            &mut HashSet::new(),
+        ) {
+            TypeResolution::Unknown => TypeResolution::Known(path),
+            resolution => resolution,
         }
     }
 
@@ -480,32 +548,10 @@ impl TypeNamespace {
             .skip(scope.path().segments().len())
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
-        let matches = self
-            .glob_candidate_paths(scope, &segments)
-            .into_iter()
-            .try_fold(Vec::new(), |mut matches, candidate| {
-                match self.by_path.get(&candidate) {
-                    Some(TypeBinding::Unique(path)) => matches.push(path.clone()),
-                    Some(TypeBinding::Ambiguous) => return Err(TypeResolution::Ambiguous),
-                    None => match self.resolve_reexported(&candidate) {
-                        TypeResolution::Known(path) => matches.push(path),
-                        TypeResolution::Ambiguous => return Err(TypeResolution::Ambiguous),
-                        TypeResolution::Unknown => {}
-                    },
-                }
-                Ok(matches)
-            });
-        let mut matches = match matches {
-            Ok(matches) => matches,
-            Err(resolution) => return resolution,
-        };
-        matches.sort();
-        matches.dedup();
-        match matches.as_slice() {
-            [path] => TypeResolution::Known(path.clone()),
-            [] => TypeResolution::Unknown,
-            _ => TypeResolution::Ambiguous,
-        }
+        self.resolve_candidate_paths(
+            self.glob_candidate_paths(scope, &segments),
+            &mut HashSet::new(),
+        )
     }
 
     fn resolve_reexported(&self, path: &str) -> TypeResolution {
@@ -534,8 +580,34 @@ impl TypeNamespace {
             TypeResolution::Unknown => {}
         }
         let segments = [name.clone()];
-        let matches = self
-            .reexport_glob_candidate_paths(scope, &segments)
+        self.resolve_candidate_paths(
+            self.reexport_glob_candidate_paths(scope, &segments),
+            visited,
+        )
+    }
+
+    fn resolve_explicit_reexport(
+        &self,
+        scope: &ModuleScope,
+        name: &str,
+        visited: &mut HashSet<String>,
+    ) -> TypeResolution {
+        match scope.reexported(name) {
+            ImportLookup::Unique(imported) => {
+                let raw = imported.join("::");
+                self.resolve_candidate_paths(self.import_candidate_paths(scope, &raw), visited)
+            }
+            ImportLookup::Ambiguous => TypeResolution::Ambiguous,
+            ImportLookup::None => TypeResolution::Unknown,
+        }
+    }
+
+    fn resolve_candidate_paths(
+        &self,
+        candidates: Vec<String>,
+        visited: &mut HashSet<String>,
+    ) -> TypeResolution {
+        let matches = candidates
             .into_iter()
             .try_fold(Vec::new(), |mut matches, candidate| {
                 match self.by_path.get(&candidate) {
@@ -562,59 +634,11 @@ impl TypeNamespace {
         }
     }
 
-    fn resolve_explicit_reexport(
-        &self,
-        scope: &ModuleScope,
-        name: &str,
-        visited: &mut HashSet<String>,
-    ) -> TypeResolution {
-        match scope.reexported(name) {
-            ImportLookup::Unique(imported) => {
-                // A uniform-path re-export (`pub use camera::Item;` naming a
-                // sibling module) is recorded verbatim, so try the raw path
-                // and its module-qualified form, mirroring glob handling.
-                let raw = imported.join("::");
-                let qualified = self.module_qualified_candidate(scope, &raw);
-                let candidates = match qualified == raw {
-                    true => vec![raw],
-                    false => vec![raw, qualified],
-                };
-                let matches =
-                    candidates
-                        .into_iter()
-                        .try_fold(Vec::new(), |mut matches, candidate| {
-                            match self.by_path.get(&candidate) {
-                                Some(TypeBinding::Unique(path)) => matches.push(path.clone()),
-                                Some(TypeBinding::Ambiguous) => {
-                                    return Err(TypeResolution::Ambiguous);
-                                }
-                                None => {
-                                    match self.resolve_reexported_with_visited(&candidate, visited)
-                                    {
-                                        TypeResolution::Known(path) => matches.push(path),
-                                        TypeResolution::Ambiguous => {
-                                            return Err(TypeResolution::Ambiguous);
-                                        }
-                                        TypeResolution::Unknown => {}
-                                    }
-                                }
-                            }
-                            Ok(matches)
-                        });
-                let mut matches = match matches {
-                    Ok(matches) => matches,
-                    Err(resolution) => return resolution,
-                };
-                matches.sort();
-                matches.dedup();
-                match matches.as_slice() {
-                    [path] => TypeResolution::Known(path.clone()),
-                    [] => TypeResolution::Unknown,
-                    _ => TypeResolution::Ambiguous,
-                }
-            }
-            ImportLookup::Ambiguous => TypeResolution::Ambiguous,
-            ImportLookup::None => TypeResolution::Unknown,
+    fn import_candidate_paths(&self, scope: &ModuleScope, path: &str) -> Vec<String> {
+        let qualified = self.module_qualified_candidate(scope, path);
+        match qualified == path {
+            true => vec![path.to_owned()],
+            false => vec![path.to_owned(), qualified],
         }
     }
 
@@ -670,7 +694,30 @@ impl TypeNamespace {
             .get(name)
     }
 
-    fn insert_source(&mut self, module: &SourceModule, name: String) {
+    fn insert_item(&mut self, module: &SourceModule, item: &syn::Item) {
+        match item {
+            syn::Item::Type(alias) => self.insert_alias(module, alias),
+            _ => {
+                if let Some(name) = Self::item_name(item) {
+                    self.insert_source(module, name);
+                }
+            }
+        }
+    }
+
+    fn insert_alias(&mut self, module: &SourceModule, alias: &syn::ItemType) {
+        let path = self.insert_source(module, alias.ident.to_string());
+        self.aliases.insert(
+            path.clone(),
+            TypeAlias {
+                path,
+                scope: module.scope().clone(),
+                target: alias.ty.as_ref().clone(),
+            },
+        );
+    }
+
+    fn insert_source(&mut self, module: &SourceModule, name: String) -> String {
         let path = module.scope().path().qualified(&name);
         self.insert_path(path.clone());
         self.by_module
@@ -678,7 +725,8 @@ impl TypeNamespace {
             .or_default()
             .entry(name)
             .and_modify(TypeBinding::mark_ambiguous)
-            .or_insert(TypeBinding::Unique(path));
+            .or_insert(TypeBinding::Unique(path.clone()));
+        path
     }
 
     fn insert_scope(&mut self, module: &SourceModule) {

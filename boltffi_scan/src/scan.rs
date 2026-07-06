@@ -860,6 +860,66 @@ mod tests {
     }
 
     #[test]
+    fn scans_custom_remote_used_through_type_alias() {
+        let contract = scan(
+            "custom_type!(pub UtcDateTime, remote = chrono::DateTime<chrono::Utc>, repr = i64, error = ConvertError, into_ffi = |dt: &chrono::DateTime<chrono::Utc>| dt.timestamp_millis(), try_from_ffi = |millis: i64| from_millis(millis)); \
+             pub mod core { \
+                 pub mod location { \
+                     pub mod types { \
+                         pub mod coor { \
+                             use chrono::{DateTime, Utc}; \
+                             pub type UtcDateTime = DateTime<Utc>; \
+                         } \
+                         pub mod location { \
+                             use super::coor::UtcDateTime; \
+                             #[data] pub struct CurrentLocation { pub timestamp: UtcDateTime } \
+                         } \
+                     } \
+                 } \
+             }",
+        );
+        let location = contract
+            .records
+            .iter()
+            .find(|record| {
+                record.id == RecordId::new("demo::core::location::types::location::CurrentLocation")
+            })
+            .expect("CurrentLocation record");
+
+        assert_eq!(
+            location.fields[0].type_expr,
+            custom("demo::UtcDateTime", "UtcDateTime")
+        );
+    }
+
+    #[test]
+    fn scans_custom_repr_reexported_from_root() {
+        let contract = scan(
+            "pub use core::location::{GeoCoord, GeographicCoordinate}; \
+             pub mod core { \
+                 pub mod location { \
+                     pub use types::coor::{GeoCoord, GeographicCoordinate}; \
+                     pub mod types { \
+                         pub mod coor { \
+                             pub type GeoCoord = geo::Coord<f64>; \
+                             #[data] pub struct GeographicCoordinate { pub latitude: f64, pub longitude: f64 } \
+                         } \
+                     } \
+                 } \
+             } \
+             custom_type!(pub GeoCoord, remote = geo::Coord<f64>, repr = GeographicCoordinate, error = ConvertError, into_ffi = |coord: &geo::Coord<f64>| GeographicCoordinate { latitude: coord.y, longitude: coord.x }, try_from_ffi = |value: GeographicCoordinate| from_coordinate(value));",
+        );
+
+        assert_eq!(
+            contract.customs[0].repr,
+            record(
+                "demo::core::location::types::coor::GeographicCoordinate",
+                "GeographicCoordinate"
+            )
+        );
+    }
+
+    #[test]
     fn scans_custom_ffi_trait_impl_and_resolves_remote_uses() {
         let contract = scan(
             "pub struct Email(String); \
