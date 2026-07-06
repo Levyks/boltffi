@@ -75,11 +75,15 @@ impl DeclaredTypes {
         })?;
         marked.customs().iter().try_for_each(|marked| {
             let spec = items::custom_type::Spec::parse(marked)?;
-            declared_types.register_custom_type(
-                marked.scope(),
-                CustomTypeId::new(marked.module().qualified(&spec.name().to_string())),
-                spec.remote_type(),
-            )
+            let id = CustomTypeId::new(marked.module().qualified(&spec.name().to_string()));
+            // A custom_ffi impl proves a real type lives at the declared
+            // path (the defining struct may be macro-generated and thus
+            // missing from the item index), so re-export chains can verify
+            // against it when picking a public spelling.
+            if spec.declares_source_type() {
+                declared_types.source_types.ensure_path(id.as_str());
+            }
+            declared_types.register_custom_type(marked.scope(), id, spec.remote_type())
         })?;
         Ok(declared_types)
     }
@@ -144,7 +148,7 @@ impl DeclaredTypes {
                 .iter()
                 .any(|dependency| dependency == root)
         {
-            return Some(id.to_owned());
+            return self.shallowest_public_path(&segments);
         }
         let leaf = segments.last().copied()?;
         let mut candidates = direct_dependencies
@@ -165,6 +169,27 @@ impl DeclaredTypes {
             [candidate] => Some(candidate.clone()),
             [] | [_, ..] => None,
         }
+    }
+
+    fn shallowest_public_path(&self, segments: &[&str]) -> Option<String> {
+        let (leaf, modules) = segments.split_last()?;
+        let id = segments.join("::");
+        (1..modules.len())
+            .map(|depth| {
+                modules[..depth]
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(*leaf))
+                    .collect::<Vec<_>>()
+                    .join("::")
+            })
+            .find(|candidate| {
+                matches!(
+                    self.source_types.resolve_public_path(candidate.clone()),
+                    TypeResolution::Known(path) if path == id
+                )
+            })
+            .or(Some(id))
     }
 
     pub(super) fn resolve_impl_target(
@@ -545,11 +570,47 @@ impl TypeNamespace {
     ) -> TypeResolution {
         match scope.reexported(name) {
             ImportLookup::Unique(imported) => {
-                let candidate = imported.join("::");
-                match self.by_path.get(&candidate) {
-                    Some(TypeBinding::Unique(path)) => TypeResolution::Known(path.clone()),
-                    Some(TypeBinding::Ambiguous) => TypeResolution::Ambiguous,
-                    None => self.resolve_reexported_with_visited(&candidate, visited),
+                // A uniform-path re-export (`pub use camera::Item;` naming a
+                // sibling module) is recorded verbatim, so try the raw path
+                // and its module-qualified form, mirroring glob handling.
+                let raw = imported.join("::");
+                let qualified = self.module_qualified_candidate(scope, &raw);
+                let candidates = match qualified == raw {
+                    true => vec![raw],
+                    false => vec![raw, qualified],
+                };
+                let matches =
+                    candidates
+                        .into_iter()
+                        .try_fold(Vec::new(), |mut matches, candidate| {
+                            match self.by_path.get(&candidate) {
+                                Some(TypeBinding::Unique(path)) => matches.push(path.clone()),
+                                Some(TypeBinding::Ambiguous) => {
+                                    return Err(TypeResolution::Ambiguous);
+                                }
+                                None => {
+                                    match self.resolve_reexported_with_visited(&candidate, visited)
+                                    {
+                                        TypeResolution::Known(path) => matches.push(path),
+                                        TypeResolution::Ambiguous => {
+                                            return Err(TypeResolution::Ambiguous);
+                                        }
+                                        TypeResolution::Unknown => {}
+                                    }
+                                }
+                            }
+                            Ok(matches)
+                        });
+                let mut matches = match matches {
+                    Ok(matches) => matches,
+                    Err(resolution) => return resolution,
+                };
+                matches.sort();
+                matches.dedup();
+                match matches.as_slice() {
+                    [path] => TypeResolution::Known(path.clone()),
+                    [] => TypeResolution::Unknown,
+                    _ => TypeResolution::Ambiguous,
                 }
             }
             ImportLookup::Ambiguous => TypeResolution::Ambiguous,
