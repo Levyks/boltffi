@@ -684,8 +684,8 @@ impl BindingMetadataEnvelope {
         }
         if &self.package != self.bindings.package() {
             return Err(BindingMetadataError::PackageMismatch {
-                envelope: self.package.clone(),
-                payload: self.bindings.package().clone(),
+                envelope: Box::new(self.package.clone()),
+                payload: Box::new(self.bindings.package().clone()),
             });
         }
         let actual = BindingMetadataHash::new(&self.bindings.payload_bytes()?);
@@ -800,9 +800,9 @@ pub enum BindingMetadataError {
     /// The envelope package does not match the payload package.
     PackageMismatch {
         /// Package written on the envelope.
-        envelope: PackageInfo,
+        envelope: Box<PackageInfo>,
         /// Package carried by the payload.
-        payload: PackageInfo,
+        payload: Box<PackageInfo>,
     },
     /// The payload hash does not match the serialized payload.
     HashMismatch {

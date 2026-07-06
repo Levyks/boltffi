@@ -390,6 +390,11 @@ fn swift_target_renders_class_handles_and_methods() {
 }
 
 #[test]
+fn swift_target_preserves_rust_pascal_type_spelling() {
+    insta::assert_snapshot!(rendered_fixture("exports/acronym_class"));
+}
+
+#[test]
 fn swift_target_renders_constants() {
     insta::assert_snapshot!(rendered_fixture("constant/literals_and_accessors"));
 }

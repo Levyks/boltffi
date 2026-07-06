@@ -1,9 +1,9 @@
 use std::{fmt, path::PathBuf};
 
-use boltffi_binding::{CanonicalName, NamePart};
+use boltffi_binding::CanonicalName;
 
 use crate::{
-    core::{Error, Result},
+    core::{Error, Result, name_case},
     target::swift::syntax::{Identifier, TypeName},
 };
 
@@ -21,7 +21,7 @@ pub struct SwiftFile {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Name {
-    parts: Vec<NamePart>,
+    source: CanonicalName,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -104,7 +104,7 @@ impl fmt::Display for SwiftFile {
 impl Name {
     pub fn new(name: &CanonicalName) -> Self {
         Self {
-            parts: name.parts().to_vec(),
+            source: name.clone(),
         }
     }
 
@@ -128,46 +128,20 @@ impl Name {
         Identifier::parse(format!(
             "boltffi{}{}",
             self.upper_camel(),
-            Self::upper_camel_from_snake(suffix)
+            name_case::upper_camel_from_snake(suffix)
         ))
     }
 
     pub fn type_name(&self) -> TypeName {
-        TypeName::new(
-            self.parts
-                .iter()
-                .map(|part| Self::capitalized(part.as_str()))
-                .collect::<String>(),
-        )
+        TypeName::new(self.upper_camel())
     }
 
     fn lower_camel(&self) -> String {
-        self.parts
-            .iter()
-            .enumerate()
-            .map(|(index, part)| match index {
-                0 => part.as_str().to_owned(),
-                _ => Self::capitalized(part.as_str()),
-            })
-            .collect()
+        name_case::lower_camel(&self.source)
     }
 
     fn upper_camel(&self) -> String {
-        self.parts
-            .iter()
-            .map(|part| Self::capitalized(part.as_str()))
-            .collect()
-    }
-
-    fn upper_camel_from_snake(name: &str) -> String {
-        name.split('_').map(Self::capitalized).collect()
-    }
-
-    fn capitalized(part: &str) -> String {
-        let mut characters = part.chars();
-        characters.next().map_or_else(String::new, |first| {
-            first.to_uppercase().chain(characters).collect()
-        })
+        name_case::upper_camel(&self.source)
     }
 }
 
@@ -175,15 +149,15 @@ impl GeneratedLocal {
     pub fn identifier(self) -> Result<Identifier> {
         Identifier::parse(format!(
             "boltffi{}",
-            Name::upper_camel_from_snake(self.role())
+            name_case::upper_camel_from_snake(self.role())
         ))
     }
 
     pub fn suffixed(self, suffix: &str) -> Result<Identifier> {
         Identifier::parse(format!(
             "boltffi{}{}",
-            Name::upper_camel_from_snake(self.role()),
-            Name::upper_camel_from_snake(suffix)
+            name_case::upper_camel_from_snake(self.role()),
+            name_case::upper_camel_from_snake(suffix)
         ))
     }
 

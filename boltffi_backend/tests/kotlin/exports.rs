@@ -77,12 +77,17 @@ fn kotlin_target_renders_custom_types_through_representations() {
 fn kotlin_target_renders_custom_type_mappings() {
     let host = KotlinHost::new("com.boltffi.demo", "Demo")
         .expect("Kotlin host")
-        .custom_mapping("Email", KotlinCustomMapping::url_string("java.net.URI"));
+        .custom_mapping("Email", KotlinCustomMapping::url_string("URI"));
 
     insta::assert_snapshot!(rendered_fixture_with_host(
         "exports/custom_string_type_functions",
         host
     ));
+}
+
+#[test]
+fn kotlin_target_qualifies_shadowed_data_enum_payloads() {
+    insta::assert_snapshot!(rendered_fixture("enums/error_payload_shadow"));
 }
 
 #[test]
@@ -108,6 +113,11 @@ fn kotlin_target_encodes_nullable_primitives_as_compact_wire() {
 #[test]
 fn kotlin_target_renders_class_handles_and_associated_callables() {
     insta::assert_snapshot!(rendered_fixture("exports/kotlin_class_handles"));
+}
+
+#[test]
+fn kotlin_target_preserves_rust_pascal_type_spelling() {
+    insta::assert_snapshot!(rendered_fixture("exports/acronym_class"));
 }
 
 #[test]

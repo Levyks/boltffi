@@ -71,6 +71,11 @@ fn jni_bridge_renders_class_handles_and_methods() {
 }
 
 #[test]
+fn jni_bridge_preserves_rust_pascal_type_spelling() {
+    insta::assert_snapshot!(rendered_fixture("exports/acronym_class"));
+}
+
+#[test]
 fn jni_bridge_renders_async_class_methods() {
     insta::assert_snapshot!(rendered_fixture("exports/async_class_methods"));
 }

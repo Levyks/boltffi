@@ -39,25 +39,39 @@ impl DefaultExpression {
 
     fn float(ty: &TypeRef, value: FloatValue) -> Result<Expression> {
         match ty {
-            TypeRef::Primitive(Primitive::F32) => Ok(Expression::call(
+            TypeRef::Primitive(Primitive::F32) => Ok(Self::float32(value.to_f64() as f32)),
+            TypeRef::Primitive(Primitive::F64) => Ok(Self::float64(value.to_f64())),
+            _ => Err(SwiftHost::unsupported("float default type")),
+        }
+    }
+
+    fn float32(value: f32) -> Expression {
+        match value.is_finite() {
+            true => Expression::literal(Literal::float32(value)),
+            false => Expression::call(
                 "Float",
                 [Expression::labeled(
                     "bitPattern",
-                    Expression::new(format!("0x{:08X}", (value.to_f64() as f32).to_bits())),
+                    Expression::new(format!("0x{:08X}", value.to_bits())),
                 )]
                 .into_iter()
                 .collect::<ArgumentList>(),
-            )),
-            TypeRef::Primitive(Primitive::F64) => Ok(Expression::call(
+            ),
+        }
+    }
+
+    fn float64(value: f64) -> Expression {
+        match value.is_finite() {
+            true => Expression::literal(Literal::float64(value)),
+            false => Expression::call(
                 "Double",
                 [Expression::labeled(
                     "bitPattern",
-                    Expression::new(format!("0x{:016X}", value.bits())),
+                    Expression::new(format!("0x{:016X}", value.to_bits())),
                 )]
                 .into_iter()
                 .collect::<ArgumentList>(),
-            )),
-            _ => Err(SwiftHost::unsupported("float default type")),
+            ),
         }
     }
 }

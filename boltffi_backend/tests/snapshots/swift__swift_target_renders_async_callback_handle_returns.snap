@@ -134,20 +134,20 @@ private var boltffiListenerVtable: ___ListenerVTable = {
             _ = wrapper.retain()
             return handle
         },
-        child: { handle, complete, complete_context in
-            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), BoltFFICallbackHandle(handle: 0, vtable: nil)); return }
+        child: { handle, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), BoltFFICallbackHandle(handle: 0, vtable: nil)); return }
             let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
             _Concurrency.Task {
                 let boltffiResult = await wrapper.impl.child()
-                complete?(complete_context, FfiStatus(code: 0), ChildBridge.create(boltffiResult))
+                completion?(completionContext, FfiStatus(code: 0), ChildBridge.create(boltffiResult))
             }
         },
-        sibling: { handle, complete, complete_context in
-            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), BoltFFICallbackHandle(handle: 0, vtable: nil)); return }
+        sibling: { handle, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), BoltFFICallbackHandle(handle: 0, vtable: nil)); return }
             let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
             _Concurrency.Task {
                 let boltffiResult = await wrapper.impl.sibling()
-                complete?(complete_context, FfiStatus(code: 0), SiblingBridge.create(boltffiResult))
+                completion?(completionContext, FfiStatus(code: 0), SiblingBridge.create(boltffiResult))
             }
         }
     )

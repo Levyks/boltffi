@@ -54,8 +54,8 @@ impl EncodedField {
             field,
             host,
             context,
-            Reader::new(reader.clone(), host, context).record_package(package),
-            KotlinType::type_ref_with_record_package(field.ty(), context, package)?,
+            Reader::new(reader.clone(), host, context).package(package),
+            KotlinType::type_ref_with_package(field.ty(), context, package)?,
             writer,
             current,
         )

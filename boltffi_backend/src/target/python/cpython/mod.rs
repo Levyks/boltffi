@@ -1024,6 +1024,37 @@ mod tests {
     }
 
     #[test]
+    fn python_target_preserves_rust_pascal_type_spelling() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                pub struct GPSSimulator {
+                    enabled: bool,
+                }
+
+                #[export]
+                impl GPSSimulator {
+                    pub fn new(enabled: bool) -> Self {
+                        Self { enabled }
+                    }
+
+                    pub fn enabled(&self) -> bool {
+                        self.enabled
+                    }
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(init.contains("class GPSSimulator:"));
+        assert!(stub.contains("class GPSSimulator:"));
+        assert!(!init.contains("class GpsSimulator:"));
+        assert!(!stub.contains("class GpsSimulator:"));
+    }
+
+    #[test]
     fn python_target_renders_primitive_callback_handles() {
         let output = target()
             .render(&bindings(

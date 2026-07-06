@@ -396,18 +396,18 @@ impl<S: Surface> Decl<S> {
 #[non_exhaustive]
 pub enum RecordDecl<S: Surface> {
     /// Crosses by raw memory.
-    Direct(DirectRecordDecl<S>),
+    Direct(Box<DirectRecordDecl<S>>),
     /// Crosses through encoded bytes.
-    Encoded(EncodedRecordDecl<S>),
+    Encoded(Box<EncodedRecordDecl<S>>),
 }
 
 impl<S: Surface> RecordDecl<S> {
     pub(crate) fn direct(record: DirectRecordDecl<S>) -> Self {
-        Self::Direct(record)
+        Self::Direct(Box::new(record))
     }
 
     pub(crate) fn encoded(record: EncodedRecordDecl<S>) -> Self {
-        Self::Encoded(record)
+        Self::Encoded(Box::new(record))
     }
 
     /// Returns the record id.
