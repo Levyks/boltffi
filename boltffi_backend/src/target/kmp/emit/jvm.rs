@@ -2,12 +2,26 @@
 
 use askama::Template as AskamaTemplate;
 
-use crate::core::Result;
+use crate::core::{Error, Result};
+
+use super::{
+    super::plan::KmpModule,
+    common::{RenderedFunction, render_functions},
+};
 
 #[derive(AskamaTemplate)]
-#[template(path = "target/kmp/package_source.kt", escape = "none")]
-struct PackageSourceTemplate<'options> {
-    package_name: &'options str,
+#[template(path = "target/kmp/platform_actual.kt", escape = "none")]
+struct PlatformActualTemplate<'module> {
+    package_name: &'module str,
+    internal_package: &'module str,
+    functions: Vec<RenderedFunction>,
+}
+
+#[derive(AskamaTemplate)]
+#[template(path = "target/kmp/internal_kotlin.kt", escape = "none")]
+struct InternalKotlinTemplate<'module> {
+    internal_package: &'module str,
+    functions: Vec<RenderedFunction>,
 }
 
 #[derive(AskamaTemplate)]
@@ -40,17 +54,34 @@ pub(crate) fn default_adapters() -> Vec<KmpJvmAdapter> {
     vec![KmpJvmAdapter::jvm(), KmpJvmAdapter::android()]
 }
 
-pub(crate) fn render_platform_actual(package_name: &str) -> Result<String> {
-    Ok(PackageSourceTemplate { package_name }.render()?)
-}
-
-pub(crate) fn render_internal_kotlin(internal_package: &str) -> Result<String> {
-    Ok(PackageSourceTemplate {
-        package_name: internal_package,
+pub(crate) fn render_platform_actual(
+    module: &KmpModule,
+    package_name: &str,
+    internal_package: &str,
+) -> Result<String> {
+    Ok(PlatformActualTemplate {
+        package_name,
+        internal_package,
+        functions: render_functions(module)?,
     }
     .render()?)
 }
 
-pub(crate) fn render_jni_glue() -> Result<String> {
+pub(crate) fn render_internal_kotlin(module: &KmpModule, internal_package: &str) -> Result<String> {
+    Ok(InternalKotlinTemplate {
+        internal_package,
+        functions: render_functions(module)?,
+    }
+    .render()?)
+}
+
+pub(crate) fn render_jni_glue(module: &KmpModule) -> Result<String> {
+    if !render_functions(module)?.is_empty() {
+        return Err(Error::UnsupportedTarget {
+            target: "kotlin_multiplatform",
+            shape: "KMP JNI glue emission",
+        });
+    }
+
     Ok(JniGlueTemplate.render()?)
 }

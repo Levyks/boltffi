@@ -70,12 +70,13 @@ impl KmpEmitter {
     /// Emits files for the supplied module plan.
     pub fn emit(&self, module: &KmpModule) -> Result<GeneratedOutput> {
         validate_emission_options(&self.options)?;
-        validate_emit_ready(module)?;
+        validate_platform_matrix(module)?;
 
         let source_package_path = package_path(self.options.package_name());
         let internal_package = format!("{}.jvm", self.options.package_name());
         let internal_package_path = package_path(&internal_package);
         let common_dir = PathBuf::from("src/commonMain/kotlin").join(&source_package_path);
+        let common_source = common::render_common_module(module, self.options.package_name())?;
         let support_metadata = KmpSupportMetadata::new(
             module.support_report(),
             self.options.package_name(),
@@ -99,7 +100,7 @@ impl KmpEmitter {
             )?,
             self.file(
                 common_dir.join(format!("{}.kt", self.options.module_name())),
-                common::render_common_module(module, self.options.package_name())?,
+                common_source,
             )?,
             self.file(KMP_SUPPORT_REPORT_FILE, support_report)?,
         ];
@@ -112,7 +113,11 @@ impl KmpEmitter {
                     self.options.module_name(),
                     adapter.actual_file_suffix
                 )),
-                jvm::render_platform_actual(self.options.package_name())?,
+                jvm::render_platform_actual(
+                    module,
+                    self.options.package_name(),
+                    &internal_package,
+                )?,
             )?);
         }
 
@@ -120,14 +125,14 @@ impl KmpEmitter {
             let internal_dir = source_set_kotlin_dir(adapter.source_set, &internal_package_path);
             files.push(self.file(
                 internal_dir.join(format!("{}.kt", self.options.module_name())),
-                jvm::render_internal_kotlin(&internal_package)?,
+                jvm::render_internal_kotlin(module, &internal_package)?,
             )?);
         }
 
         for adapter in jvm::default_adapters() {
             files.push(self.file(
                 PathBuf::from(format!("src/{}/c/jni_glue.c", adapter.source_set)),
-                jvm::render_jni_glue()?,
+                jvm::render_jni_glue(module)?,
             )?);
         }
 
@@ -180,14 +185,7 @@ fn invalid_emission_options() -> Error {
     }
 }
 
-fn validate_emit_ready(module: &KmpModule) -> Result<()> {
-    if !module.common().apis().is_empty() {
-        return Err(Error::UnsupportedTarget {
-            target: "kotlin_multiplatform",
-            shape: "KMP declaration body emission",
-        });
-    }
-
+fn validate_platform_matrix(module: &KmpModule) -> Result<()> {
     let selected = module
         .platforms()
         .iter()
@@ -214,8 +212,9 @@ fn source_set_kotlin_dir(source_set: &str, package_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        KmpApiPlan, KmpCapability, KmpCapabilitySet, KmpCommonModule, KmpModule, KmpPlatform,
-        KmpPlatformModule, KmpSupportApi, KmpSupportMode, KmpSupportReport,
+        KmpApiPlan, KmpCapability, KmpCapabilitySet, KmpCommonModule, KmpFunctionPlan, KmpModule,
+        KmpParamPlan, KmpPlatform, KmpPlatformModule, KmpSupportApi, KmpSupportMode,
+        KmpSupportReport, KmpTypePlan,
     };
     use super::{KmpEmissionOptions, KmpEmitter};
 
@@ -259,6 +258,68 @@ mod tests {
         )
     }
 
+    fn unsigned_function_module() -> KmpModule {
+        KmpModule::new(
+            KmpCommonModule::new(vec![KmpApiPlan::function(
+                "roundTrip",
+                KmpCapabilitySet::from_iter([KmpCapability::SyncCallables]),
+                KmpFunctionPlan::new(
+                    "roundTrip",
+                    "boltffi_function_demo_round_trip",
+                    vec![KmpParamPlan::new(
+                        "value",
+                        KmpTypePlan::Primitive(boltffi_binding::Primitive::U32),
+                    )],
+                    Some(KmpTypePlan::Primitive(boltffi_binding::Primitive::U32)),
+                ),
+            )]),
+            vec![
+                KmpPlatformModule::new(KmpPlatform::Jvm, KmpPlatform::Jvm.capabilities()),
+                KmpPlatformModule::new(KmpPlatform::Android, KmpPlatform::Android.capabilities()),
+            ],
+            KmpSupportReport::new(
+                KmpSupportMode::Strict,
+                vec![KmpPlatform::Jvm, KmpPlatform::Android],
+                vec![KmpSupportApi::admitted("function", "round::trip")],
+                Vec::new(),
+            ),
+        )
+    }
+
+    fn signed_function_module() -> KmpModule {
+        KmpModule::new(
+            KmpCommonModule::new(vec![KmpApiPlan::function(
+                "add",
+                KmpCapabilitySet::from_iter([KmpCapability::SyncCallables]),
+                KmpFunctionPlan::new(
+                    "add",
+                    "boltffi_function_demo_add",
+                    vec![
+                        KmpParamPlan::new(
+                            "left",
+                            KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
+                        ),
+                        KmpParamPlan::new(
+                            "right",
+                            KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
+                        ),
+                    ],
+                    Some(KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)),
+                ),
+            )]),
+            vec![
+                KmpPlatformModule::new(KmpPlatform::Jvm, KmpPlatform::Jvm.capabilities()),
+                KmpPlatformModule::new(KmpPlatform::Android, KmpPlatform::Android.capabilities()),
+            ],
+            KmpSupportReport::new(
+                KmpSupportMode::Strict,
+                vec![KmpPlatform::Jvm, KmpPlatform::Android],
+                vec![KmpSupportApi::admitted("function", "add")],
+                Vec::new(),
+            ),
+        )
+    }
+
     fn jvm_only_module() -> KmpModule {
         KmpModule::new(
             KmpCommonModule::new(Vec::new()),
@@ -273,6 +334,15 @@ mod tests {
                 Vec::new(),
             ),
         )
+    }
+
+    fn file<'output>(output: &'output crate::GeneratedOutput, path: &str) -> &'output str {
+        output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path() == std::path::Path::new(path))
+            .unwrap_or_else(|| panic!("missing generated file {path}"))
+            .contents()
     }
 
     fn assert_invalid_emission_options(error: crate::Error) {
@@ -331,6 +401,36 @@ mod tests {
     }
 
     #[test]
+    fn emitter_rejects_unsigned_function_plans_at_the_emit_boundary() {
+        let error = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
+            .emit(&unsigned_function_module())
+            .expect_err("unsigned function plans must not render public Kotlin unsigned types");
+
+        assert!(matches!(
+            error,
+            crate::Error::UnsupportedTarget {
+                target: "kotlin_multiplatform",
+                shape: "KMP declaration body emission"
+            }
+        ));
+    }
+
+    #[test]
+    fn emitter_rejects_signed_function_plans_until_jni_glue_is_delegated() {
+        let error = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
+            .emit(&signed_function_module())
+            .expect_err("function plans need delegated JNI glue before files are safe");
+
+        assert!(matches!(
+            error,
+            crate::Error::UnsupportedTarget {
+                target: "kotlin_multiplatform",
+                shape: "KMP JNI glue emission"
+            }
+        ));
+    }
+
+    #[test]
     fn emitter_rejects_non_default_platform_matrix_until_files_are_parameterized() {
         let error = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
             .emit(&jvm_only_module())
@@ -374,6 +474,39 @@ mod tests {
     }
 
     #[test]
+    fn emitter_keeps_empty_jvm_family_sources_package_only() {
+        let output = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
+            .emit(&empty_module())
+            .expect("KMP files should emit");
+
+        for (path, package_name) in [
+            (
+                "src/jvmMain/kotlin/com/example/demo/DemoJvmActual.kt",
+                "com.example.demo",
+            ),
+            (
+                "src/androidMain/kotlin/com/example/demo/DemoAndroidActual.kt",
+                "com.example.demo",
+            ),
+            (
+                "src/jvmMain/kotlin/com/example/demo/jvm/Demo.kt",
+                "com.example.demo.jvm",
+            ),
+            (
+                "src/androidMain/kotlin/com/example/demo/jvm/Demo.kt",
+                "com.example.demo.jvm",
+            ),
+        ] {
+            let contents = file(&output, path);
+
+            assert_eq!(
+                contents,
+                format!("// Auto-generated by BoltFFI. Do not edit.\n\npackage {package_name}\n")
+            );
+        }
+    }
+
+    #[test]
     fn emitter_writes_pack_compatible_support_metadata() {
         let output = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
             .emit(&empty_module())
@@ -407,17 +540,10 @@ mod tests {
         let output = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
             .emit(&empty_module())
             .expect("KMP files should emit");
-        let common = output
-            .files()
-            .iter()
-            .find(|file| {
-                file.path().as_path()
-                    == std::path::Path::new("src/commonMain/kotlin/com/example/demo/Demo.kt")
-            })
-            .expect("common source");
+        let common = file(&output, "src/commonMain/kotlin/com/example/demo/Demo.kt");
 
-        assert!(common.contents().contains("package com.example.demo"));
-        assert!(common.contents().contains("class FfiException"));
-        assert!(common.contents().contains("sealed class BoltFFIResult"));
+        assert!(common.contains("package com.example.demo"));
+        assert!(common.contains("class FfiException"));
+        assert!(common.contains("sealed class BoltFFIResult"));
     }
 }

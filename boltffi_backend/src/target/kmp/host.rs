@@ -4,23 +4,23 @@ use boltffi_binding::{
 };
 
 use crate::core::{
-    BindingCapability, BridgeCapability, CapabilityRequirements, DeclarationLabel, Diagnostic,
-    Emitted, GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
-    contract::sealed, host,
+    BindingCapability, BridgeCapability, CapabilityRequirements, CoverageMode, CoverageReport,
+    DeclarationLabel, Diagnostic, Emitted, GeneratedOutput, HostCapabilities, RenderContext,
+    RenderedDeclaration, Result, Target, UnsupportedDeclaration, contract::sealed, host,
 };
 
 use super::{
     KmpBridge, KmpBridgeContract, KmpEmissionOptions, KmpEmitter, KmpPlatform, KmpSupportMode,
     Syntax,
-    lower::{KmpLowerer, KmpLoweringOptions, admission::KmpAdmission},
+    lower::{KmpLowerer, KmpLoweringOptions, KmpSupportPlan},
 };
 
 /// Kotlin Multiplatform host renderer for the IR backend plan.
 ///
-/// The host currently lowers to a typed [`super::KmpModule`] plan and emits no
-/// Kotlin strings. Complete coverage rendering remains strict: APIs outside
-/// the selected platform capability intersection produce diagnostics that the
-/// backend driver turns into generation failures.
+/// The host lowers to a typed [`super::KmpModule`] plan before file emission.
+/// Complete coverage rendering remains strict: APIs outside the selected
+/// platform capability intersection or current body-emission ownership produce
+/// diagnostics that the backend driver turns into generation failures.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct KmpHost {
@@ -78,36 +78,57 @@ impl KmpHost {
         Target::new(self, KmpBridge)
     }
 
-    fn emit_admitted(
-        &self,
-        declaration: boltffi_binding::DeclarationRef<'_, Native>,
-        bindings: &Bindings<Native>,
-    ) -> Emitted {
-        let label = DeclarationLabel::from_ref(declaration);
-        let records = KmpAdmission::for_bindings(self.selected_platforms.clone(), bindings)
-            .evaluate_declaration(declaration);
-        let diagnostics = records
-            .iter()
-            .filter(|record| !record.is_admitted())
-            .map(|record| Diagnostic::new(admission_message(&label, record)))
-            .collect::<Vec<_>>();
-        if diagnostics.is_empty() {
-            Emitted::primary("")
-        } else {
-            Emitted::primary("").with_diagnostics(diagnostics)
-        }
+    fn emit_declaration_placeholder(&self) -> Emitted {
+        Emitted::primary("")
+    }
+
+    fn support_plan(&self, bindings: &Bindings<Native>) -> KmpSupportPlan {
+        KmpLowerer::new(
+            KmpLoweringOptions::new().selected_platforms(self.selected_platforms.clone()),
+        )
+        .support_plan(bindings)
     }
 }
 
-fn admission_message(
-    label: &DeclarationLabel,
-    record: &super::lower::admission::KmpAdmissionRecord,
-) -> String {
-    let reason = record.reason().unwrap_or("unsupported");
-    if record.kind() == label.kind() && record.name() == label.name() {
+fn coverage_from_support_plan(support_plan: &KmpSupportPlan) -> CoverageReport {
+    let mut coverage = CoverageReport::new();
+    for declaration in support_plan.declarations() {
+        for message in support_messages(declaration) {
+            coverage.push(UnsupportedDeclaration::new(
+                declaration.label().clone(),
+                message,
+            ));
+        }
+    }
+    coverage
+}
+
+fn diagnostics_from_support_plan(support_plan: &KmpSupportPlan) -> Vec<Diagnostic> {
+    support_plan
+        .declarations()
+        .iter()
+        .flat_map(support_messages)
+        .map(Diagnostic::new)
+        .collect()
+}
+
+fn support_messages(declaration: &super::lower::KmpDeclarationSupport) -> Vec<String> {
+    declaration
+        .records()
+        .iter()
+        .filter_map(|record| {
+            record.reason().map(|reason| {
+                api_message(declaration.label(), record.kind(), record.name(), reason)
+            })
+        })
+        .collect()
+}
+
+fn api_message(label: &DeclarationLabel, kind: &str, name: &str, reason: &str) -> String {
+    if kind == label.kind() && name == label.name() {
         reason.to_owned()
     } else {
-        format!("{} {}: {reason}", record.kind(), record.name())
+        format!("{kind} {name}: {reason}")
     }
 }
 
@@ -142,124 +163,113 @@ impl host::HostBackend for KmpHost {
         CapabilityRequirements::new()
     }
 
+    fn preflight_coverage(
+        &self,
+        bindings: &Bindings<Self::Surface>,
+        _bridge: &Self::Bridge,
+        _context: &RenderContext<Self::Surface>,
+    ) -> Result<CoverageReport> {
+        Ok(coverage_from_support_plan(&self.support_plan(bindings)))
+    }
+
     fn record(
         &self,
-        decl: &RecordDecl<Self::Surface>,
+        _decl: &RecordDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Record(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn enumeration(
         &self,
-        decl: &EnumDecl<Self::Surface>,
+        _decl: &EnumDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Enum(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn function(
         &self,
-        decl: &FunctionDecl<Self::Surface>,
+        _decl: &FunctionDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Function(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn class(
         &self,
-        decl: &ClassDecl<Self::Surface>,
+        _decl: &ClassDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Class(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn callback(
         &self,
-        decl: &CallbackDecl<Self::Surface>,
+        _decl: &CallbackDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Callback(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn stream(
         &self,
-        decl: &StreamDecl<Self::Surface>,
+        _decl: &StreamDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Stream(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn constant(
         &self,
-        decl: &ConstantDecl<Self::Surface>,
+        _decl: &ConstantDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::Constant(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn custom_type(
         &self,
-        decl: &CustomTypeDecl,
+        _decl: &CustomTypeDecl,
         _bridge: &Self::Bridge,
-        context: &RenderContext<Self::Surface>,
+        _context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Ok(self.emit_admitted(
-            boltffi_binding::DeclarationRef::CustomType(decl),
-            context.bindings(),
-        ))
+        Ok(self.emit_declaration_placeholder())
     }
 
     fn assemble<'decl>(
         &self,
         bindings: &Bindings<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
-        declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
+        context: &RenderContext<Self::Surface>,
+        _declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
-        let diagnostics = declarations
-            .iter()
-            .flat_map(|declaration| declaration.emitted().diagnostics().iter().cloned())
-            .collect::<Vec<_>>();
-        let support_mode = if diagnostics.is_empty() {
-            self.support_mode
+        let support_plan = self.support_plan(bindings);
+        let diagnostics = if matches!(context.coverage_mode(), CoverageMode::Partial) {
+            diagnostics_from_support_plan(&support_plan)
         } else {
+            Vec::new()
+        };
+        let support_mode = if matches!(context.coverage_mode(), CoverageMode::Partial)
+            && support_plan.has_rejections()
+        {
             KmpSupportMode::PreviewPruneUnsupported
+        } else {
+            self.support_mode
         };
         let module = KmpLowerer::new(
             KmpLoweringOptions::new()
                 .selected_platforms(self.selected_platforms.clone())
                 .support_mode(support_mode),
         )
-        .lower(bindings)
+        .lower_support_plan(support_plan)
         .map_err(|error| error.into_backend_error())?;
         let emitted = KmpEmitter::new(KmpEmissionOptions::new(
             self.package_name.clone(),
@@ -302,6 +312,15 @@ mod tests {
             .collect()
     }
 
+    fn file<'output>(output: &'output crate::GeneratedOutput, path: &str) -> &'output str {
+        output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path() == std::path::Path::new(path))
+            .unwrap_or_else(|| panic!("missing generated file {path}"))
+            .contents()
+    }
+
     fn expected_default_file_list() -> Vec<&'static str> {
         vec![
             "settings.gradle.kts",
@@ -330,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn kmp_target_rejects_admitted_sync_function_until_body_emission_is_ported() {
+    fn kmp_target_rejects_sync_primitive_function_until_jni_glue_is_delegated() {
         let error = KmpHost::new()
             .into_target()
             .render(&bindings(
@@ -341,15 +360,152 @@ mod tests {
                 }
                 "#,
             ))
-            .expect_err("KMP IR files cannot claim admitted APIs until bodies are emitted");
+            .expect_err("primitive sync functions need delegated JNI glue before generation");
 
-        assert!(matches!(
-            error,
-            Error::UnsupportedTarget {
+        match error {
+            Error::IncompleteCoverage {
                 target: "kotlin_multiplatform",
-                shape: "KMP declaration body emission"
+                reason,
+            } => {
+                assert!(reason.contains("function add"), "{reason}");
+                assert!(reason.contains("JNI glue emission"), "{reason}");
             }
-        ));
+            other => panic!("unexpected KMP IR skeleton error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kmp_target_partial_prunes_sync_function_rejected_by_body_emission() {
+        let output = KmpHost::new()
+            .into_target()
+            .render_partial(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
+            .expect("partial KMP generation should prune unrenderable function bodies");
+
+        assert_eq!(output_paths(&output), expected_default_file_list());
+        assert!(!output.coverage().is_complete());
+        assert!(
+            output
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message().contains("JNI glue emission"))
+        );
+
+        let common = file(
+            &output,
+            "src/commonMain/kotlin/com/example/boltffi/BoltFFI.kt",
+        );
+        assert!(!common.contains("expect fun add"));
+
+        let report: serde_json::Value =
+            serde_json::from_str(file(&output, KMP_SUPPORT_REPORT_FILE))
+                .expect("valid support report");
+        assert_eq!(report["admitted_apis"], serde_json::json!([]));
+        assert_eq!(report["rejected_apis"][0]["kind"], "function");
+        assert_eq!(report["rejected_apis"][0]["name"], "add");
+        assert!(
+            report["rejected_apis"][0]["reason"]
+                .as_str()
+                .expect("reason")
+                .contains("JNI glue emission")
+        );
+    }
+
+    #[test]
+    fn kmp_target_partial_reports_support_metadata_reasons_for_duplicate_function_declarations() {
+        let output = KmpHost::new()
+            .into_target()
+            .render_partial(&bindings(
+                r#"
+                #[export]
+                pub fn ping_pong(value: i32) -> i32 {
+                    value
+                }
+
+                #[export]
+                pub fn ping__pong(value: i32) -> i32 {
+                    value
+                }
+                "#,
+            ))
+            .expect("partial KMP generation should prune duplicate unrenderable functions");
+        let diagnostic_messages = output
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message())
+            .collect::<Vec<_>>();
+        let unsupported_reasons = output
+            .coverage()
+            .unsupported()
+            .iter()
+            .map(|unsupported| unsupported.reason())
+            .collect::<Vec<_>>();
+        let report: serde_json::Value =
+            serde_json::from_str(file(&output, KMP_SUPPORT_REPORT_FILE))
+                .expect("valid support report");
+        let rejected_reasons = report["rejected_apis"]
+            .as_array()
+            .expect("rejected APIs")
+            .iter()
+            .map(|api| {
+                api["reason"]
+                    .as_str()
+                    .expect("support report rejection reason")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(diagnostic_messages.len(), 2);
+        assert_eq!(output.coverage().unsupported().len(), 2);
+        assert_eq!(rejected_reasons.len(), 2);
+        for reasons in [diagnostic_messages, unsupported_reasons, rejected_reasons] {
+            assert!(
+                reasons
+                    .iter()
+                    .any(|reason| reason.contains("JNI glue emission")),
+                "{reasons:#?}"
+            );
+            assert!(
+                reasons
+                    .iter()
+                    .any(|reason| reason.contains("duplicate Kotlin function signature")),
+                "{reasons:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn kmp_target_rejects_unsigned_primitive_function_until_jni_carrier_plan_exists() {
+        let error = KmpHost::new()
+            .into_target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn round_trip(value: u32) -> u32 {
+                    value
+                }
+                "#,
+            ))
+            .expect_err("unsigned primitives need an explicit JNI carrier plan");
+
+        match error {
+            Error::IncompleteCoverage {
+                target: "kotlin_multiplatform",
+                reason,
+            } => {
+                assert!(reason.contains("function round::trip"), "{reason}");
+                assert!(
+                    reason.contains("unsigned primitive JNI carrier"),
+                    "{reason}"
+                );
+            }
+            other => panic!("unexpected KMP IR skeleton error: {other:?}"),
+        }
     }
 
     #[test]
