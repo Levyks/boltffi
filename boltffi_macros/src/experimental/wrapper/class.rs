@@ -273,7 +273,7 @@ impl<'expansion, 'lowered, S: RenderSurface> Renderer<'expansion, 'lowered, S> {
                         ::std::sync::atomic::fence(::std::sync::atomic::Ordering::Acquire);
                         unsafe {
                             let state = *Box::from_raw(handle);
-                            drop(state.value.into_inner());
+                            state.value.into_inner();
                         }
                     }
                 }
