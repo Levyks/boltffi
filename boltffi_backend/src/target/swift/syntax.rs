@@ -6,9 +6,11 @@ use crate::core::{Error, LanguageSyntax, Result, syntax::sealed};
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Syntax;
 
-/// A valid Swift identifier.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Identifier(String);
+pub struct Identifier {
+    spelling: String,
+    escaped: bool,
+}
 
 /// Swift type syntax.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -26,12 +28,14 @@ pub struct Statement(String);
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Literal(String);
 
-/// Swift argument-list syntax.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ArgumentList(Vec<Expression>);
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ParameterList(Vec<String>);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ArgumentLabel(String);
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 struct CommaList(Vec<String>);
@@ -113,7 +117,10 @@ impl sealed::SyntaxFragment for Identifier {}
 
 impl fmt::Display for Identifier {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        match self.escaped {
+            true => write!(formatter, "`{}`", self.spelling),
+            false => formatter.write_str(&self.spelling),
+        }
     }
 }
 
@@ -121,7 +128,10 @@ impl Identifier {
     pub fn parse(identifier: impl Into<String>) -> Result<Self> {
         let identifier = identifier.into();
         if Self::valid(&identifier) && !Syntax::keyword(&identifier) {
-            Ok(Self(identifier))
+            Ok(Self {
+                spelling: identifier,
+                escaped: false,
+            })
         } else {
             Err(Error::InvalidSwiftIdentifier { identifier })
         }
@@ -129,15 +139,18 @@ impl Identifier {
 
     pub fn escape(identifier: impl Into<String>) -> Result<Self> {
         let identifier = identifier.into();
-        if Syntax::keyword(&identifier) {
-            Ok(Self(format!("`{identifier}`")))
+        if Self::valid(&identifier) {
+            Ok(Self {
+                escaped: Syntax::keyword(&identifier),
+                spelling: identifier,
+            })
         } else {
-            Self::parse(identifier)
+            Err(Error::InvalidSwiftIdentifier { identifier })
         }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.spelling
     }
 
     fn valid(identifier: &str) -> bool {
@@ -146,6 +159,42 @@ impl Identifier {
             .next()
             .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
             && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+    }
+}
+
+impl fmt::Display for ArgumentLabel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl From<&str> for ArgumentLabel {
+    fn from(label: &str) -> Self {
+        Self(label.to_owned())
+    }
+}
+
+impl From<String> for ArgumentLabel {
+    fn from(label: String) -> Self {
+        Self(label)
+    }
+}
+
+impl From<&String> for ArgumentLabel {
+    fn from(label: &String) -> Self {
+        Self(label.clone())
+    }
+}
+
+impl From<Identifier> for ArgumentLabel {
+    fn from(identifier: Identifier) -> Self {
+        Self(identifier.spelling)
+    }
+}
+
+impl From<&Identifier> for ArgumentLabel {
+    fn from(identifier: &Identifier) -> Self {
+        Self(identifier.spelling.clone())
     }
 }
 
@@ -357,7 +406,8 @@ impl Expression {
         Self::new(format!("{callee}?({arguments})"))
     }
 
-    pub fn labeled(label: impl fmt::Display, value: impl fmt::Display) -> Self {
+    pub fn labeled(label: impl Into<ArgumentLabel>, value: impl fmt::Display) -> Self {
+        let label = label.into();
         Self::new(format!("{label}: {value}"))
     }
 
@@ -556,8 +606,10 @@ impl Statement {
         buffer: impl fmt::Display,
         body: impl fmt::Display,
         indent: &str,
+        throwing: bool,
     ) -> String {
-        Self::unsafe_buffer_scope_with_prefix(bytes, buffer, body, indent, "_ = ")
+        let prefix = if throwing { "try " } else { "" };
+        Self::unsafe_buffer_scope_with_effect(bytes, buffer, body, indent, prefix)
     }
 
     pub fn unsafe_buffer_scope(
@@ -753,6 +805,19 @@ impl Statement {
             body,
             indent,
             prefix,
+        )
+    }
+
+    fn unsafe_buffer_scope_with_effect(
+        bytes: impl fmt::Display,
+        buffer: impl fmt::Display,
+        body: impl fmt::Display,
+        indent: &str,
+        prefix: &str,
+    ) -> String {
+        format!(
+            "{indent}{prefix}{} {{ {buffer} -> Void in\n{body}\n{indent}}}",
+            Expression::member(bytes, "withUnsafeBufferPointer")
         )
     }
 

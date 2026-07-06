@@ -161,6 +161,7 @@ struct MutableEncodedArgument {
 enum BodyExit {
     ReturnValue,
     ThrowingReturnValue,
+    ThrowingEffect,
     CompleteEffect,
 }
 
@@ -1841,7 +1842,8 @@ impl EncodedArgument {
             match exit {
                 BodyExit::ReturnValue => self.buffer.returning_scope(body, indent, false),
                 BodyExit::ThrowingReturnValue => self.buffer.returning_scope(body, indent, true),
-                BodyExit::CompleteEffect => self.buffer.effect_scope(body, indent),
+                BodyExit::ThrowingEffect => self.buffer.effect_scope(body, indent, true),
+                BodyExit::CompleteEffect => self.buffer.effect_scope(body, indent, false),
             }
         )
     }
@@ -1906,7 +1908,7 @@ impl MutableEncodedArgument {
             )
             .indented(indent),
             Statement::defer(self.output.free_call(&self.free)).indented(indent),
-            self.input.effect_scope(Statement::new(body), indent),
+            self.input.effect_scope(Statement::new(body), indent, false),
             self.writeback(indent)?,
         ]
         .join("\n"))
@@ -1925,7 +1927,7 @@ impl BodyExit {
     }
 
     fn throws(self) -> bool {
-        matches!(self, Self::ThrowingReturnValue)
+        matches!(self, Self::ThrowingReturnValue | Self::ThrowingEffect)
     }
 }
 
@@ -2136,7 +2138,8 @@ impl Return {
         match (self.ty.is_some(), fallible) {
             (true, true) => BodyExit::ThrowingReturnValue,
             (true, false) => BodyExit::ReturnValue,
-            (false, _) => BodyExit::CompleteEffect,
+            (false, true) => BodyExit::ThrowingEffect,
+            (false, false) => BodyExit::CompleteEffect,
         }
     }
 

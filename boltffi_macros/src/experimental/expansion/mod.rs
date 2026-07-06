@@ -159,13 +159,14 @@ mod tests {
     use std::process::Command;
 
     use boltffi_ast::{
-        AdditionalBound, BaseTrait, CanonicalName, ClassDef, ClassId, ClassThreadSafety, ConstExpr,
-        ConstantDef, ConstantId, CustomRemoteType, CustomTypeConverter, CustomTypeConverters,
-        CustomTypeDef, CustomTypeId, EnumDef, EnumId, ExecutionKind, FieldDef, FnSig, FnTrait,
-        FnTraitKind, FunctionDef, FunctionId, IntegerLiteral, Literal, MethodDef, MethodId,
-        PackageInfo, ParameterDef, ParameterPassing, Path, Primitive, Receiver, RecordDef,
-        RecordId, ReprAttr, ReprItem, ReturnDef, Source, SourceContract, SourceName, StreamDef,
-        StreamId, TraitBounds, TraitDef, TraitId, TypeExpr, VariantDef, VariantPayload, Visibility,
+        AdditionalBound, AttributeInput, BaseTrait, CanonicalName, ClassDef, ClassId,
+        ClassThreadSafety, ConstExpr, ConstantDef, ConstantId, CustomRemoteType,
+        CustomTypeConverter, CustomTypeConverters, CustomTypeDef, CustomTypeId, EnumDef, EnumId,
+        ExecutionKind, FieldDef, FnSig, FnTrait, FnTraitKind, FunctionDef, FunctionId,
+        IntegerLiteral, Literal, MethodDef, MethodId, PackageInfo, ParameterDef, ParameterPassing,
+        Path, Primitive, Receiver, RecordDef, RecordId, ReprAttr, ReprItem, ReturnDef, Source,
+        SourceContract, SourceName, StreamDef, StreamId, TraitBounds, TraitDef, TraitId, TypeExpr,
+        UserAttr, VariantDef, VariantPayload, Visibility,
     };
     use boltffi_binding::{Native, Wasm32, lower_with_declarations};
     use proc_macro2::TokenStream;
@@ -6876,6 +6877,27 @@ mod tests {
         assert!(
             !rendered
                 .contains("impl :: boltffi :: __private :: CallbackForeignType for dyn Listener")
+        );
+    }
+
+    #[test]
+    fn native_async_trait_callback_method_expansion_uses_async_trait_attribute() {
+        let mut source = async_string_listener_contract();
+        source.traits[0].user_attrs.push(UserAttr::new(
+            Path::single("async_trait"),
+            AttributeInput::Empty,
+        ));
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens =
+            expand_native_callback(&expansion, &source.traits[0]).expect("expanded callback");
+        let rendered = tokens.to_string();
+        syn::parse2::<syn::File>(tokens).expect("expanded callback parses");
+
+        assert!(
+            rendered
+                .contains("# [:: async_trait :: async_trait] impl Listener for ForeignListener")
         );
     }
 

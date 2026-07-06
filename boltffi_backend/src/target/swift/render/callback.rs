@@ -1209,7 +1209,7 @@ impl EncodedProxyArgument {
             self.buffer.bytes_statement().to_string(),
             match returns_value {
                 true => self.buffer.returning_scope(body, "", false),
-                false => self.buffer.effect_scope(body, ""),
+                false => self.buffer.effect_scope(body, "", false),
             },
         ]
         .join("\n")

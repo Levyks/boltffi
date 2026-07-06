@@ -63,7 +63,7 @@ private final class ListenerProxy: Listener, ListenerBridgeable {
             fatalError("missing callback vtable entry")
         }
         let boltffiNameBytes = boltffiEncode { boltffiNameWriter in boltffiNameWriter.writeString(name) }
-        _ = boltffiNameBytes.withUnsafeBufferPointer { boltffiNameBuffer in
+        boltffiNameBytes.withUnsafeBufferPointer { boltffiNameBuffer -> Void in
             invoke(handle.handle, boltffiNameBuffer.baseAddress!, UInt(boltffiNameBuffer.count))
         }
     }

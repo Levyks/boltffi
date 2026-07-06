@@ -1,6 +1,5 @@
 ---
 source: boltffi_backend/tests/swift.rs
-assertion_line: 95
 expression: "rendered_fixture(\"exports/kotlin_class_handles\")"
 ---
 ===== DemoFFI.swift =====

@@ -18,6 +18,14 @@ public struct FfiError: Error {
     }
 }
 
+private final class BoltFFIClosureBox<Invoke> {
+    let invoke: Invoke
+
+    init(_ invoke: Invoke) {
+        self.invoke = invoke
+    }
+}
+
 public protocol Listener: AnyObject {
     func onValue(value: UInt32) -> UInt32
 }
@@ -113,18 +121,14 @@ private enum ListenerBridge {
 }
 
 public func install(callback: @escaping () -> Listener) {
-    final class BoltFFICallbackClosure {
-        let invoke: () -> Listener
-        init(_ invoke: @escaping () -> Listener) { self.invoke = invoke }
-    }
-    let boltffiCallbackBox = BoltFFICallbackClosure(callback)
+    let boltffiCallbackBox = BoltFFIClosureBox<() -> Listener>(callback)
     let boltffiCallbackContext = Unmanaged.passRetained(boltffiCallbackBox).toOpaque()
     let boltffiCallbackCall: @convention(c) (UnsafeMutableRawPointer?) -> BoltFFICallbackHandle = { context in
-        return ListenerBridge.create(Unmanaged<BoltFFICallbackClosure>.fromOpaque(context!).takeUnretainedValue().invoke())
+        return ListenerBridge.create(Unmanaged<BoltFFIClosureBox<() -> Listener>>.fromOpaque(context!).takeUnretainedValue().invoke())
     }
     let boltffiCallbackRelease: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
         guard let context = context else { return }
-        Unmanaged<BoltFFICallbackClosure>.fromOpaque(context).release()
+        Unmanaged<BoltFFIClosureBox<() -> Listener>>.fromOpaque(context).release()
     }
     boltffi_function_demo_install(boltffiCallbackCall, boltffiCallbackContext, boltffiCallbackRelease)
 }

@@ -23,7 +23,6 @@ use crate::{
 pub struct ClosureArgument {
     source: Identifier,
     ty: TypeName,
-    box_type: TypeName,
     box_binding: Identifier,
     context: Identifier,
     call: Identifier,
@@ -82,7 +81,7 @@ struct EncodedClosureReturn {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ClosureError {
     None,
-    Encoded(EncodedClosureError),
+    Encoded(Box<EncodedClosureError>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,7 +131,6 @@ impl ClosureArgument {
         Ok(Self {
             source,
             ty,
-            box_type: TypeName::new(format!("BoltFFI{}Closure", source_name.type_name())),
             box_binding: source_name.generated("box")?,
             context: source_name.generated("context")?,
             call: source_name.generated("call")?,
@@ -157,11 +155,10 @@ impl ClosureArgument {
 
     pub fn wrap(&self, body: String, indent: &str) -> String {
         [
-            self.box_type_statement(indent),
             Statement::let_value(
                 &self.box_binding,
                 Expression::call(
-                    &self.box_type,
+                    self.box_type(),
                     [Expression::identifier(self.source.clone())]
                         .into_iter()
                         .collect(),
@@ -191,6 +188,10 @@ impl ClosureArgument {
         .join("\n")
     }
 
+    fn box_type(&self) -> TypeName {
+        TypeName::new(format!("BoltFFIClosureBox<{}>", self.ty))
+    }
+
     fn closure_type(
         parameters: &[ClosureParameter],
         returns: &ClosureReturn,
@@ -206,19 +207,6 @@ impl ClosureArgument {
                 returns.public_ty.clone(),
             ),
         }
-    }
-
-    fn box_type_statement(&self, indent: &str) -> String {
-        [
-            format!("{indent}final class {} {{", self.box_type),
-            format!("{indent}    let invoke: {}", self.ty),
-            format!(
-                "{indent}    init(_ invoke: @escaping {}) {{ self.invoke = invoke }}",
-                self.ty
-            ),
-            format!("{indent}}}"),
-        ]
-        .join("\n")
     }
 
     fn call_statement(&self, indent: &str) -> String {
@@ -261,7 +249,7 @@ impl ClosureArgument {
                 Expression::member(
                     Expression::call(
                         Expression::member(
-                            Expression::new(format!("Unmanaged<{}>", self.box_type)),
+                            Expression::new(format!("Unmanaged<{}>", self.box_type())),
                             "fromOpaque",
                         ),
                         [Expression::forced("context")].into_iter().collect(),
@@ -299,7 +287,7 @@ impl ClosureArgument {
             format!("{indent}    guard let context = context else {{ return }}"),
             format!(
                 "{indent}    Unmanaged<{}>.fromOpaque(context).release()",
-                self.box_type
+                self.box_type()
             ),
             format!("{indent}}}"),
         ]
@@ -491,7 +479,9 @@ impl ClosureError {
                 ty,
                 codec,
                 shape: native::BufferShape::Buffer,
-            } => EncodedClosureError::new(ty, codec, bridge, context).map(Self::Encoded),
+            } => EncodedClosureError::new(ty, codec, bridge, context)
+                .map(Box::new)
+                .map(Self::Encoded),
             ErrorChannel::Encoded { .. } => {
                 Err(SwiftHost::unsupported("closure encoded error channel"))
             }

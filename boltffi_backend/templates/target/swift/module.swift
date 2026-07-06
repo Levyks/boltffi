@@ -12,3 +12,12 @@ public struct FfiError: Error {
         self.message = message
     }
 }
+{% if closure_box %}
+private final class BoltFFIClosureBox<Invoke> {
+    let invoke: Invoke
+
+    init(_ invoke: Invoke) {
+        self.invoke = invoke
+    }
+}
+{% endif %}

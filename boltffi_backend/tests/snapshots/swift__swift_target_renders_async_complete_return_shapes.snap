@@ -20,17 +20,20 @@ public struct FfiError: Error {
 
 public struct Person: Hashable, Equatable, Sendable {
     public var name: String
+    public var `repeat`: String
 
-    public init(name: String) {
+    public init(name: String, `repeat`: String) {
         self.name = name
+        self.`repeat` = `repeat`
     }
 
     @inlinable static func decode(from reader: inout WireReader) -> Person {
-        Person(name: reader.readString())
+        Person(name: reader.readString(), repeat: reader.readString())
     }
 
     @inlinable func encode(to writer: inout WireWriter) {
         writer.writeString(self.name)
+        writer.writeString(self.`repeat`)
     }
 }
 

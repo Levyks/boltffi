@@ -1,6 +1,5 @@
 ---
 source: boltffi_backend/tests/swift.rs
-assertion_line: 218
 expression: "rendered_fixture(\"exports/closure_parameter\")"
 ---
 ===== DemoFFI.swift =====
@@ -19,19 +18,23 @@ public struct FfiError: Error {
     }
 }
 
-public func install(callback: @escaping (UInt32) -> UInt32) {
-    final class BoltFFICallbackClosure {
-        let invoke: (UInt32) -> UInt32
-        init(_ invoke: @escaping (UInt32) -> UInt32) { self.invoke = invoke }
+private final class BoltFFIClosureBox<Invoke> {
+    let invoke: Invoke
+
+    init(_ invoke: Invoke) {
+        self.invoke = invoke
     }
-    let boltffiCallbackBox = BoltFFICallbackClosure(callback)
+}
+
+public func install(callback: @escaping (UInt32) -> UInt32) {
+    let boltffiCallbackBox = BoltFFIClosureBox<(UInt32) -> UInt32>(callback)
     let boltffiCallbackContext = Unmanaged.passRetained(boltffiCallbackBox).toOpaque()
     let boltffiCallbackCall: @convention(c) (UnsafeMutableRawPointer?, UInt32) -> UInt32 = { context, arg0 in
-        return Unmanaged<BoltFFICallbackClosure>.fromOpaque(context!).takeUnretainedValue().invoke(arg0)
+        return Unmanaged<BoltFFIClosureBox<(UInt32) -> UInt32>>.fromOpaque(context!).takeUnretainedValue().invoke(arg0)
     }
     let boltffiCallbackRelease: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
         guard let context = context else { return }
-        Unmanaged<BoltFFICallbackClosure>.fromOpaque(context).release()
+        Unmanaged<BoltFFIClosureBox<(UInt32) -> UInt32>>.fromOpaque(context).release()
     }
     boltffi_function_demo_install(boltffiCallbackCall, boltffiCallbackContext, boltffiCallbackRelease)
 }

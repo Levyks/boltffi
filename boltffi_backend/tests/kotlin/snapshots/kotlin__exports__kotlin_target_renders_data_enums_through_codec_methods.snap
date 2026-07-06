@@ -16,14 +16,16 @@ private object Native {
 
 
 data class Person(
-    val name: String
+    val name: String,
+    val repeat: String
 ) {
     internal fun wireSize(): Int {
-        return 4 + Utf8Codec.maxBytes(this.name)
+        return 4 + Utf8Codec.maxBytes(this.name) + 4 + Utf8Codec.maxBytes(this.repeat)
     }
 
     internal fun writeTo(writer: WireWriter) {
         writer.writeString(this.name)
+        writer.writeString(this.repeat)
     }
 
     internal fun toByteArray(): ByteArray {
@@ -40,6 +42,7 @@ data class Person(
     companion object {
         internal fun fromReader(reader: WireReader): Person {
             return Person(
+                reader.readString(),
                 reader.readString()
             )
         }

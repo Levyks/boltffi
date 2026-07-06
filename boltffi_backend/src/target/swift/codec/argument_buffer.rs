@@ -63,8 +63,8 @@ impl ArgumentBuffer {
         Statement::let_value(&self.bytes, self.encode_call())
     }
 
-    pub fn effect_scope(&self, body: Statement, indent: &str) -> String {
-        Statement::discarding_unsafe_buffer_scope(&self.bytes, &self.buffer, body, indent)
+    pub fn effect_scope(&self, body: Statement, indent: &str, throwing: bool) -> String {
+        Statement::discarding_unsafe_buffer_scope(&self.bytes, &self.buffer, body, indent, throwing)
     }
 
     pub fn unsafe_buffer_scope(&self, body: Statement, indent: &str) -> String {

@@ -1,6 +1,5 @@
 ---
 source: boltffi_backend/tests/swift.rs
-assertion_line: 235
 expression: "rendered_partial_fixture(\"callback/callback_handle_direct_vector_return\")"
 ---
 ===== DemoFFI.swift =====

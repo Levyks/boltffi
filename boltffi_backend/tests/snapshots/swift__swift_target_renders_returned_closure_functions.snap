@@ -1,6 +1,5 @@
 ---
 source: boltffi_backend/tests/swift.rs
-assertion_line: 238
 expression: "rendered_fixture(\"exports/returned_closure_function\")"
 ---
 ===== DemoFFI.swift =====
