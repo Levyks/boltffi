@@ -11,7 +11,7 @@ use boltffi_binding::{
 };
 
 use crate::{
-    bridge::c::{CBridgeContract, CallbackSlot, ParameterGroup},
+    bridge::c::{CBridgeContract, CallbackSlot, ParameterGroup, Type as CType},
     core::{Emitted, Error, RenderContext, Result},
     target::swift::{
         SwiftHost,
@@ -88,6 +88,7 @@ enum MethodExecution {
 struct AsyncCompletion {
     callback: Identifier,
     context: Identifier,
+    payload: Option<CType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,11 +114,22 @@ struct Return {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ReturnConversion {
     Void,
-    Direct,
-    FromC { default_payload: Expression },
+    Direct(DirectReturn),
     Encoded(EncodedReturn),
     DirectVector(DirectVectorReturn),
     CallbackHandle(CallbackHandle),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DirectReturn {
+    value: DirectValue,
+    encoded_completion: Option<EncodedDirectCompletion>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EncodedDirectCompletion {
+    buffer: ArgumentBuffer,
+    copy: Identifier,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -942,8 +954,9 @@ impl AsyncCompletion {
             });
         }
         Ok(Self {
-            callback: Identifier::escape(slot.parameter(completion.callback()).name())?,
-            context: Identifier::escape(slot.parameter(completion.context()).name())?,
+            callback: Identifier::parse("completion")?,
+            context: Identifier::parse("completionContext")?,
+            payload: completion.payload().cloned(),
         })
     }
 
@@ -956,7 +969,7 @@ impl AsyncCompletion {
     }
 
     fn failure_statement(&self, returns: &Return) -> Statement {
-        Statement::expression(self.call(Self::failure_status(), returns.default_payload()))
+        Statement::expression(self.call(Self::failure_status(), returns.default_payload(self)))
     }
 
     fn call(&self, status: Expression, payload: Option<Expression>) -> Expression {
@@ -985,6 +998,10 @@ impl AsyncCompletion {
                 .collect::<ArgumentList>(),
         )
     }
+
+    fn expects_buffer_payload(&self) -> bool {
+        matches!(self.payload, Some(CType::Buffer))
+    }
 }
 
 impl Return {
@@ -1004,10 +1021,7 @@ impl Return {
     fn statement(&self, call: Expression) -> Statement {
         match &self.conversion {
             ReturnConversion::Void => Statement::expression(call),
-            ReturnConversion::Direct => Statement::returns(call),
-            ReturnConversion::FromC { .. } => {
-                Statement::returns(Expression::member(call, "cValue"))
-            }
+            ReturnConversion::Direct(direct) => Statement::returns(direct.c_value(call)),
             ReturnConversion::Encoded(encoded) => encoded.statement(call),
             ReturnConversion::DirectVector(vector) => vector.statement(call),
             ReturnConversion::CallbackHandle(handle) => Statement::returns(handle.create(call)),
@@ -1015,7 +1029,11 @@ impl Return {
     }
 
     fn requires_wire_runtime(&self) -> bool {
-        matches!(self.conversion, ReturnConversion::Encoded(_))
+        match &self.conversion {
+            ReturnConversion::Direct(direct) => direct.requires_wire_runtime(),
+            ReturnConversion::Encoded(_) => true,
+            _ => false,
+        }
     }
 
     fn returns_value(&self) -> bool {
@@ -1025,19 +1043,7 @@ impl Return {
     fn proxy_statement(&self, call: Expression) -> Result<Statement> {
         match &self.conversion {
             ReturnConversion::Void => Ok(Statement::expression(call)),
-            ReturnConversion::Direct => Ok(Statement::returns(call)),
-            ReturnConversion::FromC { .. } => self
-                .ty
-                .as_ref()
-                .map(|ty| {
-                    Statement::returns(Expression::call(
-                        ty,
-                        [Expression::labeled("fromC", call)]
-                            .into_iter()
-                            .collect::<ArgumentList>(),
-                    ))
-                })
-                .ok_or(SwiftHost::unsupported("callback proxy C return")),
+            ReturnConversion::Direct(direct) => Ok(Statement::returns(direct.swift_value(call))),
             ReturnConversion::Encoded(encoded) => Ok(encoded.proxy_statement(call)),
             ReturnConversion::DirectVector(vector) => vector.proxy_statement(call),
             ReturnConversion::CallbackHandle(handle) => Ok(Statement::returns(handle.wrap(call))),
@@ -1060,15 +1066,11 @@ impl Return {
         };
         match &self.conversion {
             ReturnConversion::Void => Statement::returns(Self::empty_error()),
-            ReturnConversion::Direct => self.direct_success(
+            ReturnConversion::Direct(direct) => self.direct_success(
                 call,
                 success_out,
-                Expression::identifier(self.result.clone()),
+                direct.c_value(Expression::identifier(self.result.clone())),
             ),
-            ReturnConversion::FromC { .. } => {
-                let result = Expression::identifier(self.result.clone());
-                self.direct_success(call, success_out, Expression::member(result, "cValue"))
-            }
             ReturnConversion::Encoded(encoded) => encoded.success_statement(call, success_out),
             ReturnConversion::DirectVector(vector) => {
                 vector.success_statement(call, success_out, Self::empty_error())
@@ -1093,16 +1095,9 @@ impl Return {
                 ]
                 .join("\n"),
             ),
-            ReturnConversion::Direct => self.direct_completion(
-                call,
-                completion,
-                Expression::identifier(self.result.clone()),
-            ),
-            ReturnConversion::FromC { .. } => self.direct_completion(
-                call,
-                completion,
-                Expression::member(Expression::identifier(self.result.clone()), "cValue"),
-            ),
+            ReturnConversion::Direct(direct) => {
+                direct.completion_statement(call, &self.result, completion)
+            }
             ReturnConversion::Encoded(encoded) => encoded.completion_statement(call, completion),
             ReturnConversion::DirectVector(vector) => {
                 vector.consume_statement(call, |value| completion.success_statement(Some(value)))
@@ -1130,11 +1125,13 @@ impl Return {
         )
     }
 
-    fn default_payload(&self) -> Option<Expression> {
+    fn default_payload(&self, completion: &AsyncCompletion) -> Option<Expression> {
+        if completion.expects_buffer_payload() {
+            return Some(Self::empty_error());
+        }
         match &self.conversion {
             ReturnConversion::Void => None,
-            ReturnConversion::Direct => Some(Expression::new("0")),
-            ReturnConversion::FromC { default_payload } => Some(default_payload.clone()),
+            ReturnConversion::Direct(direct) => Some(direct.default_storage_value()),
             ReturnConversion::Encoded(_) | ReturnConversion::DirectVector(_) => {
                 Some(Self::empty_error())
             }
@@ -1395,6 +1392,106 @@ impl EncodedCallbackError {
             ))),
             _ => Err(SwiftHost::unsupported("callback encoded error type")),
         }
+    }
+}
+
+impl DirectReturn {
+    fn new(
+        value: DirectValue,
+        result: &Identifier,
+        bridge: &CBridgeContract,
+        encoded_completion: bool,
+    ) -> Result<Self> {
+        let encoded_completion = match encoded_completion {
+            true => Some(EncodedDirectCompletion::new(&value, result, bridge)?),
+            false => None,
+        };
+        Ok(Self {
+            value,
+            encoded_completion,
+        })
+    }
+
+    fn c_value(&self, value: Expression) -> Expression {
+        self.value.c_value(value)
+    }
+
+    fn swift_value(&self, value: Expression) -> Expression {
+        self.value.swift_value(value)
+    }
+
+    fn default_storage_value(&self) -> Expression {
+        self.value.default_storage_value()
+    }
+
+    fn requires_wire_runtime(&self) -> bool {
+        self.encoded_completion.is_some()
+    }
+
+    fn completion_statement(
+        &self,
+        call: Expression,
+        result: &Identifier,
+        completion: &AsyncCompletion,
+    ) -> Statement {
+        match (
+            &self.encoded_completion,
+            completion.expects_buffer_payload(),
+        ) {
+            (Some(encoded), true) => encoded.statement(call, result, completion),
+            _ => Statement::new(
+                [
+                    Statement::let_value(result, call).to_string(),
+                    completion
+                        .success_statement(Some(
+                            self.c_value(Expression::identifier(result.clone())),
+                        ))
+                        .to_string(),
+                ]
+                .join("\n"),
+            ),
+        }
+    }
+}
+
+impl EncodedDirectCompletion {
+    fn new(value: &DirectValue, result: &Identifier, bridge: &CBridgeContract) -> Result<Self> {
+        let buffer = EncodedReturn::buffer()?;
+        let write = value.write_statement(
+            buffer.writer().clone(),
+            Expression::identifier(result.clone()),
+        )?;
+        Ok(Self {
+            buffer: buffer.with_statement(write),
+            copy: Identifier::parse(bridge.support().buffer_from_bytes()?.name())?,
+        })
+    }
+
+    fn statement(
+        &self,
+        call: Expression,
+        result: &Identifier,
+        completion: &AsyncCompletion,
+    ) -> Statement {
+        Statement::new(
+            [
+                Statement::let_value(result, call).to_string(),
+                self.buffer.bytes_statement().to_string(),
+                self.buffer.unsafe_buffer_scope(
+                    Statement::new(
+                        completion
+                            .success_statement(Some(self.copy_expression()))
+                            .indented("    "),
+                    ),
+                    "",
+                ),
+            ]
+            .join("\n"),
+        )
+    }
+
+    fn copy_expression(&self) -> Expression {
+        self.buffer.copy_expression(&self.copy)
     }
 }
 
@@ -1856,16 +1953,18 @@ impl<'plan> ReturnPlanRender<'plan, Native, IntoRust> for ReturnPlan<'_, '_> {
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         let success_out = self.success_out(slot)?;
         let direct = DirectValue::new(ty, self.bridge, self.context)?;
-        let conversion = match direct.converts_from_c() {
-            true => ReturnConversion::FromC {
-                default_payload: direct.default_storage_value(),
-            },
-            false => ReturnConversion::Direct,
-        };
+        let api_type = direct.api_type().clone();
+        let result = GeneratedLocal::ReturnBuffer.identifier()?;
+        let conversion = ReturnConversion::Direct(DirectReturn::new(
+            direct,
+            &result,
+            self.bridge,
+            self.fallible && self.asynchronous,
+        )?);
         Ok(Return {
-            ty: Some(direct.api_type().clone()),
+            ty: Some(api_type),
             conversion,
-            result: GeneratedLocal::ReturnBuffer.identifier()?,
+            result,
             success_out,
         })
     }

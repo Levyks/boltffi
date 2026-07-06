@@ -35,7 +35,7 @@ public let enabled: Bool = true
 
 public let limit: UInt32 = 1024
 
-public let half: Double = Double(bitPattern: 0x3FE0000000000000)
+public let half: Double = 0.5
 
 public let greeting: String = "hello"
 

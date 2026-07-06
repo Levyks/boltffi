@@ -865,6 +865,14 @@ impl Literal {
         Self::new(value.to_string())
     }
 
+    pub fn float32(value: f32) -> Self {
+        Self::new(value.to_string())
+    }
+
+    pub fn float64(value: f64) -> Self {
+        Self::new(value.to_string())
+    }
+
     pub fn string(value: &str) -> Self {
         let escaped = Self::escaped_string_content(value);
         Self::new(format!("\"{escaped}\""))

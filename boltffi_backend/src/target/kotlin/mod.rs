@@ -205,7 +205,13 @@ impl KotlinHost {
     }
 
     fn custom_type_name(mapping: &KotlinCustomMapping) -> TypeName {
-        TypeName::new(mapping.target_type().as_str())
+        TypeName::new(
+            match (mapping.conversion(), mapping.target_type().as_str()) {
+                (KotlinCustomConversion::UuidString, "UUID") => "java.util.UUID",
+                (KotlinCustomConversion::UrlString, "URI") => "java.net.URI",
+                _ => mapping.target_type().as_str(),
+            },
+        )
     }
 
     fn custom_type_decode(

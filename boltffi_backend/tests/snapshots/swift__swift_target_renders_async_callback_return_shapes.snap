@@ -53,6 +53,7 @@ public protocol Listener: AnyObject {
     func point(point: Point) async -> Point
     func values(count: UInt32) async -> [UInt32]
     func tryLoad(key: UInt32) async throws -> String
+    func checkEnabled(key: UInt32) async throws -> Bool
 }
 
 private final class ListenerWrapper {
@@ -75,46 +76,64 @@ private var boltffiListenerVtable: ___ListenerVTable = {
             _ = wrapper.retain()
             return handle
         },
-        value: { handle, key, complete, complete_context in
-            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), 0); return }
+        value: { handle, key, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), 0); return }
             let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
             _Concurrency.Task {
                 let boltffiResult = await wrapper.impl.value(key: key)
-                complete?(complete_context, FfiStatus(code: 0), boltffiResult)
+                completion?(completionContext, FfiStatus(code: 0), boltffiResult)
             }
         },
-        point: { handle, point, complete, complete_context in
-            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), ___Point()); return }
+        point: { handle, point, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), ___Point()); return }
             let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
             _Concurrency.Task {
                 let boltffiResult = await wrapper.impl.point(point: Point(fromC: point))
-                complete?(complete_context, FfiStatus(code: 0), boltffiResult.cValue)
+                completion?(completionContext, FfiStatus(code: 0), boltffiResult.cValue)
             }
         },
-        values: { handle, count, complete, complete_context in
-            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), FfiBuf_u8()); return }
+        values: { handle, count, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), FfiBuf_u8()); return }
             let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
             _Concurrency.Task {
                 let boltffiResult = await wrapper.impl.values(count: count)
                 _ = boltffiResult.withUnsafeBufferPointer { boltffiResultBuffer in
-                    complete?(complete_context, FfiStatus(code: 0), boltffi_buf_from_bytes(UnsafeRawPointer(boltffiResultBuffer.baseAddress)?.assumingMemoryBound(to: UInt8.self), UInt(boltffiResultBuffer.count * MemoryLayout<UInt32>.stride)))
+                    completion?(completionContext, FfiStatus(code: 0), boltffi_buf_from_bytes(UnsafeRawPointer(boltffiResultBuffer.baseAddress)?.assumingMemoryBound(to: UInt8.self), UInt(boltffiResultBuffer.count * MemoryLayout<UInt32>.stride)))
                 }
             }
         },
-        try_load: { handle, key, complete, complete_context in
-            guard handle != 0 else { complete?(complete_context, FfiStatus(code: 1), FfiBuf_u8()); return }
+        try_load: { handle, key, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), FfiBuf_u8()); return }
             let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
             _Concurrency.Task {
                 do {
                     let boltffiResult = try await wrapper.impl.tryLoad(key: key)
                     let boltffiResultBytes = boltffiEncode { boltffiResultWriter in boltffiResultWriter.writeString(boltffiResult) }
                     boltffiResultBytes.withUnsafeBufferPointer { boltffiResultBuffer in
-                        complete?(complete_context, FfiStatus(code: 0), boltffi_buf_from_bytes(boltffiResultBuffer.baseAddress, UInt(boltffiResultBuffer.count)))
+                        completion?(completionContext, FfiStatus(code: 0), boltffi_buf_from_bytes(boltffiResultBuffer.baseAddress, UInt(boltffiResultBuffer.count)))
                     }
                 } catch {
                     let boltffiErrorBytes = boltffiEncode { boltffiErrorWriter in boltffiErrorWriter.writeI32((error as? LoadError)!.rawValue) }
                     boltffiErrorBytes.withUnsafeBufferPointer { boltffiErrorBuffer in
-                        complete?(complete_context, FfiStatus(code: 1), boltffi_buf_from_bytes(boltffiErrorBuffer.baseAddress, UInt(boltffiErrorBuffer.count)))
+                        completion?(completionContext, FfiStatus(code: 1), boltffi_buf_from_bytes(boltffiErrorBuffer.baseAddress, UInt(boltffiErrorBuffer.count)))
+                    }
+                }
+            }
+        },
+        check_enabled: { handle, key, completion, completionContext in
+            guard handle != 0 else { completion?(completionContext, FfiStatus(code: 1), FfiBuf_u8()); return }
+            let wrapper = Unmanaged<ListenerWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            _Concurrency.Task {
+                do {
+                    let boltffiResult = try await wrapper.impl.checkEnabled(key: key)
+                    let boltffiResultBytes = boltffiEncode { boltffiResultWriter in boltffiResultWriter.writeBool(boltffiResult) }
+                    boltffiResultBytes.withUnsafeBufferPointer { boltffiResultBuffer in
+                        completion?(completionContext, FfiStatus(code: 0), boltffi_buf_from_bytes(boltffiResultBuffer.baseAddress, UInt(boltffiResultBuffer.count)))
+                    }
+                } catch {
+                    let boltffiErrorBytes = boltffiEncode { boltffiErrorWriter in boltffiErrorWriter.writeI32((error as? LoadError)!.rawValue) }
+                    boltffiErrorBytes.withUnsafeBufferPointer { boltffiErrorBuffer in
+                        completion?(completionContext, FfiStatus(code: 1), boltffi_buf_from_bytes(boltffiErrorBuffer.baseAddress, UInt(boltffiErrorBuffer.count)))
                     }
                 }
             }

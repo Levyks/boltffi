@@ -208,22 +208,6 @@ impl Enumeration {
             .native_argument(Expression::property(value, Identifier::parse("value")?))
     }
 
-    pub fn read_expression(
-        id: EnumId,
-        reader: Identifier,
-        context: &RenderContext<Native>,
-    ) -> Result<Expression> {
-        Self::type_name_from_id(id, context).and_then(|enumeration| {
-            Ok(Expression::call(
-                enumeration,
-                Identifier::parse("fromReader")?,
-                [Expression::identifier(reader)]
-                    .into_iter()
-                    .collect::<ArgumentList>(),
-            ))
-        })
-    }
-
     pub fn write_statement(
         id: EnumId,
         value: Expression,
@@ -380,7 +364,7 @@ impl Enumeration {
                 initializers
                     .iter()
                     .map(|initializer| match package {
-                        Some(package) => calls.with_record_package(
+                        Some(package) => calls.with_package(
                             Name::new(initializer.name()).function()?,
                             initializer.symbol(),
                             initializer.callable(),
@@ -422,7 +406,7 @@ impl Enumeration {
                                 .and_then(|writeback| {
                                     let mutation = match package {
                                         Some(package) => EncodedReceiverMutation::new(writeback)
-                                            .with_record_package(package),
+                                            .with_package(package),
                                         None => EncodedReceiverMutation::new(writeback),
                                     };
                                     calls.with_encoded_receiver_mutation(
@@ -435,7 +419,7 @@ impl Enumeration {
                                 }),
                             (Some(Receive::ByRef | Receive::ByValue), Some(receiver)) => {
                                 match package {
-                                    Some(package) => calls.with_record_package(
+                                    Some(package) => calls.with_package(
                                         Name::new(method.name()).function()?,
                                         method.target(),
                                         method.callable(),
@@ -451,7 +435,7 @@ impl Enumeration {
                                 }
                             }
                             (None, None) => match package {
-                                Some(package) => calls.with_record_package(
+                                Some(package) => calls.with_package(
                                     Name::new(method.name()).function()?,
                                     method.target(),
                                     method.callable(),

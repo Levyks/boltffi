@@ -96,46 +96,43 @@ struct FunctionReturn {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedReceiverMutation {
     ty: TypeName,
-    record_package: Option<KotlinPackage>,
+    package: Option<KotlinPackage>,
 }
 
 enum ReceiverBinding {
     None,
-    RecordPackage(KotlinPackage),
+    Package(KotlinPackage),
     EncodedMutation(EncodedReceiverMutation),
 }
 
 impl EncodedReceiverMutation {
     pub fn new(ty: TypeName) -> Self {
-        Self {
-            ty,
-            record_package: None,
-        }
+        Self { ty, package: None }
     }
 
-    pub fn with_record_package(mut self, record_package: &KotlinPackage) -> Self {
-        self.record_package = Some(record_package.clone());
+    pub fn with_package(mut self, package: &KotlinPackage) -> Self {
+        self.package = Some(package.clone());
         self
     }
 
-    fn record_package(&self) -> Option<&KotlinPackage> {
-        self.record_package.as_ref()
+    fn package(&self) -> Option<&KotlinPackage> {
+        self.package.as_ref()
     }
 }
 
 impl ReceiverBinding {
-    fn record_package(&self) -> Option<&KotlinPackage> {
+    fn package(&self) -> Option<&KotlinPackage> {
         match self {
             Self::None => None,
-            Self::RecordPackage(record_package) => Some(record_package),
-            Self::EncodedMutation(receiver) => receiver.record_package(),
+            Self::Package(package) => Some(package),
+            Self::EncodedMutation(receiver) => receiver.package(),
         }
     }
 
     fn into_mutation(self) -> Option<EncodedReceiverMutation> {
         match self {
             Self::EncodedMutation(receiver) => Some(receiver),
-            Self::None | Self::RecordPackage(_) => None,
+            Self::None | Self::Package(_) => None,
         }
     }
 }
@@ -182,7 +179,7 @@ enum ReturnConversion {
     DirectVector(DirectVector),
     Encoded {
         codec: <OutOfRust as Direction>::Codec,
-        record_package: Option<KotlinPackage>,
+        package: Option<KotlinPackage>,
     },
     ClassHandle(ClassHandle),
     CallbackHandle(CallbackHandle),
@@ -281,20 +278,20 @@ impl<'render> ExportedCallRenderer<'render> {
         self.build(name, symbol, callable, native_prefix, ReceiverBinding::None)
     }
 
-    pub fn with_record_package(
+    pub fn with_package(
         &self,
         name: Identifier,
         symbol: &NativeSymbol,
         callable: &ExportedCallable<Native>,
         native_prefix: Vec<Expression>,
-        record_package: &KotlinPackage,
+        package: &KotlinPackage,
     ) -> Result<ExportedCall> {
         self.build(
             name,
             symbol,
             callable,
             native_prefix,
-            ReceiverBinding::RecordPackage(record_package.clone()),
+            ReceiverBinding::Package(package.clone()),
         )
     }
 
@@ -323,14 +320,14 @@ impl<'render> ExportedCallRenderer<'render> {
         native_prefix: Vec<Expression>,
         receiver: ReceiverBinding,
     ) -> Result<ExportedCall> {
-        let record_package = receiver.record_package();
+        let package = receiver.package();
         let parameters = callable
             .params()
             .iter()
             .map(|parameter| {
                 ExportedParameter::from_declaration(
                     parameter,
-                    record_package,
+                    package,
                     self.host,
                     self.bridge,
                     self.context,
@@ -343,7 +340,7 @@ impl<'render> ExportedCallRenderer<'render> {
                 .plan()
                 .render_with(&mut FunctionReturnPlan::new(
                     self.context,
-                    record_package,
+                    package,
                     callable,
                 ))?;
         if let Some(receiver_mutation) = receiver.into_mutation() {
@@ -470,7 +467,7 @@ impl ExportedCall {
 impl ExportedParameter {
     pub fn from_declaration(
         parameter: &ParamDecl<Native, IntoRust>,
-        record_package: Option<&KotlinPackage>,
+        package: Option<&KotlinPackage>,
         host: &KotlinHost,
         bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
@@ -479,7 +476,7 @@ impl ExportedParameter {
         let name = source_name.parameter()?;
         let (ty, native_argument) = match parameter.payload() {
             IncomingParam::Value(plan) => (
-                Self::type_name(plan, record_package, context)?,
+                Self::type_name(plan, package, context)?,
                 Self::native_argument_for(source_name, name.clone(), plan, host, context)?,
             ),
             IncomingParam::Closure(closure) => (
@@ -526,10 +523,10 @@ impl ExportedParameter {
 
     fn type_name(
         plan: &ParamPlan<Native, IntoRust>,
-        record_package: Option<&KotlinPackage>,
+        package: Option<&KotlinPackage>,
         context: &RenderContext<Native>,
     ) -> Result<TypeName> {
-        plan.render_with(&mut ParameterType::new(context).record_package(record_package))
+        plan.render_with(&mut ParameterType::new(context).package(package))
     }
 }
 
@@ -917,20 +914,20 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
 
 struct FunctionReturnPlan<'context> {
     context: &'context RenderContext<'context, Native>,
-    record_package: Option<KotlinPackage>,
+    package: Option<KotlinPackage>,
     fallible_success_out: bool,
 }
 
 impl<'context> FunctionReturnPlan<'context> {
     fn new(
         context: &'context RenderContext<'context, Native>,
-        record_package: Option<&KotlinPackage>,
+        package: Option<&KotlinPackage>,
         callable: &ExportedCallable<Native>,
     ) -> Self {
         let error_channel = callable.error().channel();
         Self {
             context,
-            record_package: record_package.cloned(),
+            package: package.cloned(),
             fallible_success_out: matches!(
                 error_channel,
                 ErrorChannel::Status
@@ -969,7 +966,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_
             (
                 ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
                 DirectValueType::Record(record),
-            ) => FunctionReturn::direct_record(*record, self.context, self.record_package.as_ref()),
+            ) => FunctionReturn::direct_record(*record, self.context, self.package.as_ref()),
             (
                 ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
                 DirectValueType::Enum(enumeration),
@@ -987,12 +984,9 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for FunctionReturnPlan<'_
     ) -> Self::Output {
         self.require_supported_slot(slot, "out-pointer encoded function return")?;
         match slot {
-            ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer => FunctionReturn::encoded(
-                ty,
-                codec.clone(),
-                self.context,
-                self.record_package.as_ref(),
-            ),
+            ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer => {
+                FunctionReturn::encoded(ty, codec.clone(), self.context, self.package.as_ref())
+            }
             _ => Err(KotlinHost::unsupported("unknown encoded function return")),
         }
     }
@@ -1051,10 +1045,10 @@ impl FunctionReturn {
     fn direct_record(
         record: RecordId,
         context: &RenderContext<Native>,
-        record_package: Option<&KotlinPackage>,
+        package: Option<&KotlinPackage>,
     ) -> Result<Self> {
         let ty = Record::type_name_from_id(record, context).map(|record| {
-            record_package.map_or(record.clone(), |package| {
+            package.map_or(record.clone(), |package| {
                 TypeName::qualified(package, record)
             })
         })?;
@@ -1091,16 +1085,16 @@ impl FunctionReturn {
         ty: &TypeRef,
         codec: <OutOfRust as Direction>::Codec,
         context: &RenderContext<Native>,
-        record_package: Option<&KotlinPackage>,
+        package: Option<&KotlinPackage>,
     ) -> Result<Self> {
         Ok(Self {
-            ty: Some(match record_package {
-                Some(package) => KotlinType::type_ref_with_record_package(ty, context, package)?,
+            ty: Some(match package {
+                Some(package) => KotlinType::type_ref_with_package(ty, context, package)?,
                 None => KotlinType::type_ref(ty, context)?,
             }),
             conversion: ReturnConversion::Encoded {
                 codec,
-                record_package: record_package.cloned(),
+                package: package.cloned(),
             },
         })
     }
@@ -1209,18 +1203,15 @@ impl FunctionReturn {
                 [call].into_iter().collect::<ArgumentList>(),
             ))]),
             ReturnConversion::DirectVector(vector) => vector.value_statements(call),
-            ReturnConversion::Encoded {
-                codec,
-                record_package,
-            } => {
+            ReturnConversion::Encoded { codec, package } => {
                 let result = Identifier::parse("__boltffi_result")?;
                 let reader = Identifier::parse("__boltffi_reader")?;
                 let payload = call.or_else(Expression::throw_illegal_state(Literal::string(
                     "null buffer returned",
                 )));
                 let mut codec_reader = Reader::new(reader.clone(), host, context);
-                if let Some(package) = record_package {
-                    codec_reader = codec_reader.record_package(package);
+                if let Some(package) = package {
+                    codec_reader = codec_reader.package(package);
                 }
                 let value = codec.render_with(&mut codec_reader)?.into_expression();
                 Ok(vec![
