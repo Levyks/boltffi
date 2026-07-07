@@ -558,12 +558,6 @@ impl<'a> StructWireExpansion<'a> {
     }
 
     fn render_wire_decode_impl(&self, render_context: &StructWireRenderContext<'_>) -> TokenStream {
-        let field_names_for_struct = render_context
-            .field_names
-            .iter()
-            .map(|field_name| quote! { #field_name })
-            .collect::<Vec<_>>();
-
         if render_context.is_blittable {
             let struct_name = render_context.struct_name;
             let impl_generics = render_context.impl_generics;
@@ -585,21 +579,29 @@ impl<'a> StructWireExpansion<'a> {
         let decode_fields = render_context
             .field_names
             .iter()
+            .enumerate()
             .zip(render_context.field_types.iter())
-            .map(|(field_name, field_type)| {
-                // `__boltffi_position` (not `position`) so this accumulator can't be
-                // shadowed by a struct field that happens to be named `position`.
+            .map(|((field_index, field_name), field_type)| {
+                let decoded_local = quote::format_ident!("__boltffi_decoded_{field_index}");
                 let decode_expr = WireTypePlan::new(field_type, self.custom_types)
                     .decode_from_expr(quote! { &buf[__boltffi_position..] });
                 let field_name_literal = field_name.to_string();
                 quote! {
-                    let (#field_name, size) = #decode_expr.map_err(|error| {
+                    let (#decoded_local, size) = #decode_expr.map_err(|error| {
                         eprintln!("[boltffi] wire decode error in {}.{} at position {} (buf_len={}): {:?}",
                             #struct_name_literal, #field_name_literal, __boltffi_position, buf.len(), error);
                         error
                     })?;
                     __boltffi_position += size;
                 }
+            });
+        let struct_fields = render_context
+            .field_names
+            .iter()
+            .enumerate()
+            .map(|(field_index, field_name)| {
+                let decoded_local = quote::format_ident!("__boltffi_decoded_{field_index}");
+                quote! { #field_name: #decoded_local }
             });
         let struct_name = render_context.struct_name;
         let impl_generics = render_context.impl_generics;
@@ -611,7 +613,7 @@ impl<'a> StructWireExpansion<'a> {
                 fn decode_from(buf: &[u8]) -> ::boltffi::__private::wire::DecodeResult<Self> {
                     let mut __boltffi_position = 0usize;
                     #(#decode_fields)*
-                    Ok((Self { #(#field_names_for_struct),* }, __boltffi_position))
+                    Ok((Self { #(#struct_fields),* }, __boltffi_position))
                 }
             }
         }
@@ -886,23 +888,32 @@ impl<'a> EnumWireExpansion<'a> {
                         .iter()
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
-                    // `__boltffi_position` (not `position`) so this accumulator can't
-                    // be shadowed by a variant field that happens to be named `position`.
-                    let decode_fields = field_names.iter().zip(field_types.iter()).map(
-                        |(field_name, field_type)| {
+                    let decode_fields = field_names
+                        .iter()
+                        .enumerate()
+                        .zip(field_types.iter())
+                        .map(|((field_index, _), field_type)| {
+                            let decoded_local =
+                                quote::format_ident!("__boltffi_decoded_{field_index}");
                             let decode_expr = WireTypePlan::new(field_type, self.custom_types)
                                 .decode_from_expr(quote! { &buf[__boltffi_position..] });
                             quote! {
-                                let (#field_name, size) = #decode_expr?;
+                                let (#decoded_local, size) = #decode_expr?;
                                 __boltffi_position += size;
                             }
+                        });
+                    let variant_fields = field_names.iter().enumerate().map(
+                        |(field_index, field_name)| {
+                            let decoded_local =
+                                quote::format_ident!("__boltffi_decoded_{field_index}");
+                            quote! { #field_name: #decoded_local }
                         },
                     );
                     quote! {
                         #discriminant_i32 => {
                             let mut __boltffi_position = 4usize;
                             #(#decode_fields)*
-                            Ok((Self::#variant_name { #(#field_names),* }, __boltffi_position))
+                            Ok((Self::#variant_name { #(#variant_fields),* }, __boltffi_position))
                         }
                     }
                 }

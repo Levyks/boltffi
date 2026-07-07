@@ -859,6 +859,10 @@ class DemoValueTypesTest {
         demoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field")
         assertEquals(logEntry, echoLogEntry(logEntry))
 
+        demoCase("case:records.with_enums.waypoint.should_roundtrip_field_named_position")
+        val waypoint = Waypoint(99L, Priority.CRITICAL, "wp-99")
+        assertEquals(waypoint, echoWaypoint(waypoint))
+
         demoCase("case:records.with_options.user_profile.should_make_with_present_options")
         val userProfile = makeUserProfile("Alice", 30u, "alice@example.com", 98.5)
         demoCase("case:records.with_options.user_profile.should_roundtrip_present_options")

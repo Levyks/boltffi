@@ -758,6 +758,10 @@ public final class DemoTest {
         demoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field");
         assert Demo.echoLogEntry(logEntry).equals(logEntry) : "echoLogEntry round-trip";
 
+        demoCase("case:records.with_enums.waypoint.should_roundtrip_field_named_position");
+        Waypoint waypoint = new Waypoint(99L, Priority.CRITICAL, "wp-99");
+        assert Demo.echoWaypoint(waypoint).equals(waypoint) : "echoWaypoint round-trip";
+
         Filter groupFilter = new Filter.ByGroups(
             Arrays.asList(
                 Arrays.asList("café", "🌍"),
