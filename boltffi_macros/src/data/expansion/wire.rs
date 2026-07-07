@@ -529,8 +529,11 @@ impl<'a> StructWireExpansion<'a> {
             .iter()
             .zip(render_context.field_types.iter())
             .map(|(field_name, field_type)| {
-                let field_buffer =
-                    syn::Ident::new(&format!("__boltffi_buf_{}", field_name), field_name.span());
+                // `format_ident!` (unlike `syn::Ident::new(&format!(...))`)
+                // unraws `r#`-prefixed field identifiers before splicing them
+                // into a new identifier, so a field literally named `r#type`
+                // doesn't produce the invalid identifier `__boltffi_buf_r#type`.
+                let field_buffer = quote::format_ident!("__boltffi_buf_{}", field_name);
                 let encode_expr = WireTypePlan::new(field_type, self.custom_types)
                     .encode_to_expr(quote! { &self.#field_name }, quote! { #field_buffer });
                 quote! {

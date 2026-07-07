@@ -1,5 +1,6 @@
 pub mod blittable;
 pub mod default_values;
+pub mod keyword_fields;
 pub mod mixed;
 pub mod nested;
 pub mod with_collections;
@@ -9,6 +10,7 @@ pub mod with_strings;
 
 pub use blittable::*;
 pub use default_values::*;
+pub use keyword_fields::*;
 pub use mixed::*;
 pub use nested::*;
 pub use with_collections::*;
