@@ -122,6 +122,14 @@ impl CodecSize for Sizer<'_> {
         ))
     }
 
+    fn interned_string(&mut self, _static_values: &[String], _value: &ValueRef) -> Self::Expr {
+        // Java does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString codec size reached Java renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self, value: &ValueRef) -> Self::Expr {
         Ok(SizeExpression::new(Expression::integer(4).add(
             self.value(value)?.member(Identifier::known("length")),

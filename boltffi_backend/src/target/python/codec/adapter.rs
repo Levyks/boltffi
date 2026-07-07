@@ -4,11 +4,11 @@ use std::{
 };
 
 use boltffi_binding::{
-    Bindings, CallableDecl, ClosureReturn, Decl, DirectValueType, DirectVectorElementType,
-    ErrorChannel, ErrorDecl, ExportedCallable, ForeignBody, HandlePresence, HandleTarget,
-    ImportedCallable, IncomingParam, IntoRust, Native, OutOfRust, OutgoingParam, ParamPlanRender,
-    Primitive, ReadPlan, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, TypeRef,
-    ValueRoot, WritePlan, native,
+    Bindings, CallableDecl, ClosureReturn, Decl, DeclarationRef, DirectValueType,
+    DirectVectorElementType, ErrorChannel, ErrorDecl, ExportedCallable, ForeignBody,
+    HandlePresence, HandleTarget, ImportedCallable, IncomingParam, IntoRust, Native, OutOfRust,
+    OutgoingParam, ParamPlanRender, Primitive, ReadPlan, Receive, ReturnPlan, ReturnPlanRender,
+    ReturnValueSlot, RustBody, TypeRef, ValueRoot, WritePlan, native,
 };
 
 use crate::{
@@ -32,11 +32,18 @@ pub struct CodecAdapters<'binding> {
 }
 
 impl<'binding> CodecAdapters<'binding> {
-    pub fn from_bindings(bindings: &'binding Bindings<Native>) -> Self {
-        let collected = bindings.decls().iter().fold(
-            CollectedAdapters::default(),
-            CollectedAdapters::collect_decl,
-        );
+    pub fn from_declarations(
+        bindings: &'binding Bindings<Native>,
+        declarations: &[DeclarationRef<'binding, Native>],
+    ) -> Self {
+        let collected = bindings
+            .decls()
+            .iter()
+            .filter(|declaration| declarations.contains(&DeclarationRef::from(*declaration)))
+            .fold(
+                CollectedAdapters::default(),
+                CollectedAdapters::collect_decl,
+            );
         Self {
             decoders: collected.decoders,
             encoders: collected.encoders,

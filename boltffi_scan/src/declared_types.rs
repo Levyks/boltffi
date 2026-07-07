@@ -124,19 +124,32 @@ impl DeclaredTypes {
             .expect("test declaration registration must not conflict");
     }
 
+    #[cfg(test)]
+    pub(super) fn register_test_interned_string_pool(
+        &mut self,
+        path: impl Into<String>,
+        values: Vec<String>,
+    ) {
+        self.register_interned_string_pool(path.into(), values)
+            .expect("test pool registration must not conflict");
+    }
+
     pub(super) fn resolve(&self, path: &str) -> Option<&DeclaredType> {
         self.by_path.get(path)
     }
 
-    pub(super) fn resolve_interned_string_pool(
+    pub(super) fn resolve_interned_string_pool_entry(
         &self,
         scope: &ModuleScope,
         path: &syn::Path,
-    ) -> Result<Option<&[String]>, ScanError> {
+    ) -> Result<Option<(&str, &[String])>, ScanError> {
         let Some(path) = self.resolve_source_path(scope, path, || spelling::path(path))? else {
             return Ok(None);
         };
-        Ok(self.interned_string_pools.get(&path).map(Vec::as_slice))
+        Ok(self
+            .interned_string_pools
+            .get_key_value(&path)
+            .map(|(path, values)| (path.as_str(), values.as_slice())))
     }
 
     pub(super) fn paths(&self) -> impl Iterator<Item = &str> {

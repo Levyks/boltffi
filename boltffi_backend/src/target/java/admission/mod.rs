@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use boltffi_binding::{Bindings, Decl, DeclarationRef, Native};
 
+use crate::core::capabilities::BindingCapabilityAnalysis;
 use crate::core::{
-    BindingCapability, CoverageReport, DeclarationLabel, HostCapabilities, Result,
-    UnsupportedDeclaration,
+    CoverageReport, DeclarationLabel, HostCapabilities, Result, UnsupportedDeclaration,
 };
 
 pub use self::class::ClassShape;
@@ -34,10 +34,11 @@ enum Decision {
 impl Selection {
     pub fn new(host: &JavaHost, bindings: &Bindings<Native>) -> Result<Self> {
         let capabilities = host.capabilities();
+        let capability_analysis = BindingCapabilityAnalysis::new(bindings);
         let (requested, mut reasons) = bindings.decls().iter().fold(
             (BTreeSet::new(), BTreeMap::new()),
             |(mut requested, mut reasons), declaration| {
-                match Decision::for_declaration(declaration, &capabilities) {
+                match Decision::for_declaration(declaration, &capabilities, &capability_analysis) {
                     Decision::Accepted => {
                         requested.insert(declaration.id());
                     }
@@ -92,10 +93,19 @@ impl Selection {
 }
 
 impl Decision {
-    fn for_declaration(declaration: &Decl<Native>, capabilities: &HostCapabilities) -> Self {
-        let status = capabilities.status(BindingCapability::from_decl(declaration));
-        if !status.renderable_in_partial() {
-            return Self::Rejected(status.reason().to_owned());
+    fn for_declaration(
+        declaration: &Decl<Native>,
+        capabilities: &HostCapabilities,
+        capability_analysis: &BindingCapabilityAnalysis,
+    ) -> Self {
+        let requirements = capability_analysis
+            .declaration_requirements(declaration.id())
+            .expect("capability analysis must include every binding declaration");
+        for capability in requirements.iter() {
+            let status = capabilities.status(capability);
+            if !status.renderable_in_partial() {
+                return Self::Rejected(status.reason().to_owned());
+            }
         }
         match DeclarationRef::from(declaration) {
             DeclarationRef::Function(function) => FunctionShape::classify(function)

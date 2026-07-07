@@ -525,6 +525,14 @@ impl TypeRefRender for ClosureTypeName<'_> {
         Ok("String".to_owned())
     }
 
+    fn interned_string(&mut self, _static_values: &[String]) -> Self::Output {
+        // Kotlin does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString type ref reached Kotlin closure renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self) -> Self::Output {
         Ok("Bytes".to_owned())
     }

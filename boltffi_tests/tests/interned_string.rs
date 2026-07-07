@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashMap};
+
 use boltffi::__private::wire::{WireDecode, WireEncode};
 use boltffi::{InternedString, InternedStringPool, InternedStringRepr};
 
@@ -61,4 +63,90 @@ fn interned_string_wire_decode_round_trips_static_and_dynamic_values() {
         .expect("dynamic interned string decodes");
     assert_eq!(used, dynamic.len());
     assert!(matches!(dynamic_value.repr(), InternedStringRepr::Dynamic(text) if text == "Unknown"));
+}
+
+#[test]
+fn interned_string_dynamic_constructor_canonicalizes_known_pool_values() {
+    // Regression: dynamic("Chrome") must equal BrowserName::CHROME, not a
+    // Dynamic variant that compares unequal due to different representations.
+    let via_dynamic = InternedString::<BrowserName>::dynamic("Chrome");
+    assert_eq!(
+        via_dynamic,
+        BrowserName::CHROME,
+        "dynamic(\"Chrome\") must equal the pool constant"
+    );
+    assert!(
+        matches!(via_dynamic.repr(), InternedStringRepr::Interned(0)),
+        "dynamic with known value must canonicalize to Interned repr"
+    );
+
+    // Unknown values remain dynamic.
+    let unknown = InternedString::<BrowserName>::dynamic("Firefox");
+    assert!(
+        matches!(unknown.repr(), InternedStringRepr::Dynamic(text) if text == "Firefox"),
+        "dynamic with unknown value stays Dynamic"
+    );
+}
+
+#[test]
+fn interned_string_wire_decode_canonicalizes_known_dynamic_payloads() {
+    let mut dynamic = vec![1];
+    dynamic.extend_from_slice(&("Chrome".len() as u32).to_le_bytes());
+    dynamic.extend_from_slice(b"Chrome");
+
+    let (value, used) = InternedString::<BrowserName>::decode_from(&dynamic)
+        .expect("dynamic interned string decodes");
+
+    assert_eq!(used, dynamic.len());
+    assert_eq!(value, BrowserName::CHROME);
+    assert!(matches!(value.repr(), InternedStringRepr::Interned(0)));
+}
+
+#[test]
+fn interned_strings_are_hash_and_ordered_map_keys_without_pool_bounds() {
+    struct UnboundedPool;
+    fn requires_hash_and_order<T: std::hash::Hash + Ord>() {}
+    requires_hash_and_order::<InternedString<UnboundedPool>>();
+
+    let static_key = BrowserName::CHROME;
+    let canonical_static = InternedString::<BrowserName>::dynamic("Chrome");
+    let dynamic_key = InternedString::<BrowserName>::dynamic("Firefox");
+    assert_eq!(static_key, canonical_static);
+
+    let hash = HashMap::from([
+        (static_key, 1_u32),
+        (canonical_static, 2),
+        (dynamic_key.clone(), 3),
+    ]);
+    assert_eq!(hash.len(), 2);
+    assert_eq!(hash[&BrowserName::CHROME], 2);
+    assert_eq!(hash[&dynamic_key], 3);
+
+    let ordered = BTreeMap::from([(BrowserName::CHROME, 2_u32), (dynamic_key.clone(), 3)]);
+    assert_eq!(ordered[&BrowserName::CHROME], 2);
+    assert_eq!(ordered[&dynamic_key], 3);
+}
+
+#[test]
+fn interned_string_map_keys_round_trip_over_the_wire() {
+    let static_key = BrowserName::SAFARI;
+    let dynamic_key = InternedString::<BrowserName>::dynamic("Firefox");
+
+    let hash = HashMap::from([(static_key.clone(), 7_u32), (dynamic_key.clone(), 11)]);
+    let mut hash_buffer = vec![0; hash.wire_size()];
+    let hash_written = hash.encode_to(&mut hash_buffer);
+    let (decoded_hash, hash_used) =
+        HashMap::<InternedString<BrowserName>, u32>::decode_from(&hash_buffer)
+            .expect("hash map with interned keys decodes");
+    assert_eq!(hash_written, hash_used);
+    assert_eq!(decoded_hash, hash);
+
+    let ordered = BTreeMap::from([(static_key, 13_u32), (dynamic_key, 17)]);
+    let mut ordered_buffer = vec![0; ordered.wire_size()];
+    let ordered_written = ordered.encode_to(&mut ordered_buffer);
+    let (decoded_ordered, ordered_used) =
+        BTreeMap::<InternedString<BrowserName>, u32>::decode_from(&ordered_buffer)
+            .expect("ordered map with interned keys decodes");
+    assert_eq!(ordered_written, ordered_used);
+    assert_eq!(decoded_ordered, ordered);
 }

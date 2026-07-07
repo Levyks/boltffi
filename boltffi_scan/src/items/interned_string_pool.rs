@@ -22,18 +22,38 @@ struct ParsedEntry {
 
 impl Spec {
     pub fn parse(marked: &MarkedInternedStringPool<'_>) -> Result<Self, ScanError> {
-        syn::parse2::<ParsedSpec>(marked.item().mac.tokens.clone())
-            .map_err(|err| ScanError::InvalidCustomType {
+        Self::parse_tokens(marked.item().mac.tokens.clone())
+    }
+
+    fn parse_tokens(tokens: proc_macro2::TokenStream) -> Result<Self, ScanError> {
+        let parsed =
+            syn::parse2::<ParsedSpec>(tokens).map_err(|err| ScanError::InvalidCustomType {
                 message: format!("invalid interned_string_pool invocation: {err}"),
-            })
-            .map(|parsed| Self {
-                name: parsed.name,
-                values: parsed
-                    .entries
-                    .into_iter()
-                    .map(|entry| entry.value.value())
-                    .collect(),
-            })
+            })?;
+        Self::from_parsed(parsed)
+    }
+
+    fn from_parsed(parsed: ParsedSpec) -> Result<Self, ScanError> {
+        let mut seen = std::collections::HashSet::<String>::new();
+        for entry in &parsed.entries {
+            let value = entry.value.value();
+            if !seen.insert(value.clone()) {
+                return Err(ScanError::InvalidCustomType {
+                    message: format!(
+                        "duplicate string value {value:?} in interned_string_pool `{}`",
+                        parsed.name
+                    ),
+                });
+            }
+        }
+        Ok(Self {
+            name: parsed.name,
+            values: parsed
+                .entries
+                .into_iter()
+                .map(|entry| entry.value.value())
+                .collect(),
+        })
     }
 
     pub fn name(&self) -> &Ident {
@@ -69,5 +89,37 @@ impl Parse for ParsedSpec {
             name,
             entries,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use boltffi_ast::PackageInfo;
+
+    use crate::ScanError;
+
+    #[test]
+    fn scan_file_rejects_duplicate_string_values() {
+        let file = syn::parse2(quote! {
+            boltffi::interned_string_pool! {
+                pub BrowserName {
+                    CHROME = "Chrome",
+                    CHROMIUM = "Chrome",
+                }
+            }
+        })
+        .expect("valid Rust syntax");
+        let error = match crate::scan_file(file, PackageInfo::new("demo", None)) {
+            Ok(_) => panic!("duplicate value must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            ScanError::InvalidCustomType { ref message }
+                if message.contains("duplicate string value \"Chrome\"")
+                    && message.contains("BrowserName")
+        ));
     }
 }

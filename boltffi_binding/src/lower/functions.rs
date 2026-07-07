@@ -284,6 +284,36 @@ mod tests {
     }
 
     #[test]
+    fn nested_interned_string_param_lowers_to_tagged_codec_node() {
+        let type_expr = TypeExpr::option(TypeExpr::vec(TypeExpr::interned_string(
+            SourcePath::single("InternedString"),
+            "demo::pools::BrowserName",
+            SourcePath::single("BrowserName"),
+            vec!["Chrome".to_owned(), "Firefox".to_owned()],
+        )));
+        let bindings = TestContract::new()
+            .with_function(taking("demo::detect", "detect", "names", type_expr))
+            .lower_ok::<Native>();
+
+        let ParamPlan::Encoded { codec, .. } = first_param_lower(&bindings) else {
+            panic!("nested interned string must use an encoded parameter");
+        };
+        let CodecNode::Optional(inner) = codec.root() else {
+            panic!("expected optional codec root, got {:?}", codec.root());
+        };
+        let CodecNode::Sequence { element, .. } = inner.as_ref() else {
+            panic!("expected nested sequence codec, got {inner:?}");
+        };
+        assert_eq!(
+            element.as_ref(),
+            &CodecNode::InternedString {
+                static_values: vec!["Chrome".to_owned(), "Firefox".to_owned()]
+            }
+        );
+        assert!(codec.uses_interned_string());
+    }
+
+    #[test]
     fn wasm32_string_return_uses_packed_shape() {
         let mut greet = function("demo::greet", "greet");
         greet.returns = ReturnDef::value(TypeExpr::String);

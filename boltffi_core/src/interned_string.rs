@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{hash::Hash, marker::PhantomData};
 
 use crate::wire::{DecodeError, DecodeResult, InvalidWireValue, WireDecode, WireEncode};
 
@@ -10,19 +10,45 @@ pub trait InternedStringPool {
 
 /// A UTF-8 string value that can cross the wire as either a static pool id or
 /// dynamic bytes.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct InternedString<P> {
     repr: InternedStringRepr,
     _pool: PhantomData<P>,
 }
 
 /// Runtime representation of an interned string.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum InternedStringRepr {
     /// Index into the generated static string pool.
     Interned(u32),
     /// Dynamic UTF-8 string fallback for open-set values.
     Dynamic(String),
+}
+
+impl<P> PartialEq for InternedString<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.repr == other.repr
+    }
+}
+
+impl<P> Eq for InternedString<P> {}
+
+impl<P> std::hash::Hash for InternedString<P> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.repr.hash(state);
+    }
+}
+
+impl<P> PartialOrd for InternedString<P> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<P> Ord for InternedString<P> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.repr.cmp(&other.repr)
+    }
 }
 
 impl<P> InternedString<P> {
@@ -38,8 +64,13 @@ impl<P> InternedString<P> {
         }
     }
 
-    /// Builds a dynamic fallback value.
-    pub fn dynamic(value: impl Into<String>) -> Self {
+    /// Builds a dynamic fallback value from a raw string without pool lookup.
+    ///
+    /// Callers that know the value is NOT in the pool (e.g. generated encode
+    /// helpers) can use this to avoid an extra search. For callers that do
+    /// not know, prefer [`InternedString::from_str`] or the [`From`] impls,
+    /// which canonicalize known values to their static pool entries.
+    pub(crate) fn dynamic_unchecked(value: impl Into<String>) -> Self {
         Self {
             repr: InternedStringRepr::Dynamic(value.into()),
             _pool: PhantomData,
@@ -53,6 +84,16 @@ impl<P> InternedString<P> {
 }
 
 impl<P: InternedStringPool> InternedString<P> {
+    /// Builds a value from a dynamic string, canonicalizing to the static pool
+    /// when `value` is a known pool entry.
+    ///
+    /// Callers that provide a value matching a pool constant receive an
+    /// `Interned` representation identical to the generated constant, ensuring
+    /// equality holds. Prefer this over any form of raw construction.
+    pub fn dynamic(value: impl Into<String>) -> Self {
+        Self::from(value.into())
+    }
+
     /// Builds an interned value when `value` appears in the static pool,
     /// otherwise stores a dynamic fallback string.
     #[allow(clippy::should_implement_trait)]
@@ -62,7 +103,7 @@ impl<P: InternedStringPool> InternedString<P> {
                 repr: InternedStringRepr::Interned(index as u32),
                 _pool: PhantomData,
             },
-            None => Self::dynamic(value),
+            None => Self::dynamic_unchecked(value),
         }
     }
 }
@@ -80,7 +121,7 @@ impl<P: InternedStringPool> From<String> for InternedString<P> {
                 repr: InternedStringRepr::Interned(index as u32),
                 _pool: PhantomData,
             },
-            None => Self::dynamic(value),
+            None => Self::dynamic_unchecked(value),
         }
     }
 }
@@ -130,7 +171,7 @@ impl<P: InternedStringPool> WireDecode for InternedString<P> {
             }
             1 => {
                 let (value, used) = String::decode_from(&buf[1..])?;
-                Ok((Self::dynamic(value), 1 + used))
+                Ok((Self::from_str(&value), 1 + used))
             }
             _ => Err(DecodeError::InvalidValue(
                 InvalidWireValue::InternedStringTag,

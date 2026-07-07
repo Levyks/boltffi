@@ -383,6 +383,14 @@ impl TypeRefRender for JavaTypeRef<'_> {
         ))))
     }
 
+    fn interned_string(&mut self, _static_values: &[String]) -> Self::Output {
+        // Java does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString type reached Java renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self) -> Self::Output {
         Ok(ApiType {
             value: TypeName::array(TypeName::primitive(Primitive::Byte)),

@@ -1,7 +1,6 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use boltffi_binding::{Bindings, Decl, DeclarationRef, Surface};
+use boltffi_binding::{Bindings, Decl, DeclarationId, DeclarationRef, Surface};
 
 use crate::core::{Error, Result};
 
@@ -121,6 +120,90 @@ pub type HostCapabilities = CapabilitySet<BindingCapability>;
 /// Capability table advertised by a bridge contract.
 pub type BridgeCapabilities = CapabilitySet<BridgeCapability>;
 
+/// Contract-scoped binding capability requirements.
+///
+/// Computes the `InternedString` transitive dependency closure once, then
+/// serves each declaration's requirement set by its family-tagged identity.
+/// A `DeclarationId` keeps declarations with equal raw ids but different
+/// families distinct while traversing the dependency graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BindingCapabilityAnalysis {
+    contract_requirements: CapabilityRequirements<BindingCapability>,
+    declaration_requirements: BTreeMap<DeclarationId, CapabilityRequirements<BindingCapability>>,
+}
+
+impl BindingCapabilityAnalysis {
+    /// Analyzes all binding declarations and their named dependency edges.
+    pub(crate) fn new<S: Surface>(bindings: &Bindings<S>) -> Self {
+        let declarations = bindings.decls();
+        let declaration_ids = declarations.iter().map(Decl::id).collect::<BTreeSet<_>>();
+        let mut dependents: BTreeMap<DeclarationId, Vec<DeclarationId>> = BTreeMap::new();
+        let mut interned_declarations = BTreeSet::new();
+
+        for declaration in declarations {
+            let declaration_ref = DeclarationRef::from(declaration);
+            if declaration_ref.contains_interned_string() {
+                interned_declarations.insert(declaration.id());
+            }
+
+            let mut dependencies = BTreeSet::new();
+            declaration_ref.append_referenced_declarations(&mut dependencies);
+            for dependency in dependencies {
+                if declaration_ids.contains(&dependency) {
+                    dependents
+                        .entry(dependency)
+                        .or_default()
+                        .push(declaration.id());
+                }
+            }
+        }
+
+        let mut pending = interned_declarations
+            .iter()
+            .copied()
+            .collect::<VecDeque<_>>();
+        while let Some(dependency) = pending.pop_front() {
+            for dependent in dependents.get(&dependency).into_iter().flatten() {
+                if interned_declarations.insert(*dependent) {
+                    pending.push_back(*dependent);
+                }
+            }
+        }
+
+        let mut contract_requirements = CapabilityRequirements::new();
+        let mut declaration_requirements = BTreeMap::new();
+        for declaration in declarations {
+            let mut requirements =
+                CapabilityRequirements::new().require(BindingCapability::from_decl(declaration));
+            if interned_declarations.contains(&declaration.id()) {
+                requirements = requirements.require(BindingCapability::InternedString);
+            }
+            for capability in requirements.iter() {
+                contract_requirements = contract_requirements.require(capability);
+            }
+            declaration_requirements.insert(declaration.id(), requirements);
+        }
+
+        Self {
+            contract_requirements,
+            declaration_requirements,
+        }
+    }
+
+    /// Returns all capabilities required by the analyzed contract.
+    pub(crate) fn contract_requirements(&self) -> &CapabilityRequirements<BindingCapability> {
+        &self.contract_requirements
+    }
+
+    /// Returns capabilities required by one declaration.
+    pub(crate) fn declaration_requirements(
+        &self,
+        declaration: DeclarationId,
+    ) -> Option<&CapabilityRequirements<BindingCapability>> {
+        self.declaration_requirements.get(&declaration)
+    }
+}
+
 impl<C> Default for CapabilityRequirements<C> {
     fn default() -> Self {
         Self {
@@ -156,25 +239,24 @@ where
 }
 
 impl CapabilityRequirements<BindingCapability> {
-    /// Builds binding requirements from the declarations in a contract.
+    /// Builds the full set of binding capabilities required by one declaration.
     ///
-    /// In addition to the per-declaration-kind capability (e.g. `Records`,
-    /// `Functions`), this also requires [`BindingCapability::InternedString`]
-    /// when any declaration references a `TypeRef::InternedString` anywhere in
-    /// its type tree (fields, parameters, return types, stream items, constant
-    /// values, or custom-type representations).
+    /// Returns the per-kind requirement (e.g. [`BindingCapability::Functions`])
+    /// plus [`BindingCapability::InternedString`] when the declaration references
+    /// a tagged interned-string type anywhere in its codec-plan or type tree.
+    pub fn from_decl<S: Surface>(decl: &Decl<S>) -> Self {
+        let mut requirements = Self::new().require(BindingCapability::from_decl(decl));
+        if DeclarationRef::from(decl).contains_interned_string() {
+            requirements = requirements.require(BindingCapability::InternedString);
+        }
+        requirements
+    }
+
+    /// Builds binding requirements from all declarations in a contract.
     pub fn from_bindings<S: Surface>(bindings: &Bindings<S>) -> Self {
-        bindings
-            .decls()
-            .iter()
-            .fold(Self::new(), |requirements, decl| {
-                let requirements = requirements.require(BindingCapability::from_decl(decl));
-                if DeclarationRef::from(decl).contains_interned_string() {
-                    requirements.require(BindingCapability::InternedString)
-                } else {
-                    requirements
-                }
-            })
+        BindingCapabilityAnalysis::new(bindings)
+            .contract_requirements()
+            .clone()
     }
 }
 
@@ -395,5 +477,48 @@ mod tests {
         // Plain String does NOT trigger the gate.
         assert!(!TypeRef::String.contains_interned_string());
         assert!(!TypeRef::Optional(Box::new(TypeRef::String)).contains_interned_string());
+    }
+
+    #[test]
+    fn from_decl_includes_interned_string_requirement_when_decl_uses_interned_string() {
+        use boltffi_ast::PackageInfo;
+        use boltffi_binding::{Native, lower};
+
+        // A function that returns InternedString requires both Functions AND
+        // InternedString capabilities.
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                use boltffi::InternedString;
+
+                boltffi::interned_string_pool! {
+                    pub BrowserName {
+                        Chrome = "Chrome",
+                    }
+                }
+
+                #[export]
+                pub fn browser() -> InternedString<BrowserName> {
+                    BrowserName::CHROME
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        let bindings = lower::<Native>(&source).expect("source lowers");
+        let decl = bindings.decls().iter().next().expect("one declaration");
+
+        let requirements = CapabilityRequirements::from_decl(decl);
+        let capabilities: Vec<_> = requirements.iter().collect();
+        assert!(
+            capabilities.contains(&BindingCapability::Functions),
+            "expected Functions capability"
+        );
+        assert!(
+            capabilities.contains(&BindingCapability::InternedString),
+            "expected InternedString capability"
+        );
     }
 }

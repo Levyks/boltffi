@@ -36,8 +36,15 @@ pub enum TypeExpr {
     Str,
     /// A `boltffi::InternedString<Pool>` value.
     InternedString {
-        /// Path as written at this use site.
+        /// Path to the `InternedString` type as written at this use site.
         path: Path,
+        /// Canonical pool identity (e.g. `"demo::pools::BrowserName"`).
+        ///
+        /// Used by `RootModuleTypes` to rewrite `pool` to its crate-rooted
+        /// form, exactly like record/enum/class ids rewrite their paths.
+        pool_id: String,
+        /// Path to the pool type as written at this use site.
+        pool: Path,
         /// Static values addressable by wire id.
         static_values: Vec<String>,
     },
@@ -138,9 +145,16 @@ impl TypeExpr {
     }
 
     /// Builds an interned UTF-8 string type expression.
-    pub fn interned_string(path: Path, static_values: Vec<String>) -> Self {
+    pub fn interned_string(
+        path: Path,
+        pool_id: impl Into<String>,
+        pool: Path,
+        static_values: Vec<String>,
+    ) -> Self {
         Self::InternedString {
             path,
+            pool_id: pool_id.into(),
+            pool,
             static_values,
         }
     }

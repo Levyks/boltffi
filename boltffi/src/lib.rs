@@ -1,10 +1,37 @@
+extern crate self as boltffi;
+
 pub use boltffi_core::{
     ArcFromCallbackHandle, BoxFromCallbackHandle, CallbackForeignType, CallbackHandle,
     CustomFfiConvertible, CustomTypeConversionError, Data, EventSubscription, FfiType,
     InternedString, InternedStringPool, InternedStringRepr, StreamProducer,
     UnexpectedFfiCallbackError, custom_ffi, custom_type, data, default, error, export, ffi_stream,
-    interned_string_pool, name, skip,
+    name, skip,
 };
+
+/// Defines a static interned-string pool.
+///
+/// Pool values must be unique so one semantic string cannot have multiple wire IDs.
+///
+/// ```
+/// boltffi::interned_string_pool! {
+///     pub BrowserName {
+///         Chrome = "Chrome",
+///     }
+/// }
+///
+/// let value = boltffi::InternedString::<BrowserName>::from_str("Chrome");
+/// assert_eq!(value, BrowserName::CHROME);
+/// ```
+///
+/// ```compile_fail
+/// boltffi::interned_string_pool! {
+///     pub BrowserName {
+///         CHROME = "Chrome",
+///         CHROMIUM = "Chrome",
+///     }
+/// }
+/// ```
+pub use boltffi_core::interned_string_pool;
 
 #[doc(hidden)]
 pub mod __private {
@@ -24,4 +51,19 @@ pub mod __private {
         take_packed_bytes, take_packed_utf8_string, take_return_slot_vec,
         write_option_f64_presence, write_return_slot,
     };
+}
+
+#[cfg(test)]
+mod interned_string_pool_tests {
+    crate::interned_string_pool! {
+        InternalBrowserName {
+            Chrome = "Chrome",
+        }
+    }
+
+    #[test]
+    fn expands_with_the_facade_crate_self_alias() {
+        let value = crate::InternedString::<InternalBrowserName>::from_str("Chrome");
+        assert_eq!(value, InternalBrowserName::CHROME);
+    }
 }

@@ -7,7 +7,7 @@ use std::{
 
 use boltffi_ast::PackageInfo;
 use boltffi_backend::{
-    CoverageMode, Error,
+    CoverageMode, DeclarationLabel, Error,
     target::java::{JavaDesktopLoader, JavaHost, JavaVersion},
 };
 use boltffi_binding::{DeclarationRef, Native, lower};
@@ -2084,6 +2084,108 @@ fn java_partial_target_retains_dependency_closed_direct_records() {
             .any(|file| file.contents().contains(keep_point_symbol))
     );
     assert!(coverage.is_empty());
+}
+
+#[test]
+fn java_partial_target_prunes_direct_and_transitive_interned_strings_before_preflight() {
+    let source = r#"
+        use boltffi::InternedString;
+
+        boltffi::interned_string_pool! {
+            pub BrowserName {
+                Chrome = "Chrome",
+            }
+        }
+
+        #[data]
+        pub struct Browser {
+            pub name: InternedString<BrowserName>,
+        }
+
+        #[data]
+        pub enum BrowserKind {
+            Named { name: InternedString<BrowserName> },
+        }
+
+        #[export]
+        pub fn blocked_direct(name: InternedString<BrowserName>) -> InternedString<BrowserName> {
+            name
+        }
+
+        #[export]
+        pub fn blocked_record(browser: Browser) -> Browser { browser }
+
+        #[export]
+        pub fn blocked_enum(kind: BrowserKind) -> BrowserKind { kind }
+
+        #[export]
+        pub fn add(left: i32, right: i32) -> i32 { left + right }
+    "#;
+    let bindings = bindings(source);
+    let blocked_symbols = bindings
+        .decls()
+        .iter()
+        .filter_map(|declaration| match DeclarationRef::from(declaration) {
+            DeclarationRef::Function(function)
+                if function.name().source_spelling() != Some("add") =>
+            {
+                Some(function.symbol().name().as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let output = host()
+        .render_with_coverage(&bindings, CoverageMode::Partial)
+        .expect("partial Java target prunes InternedString before preflight");
+    let java = java_source(&output, "com.boltffi.demo", "Demo");
+    let all_output = output
+        .files()
+        .iter()
+        .map(|file| file.contents())
+        .collect::<String>();
+
+    assert!(java.contains("public static int add(int left, int right)"));
+    assert!(!all_output.contains("BrowserName"));
+    assert!(!all_output.contains("BrowserKind"));
+    assert!(!all_output.contains("blockedDirect"));
+    assert!(!all_output.contains("blockedRecord"));
+    assert!(!all_output.contains("blockedEnum"));
+    for symbol in blocked_symbols {
+        assert!(!all_output.contains(symbol));
+    }
+
+    let expected_unsupported = bindings
+        .decls()
+        .iter()
+        .filter(|declaration| {
+            !matches!(
+                DeclarationRef::from(*declaration),
+                DeclarationRef::Function(function)
+                    if function.name().source_spelling() == Some("add")
+            )
+        })
+        .map(|declaration| {
+            let label = DeclarationLabel::from_ref(DeclarationRef::from(declaration));
+            (
+                label.kind(),
+                label.name().to_owned(),
+                "capability was not advertised",
+            )
+        })
+        .collect::<Vec<_>>();
+    let unsupported = output
+        .coverage()
+        .unsupported()
+        .iter()
+        .map(|unsupported| {
+            (
+                unsupported.declaration().kind(),
+                unsupported.declaration().name().to_owned(),
+                unsupported.reason(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(unsupported, expected_unsupported);
 }
 
 #[test]

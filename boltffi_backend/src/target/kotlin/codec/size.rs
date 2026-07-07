@@ -149,6 +149,14 @@ impl CodecSize for Sizer<'_> {
         self.string_size(value)
     }
 
+    fn interned_string(&mut self, _static_values: &[String], _value: &ValueRef) -> Self::Expr {
+        // Kotlin does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString codec size reached Kotlin renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self, value: &ValueRef) -> Self::Expr {
         self.bytes_size(value)
     }

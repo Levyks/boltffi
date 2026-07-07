@@ -626,6 +626,15 @@ mod tests {
         TypeExpr::custom(CustomTypeId::new("demo::Timestamp"), path("Timestamp"))
     }
 
+    fn browser_name() -> TypeExpr {
+        TypeExpr::interned_string(
+            path("InternedString"),
+            "demo::BrowserName",
+            path("BrowserName"),
+            vec!["Chrome".to_owned(), "Safari".to_owned()],
+        )
+    }
+
     fn timestamp_custom_def() -> CustomTypeDef {
         CustomTypeDef::new(
             CustomTypeId::new("demo::Timestamp"),
@@ -2213,6 +2222,38 @@ mod tests {
             CanonicalName::single("timeline"),
         );
         function.returns = ReturnDef::value(TypeExpr::vec(TypeExpr::option(custom_timestamp())));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.customs.push(timestamp_custom_def());
+        source.functions.push(function);
+        source
+    }
+
+    fn interned_string_and_custom_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::transform"),
+            CanonicalName::single("transform"),
+        );
+        function.parameters = vec![
+            parameter("browser", browser_name()),
+            parameter("nested", TypeExpr::option(TypeExpr::vec(browser_name()))),
+            parameter(
+                "outcome",
+                TypeExpr::result(browser_name(), custom_timestamp()),
+            ),
+            parameter(
+                "values",
+                TypeExpr::hash_map(browser_name(), custom_timestamp()),
+            ),
+        ];
+        function.returns = ReturnDef::value(TypeExpr::result(
+            TypeExpr::tuple(vec![
+                browser_name(),
+                TypeExpr::option(TypeExpr::vec(browser_name())),
+                TypeExpr::hash_map(browser_name(), custom_timestamp()),
+            ]),
+            custom_timestamp(),
+        ));
 
         let mut source = SourceContract::new(PackageInfo::new("demo", None));
         source.customs.push(timestamp_custom_def());
@@ -3926,6 +3967,100 @@ mod tests {
         assert!(
             rendered
                 .contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_wire)")
+        );
+    }
+
+    #[test]
+    fn native_interned_string_and_custom_wrappers_compile_without_remote_wire_traits() {
+        let source = interned_string_and_custom_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn transform(
+                browser: boltffi::InternedString<BrowserName>,
+                nested: Option<Vec<boltffi::InternedString<BrowserName>>>,
+                outcome: Result<boltffi::InternedString<BrowserName>, Timestamp>,
+                values: std::collections::HashMap<boltffi::InternedString<BrowserName>, Timestamp>,
+            ) -> Result<
+                (
+                    boltffi::InternedString<BrowserName>,
+                    Option<Vec<boltffi::InternedString<BrowserName>>>,
+                    std::collections::HashMap<boltffi::InternedString<BrowserName>, Timestamp>,
+                ),
+                Timestamp,
+            > {
+                match outcome {
+                    Ok(_) => Ok((browser, nested, values)),
+                    Err(error) => Err(error),
+                }
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let rendered = tokens.to_string();
+        let incoming_result_error = "Err (error) => (timestamp_try_from_ffi) (error) . map (Err)";
+        let incoming_map_value = "__boltffi_value . into_iter () . map (| (key , value) | { Ok ((key , match (timestamp_try_from_ffi) (value) { Ok (value) => value , Err (error) => return Err (error) , })) }) . collect :: < Result < _ , _ >> ()";
+        let outgoing_tuple_map_value = "let __boltffi_wire = ((__boltffi_success) . 0 , (__boltffi_success) . 1 , (__boltffi_success) . 2 . into_iter () . map (| (key , value) | (key , (timestamp_into_ffi) (& value))) . collect :: < Vec < _ >> () ,)";
+        let outgoing_result_error =
+            "let __boltffi_wire = (timestamp_into_ffi) (& __boltffi_error) ;";
+
+        assert_eq!(
+            rendered.match_indices(incoming_result_error).count(),
+            1,
+            "the incoming Result error arm must convert its custom value exactly once"
+        );
+        assert_eq!(
+            rendered.match_indices(incoming_map_value).count(),
+            1,
+            "the incoming map value path must convert every custom value exactly once"
+        );
+        assert_eq!(
+            rendered.match_indices(outgoing_tuple_map_value).count(),
+            1,
+            "the outgoing tuple's map value path must convert every custom value exactly once"
+        );
+        assert_eq!(
+            rendered.match_indices(outgoing_result_error).count(),
+            1,
+            "the outgoing Result error arm must convert its custom value exactly once"
+        );
+        assert_eq!(
+            rendered.match_indices("timestamp_try_from_ffi").count(),
+            2,
+            "the two incoming custom conversion paths must both be present"
+        );
+        assert_eq!(
+            rendered.match_indices("timestamp_into_ffi").count(),
+            2,
+            "the two outgoing custom conversion paths must both be present"
+        );
+
+        assert_generated_crate_checks(
+            "native_interned_string_and_custom",
+            quote! {
+                boltffi::interned_string_pool! {
+                    pub BrowserName {
+                        Chrome = "Chrome",
+                        Safari = "Safari",
+                    }
+                }
+
+                pub struct Timestamp(i64);
+
+                // Deliberately no WireEncode/WireDecode impls: the generated
+                // wrapper must convert this sibling remote type to i64 before
+                // encoding and after decoding.
+                pub fn timestamp_into_ffi(value: &Timestamp) -> i64 {
+                    value.0
+                }
+
+                pub fn timestamp_try_from_ffi(value: i64) -> Result<Timestamp, ()> {
+                    Ok(Timestamp(value))
+                }
+
+                #tokens
+            },
         );
     }
 

@@ -170,6 +170,10 @@ impl TypeRefRender for ErrorPayloadTypes {
         None
     }
 
+    fn interned_string(&mut self, _: &[String]) -> Self::Output {
+        None
+    }
+
     fn bytes(&mut self) -> Self::Output {
         None
     }
@@ -229,6 +233,8 @@ impl CodecRead for ErrorPayloadTypes {
 
     fn string(&mut self) {}
 
+    fn interned_string(&mut self, _: &[String]) {}
+
     fn bytes(&mut self) {}
 
     fn direct_record(&mut self, id: RecordId) {
@@ -268,6 +274,10 @@ impl CodecWrite for ErrorPayloadTypes {
     }
 
     fn string(&mut self, _: &ValueRef) -> Vec<Self::Stmt> {
+        Vec::new()
+    }
+
+    fn interned_string(&mut self, _: &[String], _: &ValueRef) -> Vec<Self::Stmt> {
         Vec::new()
     }
 

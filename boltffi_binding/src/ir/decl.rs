@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::BTreeSet, marker::PhantomData};
 
 use serde::{Deserialize, Serialize};
 
@@ -243,6 +243,99 @@ impl<'a, S: Surface> DeclarationRef<'a, S> {
             Self::Constant(constant) => constant.contains_interned_string(),
             Self::CustomType(custom) => custom.contains_interned_string(),
         }
+    }
+
+    /// Appends every family-tagged declaration referenced by this declaration.
+    ///
+    /// This follows codec and type-plan edges rather than only inspecting the
+    /// declaration's immediate fields, so capability gates can propagate a
+    /// requirement from an encoded record or data enum to its callers.
+    pub fn append_referenced_declarations(self, references: &mut BTreeSet<DeclarationId>) {
+        match self {
+            Self::Record(record) => {
+                record.initializers().iter().for_each(|initializer| {
+                    initializer
+                        .callable()
+                        .append_referenced_declarations(references)
+                });
+                record.methods().iter().for_each(|method| {
+                    method.callable().append_referenced_declarations(references)
+                });
+                if let RecordDecl::Encoded(record) = record {
+                    record
+                        .fields()
+                        .iter()
+                        .for_each(|field| field.ty().append_referenced_declarations(references));
+                }
+            }
+            Self::Enum(enumeration) => {
+                enumeration.initializers().iter().for_each(|initializer| {
+                    initializer
+                        .callable()
+                        .append_referenced_declarations(references)
+                });
+                enumeration.methods().iter().for_each(|method| {
+                    method.callable().append_referenced_declarations(references)
+                });
+                if let EnumDecl::Data(enumeration) = enumeration {
+                    enumeration
+                        .variants()
+                        .iter()
+                        .for_each(|variant| match variant.payload() {
+                            DataVariantPayload::Unit => {}
+                            DataVariantPayload::Tuple(fields)
+                            | DataVariantPayload::Struct(fields) => {
+                                fields.iter().for_each(|field| {
+                                    field.ty().append_referenced_declarations(references)
+                                })
+                            }
+                        });
+                }
+            }
+            Self::Function(function) => function
+                .callable()
+                .append_referenced_declarations(references),
+            Self::Class(class) => {
+                class.initializers().iter().for_each(|initializer| {
+                    initializer
+                        .callable()
+                        .append_referenced_declarations(references)
+                });
+                class.methods().iter().for_each(|method| {
+                    method.callable().append_referenced_declarations(references)
+                });
+            }
+            Self::Callback(callback) => {
+                callback
+                    .protocol()
+                    .method_callables()
+                    .for_each(|callable| callable.append_referenced_declarations(references));
+                if let Some(protocol) = callback.local_protocol() {
+                    protocol.methods().iter().for_each(|method| {
+                        method.callable().append_referenced_declarations(references)
+                    });
+                }
+            }
+            Self::Stream(stream) => stream.append_referenced_declarations(references),
+            Self::Constant(constant) => match constant.value() {
+                ConstantValueDecl::Inline { ty, .. } => {
+                    ty.append_referenced_declarations(references)
+                }
+                ConstantValueDecl::Accessor { callable, .. } => {
+                    callable.append_referenced_declarations(references);
+                }
+            },
+            Self::CustomType(custom) => custom
+                .representation()
+                .append_referenced_declarations(references),
+        }
+    }
+
+    /// Returns whether a value crossing in this declaration references another declaration.
+    pub fn references_declaration(self, declaration: DeclarationId) -> bool {
+        let mut references = BTreeSet::new();
+        self.append_referenced_declarations(&mut references);
+        references.contains(&declaration)
     }
 
     /// Returns whether any value crossing in this declaration uses a direct record vector.
@@ -827,7 +920,7 @@ impl<S: Surface> EncodedRecordDecl<S> {
     fn contains_interned_string(&self) -> bool {
         self.fields
             .iter()
-            .any(|field| field.ty().contains_interned_string())
+            .any(EncodedFieldDecl::contains_interned_string)
             || self
                 .initializers
                 .iter()
@@ -967,7 +1060,7 @@ impl EncodedFieldDecl {
     }
 
     fn contains_interned_string(&self) -> bool {
-        self.ty.contains_interned_string()
+        self.codec.uses_interned_string()
     }
 }
 
@@ -1515,7 +1608,7 @@ impl DataVariantPayload {
         match self {
             Self::Tuple(fields) | Self::Struct(fields) => fields
                 .iter()
-                .any(|field| field.ty().contains_interned_string()),
+                .any(EncodedFieldDecl::contains_interned_string),
             Self::Unit => false,
         }
     }
@@ -2203,6 +2296,13 @@ impl<S: Surface> StreamDecl<S> {
         self.item.uses_builtin_codec(kind)
     }
 
+    fn append_referenced_declarations(&self, references: &mut BTreeSet<DeclarationId>) {
+        self.item.append_referenced_declarations(references);
+        if let Some(owner) = self.owner {
+            references.insert(DeclarationId::Class(owner));
+        }
+    }
+
     fn contains_interned_string(&self) -> bool {
         self.item.contains_interned_string()
     }
@@ -2298,9 +2398,27 @@ impl<S: Surface> StreamItemPlan<S> {
         }
     }
 
+    fn append_referenced_declarations(&self, references: &mut BTreeSet<DeclarationId>) {
+        match self {
+            Self::Direct { ty, .. } => match ty {
+                DirectValueType::Record(id) => {
+                    references.insert(DeclarationId::Record(*id));
+                }
+                DirectValueType::Enum(id) => {
+                    references.insert(DeclarationId::Enum(*id));
+                }
+                DirectValueType::Primitive(_) => {}
+            },
+            Self::Encoded { ty, read, .. } => {
+                ty.append_referenced_declarations(references);
+                read.append_referenced_declarations(references);
+            }
+        }
+    }
+
     fn contains_interned_string(&self) -> bool {
         match self {
-            Self::Encoded { ty, .. } => ty.contains_interned_string(),
+            Self::Encoded { read, .. } => read.uses_interned_string(),
             Self::Direct { .. } => false,
         }
     }

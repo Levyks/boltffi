@@ -1,9 +1,11 @@
+use std::collections::BTreeSet;
+
 use boltffi_ast::{BuiltinType, MapKind};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BinderId, CallbackId, ClassId, CustomTypeId, ElementCount, EnumId, FieldKey, Op, Primitive,
-    RecordId, ValueRef,
+    BinderId, CallbackId, ClassId, CustomTypeId, DeclarationId, ElementCount, EnumId, FieldKey, Op,
+    Primitive, RecordId, ValueRef,
 };
 
 /// Instructions for reconstructing one value from its boundary bytes.
@@ -56,6 +58,23 @@ impl ReadPlan {
     /// Returns whether this read plan includes the given builtin value.
     pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
         self.root.uses_builtin(kind)
+    }
+
+    /// Appends every family-tagged declaration referenced by this read plan.
+    pub fn append_referenced_declarations(&self, references: &mut BTreeSet<DeclarationId>) {
+        self.root.append_referenced_declarations(references);
+    }
+
+    /// Returns whether this read plan references a declaration.
+    pub fn references_declaration(&self, declaration: DeclarationId) -> bool {
+        let mut references = BTreeSet::new();
+        self.append_referenced_declarations(&mut references);
+        references.contains(&declaration)
+    }
+
+    /// Returns whether this read plan includes a tagged interned string.
+    pub fn uses_interned_string(&self) -> bool {
+        self.root.contains_interned_string()
     }
 }
 
@@ -115,6 +134,23 @@ impl WritePlan {
     pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
         self.root.uses_builtin(kind)
     }
+
+    /// Appends every family-tagged declaration referenced by this write plan.
+    pub fn append_referenced_declarations(&self, references: &mut BTreeSet<DeclarationId>) {
+        self.root.append_referenced_declarations(references);
+    }
+
+    /// Returns whether this write plan references a declaration.
+    pub fn references_declaration(&self, declaration: DeclarationId) -> bool {
+        let mut references = BTreeSet::new();
+        self.append_referenced_declarations(&mut references);
+        references.contains(&declaration)
+    }
+
+    /// Returns whether this write plan includes a tagged interned string.
+    pub fn uses_interned_string(&self) -> bool {
+        self.root.contains_interned_string()
+    }
 }
 
 /// Bidirectional codec selected for one encoded value.
@@ -163,6 +199,24 @@ impl CodecPlan {
     pub fn uses_builtin(&self, kind: BuiltinType) -> bool {
         self.read.uses_builtin(kind) || self.write.uses_builtin(kind)
     }
+
+    /// Appends every family-tagged declaration referenced by either codec direction.
+    pub fn append_referenced_declarations(&self, references: &mut BTreeSet<DeclarationId>) {
+        self.read.append_referenced_declarations(references);
+        self.write.append_referenced_declarations(references);
+    }
+
+    /// Returns whether either direction references a declaration.
+    pub fn references_declaration(&self, declaration: DeclarationId) -> bool {
+        let mut references = BTreeSet::new();
+        self.append_referenced_declarations(&mut references);
+        references.contains(&declaration)
+    }
+
+    /// Returns whether either direction includes a tagged interned string.
+    pub fn uses_interned_string(&self) -> bool {
+        self.read.uses_interned_string() || self.write.uses_interned_string()
+    }
 }
 
 /// One node in a codec tree.
@@ -188,6 +242,15 @@ pub enum CodecNode {
     String,
     #[doc(hidden)]
     Utf8String,
+    /// Tagged interned-string value (static pool id or dynamic UTF-8 bytes).
+    ///
+    /// Wire format: `tag (u8)` where `0` = `u32` pool index, `1` = length-prefixed
+    /// UTF-8 bytes. Hosts that do not explicitly advertise `InternedString`
+    /// capability would silently misparse these bytes as a plain string.
+    InternedString {
+        /// Static values addressable by wire id before falling back to dynamic bytes.
+        static_values: Vec<String>,
+    },
     /// Byte buffer value.
     Bytes,
     /// Record carried by direct memory layout.
@@ -250,6 +313,77 @@ impl CodecNode {
             Self::Bytes => OwnedWireEncoding::Bytes,
             Self::Custom { representation, .. } => representation.owned_wire_encoding(),
             _ => OwnedWireEncoding::Generic,
+        }
+    }
+
+    /// Appends every family-tagged declaration referenced by this codec tree.
+    pub fn append_referenced_declarations(&self, references: &mut BTreeSet<DeclarationId>) {
+        match self {
+            Self::DirectRecord(id) | Self::EncodedRecord(id) => {
+                references.insert(DeclarationId::Record(*id));
+            }
+            Self::CStyleEnum(id) | Self::DataEnum(id) => {
+                references.insert(DeclarationId::Enum(*id));
+            }
+            Self::ClassHandle(id) => {
+                references.insert(DeclarationId::Class(*id));
+            }
+            Self::CallbackHandle(id) => {
+                references.insert(DeclarationId::Callback(*id));
+            }
+            Self::Custom { id, representation } => {
+                references.insert(DeclarationId::CustomType(*id));
+                representation.append_referenced_declarations(references);
+            }
+            Self::Optional(inner) | Self::Sequence { element: inner, .. } => {
+                inner.append_referenced_declarations(references);
+            }
+            Self::Tuple(elements) => elements
+                .iter()
+                .for_each(|element| element.append_referenced_declarations(references)),
+            Self::Result { ok, err } => {
+                ok.append_referenced_declarations(references);
+                err.append_referenced_declarations(references);
+            }
+            Self::Map { key, value, .. } => {
+                key.append_referenced_declarations(references);
+                value.append_referenced_declarations(references);
+            }
+            Self::Primitive(_)
+            | Self::String
+            | Self::Utf8String
+            | Self::InternedString { .. }
+            | Self::Bytes
+            | Self::Builtin(_) => {}
+        }
+    }
+
+    /// Returns whether this codec tree references a declaration.
+    pub fn references_declaration(&self, declaration: DeclarationId) -> bool {
+        let mut references = BTreeSet::new();
+        self.append_referenced_declarations(&mut references);
+        references.contains(&declaration)
+    }
+
+    /// Returns whether this codec tree contains an [`InternedString`](Self::InternedString) node.
+    ///
+    /// Used by capability gates to detect bindings that require the `InternedString`
+    /// host capability.
+    pub fn contains_interned_string(&self) -> bool {
+        match self {
+            Self::InternedString { .. } => true,
+            Self::Custom { representation, .. } => representation.contains_interned_string(),
+            Self::Optional(inner) | Self::Sequence { element: inner, .. } => {
+                inner.contains_interned_string()
+            }
+            Self::Tuple(elements) => elements.iter().any(Self::contains_interned_string),
+            Self::Result { ok, err } => {
+                ok.contains_interned_string() || err.contains_interned_string()
+            }
+            Self::Map { key, value, .. } => {
+                key.contains_interned_string() || value.contains_interned_string()
+            }
+            _ => false,
         }
     }
 
@@ -323,6 +457,9 @@ pub trait CodecRead {
         self.string()
     }
 
+    /// Reads a tagged interned string (static pool id or dynamic UTF-8 bytes).
+    fn interned_string(&mut self, static_values: &[String]) -> Self::Expr;
+
     /// Reads a byte buffer.
     fn bytes(&mut self) -> Self::Expr;
 
@@ -385,6 +522,9 @@ pub trait CodecWrite {
     fn utf8_string(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
         self.string(value)
     }
+
+    /// Writes a tagged interned string (static pool id or dynamic UTF-8 bytes).
+    fn interned_string(&mut self, static_values: &[String], value: &ValueRef) -> Vec<Self::Stmt>;
 
     /// Writes a byte buffer.
     fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt>;
@@ -482,6 +622,9 @@ pub trait CodecSize {
         self.string(value)
     }
 
+    /// Returns the encoded size of a tagged interned string.
+    fn interned_string(&mut self, static_values: &[String], value: &ValueRef) -> Self::Expr;
+
     /// Returns the encoded size of a byte buffer.
     fn bytes(&mut self, value: &ValueRef) -> Self::Expr;
 
@@ -558,6 +701,7 @@ impl CodecWalker {
             CodecNode::Primitive(primitive) => renderer.primitive(*primitive),
             CodecNode::String => renderer.string(),
             CodecNode::Utf8String => renderer.utf8_string(),
+            CodecNode::InternedString { static_values } => renderer.interned_string(static_values),
             CodecNode::Bytes => renderer.bytes(),
             CodecNode::DirectRecord(id) => renderer.direct_record(*id),
             CodecNode::EncodedRecord(id) => renderer.encoded_record(*id),
@@ -627,6 +771,9 @@ impl CodecWalker {
             CodecNode::Primitive(primitive) => renderer.primitive(*primitive, value),
             CodecNode::String => renderer.string(value),
             CodecNode::Utf8String => renderer.utf8_string(value),
+            CodecNode::InternedString { static_values } => {
+                renderer.interned_string(static_values, value)
+            }
             CodecNode::Bytes => renderer.bytes(value),
             CodecNode::DirectRecord(id) => renderer.direct_record(*id, value),
             CodecNode::EncodedRecord(id) => renderer.encoded_record(*id, value),
@@ -715,6 +862,9 @@ impl CodecWalker {
             CodecNode::Primitive(primitive) => renderer.primitive(*primitive, value),
             CodecNode::String => renderer.string(value),
             CodecNode::Utf8String => renderer.utf8_string(value),
+            CodecNode::InternedString { static_values } => {
+                renderer.interned_string(static_values, value)
+            }
             CodecNode::Bytes => renderer.bytes(value),
             CodecNode::DirectRecord(id) => renderer.direct_record(*id, value),
             CodecNode::EncodedRecord(id) => renderer.encoded_record(*id, value),
@@ -780,12 +930,14 @@ impl CodecWalker {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use boltffi_ast::{BuiltinType, MapKind};
 
     use super::{CodecNode, CodecRead, CodecSize, CodecWrite, ReadPlan, WritePlan};
     use crate::{
-        BinderId, CallbackId, ClassId, CustomTypeId, ElementCount, EnumId, FieldKey, Op, Primitive,
-        RecordId, ValueRef, ValueRoot,
+        BinderId, CallbackId, ClassId, CustomTypeId, DeclarationId, ElementCount, EnumId, FieldKey,
+        Op, Primitive, RecordId, ValueRef, ValueRoot,
     };
 
     struct TextRead;
@@ -799,6 +951,10 @@ mod tests {
 
         fn string(&mut self) -> Self::Expr {
             "string".to_owned()
+        }
+
+        fn interned_string(&mut self, static_values: &[String]) -> Self::Expr {
+            format!("interned_string([{}])", static_values.join(","))
         }
 
         fn bytes(&mut self) -> Self::Expr {
@@ -871,6 +1027,18 @@ mod tests {
 
         fn string(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
             vec![format!("string({})", value_name(value))]
+        }
+
+        fn interned_string(
+            &mut self,
+            static_values: &[String],
+            value: &ValueRef,
+        ) -> Vec<Self::Stmt> {
+            vec![format!(
+                "interned_string([{}], {})",
+                static_values.join(","),
+                value_name(value)
+            )]
         }
 
         fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
@@ -1018,6 +1186,14 @@ mod tests {
 
         fn string(&mut self, value: &ValueRef) -> Self::Expr {
             format!("size_string({})", value_name(value))
+        }
+
+        fn interned_string(&mut self, static_values: &[String], value: &ValueRef) -> Self::Expr {
+            format!(
+                "size_interned_string([{}], {})",
+                static_values.join(","),
+                value_name(value)
+            )
         }
 
         fn bytes(&mut self, value: &ValueRef) -> Self::Expr {
@@ -1254,6 +1430,102 @@ mod tests {
             write.render_with(&mut writer),
             vec!["custom(7, self, [sequence(self, b0, [string(b0)])])".to_owned()]
         );
+    }
+
+    #[test]
+    fn interned_string_codec_node_walks_with_distinct_method() {
+        let static_values = vec!["Chrome".to_owned(), "Safari".to_owned()];
+        let read = ReadPlan::new(CodecNode::InternedString {
+            static_values: static_values.clone(),
+        });
+        let write = WritePlan::new(
+            ValueRef::self_value(),
+            CodecNode::InternedString {
+                static_values: static_values.clone(),
+            },
+        );
+        let mut reader = TextRead;
+        let mut writer = TextWrite;
+        let mut sizer = TextSize;
+
+        assert_eq!(
+            read.render_with(&mut reader),
+            "interned_string([Chrome,Safari])"
+        );
+        assert_eq!(
+            write.render_with(&mut writer),
+            vec!["interned_string([Chrome,Safari], self)".to_owned()]
+        );
+        assert_eq!(
+            write.size_with(&mut sizer),
+            "size_interned_string([Chrome,Safari], self)"
+        );
+    }
+
+    #[test]
+    fn interned_string_codec_node_nested_in_optional_reads_and_writes() {
+        let static_values = vec!["Chrome".to_owned()];
+        let read = ReadPlan::new(CodecNode::Optional(Box::new(CodecNode::InternedString {
+            static_values: static_values.clone(),
+        })));
+        let write = WritePlan::new(
+            ValueRef::self_value(),
+            CodecNode::Optional(Box::new(CodecNode::InternedString {
+                static_values: static_values.clone(),
+            })),
+        );
+        let mut reader = TextRead;
+        let mut writer = TextWrite;
+
+        assert_eq!(
+            read.render_with(&mut reader),
+            "optional(interned_string([Chrome]))"
+        );
+        assert_eq!(
+            write.render_with(&mut writer),
+            vec!["optional(self, b0, [interned_string([Chrome], b0)])".to_owned()]
+        );
+    }
+
+    #[test]
+    fn codec_node_collects_nested_family_tagged_declaration_ids() {
+        let node = CodecNode::Map {
+            kind: MapKind::Hash,
+            key: Box::new(CodecNode::Tuple(vec![
+                CodecNode::DirectRecord(RecordId::from_raw(7)),
+                CodecNode::ClassHandle(ClassId::from_raw(7)),
+            ])),
+            value: Box::new(CodecNode::Custom {
+                id: CustomTypeId::from_raw(7),
+                representation: Box::new(CodecNode::Optional(Box::new(CodecNode::CallbackHandle(
+                    CallbackId::from_raw(7),
+                )))),
+            }),
+        };
+        let mut references = BTreeSet::new();
+
+        node.append_referenced_declarations(&mut references);
+
+        assert_eq!(
+            references,
+            BTreeSet::from([
+                DeclarationId::Record(RecordId::from_raw(7)),
+                DeclarationId::Class(ClassId::from_raw(7)),
+                DeclarationId::Callback(CallbackId::from_raw(7)),
+                DeclarationId::CustomType(CustomTypeId::from_raw(7)),
+            ])
+        );
+    }
+
+    #[test]
+    fn codec_node_contains_interned_string_detects_nested_occurrences() {
+        let node = CodecNode::Optional(Box::new(CodecNode::InternedString {
+            static_values: vec!["X".to_owned()],
+        }));
+        assert!(node.contains_interned_string());
+
+        let plain = CodecNode::Optional(Box::new(CodecNode::String));
+        assert!(!plain.contains_interned_string());
     }
 
     fn value_name(value: &ValueRef) -> String {

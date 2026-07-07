@@ -103,6 +103,14 @@ impl CodecRead for Reader<'_> {
         self.call("readString")
     }
 
+    fn interned_string(&mut self, _static_values: &[String]) -> Self::Expr {
+        // Kotlin does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString codec read reached Kotlin renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self) -> Self::Expr {
         self.call("readBytes")
     }

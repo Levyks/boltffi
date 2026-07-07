@@ -565,7 +565,7 @@ impl<'source> Return<'source> {
     pub fn fallible(self) -> Result<Fallible<'source>, Error> {
         match self.value_type()? {
             Cow::Borrowed(TypeExpr::Result { ok, err }) => Ok(Fallible::Borrowed { ok, err }),
-            Cow::Owned(TypeExpr::Result { ok, err }) => Ok(Fallible::Owned { ok: *ok, err: *err }),
+            Cow::Owned(TypeExpr::Result { ok, err }) => Ok(Fallible::Owned { ok, err }),
             _ => Err(Error::SourceSyntaxMismatch("source return is not a Result")),
         }
     }
@@ -578,8 +578,8 @@ pub enum Fallible<'source> {
         err: &'source TypeExpr,
     },
     Owned {
-        ok: TypeExpr,
-        err: TypeExpr,
+        ok: Box<TypeExpr>,
+        err: Box<TypeExpr>,
     },
 }
 

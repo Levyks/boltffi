@@ -255,6 +255,14 @@ impl CodecWrite for Writer<'_> {
         })]
     }
 
+    fn interned_string(&mut self, _static_values: &[String], _value: &ValueRef) -> Vec<Self::Stmt> {
+        // Java does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString codec write reached Java renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![
             self.value(value).map(|value| {
