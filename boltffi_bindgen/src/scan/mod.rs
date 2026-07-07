@@ -1226,7 +1226,7 @@ impl SourceScanner {
                 .named
                 .iter()
                 .filter_map(|f| {
-                    let field_name = f.ident.as_ref()?.to_string();
+                    let field_name = unraw_ident_name(f.ident.as_ref()?);
                     let field_type = rust_type_to_ffi_type(
                         &f.ty,
                         &self.type_registry,
@@ -1302,7 +1302,7 @@ impl SourceScanner {
                         .named
                         .iter()
                         .filter_map(|f| {
-                            let field_name = f.ident.as_ref()?.to_string();
+                            let field_name = unraw_ident_name(f.ident.as_ref()?);
                             let field_type = rust_type_to_ffi_type(
                                 &f.ty,
                                 &self.type_registry,
@@ -1824,6 +1824,13 @@ fn extract_default_value(attrs: &[Attribute]) -> Option<String> {
         };
         Some(tokens.trim().to_string())
     })
+}
+
+fn unraw_ident_name(ident: &syn::Ident) -> String {
+    ident
+        .to_string()
+        .strip_prefix("r#")
+        .map_or_else(|| ident.to_string(), ToOwned::to_owned)
 }
 
 fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
@@ -4043,6 +4050,23 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn record_raw_identifier_field_is_unrawed_in_scan() {
+        let source = r#"
+            #[boltffi::data]
+            pub struct TypedEvent {
+                pub id: i64,
+                pub r#type: Option<String>,
+            }
+        "#;
+
+        let module = scan_temp_crate(source);
+        let record = module.find_record("TypedEvent").expect("TypedEvent not found");
+        assert_eq!(record.fields.len(), 2);
+        assert_eq!(record.fields[0].name, "id");
+        assert_eq!(record.fields[1].name, "type");
     }
 
     #[test]
