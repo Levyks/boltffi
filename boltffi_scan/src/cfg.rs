@@ -60,18 +60,9 @@ impl ActiveCfg {
             })
     }
 
-    /// Expands `attrs` the way rustc's own `cfg_attr` expansion would: each
-    /// `#[cfg_attr(predicate, wrapped...)]` is replaced by `wrapped...` if
-    /// `predicate` is currently active, or dropped entirely otherwise.
-    /// Non-`cfg_attr` attributes pass through unchanged.
-    ///
-    /// `boltffi_scan` parses source text directly via `syn` rather than
-    /// going through the compiler's macro-expansion pipeline, so it never
-    /// sees this expansion happen automatically -- without it, a marker
-    /// like `#[cfg_attr(feature = "boltffi", boltffi::data)]` (needed by
-    /// any crate that wants a working `default-features = false` escape
-    /// hatch) is invisible to marker detection, and the item silently
-    /// scans as unmarked.
+    /// Expands `cfg_attr(predicate, wrapped...)` into `wrapped...` when
+    /// `predicate` is active, the way rustc's own expansion would; drops it
+    /// otherwise. Other attributes pass through unchanged.
     pub fn expand_cfg_attrs(&self, attrs: &[Attribute]) -> Result<Vec<Attribute>, ScanError> {
         attrs.iter().try_fold(Vec::new(), |mut expanded, attr| {
             expanded.extend(self.expand_cfg_attr(attr)?);

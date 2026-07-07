@@ -898,13 +898,6 @@ mod tests {
         );
     }
 
-    /// A crate-local `type Result<T> = std::result::Result<T, E>;` alias
-    /// (needed by any crate returning its own error type from exported
-    /// functions) has to resolve for whatever concrete type each use site
-    /// actually substitutes for `T` -- not the alias's own, unsubstituted
-    /// `T`. Before this was handled, `Result<Point>` here would fail to
-    /// resolve as a value type at all, since the scanner had no record of
-    /// what `T` meant at this specific use site.
     #[test]
     fn scans_function_return_through_a_generic_type_alias() {
         let contract = scan(

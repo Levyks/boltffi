@@ -237,15 +237,6 @@ mod tests {
         );
     }
 
-    /// A crate that wants a working `default-features = false` escape hatch
-    /// (no FFI dependency at all when the feature is off) has to spell its
-    /// marker as `#[cfg_attr(feature = "boltffi", boltffi::data)]` rather
-    /// than a bare `#[boltffi::data]`. `boltffi_scan` parses source text
-    /// directly via `syn`, so it never sees the compiler's own `cfg_attr`
-    /// expansion happen -- without explicitly recognizing this pattern, the
-    /// item silently scans as unmarked, and anything that references it
-    /// later fails with a confusing "unsupported source type" pointing at
-    /// an unrelated macro invocation.
     #[test]
     fn detects_data_behind_an_active_cfg_attr() {
         let active = ActiveCfg::default().with_feature("boltffi");
@@ -265,9 +256,6 @@ mod tests {
         );
     }
 
-    /// The inactive-feature counterpart of `detects_data_behind_an_active_cfg_attr`:
-    /// when the gated feature is off, the item is genuinely unmarked, matching
-    /// what `cfg_attr` would produce if the compiler expanded it.
     #[test]
     fn ignores_data_behind_an_inactive_cfg_attr() {
         assert_eq!(

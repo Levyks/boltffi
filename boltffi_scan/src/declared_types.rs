@@ -226,14 +226,7 @@ impl DeclaredTypes {
     }
 
     /// If `path` names a known type alias, returns its target type with the
-    /// use site's actual type arguments substituted in (e.g. for
-    /// `type Result<T> = std::result::Result<T, MyError>;` used as
-    /// `Result<Wrapper>`, returns `std::result::Result<Wrapper, MyError>`).
-    ///
-    /// This only expands one alias layer; a target that is itself another
-    /// alias application is resolved by the caller re-scanning the returned
-    /// type, which naturally chains through further alias lookups the same
-    /// way non-alias nested types already do.
+    /// use site's actual type arguments substituted in.
     pub(super) fn resolve_alias_target(
         &self,
         scope: &ModuleScope,
@@ -472,10 +465,7 @@ struct TypeAlias {
     path: String,
     scope: ModuleScope,
     target: syn::Type,
-    /// Names of `target`'s free type parameters, in declaration order (e.g.
-    /// `["T"]` for `type Result<T> = std::result::Result<T, MyError>;`).
-    /// Lifetime and const generics are ignored: this alias resolver only
-    /// substitutes type arguments.
+    /// `target`'s free type parameter names, in declaration order.
     generic_params: Vec<String>,
 }
 
@@ -486,15 +476,10 @@ enum AliasResolution<'a> {
     Unknown,
 }
 
-/// Resolves a generic alias's target type for one specific use site, e.g.
-/// for `type Result<T> = std::result::Result<T, MyError>;` used as
-/// `Result<Wrapper>`, returns `std::result::Result<Wrapper, MyError>` instead
-/// of `alias.target`'s raw, unsubstituted `std::result::Result<T, MyError>`.
-///
-/// Non-generic aliases (`generic_params` empty) return `alias.target`
-/// unchanged. If the use site supplies a different number of type arguments
-/// than the alias declares (e.g. elided defaults), only the arguments that
-/// are actually present are substituted.
+/// Substitutes the use site's actual type arguments into a generic alias's
+/// target type, e.g. `Result<Wrapper>` against `type Result<T> = std::result::Result<T, MyError>;`
+/// resolves to `std::result::Result<Wrapper, MyError>` rather than the raw,
+/// unsubstituted target.
 fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> syn::Type {
     if alias.generic_params.is_empty() {
         return alias.target.clone();
@@ -527,15 +512,8 @@ fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> s
     substitute_generics(&alias.target, &substitutions)
 }
 
-/// Recursively replaces bare occurrences of `substitutions`' keys (generic
-/// type parameter names) with their corresponding concrete type, anywhere
-/// they appear in `ty` -- as the whole type (`T`) or nested inside generic
-/// arguments (`Vec<T>`, `Option<T>`, `std::result::Result<T, E>`, ...).
-///
-/// Only the type shapes that plausibly appear in a `type Alias<T> = ...;`
-/// target are handled (paths, references, tuples); anything else is
-/// returned unchanged rather than substituted, which is always safe (worst
-/// case, resolution later fails to recognize the type, same as today).
+/// Recursively replaces occurrences of `substitutions`' keys with their
+/// concrete type, both bare (`T`) and nested in generic arguments (`Vec<T>`).
 fn substitute_generics(ty: &syn::Type, substitutions: &HashMap<String, syn::Type>) -> syn::Type {
     match ty {
         syn::Type::Path(type_path) if type_path.qself.is_none() => {
