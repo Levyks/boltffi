@@ -40,30 +40,8 @@ impl PackageScan {
     pub fn root_with_support(&self) -> SourceContract {
         let root = self.root_crate();
         let mut source = self.root.clone();
-        source.records = self
-            .complete
-            .records
-            .iter()
-            .cloned()
-            .map(|mut record| {
-                if !root.owns(record.id.as_str()) {
-                    record.methods.clear();
-                }
-                record
-            })
-            .collect();
-        source.enums = self
-            .complete
-            .enums
-            .iter()
-            .cloned()
-            .map(|mut enumeration| {
-                if !root.owns(enumeration.id.as_str()) {
-                    enumeration.methods.clear();
-                }
-                enumeration
-            })
-            .collect();
+        source.records = self.complete.records.clone();
+        source.enums = self.complete.enums.clone();
         source.classes = self.complete.classes.clone();
         source.traits = self.complete.traits.clone();
         source.customs = self.complete.customs.clone();
@@ -1222,6 +1200,57 @@ mod tests {
             .expect("dependency class stays in root support contract");
 
         assert_eq!(counter.methods.len(), 2);
+    }
+
+    #[test]
+    fn root_with_support_keeps_dependency_data_impl_methods() {
+        let model = source_tree(
+            "model",
+            "#[data] pub struct ForeignPoint { pub x: f64 } \
+             #[data] pub enum ForeignKind { Guest, Member }",
+        );
+        let root = source_tree(
+            "demo",
+            "use model::{ForeignKind, ForeignPoint}; \
+             #[data(impl)] impl ForeignPoint { pub fn origin() -> Self { todo!() } } \
+             #[data(impl)] impl ForeignKind { pub fn guest() -> Self { todo!() } }",
+        );
+        let complete = SourceTree::combine([model, root.clone()]);
+        let root_marked = MarkedItems::collect(&root).expect("root marked items");
+        let complete_marked = MarkedItems::collect(&complete).expect("complete marked items");
+        let declared_types =
+            DeclaredTypes::index(&complete, &complete_marked).expect("declared types");
+        let scan = PackageScan {
+            root: scan_marked_with_declarations(
+                &root_marked,
+                &declared_types,
+                PackageInfo::new("demo", None),
+            )
+            .expect("root scans"),
+            complete: scan_marked_with_declarations(
+                &complete_marked,
+                &declared_types,
+                PackageInfo::new("demo", None),
+            )
+            .expect("complete scans"),
+            root_visible_paths: HashMap::new(),
+        };
+        let source = scan.root_with_support();
+        let point = source
+            .records
+            .iter()
+            .find(|record| record.id == RecordId::new("model::ForeignPoint"))
+            .expect("dependency record stays in root support contract");
+        let kind = source
+            .enums
+            .iter()
+            .find(|enumeration| enumeration.id == EnumId::new("model::ForeignKind"))
+            .expect("dependency enum stays in root support contract");
+
+        assert_eq!(point.methods.len(), 1);
+        assert_eq!(point.methods[0].id.as_str(), "model::ForeignPoint::origin");
+        assert_eq!(kind.methods.len(), 1);
+        assert_eq!(kind.methods[0].id.as_str(), "model::ForeignKind::guest");
     }
 
     #[test]
