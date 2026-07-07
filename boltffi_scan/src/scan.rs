@@ -12,7 +12,8 @@ use crate::source_tree::SourceTree;
 use crate::{ModuleScope, ScanError, items};
 
 pub fn scan(input: &ScanInput) -> Result<SourceContract, ScanError> {
-    scan_source(input.root(), input.package().clone())
+    let source_tree = SourceTree::load_with_cfg(input.root(), &input.package().name, input.cfg())?;
+    scan_tree(source_tree, input.package().clone())
 }
 
 pub struct PackageScan {
@@ -108,7 +109,7 @@ impl RootCrate {
 }
 
 pub fn scan_package(input: &ScanInput) -> Result<PackageScan, ScanError> {
-    let root_tree = SourceTree::load(input.root(), &input.package().name)?;
+    let root_tree = SourceTree::load_with_cfg(input.root(), &input.package().name, input.cfg())?;
     let dependencies = dependencies(input.manifest_dir())?;
     let direct_dependency_modules = dependencies.direct_modules();
     let complete_tree = SourceTree::combine(
