@@ -1,7 +1,7 @@
 use boltffi_ast::{AttributeInput, ClassThreadSafety, Path, UserAttr};
 use syn::parse::Parser;
 
-use crate::ScanError;
+use crate::{ActiveCfg, ScanError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Marker {
@@ -25,8 +25,8 @@ pub enum Disposition {
     Unmarked,
 }
 
-pub fn disposition(attrs: &[syn::Attribute]) -> Result<Disposition, ScanError> {
-    Ok(match Marker::detect(attrs)? {
+pub fn disposition(attrs: &[syn::Attribute], cfg: &ActiveCfg) -> Result<Disposition, ScanError> {
+    Ok(match Marker::detect(attrs, cfg)? {
         Some(Marker::Skip) => Disposition::Skip,
         Some(marker) => Disposition::Reject(marker),
         None => Disposition::Unmarked,
@@ -34,18 +34,21 @@ pub fn disposition(attrs: &[syn::Attribute]) -> Result<Disposition, ScanError> {
 }
 
 impl Marker {
-    pub fn detect(attrs: &[syn::Attribute]) -> Result<Option<Self>, ScanError> {
-        attrs.iter().try_fold(None, |detected: Option<Self>, attr| {
-            let marker = Self::from_attribute(attr)?;
-            match (detected, marker) {
-                (Some(first), Some(second)) => Err(ScanError::ConflictingMarkers {
-                    first: first.as_str().to_owned(),
-                    second: second.as_str().to_owned(),
-                }),
-                (None, Some(marker)) => Ok(Some(marker)),
-                (detected, None) => Ok(detected),
-            }
-        })
+    pub fn detect(attrs: &[syn::Attribute], cfg: &ActiveCfg) -> Result<Option<Self>, ScanError> {
+        let expanded = cfg.expand_cfg_attrs(attrs)?;
+        expanded
+            .iter()
+            .try_fold(None, |detected: Option<Self>, attr| {
+                let marker = Self::from_attribute(attr)?;
+                match (detected, marker) {
+                    (Some(first), Some(second)) => Err(ScanError::ConflictingMarkers {
+                        first: first.as_str().to_owned(),
+                        second: second.as_str().to_owned(),
+                    }),
+                    (None, Some(marker)) => Ok(Some(marker)),
+                    (detected, None) => Ok(detected),
+                }
+            })
     }
 
     pub fn as_str(self) -> &'static str {
@@ -217,19 +220,61 @@ mod tests {
     #[test]
     fn detects_data_on_value_types() {
         assert_eq!(
-            Marker::detect(&struct_attrs("#[data] struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("#[data] struct S { x: i32 }"), &ActiveCfg::default()),
             Ok(Some(Marker::Data))
         );
         assert_eq!(
-            Marker::detect(&struct_attrs("#[boltffi::data] struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("#[boltffi::data] struct S { x: i32 }"), &ActiveCfg::default()),
             Ok(Some(Marker::Data))
         );
         assert_eq!(
-            Marker::detect(&struct_attrs("struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("struct S { x: i32 }"), &ActiveCfg::default()),
             Ok(None)
         );
         assert_eq!(
-            Marker::detect(&struct_attrs("#[derive(Clone)] struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("#[derive(Clone)] struct S { x: i32 }"), &ActiveCfg::default()),
+            Ok(None)
+        );
+    }
+
+    /// A crate that wants a working `default-features = false` escape hatch
+    /// (no FFI dependency at all when the feature is off) has to spell its
+    /// marker as `#[cfg_attr(feature = "boltffi", boltffi::data)]` rather
+    /// than a bare `#[boltffi::data]`. `boltffi_scan` parses source text
+    /// directly via `syn`, so it never sees the compiler's own `cfg_attr`
+    /// expansion happen -- without explicitly recognizing this pattern, the
+    /// item silently scans as unmarked, and anything that references it
+    /// later fails with a confusing "unsupported source type" pointing at
+    /// an unrelated macro invocation.
+    #[test]
+    fn detects_data_behind_an_active_cfg_attr() {
+        let active = ActiveCfg::default().with_feature("boltffi");
+        assert_eq!(
+            Marker::detect(
+                &struct_attrs(r#"#[cfg_attr(feature = "boltffi", boltffi::data)] struct S { x: i32 }"#),
+                &active
+            ),
+            Ok(Some(Marker::Data))
+        );
+        assert_eq!(
+            Marker::detect(
+                &struct_attrs(r#"#[cfg_attr(feature = "boltffi", data)] struct S { x: i32 }"#),
+                &active
+            ),
+            Ok(Some(Marker::Data))
+        );
+    }
+
+    /// The inactive-feature counterpart of `detects_data_behind_an_active_cfg_attr`:
+    /// when the gated feature is off, the item is genuinely unmarked, matching
+    /// what `cfg_attr` would produce if the compiler expanded it.
+    #[test]
+    fn ignores_data_behind_an_inactive_cfg_attr() {
+        assert_eq!(
+            Marker::detect(
+                &struct_attrs(r#"#[cfg_attr(feature = "boltffi", boltffi::data)] struct S { x: i32 }"#),
+                &ActiveCfg::default()
+            ),
             Ok(None)
         );
     }
@@ -239,13 +284,13 @@ mod tests {
         assert_eq!(
             Marker::detect(&impl_attrs(
                 "#[custom_ffi] impl CustomFfiConvertible for Email {}"
-            )),
+            ), &ActiveCfg::default()),
             Ok(Some(Marker::CustomFfi))
         );
         assert_eq!(
             Marker::detect(&impl_attrs(
                 "#[boltffi::custom_ffi] impl boltffi::CustomFfiConvertible for Email {}"
-            )),
+            ), &ActiveCfg::default()),
             Ok(Some(Marker::CustomFfi))
         );
     }
@@ -253,26 +298,26 @@ mod tests {
     #[test]
     fn detects_data_impl_distinctly_from_data() {
         assert_eq!(
-            Marker::detect(&impl_attrs("#[data(impl)] impl S {}")),
+            Marker::detect(&impl_attrs("#[data(impl)] impl S {}"), &ActiveCfg::default()),
             Ok(Some(Marker::DataImpl))
         );
         assert_eq!(
-            Marker::detect(&impl_attrs("#[boltffi::data(impl)] impl S {}")),
+            Marker::detect(&impl_attrs("#[boltffi::data(impl)] impl S {}"), &ActiveCfg::default()),
             Ok(Some(Marker::DataImpl))
         );
-        assert_eq!(Marker::detect(&impl_attrs("impl S {}")), Ok(None));
+        assert_eq!(Marker::detect(&impl_attrs("impl S {}"), &ActiveCfg::default()), Ok(None));
     }
 
     #[test]
     fn rejects_unknown_marker_arguments() {
         assert_eq!(
-            Marker::detect(&struct_attrs("#[data(foo)] struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("#[data(foo)] struct S { x: i32 }"), &ActiveCfg::default()),
             Err(ScanError::InvalidMarker {
                 attribute: "data(foo)".to_owned()
             })
         );
         assert_eq!(
-            Marker::detect(&fn_attrs("#[export(foo)] fn f() {}")),
+            Marker::detect(&fn_attrs("#[export(foo)] fn f() {}"), &ActiveCfg::default()),
             Err(ScanError::InvalidMarker {
                 attribute: "export(foo)".to_owned()
             })
@@ -282,7 +327,7 @@ mod tests {
     #[test]
     fn rejects_conflicting_markers() {
         assert_eq!(
-            Marker::detect(&struct_attrs("#[data] #[error] struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("#[data] #[error] struct S { x: i32 }"), &ActiveCfg::default()),
             Err(ScanError::ConflictingMarkers {
                 first: "data".to_owned(),
                 second: "error".to_owned()
@@ -293,7 +338,7 @@ mod tests {
     #[test]
     fn ignores_unowned_qualified_attributes() {
         assert_eq!(
-            Marker::detect(&struct_attrs("#[other::data] struct S { x: i32 }")),
+            Marker::detect(&struct_attrs("#[other::data] struct S { x: i32 }"), &ActiveCfg::default()),
             Ok(None)
         );
     }
@@ -301,11 +346,11 @@ mod tests {
     #[test]
     fn detects_error_on_value_types() {
         assert_eq!(
-            Marker::detect(&struct_attrs("#[error] struct E { code: i32 }")),
+            Marker::detect(&struct_attrs("#[error] struct E { code: i32 }"), &ActiveCfg::default()),
             Ok(Some(Marker::Error))
         );
         assert_eq!(
-            Marker::detect(&enum_attrs("#[boltffi::error] enum E { Io, Parse }")),
+            Marker::detect(&enum_attrs("#[boltffi::error] enum E { Io, Parse }"), &ActiveCfg::default()),
             Ok(Some(Marker::Error))
         );
     }
@@ -313,16 +358,16 @@ mod tests {
     #[test]
     fn detects_export_on_exported_items() {
         assert_eq!(
-            Marker::detect(&fn_attrs("#[export] fn f() {}")),
+            Marker::detect(&fn_attrs("#[export] fn f() {}"), &ActiveCfg::default()),
             Ok(Some(Marker::Export(ExportMarker::default())))
         );
         assert_eq!(
-            Marker::detect(&fn_attrs("#[boltffi::export] fn f() {}")),
+            Marker::detect(&fn_attrs("#[boltffi::export] fn f() {}"), &ActiveCfg::default()),
             Ok(Some(Marker::Export(ExportMarker::default())))
         );
-        assert_eq!(Marker::detect(&fn_attrs("fn f() {}")), Ok(None));
+        assert_eq!(Marker::detect(&fn_attrs("fn f() {}"), &ActiveCfg::default()), Ok(None));
         assert_eq!(
-            Marker::detect(&const_attrs("#[export] const ANSWER: u32 = 42;")),
+            Marker::detect(&const_attrs("#[export] const ANSWER: u32 = 42;"), &ActiveCfg::default()),
             Ok(Some(Marker::Export(ExportMarker::default())))
         );
     }
@@ -330,11 +375,11 @@ mod tests {
     #[test]
     fn detects_export_with_class_threading_marker() {
         assert_eq!(
-            Marker::detect(&impl_attrs("#[export(single_threaded)] impl S {}")),
+            Marker::detect(&impl_attrs("#[export(single_threaded)] impl S {}"), &ActiveCfg::default()),
             Ok(Some(Marker::Export(ExportMarker::single_threaded())))
         );
         assert_eq!(
-            Marker::detect(&impl_attrs("#[boltffi::export(thread_unsafe)] impl S {}")),
+            Marker::detect(&impl_attrs("#[boltffi::export(thread_unsafe)] impl S {}"), &ActiveCfg::default()),
             Ok(Some(Marker::Export(ExportMarker::single_threaded())))
         );
     }
@@ -342,15 +387,15 @@ mod tests {
     #[test]
     fn detects_skip_through_the_marker_set() {
         assert_eq!(
-            Marker::detect(&fn_attrs("#[skip] fn f() {}")),
+            Marker::detect(&fn_attrs("#[skip] fn f() {}"), &ActiveCfg::default()),
             Ok(Some(Marker::Skip))
         );
         assert_eq!(
-            Marker::detect(&fn_attrs("#[boltffi::skip] fn f() {}")),
+            Marker::detect(&fn_attrs("#[boltffi::skip] fn f() {}"), &ActiveCfg::default()),
             Ok(Some(Marker::Skip))
         );
         assert_eq!(
-            Marker::detect(&fn_attrs("#[skip(reason)] fn f() {}")),
+            Marker::detect(&fn_attrs("#[skip(reason)] fn f() {}"), &ActiveCfg::default()),
             Err(ScanError::InvalidMarker {
                 attribute: "skip(reason)".to_owned()
             })

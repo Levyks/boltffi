@@ -9,11 +9,11 @@ use crate::marked::MarkedItems;
 use crate::package_graph::{ExportedPackage, LoadError, PackageGraph};
 use crate::path::ImportLookup;
 use crate::source_tree::SourceTree;
-use crate::{ModuleScope, ScanError, items};
+use crate::{ActiveCfg, ModuleScope, ScanError, items};
 
 pub fn scan(input: &ScanInput) -> Result<SourceContract, ScanError> {
     let source_tree = SourceTree::load_with_cfg(input.root(), &input.package().name, input.cfg())?;
-    scan_tree(source_tree, input.package().clone())
+    scan_tree(source_tree, input.package().clone(), input.cfg())
 }
 
 pub struct PackageScan {
@@ -118,8 +118,8 @@ pub fn scan_package(input: &ScanInput) -> Result<PackageScan, ScanError> {
             .into_iter()
             .chain(std::iter::once(root_tree.clone())),
     );
-    let root_marked = MarkedItems::collect(&root_tree)?;
-    let complete_marked = MarkedItems::collect(&complete_tree)?;
+    let root_marked = MarkedItems::collect(&root_tree, input.cfg())?;
+    let complete_marked = MarkedItems::collect(&complete_tree, input.cfg())?;
     let declared_types = DeclaredTypes::index(&complete_tree, &complete_marked)?;
     let root =
         scan_marked_with_declarations(&root_marked, &declared_types, input.package().clone())?;
@@ -144,25 +144,30 @@ pub fn scan_source(
     package: PackageInfo,
 ) -> Result<SourceContract, ScanError> {
     let source_tree = SourceTree::load(path.as_ref(), &package.name)?;
-    scan_tree(source_tree, package)
+    scan_tree(source_tree, package, &ActiveCfg::default())
 }
 
 pub fn scan_file(file: syn::File, package: PackageInfo) -> Result<SourceContract, ScanError> {
     let source_tree = SourceTree::inline(&package.name, file)?;
-    scan_tree(source_tree, package)
+    scan_tree(source_tree, package, &ActiveCfg::default())
 }
 
-fn scan_tree(source_tree: SourceTree, package: PackageInfo) -> Result<SourceContract, ScanError> {
-    scan_tree_with_declarations(&source_tree, &source_tree, package)
+fn scan_tree(
+    source_tree: SourceTree,
+    package: PackageInfo,
+    cfg: &ActiveCfg,
+) -> Result<SourceContract, ScanError> {
+    scan_tree_with_declarations(&source_tree, &source_tree, package, cfg)
 }
 
 fn scan_tree_with_declarations(
     source_tree: &SourceTree,
     declaration_tree: &SourceTree,
     package: PackageInfo,
+    cfg: &ActiveCfg,
 ) -> Result<SourceContract, ScanError> {
-    let marked = MarkedItems::collect(source_tree)?;
-    let declaration_marked = MarkedItems::collect(declaration_tree)?;
+    let marked = MarkedItems::collect(source_tree, cfg)?;
+    let declaration_marked = MarkedItems::collect(declaration_tree, cfg)?;
     let declared_types = DeclaredTypes::index(declaration_tree, &declaration_marked)?;
     scan_marked_with_declarations(&marked, &declared_types, package)
 }
@@ -727,8 +732,8 @@ mod tests {
              #[data] pub struct MapOptions { pub initial_camera: CameraUpdate }",
         );
         let complete = SourceTree::combine([maplib, root.clone()]);
-        let root_marked = MarkedItems::collect(&root).expect("root marked items");
-        let complete_marked = MarkedItems::collect(&complete).expect("complete marked items");
+        let root_marked = MarkedItems::collect(&root, &ActiveCfg::default()).expect("root marked items");
+        let complete_marked = MarkedItems::collect(&complete, &ActiveCfg::default()).expect("complete marked items");
         let declared_types =
             DeclaredTypes::index(&complete, &complete_marked).expect("declared types");
         let contract = scan_marked_with_declarations(
@@ -890,6 +895,50 @@ mod tests {
         assert_eq!(
             location.fields[0].type_expr,
             custom("demo::UtcDateTime", "UtcDateTime")
+        );
+    }
+
+    /// A crate-local `type Result<T> = std::result::Result<T, E>;` alias
+    /// (needed by any crate returning its own error type from exported
+    /// functions) has to resolve for whatever concrete type each use site
+    /// actually substitutes for `T` -- not the alias's own, unsubstituted
+    /// `T`. Before this was handled, `Result<Point>` here would fail to
+    /// resolve as a value type at all, since the scanner had no record of
+    /// what `T` meant at this specific use site.
+    #[test]
+    fn scans_function_return_through_a_generic_type_alias() {
+        let contract = scan(
+            "#[error] pub enum MyError { Bad } \
+             pub type Result<T> = std::result::Result<T, MyError>; \
+             #[data] pub struct Point { pub x: f64 } \
+             #[export] pub fn origin() -> Result<Point> { todo!() } \
+             #[export] pub fn count() -> Result<u32> { todo!() }",
+        );
+
+        assert_eq!(contract.functions.len(), 2);
+        let origin = contract
+            .functions
+            .iter()
+            .find(|function| function.id.as_str().ends_with("origin"))
+            .expect("origin function");
+        assert_eq!(
+            value_return(&origin.returns),
+            &TypeExpr::result(
+                record("demo::Point", "Point"),
+                enumeration("demo::MyError", "MyError")
+            )
+        );
+        let count = contract
+            .functions
+            .iter()
+            .find(|function| function.id.as_str().ends_with("count"))
+            .expect("count function");
+        assert_eq!(
+            value_return(&count.returns),
+            &TypeExpr::result(
+                TypeExpr::Primitive(Primitive::U32),
+                enumeration("demo::MyError", "MyError")
+            )
         );
     }
 
@@ -1089,7 +1138,7 @@ mod tests {
              #[export] pub fn model_echo_kind(kind: u32) -> u32 { kind }",
         );
         let complete = SourceTree::combine([model, session, root]);
-        let marked = MarkedItems::collect(&complete).expect("marked items");
+        let marked = MarkedItems::collect(&complete, &ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&complete, &marked).expect("declared types");
         let paths = root_visible_paths(
             &declared_types,
@@ -1145,7 +1194,7 @@ mod tests {
             "mod inner { #[data] pub struct Hidden { pub x: f64 } } \
              pub use inner::Hidden;",
         );
-        let marked = MarkedItems::collect(&root).expect("marked items");
+        let marked = MarkedItems::collect(&root, &ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&root, &marked).expect("declared types");
         let paths = root_visible_paths(&declared_types, &root, &marked, "demo", &[]);
         let path = paths
@@ -1180,7 +1229,7 @@ mod tests {
              } \
              pub use ids::Token;",
         );
-        let marked = MarkedItems::collect(&root).expect("marked items");
+        let marked = MarkedItems::collect(&root, &ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&root, &marked).expect("declared types");
         let paths = root_visible_paths(&declared_types, &root, &marked, "demo", &[]);
         let path = paths
@@ -1210,8 +1259,10 @@ mod tests {
         );
         let complete = SourceTree::combine([model, root.clone()]);
         let scan = PackageScan {
-            root: scan_tree(root, PackageInfo::new("demo", None)).expect("root scans"),
-            complete: scan_tree(complete, PackageInfo::new("demo", None)).expect("complete scans"),
+            root: scan_tree(root, PackageInfo::new("demo", None), &ActiveCfg::default())
+                .expect("root scans"),
+            complete: scan_tree(complete, PackageInfo::new("demo", None), &ActiveCfg::default())
+                .expect("complete scans"),
             root_visible_paths: HashMap::new(),
         };
         let source = scan.root_with_support();

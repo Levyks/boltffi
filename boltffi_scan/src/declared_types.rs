@@ -225,6 +225,31 @@ impl DeclaredTypes {
         }
     }
 
+    /// If `path` names a known type alias, returns its target type with the
+    /// use site's actual type arguments substituted in (e.g. for
+    /// `type Result<T> = std::result::Result<T, MyError>;` used as
+    /// `Result<Wrapper>`, returns `std::result::Result<Wrapper, MyError>`).
+    ///
+    /// This only expands one alias layer; a target that is itself another
+    /// alias application is resolved by the caller re-scanning the returned
+    /// type, which naturally chains through further alias lookups the same
+    /// way non-alias nested types already do.
+    pub(super) fn resolve_alias_target(
+        &self,
+        scope: &ModuleScope,
+        path: &syn::Path,
+    ) -> Result<Option<syn::Type>, ScanError> {
+        match self.source_types.resolve_alias(scope, path) {
+            AliasResolution::Known(alias) => {
+                Ok(Some(substitute_generic_alias_target(alias, path)))
+            }
+            AliasResolution::Unknown => Ok(None),
+            AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
+                path: spelling::path(path),
+            }),
+        }
+    }
+
     fn resolve_custom_remote_with_aliases<'a>(
         &'a self,
         scope: &ModuleScope,
@@ -239,7 +264,8 @@ impl DeclaredTypes {
         };
         match self.source_types.resolve_alias(scope, &type_path.path) {
             AliasResolution::Known(alias) if visited.insert(alias.path.clone()) => {
-                self.resolve_custom_remote_with_aliases(&alias.scope, &alias.target, visited)
+                let resolved_target = substitute_generic_alias_target(alias, &type_path.path);
+                self.resolve_custom_remote_with_aliases(&alias.scope, &resolved_target, visited)
             }
             AliasResolution::Known(_) | AliasResolution::Unknown => Ok(None),
             AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
@@ -446,6 +472,11 @@ struct TypeAlias {
     path: String,
     scope: ModuleScope,
     target: syn::Type,
+    /// Names of `target`'s free type parameters, in declaration order (e.g.
+    /// `["T"]` for `type Result<T> = std::result::Result<T, MyError>;`).
+    /// Lifetime and const generics are ignored: this alias resolver only
+    /// substitutes type arguments.
+    generic_params: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -453,6 +484,95 @@ enum AliasResolution<'a> {
     Known(&'a TypeAlias),
     Ambiguous,
     Unknown,
+}
+
+/// Resolves a generic alias's target type for one specific use site, e.g.
+/// for `type Result<T> = std::result::Result<T, MyError>;` used as
+/// `Result<Wrapper>`, returns `std::result::Result<Wrapper, MyError>` instead
+/// of `alias.target`'s raw, unsubstituted `std::result::Result<T, MyError>`.
+///
+/// Non-generic aliases (`generic_params` empty) return `alias.target`
+/// unchanged. If the use site supplies a different number of type arguments
+/// than the alias declares (e.g. elided defaults), only the arguments that
+/// are actually present are substituted.
+fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> syn::Type {
+    if alias.generic_params.is_empty() {
+        return alias.target.clone();
+    }
+
+    let actual_args = use_site
+        .segments
+        .last()
+        .into_iter()
+        .flat_map(|segment| match &segment.arguments {
+            syn::PathArguments::AngleBracketed(args) => args.args.iter().collect::<Vec<_>>(),
+            syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => Vec::new(),
+        })
+        .filter_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        });
+
+    let substitutions: HashMap<String, syn::Type> = alias
+        .generic_params
+        .iter()
+        .cloned()
+        .zip(actual_args.cloned())
+        .collect();
+
+    if substitutions.is_empty() {
+        return alias.target.clone();
+    }
+
+    substitute_generics(&alias.target, &substitutions)
+}
+
+/// Recursively replaces bare occurrences of `substitutions`' keys (generic
+/// type parameter names) with their corresponding concrete type, anywhere
+/// they appear in `ty` -- as the whole type (`T`) or nested inside generic
+/// arguments (`Vec<T>`, `Option<T>`, `std::result::Result<T, E>`, ...).
+///
+/// Only the type shapes that plausibly appear in a `type Alias<T> = ...;`
+/// target are handled (paths, references, tuples); anything else is
+/// returned unchanged rather than substituted, which is always safe (worst
+/// case, resolution later fails to recognize the type, same as today).
+fn substitute_generics(ty: &syn::Type, substitutions: &HashMap<String, syn::Type>) -> syn::Type {
+    match ty {
+        syn::Type::Path(type_path) if type_path.qself.is_none() => {
+            if let Some(ident) = type_path.path.get_ident() {
+                if let Some(replacement) = substitutions.get(&ident.to_string()) {
+                    return replacement.clone();
+                }
+            }
+            let mut new_path = type_path.path.clone();
+            for segment in &mut new_path.segments {
+                if let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments {
+                    for arg in &mut args.args {
+                        if let syn::GenericArgument::Type(inner) = arg {
+                            *inner = substitute_generics(inner, substitutions);
+                        }
+                    }
+                }
+            }
+            syn::Type::Path(syn::TypePath {
+                qself: None,
+                path: new_path,
+            })
+        }
+        syn::Type::Reference(reference) => {
+            let mut new_reference = reference.clone();
+            *new_reference.elem = substitute_generics(&reference.elem, substitutions);
+            syn::Type::Reference(new_reference)
+        }
+        syn::Type::Tuple(tuple) => {
+            let mut new_tuple = tuple.clone();
+            for elem in &mut new_tuple.elems {
+                *elem = substitute_generics(elem, substitutions);
+            }
+            syn::Type::Tuple(new_tuple)
+        }
+        other => other.clone(),
+    }
 }
 
 impl TypeNamespace {
@@ -707,12 +827,22 @@ impl TypeNamespace {
 
     fn insert_alias(&mut self, module: &SourceModule, alias: &syn::ItemType) {
         let path = self.insert_source(module, alias.ident.to_string());
+        let generic_params = alias
+            .generics
+            .params
+            .iter()
+            .filter_map(|param| match param {
+                syn::GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                syn::GenericParam::Lifetime(_) | syn::GenericParam::Const(_) => None,
+            })
+            .collect();
         self.aliases.insert(
             path.clone(),
             TypeAlias {
                 path,
                 scope: module.scope().clone(),
                 target: alias.ty.as_ref().clone(),
+                generic_params,
             },
         );
     }

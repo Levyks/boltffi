@@ -90,7 +90,7 @@ fn is_exported_method(method: &syn::TraitItemFn) -> Result<bool, ScanError> {
     if stream::Attribute::scan(&method.attrs)?.is_some() {
         return Err(stream::Attribute::invalid_placement("trait method"));
     }
-    match marker::disposition(&method.attrs)? {
+    match marker::disposition(&method.attrs, &crate::ActiveCfg::default())? {
         Disposition::Skip => Ok(false),
         Disposition::Reject(marker) => Err(marker.invalid_placement("trait method")),
         Disposition::Unmarked => Ok(true),

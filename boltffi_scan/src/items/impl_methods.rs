@@ -125,7 +125,7 @@ pub(super) fn exported_method(
     visibility: &syn::Visibility,
     item: &str,
 ) -> Result<bool, ScanError> {
-    match marker::disposition(attrs)? {
+    match marker::disposition(attrs, &crate::ActiveCfg::default())? {
         Disposition::Skip => Ok(false),
         Disposition::Reject(marker) => Err(marker.invalid_placement(item)),
         Disposition::Unmarked => Ok(matches!(visibility, syn::Visibility::Public(_))),
@@ -144,7 +144,7 @@ fn non_method(
         Ok(None) => {}
         Err(error) => return Some(Err(error)),
     }
-    match marker::disposition(attrs) {
+    match marker::disposition(attrs, &crate::ActiveCfg::default()) {
         Ok(Disposition::Skip) => None,
         Ok(Disposition::Reject(marker)) => Some(Err(marker.invalid_placement(item))),
         Ok(Disposition::Unmarked)

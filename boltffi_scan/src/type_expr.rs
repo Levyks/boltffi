@@ -59,6 +59,18 @@ impl<'a> Scanner<'a> {
         if type_path.qself.is_some() {
             return Err(ScanError::unsupported_type(source));
         }
+        // A locally-declared type alias (e.g. `type Result<T> = std::result::Result<T, MyError>;`)
+        // shadows any same-named standard type for unqualified use, matching how Rust itself
+        // resolves it -- so this must run before `standard_type`'s name-based Vec/Option/Result
+        // detection, which would otherwise see the alias's use-site arity (one argument for
+        // `Result<Wrapper>`) instead of the real, substituted type's arity (two, once expanded to
+        // `std::result::Result<Wrapper, MyError>`) and reject it as unsupported.
+        if let Some(substituted) = self
+            .declared_types
+            .resolve_alias_target(self.scope, &type_path.path)?
+        {
+            return self.scan(&substituted);
+        }
         if let Some(standard_type) = self.standard_type(type_path, source)? {
             return self.standard_path(standard_type, type_path, source);
         }

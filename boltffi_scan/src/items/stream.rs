@@ -504,7 +504,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let marked = crate::marked::MarkedItems::collect(&source, &crate::ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
         let streams = scan(marked.classes(), &declared_types).expect("streams");
 
@@ -533,7 +533,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let marked = crate::marked::MarkedItems::collect(&source, &crate::ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
         let streams = scan(marked.classes(), &declared_types).expect("streams");
 
@@ -558,7 +558,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let marked = crate::marked::MarkedItems::collect(&source, &crate::ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
         let streams = scan(marked.classes(), &declared_types).expect("streams");
 
@@ -583,7 +583,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let marked = crate::marked::MarkedItems::collect(&source, &crate::ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
         let streams = scan(marked.classes(), &declared_types).expect("streams");
 
@@ -610,7 +610,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let marked = crate::marked::MarkedItems::collect(&source, &crate::ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
 
         let error = scan(marked.classes(), &declared_types).expect_err("local Arc rejected");
@@ -641,7 +641,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source).expect("marked items");
+        let marked = crate::marked::MarkedItems::collect(&source, &crate::ActiveCfg::default()).expect("marked items");
         let declared_types = DeclaredTypes::index(&source, &marked).expect("declared types");
 
         let error =

@@ -60,6 +60,54 @@ impl ActiveCfg {
             })
     }
 
+    /// Expands `attrs` the way rustc's own `cfg_attr` expansion would: each
+    /// `#[cfg_attr(predicate, wrapped...)]` is replaced by `wrapped...` if
+    /// `predicate` is currently active, or dropped entirely otherwise.
+    /// Non-`cfg_attr` attributes pass through unchanged.
+    ///
+    /// `boltffi_scan` parses source text directly via `syn` rather than
+    /// going through the compiler's macro-expansion pipeline, so it never
+    /// sees this expansion happen automatically -- without it, a marker
+    /// like `#[cfg_attr(feature = "boltffi", boltffi::data)]` (needed by
+    /// any crate that wants a working `default-features = false` escape
+    /// hatch) is invisible to marker detection, and the item silently
+    /// scans as unmarked.
+    pub fn expand_cfg_attrs(&self, attrs: &[Attribute]) -> Result<Vec<Attribute>, ScanError> {
+        attrs.iter().try_fold(Vec::new(), |mut expanded, attr| {
+            expanded.extend(self.expand_cfg_attr(attr)?);
+            Ok(expanded)
+        })
+    }
+
+    fn expand_cfg_attr(&self, attr: &Attribute) -> Result<Vec<Attribute>, ScanError> {
+        if !attr.path().is_ident("cfg_attr") {
+            return Ok(vec![attr.clone()]);
+        }
+
+        let (predicate, wrapped) = attr
+            .parse_args_with(|input: syn::parse::ParseStream<'_>| {
+                let predicate = input.parse::<Meta>()?;
+                input.parse::<Token![,]>()?;
+                let wrapped = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
+                Ok((predicate, wrapped))
+            })
+            .map_err(|_| Self::invalid_attribute(attr.meta.to_token_stream()))?;
+
+        if !self.matches_meta(&predicate)? {
+            return Ok(Vec::new());
+        }
+
+        Ok(wrapped
+            .into_iter()
+            .map(|meta| Attribute {
+                pound_token: attr.pound_token,
+                style: attr.style.clone(),
+                bracket_token: attr.bracket_token,
+                meta,
+            })
+            .collect())
+    }
+
     fn observe_cargo_env(&mut self, name: &str, value: &str) {
         if let Some(feature) = name.strip_prefix("CARGO_FEATURE_") {
             self.features.insert(Self::feature_name(feature));

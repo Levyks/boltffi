@@ -107,7 +107,7 @@ mod tests {
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_class(ClassId::new("demo::Engine"));
         let item = parse(source);
-        let thread_safety = Marker::detect(&item.attrs)?
+        let thread_safety = Marker::detect(&item.attrs, &crate::ActiveCfg::default())?
             .and_then(Marker::export)
             .map(|export| export.class_thread_safety())
             .unwrap_or_default();
@@ -243,7 +243,7 @@ mod tests {
             .items,
         )
         .expect("source tree");
-        let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
+        let marked = crate::marked::MarkedItems::collect(&source_tree, &crate::ActiveCfg::default()).expect("marked");
         let declared_types =
             DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
         let classes = super::scan(marked.classes(), &declared_types).expect("scan");

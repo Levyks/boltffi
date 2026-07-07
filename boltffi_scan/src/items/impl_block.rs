@@ -115,7 +115,7 @@ mod tests {
             "#[data(impl)] impl Point { pub fn origin() -> Self { todo!() } } \
              #[data(impl)] impl Mode { pub fn parse() -> Self { todo!() } }",
         );
-        let marked = MarkedItems::collect(&source_tree).expect("marked");
+        let marked = MarkedItems::collect(&source_tree, &crate::ActiveCfg::default()).expect("marked");
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_record(RecordId::new("demo::Point"));
         declared_types.register_enum(EnumId::new("demo::Mode"));
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn rejects_generic_impl_before_erasing_type_parameters() {
         let source_tree = source_tree("#[data(impl)] impl<T> Point { pub fn get(&self) {} }");
-        let marked = MarkedItems::collect(&source_tree).expect("marked");
+        let marked = MarkedItems::collect(&source_tree, &crate::ActiveCfg::default()).expect("marked");
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_record(RecordId::new("demo::Point"));
         let mut records = vec![RecordDef::new(
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn rejects_trait_impls_for_value_method_attachment() {
         let source_tree = source_tree("#[data(impl)] impl Display for Point {}");
-        let marked = MarkedItems::collect(&source_tree).expect("marked");
+        let marked = MarkedItems::collect(&source_tree, &crate::ActiveCfg::default()).expect("marked");
         let mut declared_types = DeclaredTypes::new();
         declared_types.register_record(RecordId::new("demo::Point"));
         let mut records = vec![RecordDef::new(

@@ -1,7 +1,7 @@
 use crate::items;
 use crate::marker::Marker;
 use crate::source_tree::SourceTree;
-use crate::{ModulePath, ModuleScope, ScanError};
+use crate::{ActiveCfg, ModulePath, ModuleScope, ScanError};
 
 pub(super) struct MarkedItems<'source> {
     records: Vec<Marked<'source, syn::ItemStruct>>,
@@ -15,7 +15,7 @@ pub(super) struct MarkedItems<'source> {
 }
 
 impl<'source> MarkedItems<'source> {
-    pub(super) fn collect(tree: &'source SourceTree) -> Result<Self, ScanError> {
+    pub(super) fn collect(tree: &'source SourceTree, cfg: &ActiveCfg) -> Result<Self, ScanError> {
         tree.modules()
             .iter()
             .flat_map(|module| {
@@ -25,7 +25,7 @@ impl<'source> MarkedItems<'source> {
                     .map(move |item| (module.scope(), item))
             })
             .try_fold(Self::empty(), |mut marked, (scope, item)| {
-                marked.push(scope, item)?;
+                marked.push(scope, item, cfg)?;
                 Ok(marked)
             })
     }
@@ -79,20 +79,21 @@ impl<'source> MarkedItems<'source> {
         &mut self,
         scope: &'source ModuleScope,
         item: &'source syn::Item,
+        cfg: &ActiveCfg,
     ) -> Result<(), ScanError> {
         if let Some(error) = items::misplaced_stream_marker(attrs(item), item_kind(item))? {
             return Err(error);
         }
 
         if let Some(item_macro) = custom_type_macro(item) {
-            if let Some(marker) = Marker::detect(attrs(item))? {
+            if let Some(marker) = Marker::detect(attrs(item), cfg)? {
                 return Err(marker.invalid_placement(item_kind(item)));
             }
             self.customs.push(MarkedCustom::new(scope, item_macro));
             return Ok(());
         }
 
-        let Some(marker) = Marker::detect(attrs(item))? else {
+        let Some(marker) = Marker::detect(attrs(item), cfg)? else {
             return Ok(());
         };
         match (marker, item) {
@@ -303,7 +304,7 @@ mod tests {
              #[data(impl)] impl Point {}",
         );
 
-        let marked = MarkedItems::collect(&tree).expect("marked items");
+        let marked = MarkedItems::collect(&tree, &ActiveCfg::default()).expect("marked items");
 
         assert_eq!(marked.records().len(), 1);
         assert_eq!(marked.records()[0].marker(), Marker::Data);
@@ -321,7 +322,7 @@ mod tests {
     fn rejects_marker_on_wrong_item_kind() {
         let tree = tree("#[export] struct Point { x: i32 }");
 
-        let error = match MarkedItems::collect(&tree) {
+        let error = match MarkedItems::collect(&tree, &ActiveCfg::default()) {
             Ok(_) => panic!("wrong marker placement must reject"),
             Err(error) => error,
         };
@@ -339,7 +340,7 @@ mod tests {
     fn rejects_class_export_options_on_non_class_items() {
         let tree = tree("#[export(single_threaded)] fn answer() -> u32 { 42 }");
 
-        let error = match MarkedItems::collect(&tree) {
+        let error = match MarkedItems::collect(&tree, &ActiveCfg::default()) {
             Ok(_) => panic!("class-only export option must reject on functions"),
             Err(error) => error,
         };
@@ -359,7 +360,7 @@ mod tests {
             "#[export] custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis);",
         );
 
-        let error = match MarkedItems::collect(&tree) {
+        let error = match MarkedItems::collect(&tree, &ActiveCfg::default()) {
             Ok(_) => panic!("marked custom type macro must reject"),
             Err(error) => error,
         };
@@ -377,7 +378,7 @@ mod tests {
     fn rejects_stream_marker_on_top_level_items() {
         let tree = tree("#[ffi_stream(item = i32)] fn values() {}");
 
-        let error = match MarkedItems::collect(&tree) {
+        let error = match MarkedItems::collect(&tree, &ActiveCfg::default()) {
             Ok(_) => panic!("top-level stream marker must reject"),
             Err(error) => error,
         };
@@ -397,7 +398,7 @@ mod tests {
             "boltffi::custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis);",
         );
 
-        let marked = MarkedItems::collect(&tree).expect("marked items");
+        let marked = MarkedItems::collect(&tree, &ActiveCfg::default()).expect("marked items");
 
         assert_eq!(marked.customs().len(), 1);
     }
@@ -408,7 +409,7 @@ mod tests {
             "other::custom_type!(UtcDateTime, remote = DateTime<Utc>, repr = i64, into_ffi = to_millis, try_from_ffi = from_millis);",
         );
 
-        let marked = MarkedItems::collect(&tree).expect("marked items");
+        let marked = MarkedItems::collect(&tree, &ActiveCfg::default()).expect("marked items");
 
         assert_eq!(marked.customs().len(), 0);
     }
