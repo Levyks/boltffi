@@ -161,7 +161,7 @@ fn generate_kmp(config: &Config, options: &GenerateOptions) -> Result<()> {
     }
 
     let cargo_args = config
-        .cargo_args_for_command("generate")
+        .cargo_args_for_commands(&["build", "generate"])
         .into_iter()
         .chain(options.cargo_args.iter().cloned())
         .collect::<Vec<_>>();
@@ -275,7 +275,7 @@ struct SelectedCrate {
 impl SelectedCrate {
     fn resolve(config: &Config, options: &GenerateOptions) -> Result<Self> {
         let cargo_args = config
-            .cargo_args_for_command("generate")
+            .cargo_args_for_commands(&["build", "generate"])
             .into_iter()
             .chain(options.cargo_args.iter().cloned())
             .collect::<Vec<_>>();

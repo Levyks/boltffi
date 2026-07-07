@@ -765,6 +765,21 @@ impl Config {
             .collect()
     }
 
+    pub fn cargo_args_for_commands(&self, command_names: &[&str]) -> Vec<String> {
+        self.cargo
+            .global_args
+            .iter()
+            .chain(command_names.iter().flat_map(|command_name| {
+                self.cargo
+                    .command_args
+                    .get(*command_name)
+                    .into_iter()
+                    .flat_map(|args| args.iter())
+            }))
+            .cloned()
+            .collect()
+    }
+
     fn is_experimental_enabled(&self, exp: &Experimental) -> bool {
         let key = match exp {
             Experimental::WholeTarget(target) => target.name().to_string(),
@@ -1978,6 +1993,34 @@ build = ["--features", "mobile"]
                 "--locked".to_string(),
                 "--features".to_string(),
                 "mobile".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn merges_global_and_multiple_command_specific_cargo_args() {
+        let config = parse_config(
+            r#"
+[package]
+name = "mylib"
+
+[cargo]
+global_args = ["--locked"]
+
+[cargo.command_args]
+build = ["--features", "mobile"]
+generate = ["--profile", "metadata"]
+"#,
+        );
+
+        assert_eq!(
+            config.cargo_args_for_commands(&["build", "generate"]),
+            vec![
+                "--locked".to_string(),
+                "--features".to_string(),
+                "mobile".to_string(),
+                "--profile".to_string(),
+                "metadata".to_string()
             ]
         );
     }
