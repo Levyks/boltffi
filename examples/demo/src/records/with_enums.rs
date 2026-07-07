@@ -192,3 +192,29 @@ pub fn make_error_log_entry(timestamp: i64, code: u16) -> LogEntry {
         code,
     }
 }
+
+/// A record with a field literally named `position`.
+///
+/// The generated `WireDecode::decode_from` for the non-blittable path
+/// used a fixed local variable also named `position` as its running
+/// byte-offset accumulator. A field named `position` would shadow it
+/// via `let (position, size) = ...`, corrupting or breaking the
+/// following `position += size;`. This exists to keep that regression
+/// from coming back.
+#[data]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waypoint {
+    pub id: i64,
+    pub position: Priority,
+    pub label: String,
+}
+
+#[export]
+#[demo_bench_macros::demo_case(
+    "records.with_enums.waypoint.should_roundtrip_field_named_position",
+    justification = "Ensure a record with a field literally named `position` crosses the wire and returns unchanged. Regression test for https://github.com/boltffi/boltffi/issues/623.",
+    directions = "Call `records::with_enums::echo_waypoint` through the generated binding and assert a record with a field literally named `position` crosses the wire and returns unchanged."
+)]
+pub fn echo_waypoint(waypoint: Waypoint) -> Waypoint {
+    waypoint
+}
