@@ -587,16 +587,18 @@ impl<'a> StructWireExpansion<'a> {
             .iter()
             .zip(render_context.field_types.iter())
             .map(|(field_name, field_type)| {
+                // `__boltffi_position` (not `position`) so this accumulator can't be
+                // shadowed by a struct field that happens to be named `position`.
                 let decode_expr = WireTypePlan::new(field_type, self.custom_types)
-                    .decode_from_expr(quote! { &buf[position..] });
+                    .decode_from_expr(quote! { &buf[__boltffi_position..] });
                 let field_name_literal = field_name.to_string();
                 quote! {
                     let (#field_name, size) = #decode_expr.map_err(|error| {
                         eprintln!("[boltffi] wire decode error in {}.{} at position {} (buf_len={}): {:?}",
-                            #struct_name_literal, #field_name_literal, position, buf.len(), error);
+                            #struct_name_literal, #field_name_literal, __boltffi_position, buf.len(), error);
                         error
                     })?;
-                    position += size;
+                    __boltffi_position += size;
                 }
             });
         let struct_name = render_context.struct_name;
@@ -607,9 +609,9 @@ impl<'a> StructWireExpansion<'a> {
         quote! {
             impl #impl_generics ::boltffi::__private::wire::WireDecode for #struct_name #ty_generics #where_clause {
                 fn decode_from(buf: &[u8]) -> ::boltffi::__private::wire::DecodeResult<Self> {
-                    let mut position = 0usize;
+                    let mut __boltffi_position = 0usize;
                     #(#decode_fields)*
-                    Ok((Self { #(#field_names_for_struct),* }, position))
+                    Ok((Self { #(#field_names_for_struct),* }, __boltffi_position))
                 }
             }
         }
@@ -858,18 +860,18 @@ impl<'a> EnumWireExpansion<'a> {
                     let decode_fields = field_bindings.iter().zip(field_types.iter()).map(
                         |(binding, field_type)| {
                             let decode_expr = WireTypePlan::new(field_type, self.custom_types)
-                                .decode_from_expr(quote! { &buf[position..] });
+                                .decode_from_expr(quote! { &buf[__boltffi_position..] });
                             quote! {
                                 let (#binding, size) = #decode_expr?;
-                                position += size;
+                                __boltffi_position += size;
                             }
                         },
                     );
                     quote! {
                         #discriminant_i32 => {
-                            let mut position = 4usize;
+                            let mut __boltffi_position = 4usize;
                             #(#decode_fields)*
-                            Ok((Self::#variant_name(#(#field_bindings),*), position))
+                            Ok((Self::#variant_name(#(#field_bindings),*), __boltffi_position))
                         }
                     }
                 }
@@ -884,21 +886,23 @@ impl<'a> EnumWireExpansion<'a> {
                         .iter()
                         .map(|field| &field.ty)
                         .collect::<Vec<_>>();
+                    // `__boltffi_position` (not `position`) so this accumulator can't
+                    // be shadowed by a variant field that happens to be named `position`.
                     let decode_fields = field_names.iter().zip(field_types.iter()).map(
                         |(field_name, field_type)| {
                             let decode_expr = WireTypePlan::new(field_type, self.custom_types)
-                                .decode_from_expr(quote! { &buf[position..] });
+                                .decode_from_expr(quote! { &buf[__boltffi_position..] });
                             quote! {
                                 let (#field_name, size) = #decode_expr?;
-                                position += size;
+                                __boltffi_position += size;
                             }
                         },
                     );
                     quote! {
                         #discriminant_i32 => {
-                            let mut position = 4usize;
+                            let mut __boltffi_position = 4usize;
                             #(#decode_fields)*
-                            Ok((Self::#variant_name { #(#field_names),* }, position))
+                            Ok((Self::#variant_name { #(#field_names),* }, __boltffi_position))
                         }
                     }
                 }
