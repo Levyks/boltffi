@@ -81,6 +81,12 @@ impl<'source> MarkedItems<'source> {
         item: &'source syn::Item,
         cfg: &ActiveCfg,
     ) -> Result<(), ScanError> {
+        // An item behind an inactive `#[cfg(...)]` doesn't exist as far as
+        // rustc is concerned, regardless of any marker attribute alongside it.
+        if !cfg.matches_attrs(attrs(item))? {
+            return Ok(());
+        }
+
         if let Some(error) = items::misplaced_stream_marker(attrs(item), item_kind(item))? {
             return Err(error);
         }
@@ -316,6 +322,18 @@ mod tests {
         assert_eq!(marked.constants().len(), 1);
         assert_eq!(marked.customs().len(), 2);
         assert_eq!(marked.impls().len(), 1);
+    }
+
+    #[test]
+    fn ignores_a_marked_item_behind_an_inactive_plain_cfg() {
+        let tree = tree(
+            r#"#[cfg(target_os = "ios")] #[cfg_attr(feature = "boltffi", boltffi::data)] struct IosOnly { x: i32 }"#,
+        );
+        let active = ActiveCfg::default().with_feature("boltffi");
+
+        let marked = MarkedItems::collect(&tree, &active).expect("marked items");
+
+        assert_eq!(marked.records().len(), 0);
     }
 
     #[test]

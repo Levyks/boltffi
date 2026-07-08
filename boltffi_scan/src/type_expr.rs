@@ -96,7 +96,7 @@ impl<'a> Scanner<'a> {
     /// Scans the alias's type arguments at `self`'s (use-site) scope, but the
     /// alias's own written target at its declaration scope -- they can differ.
     fn scan_alias(&self, alias: &TypeAlias, use_site: &syn::Path) -> Result<TypeExpr, ScanError> {
-        let actual_args = use_site
+        let mut actual_args = use_site
             .segments
             .last()
             .into_iter()
@@ -109,12 +109,20 @@ impl<'a> Scanner<'a> {
                 _ => None,
             });
 
+        // A param the use site omits, relying on its own `= Default`, has
+        // that default written at the alias's declaration site, not the use
+        // site's -- scan it under the alias's own scope, like the target.
+        let alias_scanner = Scanner::new(self.declared_types, alias.scope());
         let substitutions = alias
             .generic_params()
             .iter()
-            .cloned()
-            .zip(actual_args)
-            .map(|(param, arg)| Ok((param, self.scan(arg)?)))
+            .filter_map(|param| match actual_args.next() {
+                Some(arg) => Some(self.scan(arg).map(|expr| (param.name().to_owned(), expr))),
+                None => param
+                    .default()
+                    .map(|default| alias_scanner.scan(default))
+                    .map(|result| result.map(|expr| (param.name().to_owned(), expr))),
+            })
             .collect::<Result<HashMap<_, _>, ScanError>>()?;
 
         Scanner::with_substitutions(self.declared_types, alias.scope(), &substitutions)

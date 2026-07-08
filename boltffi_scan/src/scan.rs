@@ -959,6 +959,24 @@ mod tests {
     }
 
     #[test]
+    fn scans_generic_type_alias_with_a_defaulted_parameter_omitted_at_the_use_site() {
+        let contract = scan(
+            "#[error] pub enum MyError { Bad } \
+             pub type Result<T, E = MyError> = std::result::Result<T, E>; \
+             #[data] pub struct Point { pub x: f64 } \
+             #[export] pub fn origin() -> Result<Point> { todo!() }",
+        );
+
+        assert_eq!(
+            value_return(&contract.functions[0].returns),
+            &TypeExpr::result(
+                record("demo::Point", "Point"),
+                enumeration("demo::MyError", "MyError")
+            )
+        );
+    }
+
+    #[test]
     fn scans_custom_repr_reexported_from_root() {
         let contract = scan(
             "pub use core::location::{GeoCoord, GeographicCoordinate}; \

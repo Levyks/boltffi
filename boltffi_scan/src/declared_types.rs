@@ -463,8 +463,8 @@ pub(super) struct TypeAlias {
     path: String,
     scope: ModuleScope,
     target: syn::Type,
-    /// `target`'s free type parameter names, in declaration order.
-    generic_params: Vec<String>,
+    /// `target`'s free type parameters, in declaration order.
+    generic_params: Vec<AliasGenericParam>,
 }
 
 impl TypeAlias {
@@ -476,8 +476,25 @@ impl TypeAlias {
         &self.target
     }
 
-    pub(super) fn generic_params(&self) -> &[String] {
+    pub(super) fn generic_params(&self) -> &[AliasGenericParam] {
         &self.generic_params
+    }
+}
+
+pub(super) struct AliasGenericParam {
+    name: String,
+    /// Written at the alias's own declaration site, e.g. the `= MyError` in
+    /// `type Result<T, E = MyError> = std::result::Result<T, E>;`.
+    default: Option<syn::Type>,
+}
+
+impl AliasGenericParam {
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn default(&self) -> Option<&syn::Type> {
+        self.default.as_ref()
     }
 }
 
@@ -497,7 +514,7 @@ fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> s
         return alias.target.clone();
     }
 
-    let actual_args = use_site
+    let mut actual_args = use_site
         .segments
         .last()
         .into_iter()
@@ -506,15 +523,20 @@ fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> s
             syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => Vec::new(),
         })
         .filter_map(|arg| match arg {
-            syn::GenericArgument::Type(ty) => Some(ty),
+            syn::GenericArgument::Type(ty) => Some(ty.clone()),
             _ => None,
         });
 
+    // Trailing params the use site omits (relying on their own `= Default`)
+    // fall back to that default instead of being left as a bare, unresolved
+    // parameter name.
     let substitutions: HashMap<String, syn::Type> = alias
         .generic_params
         .iter()
-        .cloned()
-        .zip(actual_args.cloned())
+        .filter_map(|param| {
+            let value = actual_args.next().or_else(|| param.default.clone())?;
+            Some((param.name.clone(), value))
+        })
         .collect();
 
     if substitutions.is_empty() {
@@ -822,7 +844,10 @@ impl TypeNamespace {
             .params
             .iter()
             .filter_map(|param| match param {
-                syn::GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+                syn::GenericParam::Type(type_param) => Some(AliasGenericParam {
+                    name: type_param.ident.to_string(),
+                    default: type_param.default.clone(),
+                }),
                 syn::GenericParam::Lifetime(_) | syn::GenericParam::Const(_) => None,
             })
             .collect();
