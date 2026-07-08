@@ -859,6 +859,10 @@ class DemoValueTypesTest {
         demoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field")
         assertEquals(logEntry, echoLogEntry(logEntry))
 
+        demoCase("case:records.keyword_fields.typed_event.should_roundtrip_raw_identifier_field")
+        val typedEvent = TypedEvent(99L, "circle")
+        assertEquals(typedEvent, echoTypedEvent(typedEvent))
+
         demoCase("case:records.with_options.user_profile.should_make_with_present_options")
         val userProfile = makeUserProfile("Alice", 30u, "alice@example.com", 98.5)
         demoCase("case:records.with_options.user_profile.should_roundtrip_present_options")

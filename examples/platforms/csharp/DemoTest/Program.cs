@@ -40,6 +40,7 @@ public static class DemoTest
             TestCStyleEnums();
             TestDataEnums();
             TestRecordsWithEnumFields();
+            TestKeywordFieldRecords();
             TestPrimitiveVecs();
             TestBytes();
             TestStringAndNestedVecs();
@@ -1077,6 +1078,17 @@ public static class DemoTest
         DemoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field");
         LogEntry echoedEntry = EchoLogEntry(entry);
         Require(echoedEntry == entry, "EchoLogEntry round-trip");
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    private static void TestKeywordFieldRecords()
+    {
+        Console.WriteLine("Testing records with keyword field names (TypedEvent)...");
+
+        DemoCase("case:records.keyword_fields.typed_event.should_roundtrip_raw_identifier_field");
+        TypedEvent typedEvent = new TypedEvent(99, "circle");
+        Require(EchoTypedEvent(typedEvent) == typedEvent, "EchoTypedEvent round-trip");
 
         Console.WriteLine("  PASS\n");
     }

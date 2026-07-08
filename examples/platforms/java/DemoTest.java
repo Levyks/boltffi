@@ -758,6 +758,10 @@ public final class DemoTest {
         demoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field");
         assert Demo.echoLogEntry(logEntry).equals(logEntry) : "echoLogEntry round-trip";
 
+        demoCase("case:records.keyword_fields.typed_event.should_roundtrip_raw_identifier_field");
+        TypedEvent typedEvent = new TypedEvent(99L, Optional.of("circle"));
+        assert Demo.echoTypedEvent(typedEvent).equals(typedEvent) : "echoTypedEvent round-trip";
+
         Filter groupFilter = new Filter.ByGroups(
             Arrays.asList(
                 Arrays.asList("café", "🌍"),
