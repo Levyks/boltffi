@@ -2,7 +2,6 @@
 
 package {{ internal_package }}
 {% if !functions.is_empty() %}
-
 private object Native {
 {%- for line in runtime_lines %}
     {{ line }}
@@ -11,8 +10,7 @@ private object Native {
     @JvmStatic external fun {{ function.native_symbol() }}({% for parameter in function.params() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = function.returns() %}: {{ return_type }}{% endif %}
 {%- endfor %}
 }
-{%- for function in functions %}
-
+{% for function in functions %}
 {%- if function.has_source() %}
 {% for line in function.source_lines() %}{{ line }}
 {%- endfor %}
