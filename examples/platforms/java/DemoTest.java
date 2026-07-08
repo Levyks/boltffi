@@ -762,6 +762,10 @@ public final class DemoTest {
         TypedEvent typedEvent = new TypedEvent(99L, Optional.of("circle"));
         assert Demo.echoTypedEvent(typedEvent).equals(typedEvent) : "echoTypedEvent round-trip";
 
+        demoCase("case:records.with_enums.waypoint.should_roundtrip_field_named_position");
+        Waypoint waypoint = new Waypoint(99L, Priority.CRITICAL, "wp-99");
+        assert Demo.echoWaypoint(waypoint).equals(waypoint) : "echoWaypoint round-trip";
+
         Filter groupFilter = new Filter.ByGroups(
             Arrays.asList(
                 Arrays.asList("café", "🌍"),

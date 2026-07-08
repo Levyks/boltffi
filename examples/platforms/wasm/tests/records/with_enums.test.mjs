@@ -35,4 +35,8 @@ export async function run() {
   assert.equal(logEntry.code, 42);
   globalThis.demoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field");
   assert.deepEqual(demo.echoLogEntry(logEntry), logEntry);
+
+  globalThis.demoCase("case:records.with_enums.waypoint.should_roundtrip_field_named_position");
+  const waypoint = { id: 99n, position: demo.Priority.Critical, label: "wp-99" };
+  assert.deepEqual(demo.echoWaypoint(waypoint), waypoint);
 }

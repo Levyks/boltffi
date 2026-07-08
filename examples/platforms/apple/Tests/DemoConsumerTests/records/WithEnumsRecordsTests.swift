@@ -50,4 +50,11 @@ final class WithEnumsRecordsTests: DemoTestCase {
         demoCase("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field")
         XCTAssertEqual(echoLogEntry(entry: entry), entry)
     }
+
+    func testWaypointFns() {
+        let waypoint = Waypoint(id: 99, position: .critical, label: "wp-99")
+
+        demoCase("case:records.with_enums.waypoint.should_roundtrip_field_named_position")
+        XCTAssertEqual(echoWaypoint(waypoint: waypoint), waypoint)
+    }
 }

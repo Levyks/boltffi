@@ -1079,6 +1079,10 @@ public static class DemoTest
         LogEntry echoedEntry = EchoLogEntry(entry);
         Require(echoedEntry == entry, "EchoLogEntry round-trip");
 
+        DemoCase("case:records.with_enums.waypoint.should_roundtrip_field_named_position");
+        Waypoint waypoint = new Waypoint(99, Priority.Critical, "wp-99");
+        Require(EchoWaypoint(waypoint) == waypoint, "EchoWaypoint round-trip");
+
         Console.WriteLine("  PASS\n");
     }
 

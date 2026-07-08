@@ -39,3 +39,9 @@ class EnumFieldRecordTests(DemoTestCase):
         self.assertEqual(log_entry, demo.LogEntry(1_234_567_890, demo.LogLevel.ERROR, 42))
         self.demo_case("case:records.with_enums.log_entry.should_roundtrip_u8_enum_field")
         self.assertEqual(demo.echo_log_entry(log_entry), log_entry)
+
+    def test_waypoint(self) -> None:
+        waypoint = demo.Waypoint(99, demo.Priority.CRITICAL, "wp-99")
+
+        self.demo_case("case:records.with_enums.waypoint.should_roundtrip_field_named_position")
+        self.assertEqual(demo.echo_waypoint(waypoint), waypoint)
