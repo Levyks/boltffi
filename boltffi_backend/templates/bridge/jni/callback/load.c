@@ -1,36 +1,25 @@
 static bool {{ callback.load }}(JNIEnv *env) {
-    jclass local_class = (*env)->FindClass(env, {{ callback.class }});
-    if (local_class == NULL) {
+    if (!boltffi_jni_lookup_global_class(env, {{ callback.class }}, &{{ callback.global_class }})) {
         return false;
     }
-    {{ callback.global_class }} = (*env)->NewGlobalRef(env, local_class);
-    (*env)->DeleteLocalRef(env, local_class);
-    if ({{ callback.global_class }} == NULL) {
-        return false;
-    }
-    {{ callback.free_method }} = (*env)->GetStaticMethodID(env, {{ callback.global_class }}, "free", "(J)V");
-    if ({{ callback.free_method }} == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, {{ callback.global_class }}, {{ callback.class }}, "free", "(J)V", &{{ callback.free_method }})) {
         goto fail;
     }
-    {{ callback.clone_method }} = (*env)->GetStaticMethodID(env, {{ callback.global_class }}, "clone", "(J)J");
-    if ({{ callback.clone_method }} == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, {{ callback.global_class }}, {{ callback.class }}, "clone", "(J)J", &{{ callback.clone_method }})) {
         goto fail;
     }
 {%- for method in callback.methods %}
-    {{ method.method_id }} = (*env)->GetStaticMethodID(env, {{ callback.global_class }}, "{{ method.method }}", {{ method.signature }});
-    if ({{ method.method_id }} == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, {{ callback.global_class }}, {{ callback.class }}, "{{ method.method }}", {{ method.signature }}, &{{ method.method_id }})) {
         goto fail;
     }
 {%- endfor %}
 {%- for method in callback.handle_methods %}
 {%- match method.completion %}
 {%- when Some with (completion) %}
-    {{ completion.success_method_id }} = (*env)->GetStaticMethodID(env, {{ callback.global_class }}, "{{ completion.success_method }}", {{ completion.success_signature }});
-    if ({{ completion.success_method_id }} == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, {{ callback.global_class }}, {{ callback.class }}, "{{ completion.success_method }}", {{ completion.success_signature }}, &{{ completion.success_method_id }})) {
         goto fail;
     }
-    {{ completion.failure_method_id }} = (*env)->GetStaticMethodID(env, {{ callback.global_class }}, "{{ completion.failure_method }}", {{ completion.failure_signature }});
-    if ({{ completion.failure_method_id }} == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, {{ callback.global_class }}, {{ callback.class }}, "{{ completion.failure_method }}", {{ completion.failure_signature }}, &{{ completion.failure_method_id }})) {
         goto fail;
     }
 {%- when None %}

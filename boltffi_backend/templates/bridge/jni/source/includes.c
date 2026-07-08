@@ -1,6 +1,9 @@
 #include <jni.h>
 #include <stdint.h>
 #include <stdbool.h>
+{%- if uses_lifecycle %}
+#include <stdio.h>
+{%- endif %}
 {%- if uses_limits %}
 #include <limits.h>
 {%- endif %}

@@ -90,6 +90,7 @@ FfiBuf_u8 boltffi_function_demo_apply(FfiBuf_u8 (*callback_call)(void *, int32_t
 #include <jni.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <limits.h>
 #include <stdlib.h>
 #if defined(__ANDROID__)
@@ -157,6 +158,48 @@ static bool boltffi_jni_clear_exception(JNIEnv *env) {
         return false;
     }
     (*env)->ExceptionClear(env);
+    return true;
+}
+
+static void boltffi_jni_describe_load_exception(JNIEnv *env) {
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+    }
+}
+
+static bool boltffi_jni_report_class_load_failure(JNIEnv *env, const char *message, const char *class_name) {
+    fprintf(stderr, "BoltFFI JNI_OnLoad failed: %s '%s'\n", message, class_name);
+    boltffi_jni_describe_load_exception(env);
+    return false;
+}
+
+static bool boltffi_jni_report_static_method_load_failure(JNIEnv *env, const char *class_name, const char *method_name, const char *signature) {
+    fprintf(stderr, "BoltFFI JNI_OnLoad failed: could not resolve static method %s.%s%s\n", class_name, method_name, signature);
+    boltffi_jni_describe_load_exception(env);
+    return false;
+}
+
+static bool boltffi_jni_lookup_global_class(JNIEnv *env, const char *class_name, jclass *out_class) {
+    *out_class = NULL;
+    jclass local_class = (*env)->FindClass(env, class_name);
+    if (local_class == NULL) {
+        return boltffi_jni_report_class_load_failure(env, "could not find JVM class", class_name);
+    }
+    jclass global_class = (*env)->NewGlobalRef(env, local_class);
+    (*env)->DeleteLocalRef(env, local_class);
+    if (global_class == NULL) {
+        return boltffi_jni_report_class_load_failure(env, "could not create global reference for JVM class", class_name);
+    }
+    *out_class = global_class;
+    return true;
+}
+
+static bool boltffi_jni_lookup_static_method(JNIEnv *env, jclass cls, const char *class_name, const char *method_name, const char *signature, jmethodID *out_method) {
+    *out_method = (*env)->GetStaticMethodID(env, cls, method_name, signature);
+    if (*out_method == NULL) {
+        return boltffi_jni_report_static_method_load_failure(env, class_name, method_name, signature);
+    }
     return true;
 }
 
@@ -386,21 +429,13 @@ static void boltffi_jni____closure__i32_to_result_i32_err_demo_math_error_releas
 }
 
 static bool boltffi_jni_load____closure__i32_to_result_i32_err_demo_math_error(JNIEnv *env) {
-    jclass local_class = (*env)->FindClass(env, "com/boltffi/demo/ClosureI32ToResultI32ErrDemoMathErrorCallbacks");
-    if (local_class == NULL) {
+    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/ClosureI32ToResultI32ErrDemoMathErrorCallbacks", &g____closure__i32_to_result_i32_err_demo_math_error_class)) {
         return false;
     }
-    g____closure__i32_to_result_i32_err_demo_math_error_class = (*env)->NewGlobalRef(env, local_class);
-    (*env)->DeleteLocalRef(env, local_class);
-    if (g____closure__i32_to_result_i32_err_demo_math_error_class == NULL) {
-        return false;
-    }
-    g____closure__i32_to_result_i32_err_demo_math_error_call_method = (*env)->GetStaticMethodID(env, g____closure__i32_to_result_i32_err_demo_math_error_class, "call", "(JIJ)[B");
-    if (g____closure__i32_to_result_i32_err_demo_math_error_call_method == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, g____closure__i32_to_result_i32_err_demo_math_error_class, "com/boltffi/demo/ClosureI32ToResultI32ErrDemoMathErrorCallbacks", "call", "(JIJ)[B", &g____closure__i32_to_result_i32_err_demo_math_error_call_method)) {
         goto fail;
     }
-    g____closure__i32_to_result_i32_err_demo_math_error_free_method = (*env)->GetStaticMethodID(env, g____closure__i32_to_result_i32_err_demo_math_error_class, "free", "(J)V");
-    if (g____closure__i32_to_result_i32_err_demo_math_error_free_method == NULL) {
+    if (!boltffi_jni_lookup_static_method(env, g____closure__i32_to_result_i32_err_demo_math_error_class, "com/boltffi/demo/ClosureI32ToResultI32ErrDemoMathErrorCallbacks", "free", "(J)V", &g____closure__i32_to_result_i32_err_demo_math_error_free_method)) {
         goto fail;
     }
     return true;
@@ -431,16 +466,12 @@ JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1success_1i32(JNIEnv
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
     JNIEnv *env = NULL;
-    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+    jint env_result = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6);
+    if (env_result != JNI_OK) {
+        fprintf(stderr, "BoltFFI JNI_OnLoad failed: GetEnv(JNI_VERSION_1_6) returned %d\n", (int)env_result);
         return JNI_ERR;
     }
-    jclass local_class = (*env)->FindClass(env, "com/boltffi/demo/Native");
-    if (local_class == NULL) {
-        return JNI_ERR;
-    }
-    boltffi_jni_native_class = (*env)->NewGlobalRef(env, local_class);
-    (*env)->DeleteLocalRef(env, local_class);
-    if (boltffi_jni_native_class == NULL) {
+    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
         return JNI_ERR;
     }
     if (!boltffi_jni_load____closure__i32_to_result_i32_err_demo_math_error(env)) {

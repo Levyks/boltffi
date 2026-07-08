@@ -36,16 +36,24 @@ fn bindings(source: &str) -> boltffi_binding::Bindings<Native> {
 }
 
 pub fn bridge(source: &str) -> BridgeOutput<JniBridgeContract> {
+    bridge_with_class(source, "Native")
+}
+
+fn bridge_with_class(source: &str, class: &str) -> BridgeOutput<JniBridgeContract> {
     let bindings = bindings(source);
     let stack = BridgeLayer::new(
         CBridge::new("jni/demo.h").expect("C header bridge"),
-        JniBridge::new("com.boltffi.demo", "Native", "jni/jni_glue.c").expect("JNI bridge"),
+        JniBridge::new("com.boltffi.demo", class, "jni/jni_glue.c").expect("JNI bridge"),
     );
     stack.build(&bindings).expect("JNI bridge stack")
 }
 
 pub fn files(source: &str) -> Vec<(String, String)> {
-    bridge(source)
+    files_with_class(source, "Native")
+}
+
+pub fn files_with_class(source: &str, class: &str) -> Vec<(String, String)> {
+    bridge_with_class(source, class)
         .output()
         .files()
         .iter()
@@ -56,6 +64,10 @@ pub fn files(source: &str) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+pub fn rendered_fixture_with_class_support(name: &str, class: &str) -> String {
+    rendered_files_with_support(&files_with_class(&fixture(name), class))
 }
 
 pub fn rendered_fixture(name: &str) -> String {

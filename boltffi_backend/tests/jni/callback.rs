@@ -1,8 +1,23 @@
-use super::rendered_fixture;
+use super::{rendered_fixture, rendered_fixture_with_support};
 
 #[test]
 fn jni_bridge_renders_callback_handle_parameters() {
     insta::assert_snapshot!(rendered_fixture("callback/foreign_callback_parameter"));
+}
+
+#[test]
+fn jni_bridge_reports_lifecycle_lookup_failures() {
+    let rendered = rendered_fixture_with_support("callback/foreign_callback_parameter");
+
+    assert!(rendered.contains(
+        "boltffi_jni_lookup_global_class(env, \"com/boltffi/demo/Native\", &boltffi_jni_native_class)"
+    ));
+    assert!(rendered.contains(
+        "boltffi_jni_lookup_global_class(env, \"com/boltffi/demo/ListenerCallbacks\", &g____ListenerVTable_class)"
+    ));
+    assert!(rendered.contains(
+        "boltffi_jni_lookup_static_method(env, g____ListenerVTable_class, \"com/boltffi/demo/ListenerCallbacks\", \"on_value\", \"(JI)I\", &g____ListenerVTable_on_value_method)"
+    ));
 }
 
 #[test]

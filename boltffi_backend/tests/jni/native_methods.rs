@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::{
-    bridge_fixture, rendered_fixture, rendered_fixture_with_support, rendered_source,
-    source::SourceFixture,
+    bridge_fixture, rendered_fixture, rendered_fixture_with_class_support,
+    rendered_fixture_with_support, rendered_source, source::SourceFixture,
 };
 
 #[test]
@@ -78,6 +78,18 @@ fn jni_bridge_preserves_rust_pascal_type_spelling() {
 #[test]
 fn jni_bridge_renders_async_class_methods() {
     insta::assert_snapshot!(rendered_fixture("exports/async_class_methods"));
+}
+
+#[test]
+fn jni_bridge_reports_custom_continuation_owner_class() {
+    let rendered = rendered_fixture_with_class_support("exports/async_class_methods", "Bindings");
+
+    assert!(rendered.contains(
+        "boltffi_jni_lookup_static_method(env, boltffi_jni_native_class, \"com/boltffi/demo/Bindings\", \"boltffiFutureContinuationCallback\", \"(JB)V\", &boltffi_jni_continuation_method)"
+    ));
+    assert!(!rendered.contains(
+        "boltffi_jni_lookup_static_method(env, boltffi_jni_native_class, \"Native\", \"boltffiFutureContinuationCallback\""
+    ));
 }
 
 #[test]
