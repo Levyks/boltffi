@@ -227,9 +227,9 @@ Completed:
 - Kept `commonMain` expect declarations KMP-owned.
 - Kept strict mode fail-closed when no delegate covers a function.
 - Added backend tests for delegated primitive sync functions, native-symbol/type/name matching, package mismatch rejection, and preview-prune duplicate handling.
-- Added an IR CLI regression test proving production `generate kmp --ir` remains fail-closed until M2b body parity is wired.
+- Added an IR CLI regression test proving production `generate kmp --ir` remains fail-closed for unsupported KMP surfaces.
 
-M2a non-goals:
+M2a non-goals at the time:
 
 - Do not wire `boltffi_bindgen::Generation::kmp_host()` to Kotlin/JNI output.
 - Do not model the mature Kotlin/JNI shared `Native` runtime or C translation-unit preamble as production behavior.
@@ -244,7 +244,7 @@ Exit criteria:
 Verification:
 
 - `cargo test -p boltffi_backend kmp -- --nocapture`
-- `cargo test -p boltffi_cli ir_kmp_strict_generation_fails_closed_until_m2b_body_parity`
+- `cargo test -p boltffi_cli ir_kmp_strict_generation_still_fails_closed_for_unsupported_surface`
 - `cargo fmt --check`
 - `git diff --check`
 - `rg "NotImplementedError|NativeRuntimeNotImplemented" boltffi_bindgen/src/render/kmp boltffi_backend/src/target/kmp`
@@ -260,6 +260,14 @@ M2b-a completed:
 - Preserved the shared Kotlin `Native` runtime as members of the same object that declares external methods.
 - Preserved shared JNI preamble/includes once per generated translation unit and isolated per-function JNI glue.
 - Kept non-primitive/common-to-JVM conversion cases uncovered until an explicit conversion plan exists.
+
+M2b-b completed:
+
+- Wired production IR KMP generation through `Generation::render_kmp()` to build a JVM-family delegate from backend `Bindings<Native>`.
+- Preserved backend native symbols when adapting metadata bindings into the legacy Kotlin/JNI lowerer shape.
+- Shared KMP default package/module constants from the backend host so delegate package matching cannot drift from host defaults.
+- Added a production-host regression proving an infallible primitive sync free function renders common/JVM/Android output through the new delegate path.
+- Kept unsupported KMP surfaces strict and fail-closed after delegate wiring.
 
 Work:
 

@@ -346,7 +346,7 @@ fn admitted_api_plan(
 
     match (record.kind(), DeclarationRef::from(decl)) {
         ("function", DeclarationRef::Function(function)) => {
-            let function_plan = lower_function_plan(function)?;
+            let function_plan = lower_native_function_plan(function)?;
             if jvm_delegate.is_some_and(|delegate| delegate.covers_function(&function_plan)) {
                 reserve_function_signature(&function_plan, function_signatures)?;
                 Ok(KmpApiPlan::function(
@@ -369,7 +369,8 @@ fn admitted_api_plan(
     }
 }
 
-fn lower_function_plan(
+/// Builds the KMP function plan for a native free function declaration.
+pub fn lower_native_function_plan(
     function: &FunctionDecl<Native>,
 ) -> std::result::Result<KmpFunctionPlan, String> {
     let callable = function.callable();

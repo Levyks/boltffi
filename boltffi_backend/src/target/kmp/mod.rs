@@ -15,7 +15,7 @@ mod syntax;
 
 pub use bridge::{KmpBridge, KmpBridgeContract};
 pub use emit::{KMP_SUPPORT_REPORT_FILE, KmpEmissionOptions, KmpEmitter};
-pub use host::KmpHost;
+pub use host::{DEFAULT_KMP_MODULE_NAME, DEFAULT_KMP_PACKAGE_NAME, KmpHost};
 pub use lower::{KmpLowerError, KmpLowerer, KmpLoweringOptions};
 pub use plan::{
     KmpApiBody, KmpApiPlan, KmpCapability, KmpCapabilitySet, KmpCommonModule, KmpFunctionPlan,

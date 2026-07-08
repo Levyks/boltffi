@@ -16,6 +16,12 @@ use super::{
     plan::KmpJvmDelegateOutput,
 };
 
+/// Default Kotlin package used for generated KMP sources.
+pub const DEFAULT_KMP_PACKAGE_NAME: &str = "com.example.boltffi";
+
+/// Default generated Kotlin module/source class name.
+pub const DEFAULT_KMP_MODULE_NAME: &str = "BoltFFI";
+
 /// Kotlin Multiplatform host renderer for the IR backend plan.
 ///
 /// The host lowers to a typed [`super::KmpModule`] plan before file emission.
@@ -39,8 +45,8 @@ impl KmpHost {
         Self {
             selected_platforms: KmpPlatform::default_selected(),
             support_mode: KmpSupportMode::Strict,
-            package_name: "com.example.boltffi".to_string(),
-            module_name: "BoltFFI".to_string(),
+            package_name: DEFAULT_KMP_PACKAGE_NAME.to_string(),
+            module_name: DEFAULT_KMP_MODULE_NAME.to_string(),
             min_sdk: 24,
             jvm_delegate: None,
         }
