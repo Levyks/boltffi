@@ -68,7 +68,8 @@ M2 has started:
 - M2a introduced a backend-owned JVM-family delegate seam for KMP.
 - `commonMain` expect declarations remain KMP-owned, while JVM/Android internal Kotlin and JNI glue can be supplied by a delegate owned outside `boltffi_backend`.
 - The backend can admit a delegated infallible sync primitive free function in strict mode through internal delegate tests.
-- Production IR generation remains intentionally fail-closed in M2a. `boltffi_bindgen` does not yet construct or attach the real Kotlin/JNI delegate.
+- M2b-a introduced the `boltffi_bindgen` adapter scaffold that converts `FfiContract` + `AbiContract` into backend JVM-family delegate output for the admitted primitive sync surface.
+- Production IR generation remains intentionally fail-closed after M2b-a. `boltffi_bindgen` can construct the delegate in focused tests, but `Generation::kmp_host()` does not attach it yet.
 
 ## Target Architecture
 
@@ -251,6 +252,14 @@ Verification:
 #### M2b: Kotlin/JNI Delegate Adapter
 
 Goal: connect production IR KMP generation to the mature Kotlin/JNI lowerers/emitters.
+
+M2b-a completed:
+
+- Added the `boltffi_bindgen` bridge from `FfiContract` + `AbiContract` to `KmpJvmDelegateOutput` without wiring it into production IR generation.
+- Reused the existing Kotlin/JNI lowerers and emitters to build delegate Kotlin/JNI output for infallible primitive sync functions.
+- Preserved the shared Kotlin `Native` runtime as members of the same object that declares external methods.
+- Preserved shared JNI preamble/includes once per generated translation unit and isolated per-function JNI glue.
+- Kept non-primitive/common-to-JVM conversion cases uncovered until an explicit conversion plan exists.
 
 Work:
 

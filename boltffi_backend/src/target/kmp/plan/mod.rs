@@ -220,6 +220,7 @@ impl KmpModule {
 pub struct KmpJvmDelegateOutput {
     internal_package: String,
     internal_kotlin_runtime_source: String,
+    shared_jni_source: String,
     functions: Vec<KmpJvmDelegateFunction>,
 }
 
@@ -233,8 +234,15 @@ impl KmpJvmDelegateOutput {
         Self {
             internal_package: internal_package.into(),
             internal_kotlin_runtime_source: internal_kotlin_runtime_source.into(),
+            shared_jni_source: String::new(),
             functions,
         }
+    }
+
+    /// Attaches shared JNI translation-unit source emitted before per-function glue.
+    pub fn with_shared_jni_source(mut self, source: impl Into<String>) -> Self {
+        self.shared_jni_source = source.into();
+        self
     }
 
     /// Returns the Kotlin package declared by delegated JVM-family source.
@@ -245,6 +253,11 @@ impl KmpJvmDelegateOutput {
     /// Returns shared internal Kotlin runtime source used by delegated functions.
     pub fn internal_kotlin_runtime_source(&self) -> &str {
         &self.internal_kotlin_runtime_source
+    }
+
+    /// Returns shared JNI source used by every delegated JVM-family function.
+    pub fn shared_jni_source(&self) -> &str {
+        &self.shared_jni_source
     }
 
     /// Returns whether this delegate contains platform implementation for `function`.

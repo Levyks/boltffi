@@ -21,13 +21,14 @@ struct PlatformActualTemplate<'module> {
 #[template(path = "target/kmp/internal_kotlin.kt", escape = "none")]
 struct InternalKotlinTemplate<'module> {
     internal_package: &'module str,
-    runtime: Option<&'module str>,
+    runtime_lines: Vec<&'module str>,
     functions: Vec<RenderedFunction>,
 }
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kmp/jni_glue.c", escape = "none")]
 struct JniGlueTemplate<'module> {
+    shared_source: Option<&'module str>,
     delegate_functions: Vec<&'module str>,
 }
 
@@ -83,7 +84,7 @@ pub(crate) fn render_internal_kotlin(module: &KmpModule, internal_package: &str)
 
     Ok(InternalKotlinTemplate {
         internal_package,
-        runtime: delegate.map(KmpJvmDelegateOutput::internal_kotlin_runtime_source),
+        runtime_lines: runtime_lines(delegate),
         functions: rendered_functions(&functions)?,
     }
     .render()?)
@@ -91,19 +92,26 @@ pub(crate) fn render_internal_kotlin(module: &KmpModule, internal_package: &str)
 
 pub(crate) fn render_jni_glue(module: &KmpModule) -> Result<String> {
     let functions = function_plans(module)?;
-    let delegate_functions = if functions.is_empty() {
-        Vec::new()
+    let (shared_source, delegate_functions) = if functions.is_empty() {
+        (None, Vec::new())
     } else {
         let delegate = delegate_for_functions(module, &functions, None)?;
-        functions
+        let shared_source =
+            (!delegate.shared_jni_source().trim().is_empty()).then(|| delegate.shared_jni_source());
+        let delegate_functions = functions
             .iter()
             .map(|function| {
                 delegate_function_for(delegate, function).map(|function| function.jni_glue_source())
             })
-            .collect::<Result<Vec<_>>>()?
+            .collect::<Result<Vec<_>>>()?;
+        (shared_source, delegate_functions)
     };
 
-    Ok(JniGlueTemplate { delegate_functions }.render()?)
+    Ok(JniGlueTemplate {
+        shared_source,
+        delegate_functions,
+    }
+    .render()?)
 }
 
 fn function_plans(module: &KmpModule) -> Result<Vec<&KmpFunctionPlan>> {
@@ -122,6 +130,15 @@ fn rendered_functions(functions: &[&KmpFunctionPlan]) -> Result<Vec<RenderedFunc
     functions
         .iter()
         .map(|function| RenderedFunction::from_plan(function))
+        .collect()
+}
+
+fn runtime_lines(delegate: Option<&KmpJvmDelegateOutput>) -> Vec<&str> {
+    delegate
+        .map(KmpJvmDelegateOutput::internal_kotlin_runtime_source)
+        .unwrap_or_default()
+        .trim()
+        .lines()
         .collect()
 }
 

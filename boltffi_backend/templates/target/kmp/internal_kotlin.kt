@@ -3,10 +3,10 @@
 package {{ internal_package }}
 {% if !functions.is_empty() %}
 
-{% if let Some(runtime_source) = runtime %}{{ runtime_source }}
-{% endif %}
-
 private object Native {
+{%- for line in runtime_lines %}
+    {{ line }}
+{%- endfor %}
 {%- for function in functions %}
     @JvmStatic external fun {{ function.native_symbol() }}({% for parameter in function.params() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = function.returns() %}: {{ return_type }}{% endif %}
 {%- endfor %}
