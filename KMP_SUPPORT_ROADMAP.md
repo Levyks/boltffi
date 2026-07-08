@@ -69,7 +69,9 @@ M2 has started:
 - `commonMain` expect declarations remain KMP-owned, while JVM/Android internal Kotlin and JNI glue can be supplied by a delegate owned outside `boltffi_backend`.
 - The backend can admit a delegated infallible sync primitive free function in strict mode through internal delegate tests.
 - M2b-a introduced the `boltffi_bindgen` adapter scaffold that converts `FfiContract` + `AbiContract` into backend JVM-family delegate output for the admitted primitive sync surface.
-- Production IR generation remains intentionally fail-closed after M2b-a. `boltffi_bindgen` can construct the delegate in focused tests, but `Generation::kmp_host()` does not attach it yet.
+- M2b-b wired production IR KMP generation through that delegate for the admitted primitive sync surface.
+- M2c let the delegate supply trusted generated internal Kotlin function bodies, so JVM/Android emission now reuses the mature Kotlin/JNI function renderer for the currently admitted surface.
+- Unsupported KMP surfaces remain strict and fail-closed unless explicit preview pruning is enabled.
 
 ## Target Architecture
 
@@ -269,15 +271,25 @@ M2b-b completed:
 - Added a production-host regression proving an infallible primitive sync free function renders common/JVM/Android output through the new delegate path.
 - Kept unsupported KMP surfaces strict and fail-closed after delegate wiring.
 
-Work:
+#### M2c: Delegate-Owned Internal Kotlin Bodies
 
-- Generate `commonMain`, `jvmMain`, and `androidMain`.
-- Delegate JVM/Android implementation to existing Kotlin/JNI lowerers and emitters.
-- Add the `boltffi_bindgen` bridge that converts `FfiContract` + `AbiContract` into KMP JVM-family delegate output.
-- Preserve the shared Kotlin `Native` runtime inside the owner object that declares external methods.
-- Preserve shared JNI C preamble/includes/helpers once per generated translation unit.
-- Filter delegate functions to the admitted KMP support surface.
-- Keep common-to-JVM conversion plans explicit.
+Goal: keep the KMP backend in charge of common/platform file shape while letting the JVM-family delegate own the internal Kotlin function body implementation.
+
+Completed:
+
+- Added delegate-owned internal Kotlin function source to the backend JVM delegate model.
+- Updated JVM/Android emission to prefer delegate-supplied internal Kotlin bodies, retaining direct `Native.*` body rendering only as a manual-delegate fallback.
+- Kept backend admission based on typed delegate coverage and non-empty JNI glue; delegate-owned Kotlin source is trusted generated output, not arbitrary Kotlin input validated by the backend.
+- Reused the mature Kotlin/JNI function renderer from `boltffi_bindgen` for admitted primitive sync functions, rewriting only the backend-planned Kotlin function name, native symbol, and parameter names.
+- Added focused backend and adapter regressions proving delegate-owned internal Kotlin source is propagated into generated KMP JVM output.
+- Did not admit new API categories; strings, records, async, classes, callbacks, and broader value conversion remain future explicit plan work.
+
+Remaining M2 work after M2c:
+
+- Extend admitted JVM/Android coverage beyond infallible primitive sync functions through explicit common-to-JVM conversion plans.
+- Preserve the shared Kotlin `Native` runtime inside the owner object that declares external methods as more API shapes are admitted.
+- Preserve shared JNI C preamble/includes/helpers once per generated translation unit as more API shapes are admitted.
+- Keep delegate functions filtered to the admitted KMP support surface.
 - Keep Android `jniLibs` packaging through the existing Android packager.
 - Keep JVM native resources through the existing JVM packager.
 - Delete the old monolithic `KMPEmitter` production flow after JVM/Android parity is proven.

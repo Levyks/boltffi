@@ -314,7 +314,7 @@ mod tests {
     use boltffi_binding::{Bindings, Native, lower};
 
     use crate::{
-        Error,
+        Error, GeneratedOutput, Result,
         target::kmp::{
             KMP_SUPPORT_REPORT_FILE, KmpHost, KmpJvmDelegateFunction, KmpJvmDelegateOutput,
             KmpPlatform, KmpTypePlan,
@@ -377,6 +377,40 @@ mod tests {
                 "/* delegated JNI glue */\n",
             )],
         )
+    }
+
+    fn add_delegate_with_internal_source(source: impl Into<String>) -> KmpJvmDelegateOutput {
+        KmpJvmDelegateOutput::new(
+            "com.example.boltffi.jvm",
+            "private const val BOLTFFI_LIBRARY_NAME: String = \"boltffi_demo\"\n",
+            vec![
+                KmpJvmDelegateFunction::new(
+                    "boltffi_function_demo_add",
+                    "add",
+                    vec![
+                        KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
+                        KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
+                    ],
+                    Some(KmpTypePlan::Primitive(boltffi_binding::Primitive::I32)),
+                    "/* delegated JNI glue */\n",
+                )
+                .with_internal_kotlin_source(source),
+            ],
+        )
+    }
+
+    fn render_add_with_delegate_source(source: impl Into<String>) -> Result<GeneratedOutput> {
+        KmpHost::new()
+            .jvm_delegate(add_delegate_with_internal_source(source))
+            .into_target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn add(left: i32, right: i32) -> i32 {
+                    left + right
+                }
+                "#,
+            ))
     }
 
     fn duplicate_ping_delegate() -> KmpJvmDelegateOutput {
@@ -501,6 +535,34 @@ mod tests {
         assert_eq!(report["admitted_apis"][0]["kind"], "function");
         assert_eq!(report["admitted_apis"][0]["name"], "add");
         assert_eq!(report["rejected_apis"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn kmp_target_prefers_delegate_internal_kotlin_function_source() {
+        let output = render_add_with_delegate_source(
+            "/**\n * Adds two values.\n */\nfun add(left: Int, right: Int): Int {\n    val delegated = Native.boltffi_function_demo_add(left, right)\n    return delegated\n}\n",
+        )
+        .expect("delegate-owned internal Kotlin source should render");
+
+        let internal = file(
+            &output,
+            "src/jvmMain/kotlin/com/example/boltffi/jvm/BoltFFI.kt",
+        );
+        assert!(internal.contains("val delegated = Native.boltffi_function_demo_add(left, right)"));
+        assert!(internal.contains("return delegated"));
+    }
+
+    #[test]
+    fn kmp_target_ignores_blank_delegate_internal_kotlin_function_source() {
+        let output = render_add_with_delegate_source("   \n\t")
+            .expect("blank delegate-owned internal Kotlin source should use fallback rendering");
+
+        let internal = file(
+            &output,
+            "src/jvmMain/kotlin/com/example/boltffi/jvm/BoltFFI.kt",
+        );
+        assert!(internal.contains("fun add(left: Int, right: Int): Int"));
+        assert!(internal.contains("return Native.boltffi_function_demo_add(left, right)"));
     }
 
     #[test]

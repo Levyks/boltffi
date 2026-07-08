@@ -1007,15 +1007,7 @@ fn join_kotlin_sections(sections: Vec<String>) -> String {
 }
 
 fn kdoc_block(doc: &Option<String>) -> String {
-    doc.as_ref()
-        .map(|text| {
-            let mut result = "/**\n".to_string();
-            text.lines()
-                .for_each(|line| result.push_str(&format!(" * {line}\n")));
-            result.push_str(" */\n");
-            result
-        })
-        .unwrap_or_default()
+    crate::render::kotlin::kdoc_block(doc, "")
 }
 
 fn build_support_report(
@@ -2156,6 +2148,20 @@ mod tests {
             doc: None,
             deprecated: None,
         }
+    }
+
+    #[test]
+    fn legacy_kmp_kdoc_block_neutralizes_embedded_block_comment_markers() {
+        let doc = Some("Safe docs */ fun injected() {} /* still docs".to_string());
+        let rendered = kdoc_block(&doc);
+        let body = rendered
+            .strip_prefix("/**\n")
+            .and_then(|source| source.strip_suffix(" */\n"))
+            .expect("KDoc wrapper");
+
+        assert!(!body.contains("*/"), "{rendered}");
+        assert!(!body.contains("/*"), "{rendered}");
+        assert!(body.contains("Safe docs * / fun injected() {} / * still docs"));
     }
 
     #[test]

@@ -22,7 +22,8 @@ struct PlatformActualTemplate<'module> {
 struct InternalKotlinTemplate<'module> {
     internal_package: &'module str,
     runtime_lines: Vec<&'module str>,
-    functions: Vec<RenderedFunction>,
+    native_functions: Vec<RenderedFunction>,
+    functions: Vec<RenderedInternalFunction<'module>>,
 }
 
 #[derive(AskamaTemplate)]
@@ -30,6 +31,11 @@ struct InternalKotlinTemplate<'module> {
 struct JniGlueTemplate<'module> {
     shared_source: Option<&'module str>,
     delegate_functions: Vec<&'module str>,
+}
+
+struct RenderedInternalFunction<'module> {
+    function: RenderedFunction,
+    source_lines: Vec<&'module str>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,7 +91,8 @@ pub(crate) fn render_internal_kotlin(module: &KmpModule, internal_package: &str)
     Ok(InternalKotlinTemplate {
         internal_package,
         runtime_lines: runtime_lines(delegate),
-        functions: rendered_functions(&functions)?,
+        native_functions: rendered_functions(&functions)?,
+        functions: rendered_internal_functions(delegate, &functions)?,
     }
     .render()?)
 }
@@ -130,6 +137,29 @@ fn rendered_functions(functions: &[&KmpFunctionPlan]) -> Result<Vec<RenderedFunc
     functions
         .iter()
         .map(|function| RenderedFunction::from_plan(function))
+        .collect()
+}
+
+fn rendered_internal_functions<'module>(
+    delegate: Option<&'module KmpJvmDelegateOutput>,
+    functions: &[&KmpFunctionPlan],
+) -> Result<Vec<RenderedInternalFunction<'module>>> {
+    functions
+        .iter()
+        .map(|function| {
+            let source_lines = delegate
+                .map(|delegate| delegate_function_for(delegate, function))
+                .transpose()?
+                .and_then(|function| function.internal_kotlin_source())
+                .map(str::trim)
+                .filter(|source| !source.is_empty())
+                .map(|source| source.lines().collect())
+                .unwrap_or_default();
+            Ok(RenderedInternalFunction {
+                function: RenderedFunction::from_plan(function)?,
+                source_lines,
+            })
+        })
         .collect()
 }
 
@@ -180,4 +210,18 @@ fn delegate_function_for<'delegate>(
             target: "kotlin_multiplatform",
             shape: "KMP JNI glue emission",
         })
+}
+
+impl RenderedInternalFunction<'_> {
+    fn function(&self) -> &RenderedFunction {
+        &self.function
+    }
+
+    fn source_lines(&self) -> &[&str] {
+        &self.source_lines
+    }
+
+    fn has_source(&self) -> bool {
+        !self.source_lines.is_empty()
+    }
 }

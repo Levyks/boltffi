@@ -19,7 +19,9 @@ use crate::render::jni::{JniEmitter, JniFunction, JniLowerer, JniModule, JvmBind
 use crate::render::kmp::{
     KmpSurfaceSupport, filter_abi_for_kmp_surface, filter_contract_for_kmp_surface,
 };
-use crate::render::kotlin::{KotlinEmitter, KotlinLowerer, KotlinModule, KotlinOptions};
+use crate::render::kotlin::{
+    KotlinEmitter, KotlinFunction, KotlinLowerer, KotlinModule, KotlinOptions,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum KmpJvmDelegateAdapterError {
@@ -148,12 +150,13 @@ fn delegate_functions(
             continue;
         };
         let legacy_symbol = kotlin_function.ffi_name.as_str();
-        let (native_symbol, kotlin_name, param_types, returns) =
+        let (native_symbol, kotlin_name, param_types, param_names, returns) =
             if let Some(function_plan) = delegate_entries_by_legacy_symbol.get(legacy_symbol) {
                 (
                     function_plan.native_symbol().to_string(),
                     function_plan.name().to_string(),
                     function_plan_param_types(function_plan),
+                    Some(function_plan_param_names(function_plan)),
                     function_plan.returns().cloned(),
                 )
             } else {
@@ -164,19 +167,49 @@ fn delegate_functions(
                     kmp_native_function_symbol(contract, function_def),
                     kotlin_function.func_name.clone(),
                     param_types,
+                    None,
                     returns,
                 )
             };
-        delegates.push(KmpJvmDelegateFunction::new(
-            native_symbol.clone(),
-            kotlin_name,
-            param_types,
-            returns,
-            jni_function_source(jni_module, jni_function, &native_symbol, shared_jni_source)?,
-        ));
+        let internal_kotlin_source = delegated_kotlin_function_source(
+            kotlin_function,
+            &kotlin_name,
+            &native_symbol,
+            param_names.as_deref(),
+        );
+        delegates.push(
+            KmpJvmDelegateFunction::new(
+                native_symbol.clone(),
+                kotlin_name,
+                param_types,
+                returns,
+                jni_function_source(jni_module, jni_function, &native_symbol, shared_jni_source)?,
+            )
+            .with_internal_kotlin_source(internal_kotlin_source),
+        );
     }
 
     Ok(delegates)
+}
+
+fn delegated_kotlin_function_source(
+    function: &KotlinFunction,
+    kotlin_name: &str,
+    native_symbol: &str,
+    param_names: Option<&[String]>,
+) -> String {
+    let mut delegated = function.clone();
+    delegated.func_name = kotlin_name.to_string();
+    delegated.ffi_name = native_symbol.to_string();
+    if let Some(param_names) = param_names {
+        delegated
+            .signature_params
+            .iter_mut()
+            .zip(param_names)
+            .for_each(|(param, name)| param.name = name.clone());
+        delegated.native_args = param_names.to_vec();
+    }
+    KotlinEmitter::emit_function(&delegated)
 }
 
 fn function_plan_param_types(function_plan: &KmpFunctionPlan) -> Vec<KmpTypePlan> {
@@ -184,6 +217,14 @@ fn function_plan_param_types(function_plan: &KmpFunctionPlan) -> Vec<KmpTypePlan
         .params()
         .iter()
         .map(|param| param.ty().clone())
+        .collect()
+}
+
+fn function_plan_param_names(function_plan: &KmpFunctionPlan) -> Vec<String> {
+    function_plan
+        .params()
+        .iter()
+        .map(|param| param.name().to_string())
         .collect()
 }
 
@@ -270,7 +311,7 @@ fn legacy_function_for_binding(
         params,
         returns,
         execution_kind: ExecutionKind::Sync,
-        doc: None,
+        doc: function.meta().doc().map(|doc| doc.as_str().to_string()),
         deprecated: None,
     })
 }
@@ -530,6 +571,12 @@ fn shared_jni_module(jni_module: &JniModule) -> JniModule {
 
 #[cfg(test)]
 mod tests {
+    use boltffi_ast::{
+        CanonicalName as SourceCanonicalName, DocComment, FunctionDef as SourceFunctionDef,
+        FunctionId as SourceFunctionId, PackageInfo as SourcePackageInfo,
+        ParameterDef as SourceParameterDef, Primitive as SourcePrimitive,
+        ReturnDef as SourceReturnDef, SourceContract, SourceName, TypeExpr as SourceTypeExpr,
+    };
     use boltffi_backend::target::kmp::{KmpFunctionPlan, KmpParamPlan};
 
     use super::*;
@@ -595,14 +642,43 @@ mod tests {
             .expect("delegate adapter should render")
     }
 
+    fn bindings_for_functions(functions: Vec<SourceFunctionDef>) -> Bindings<Native> {
+        let mut source = SourceContract::new(SourcePackageInfo::new("demo", None));
+        source.functions = functions;
+        boltffi_binding::lower::<Native>(&source).expect("function should lower")
+    }
+
+    fn source_name(part: &str) -> SourceName {
+        SourceName::from_canonical(SourceCanonicalName::single(part))
+    }
+
+    fn source_primitive_function(
+        id: &str,
+        name: &str,
+        params: Vec<(&str, SourcePrimitive)>,
+        returns: SourcePrimitive,
+    ) -> SourceFunctionDef {
+        let mut function = SourceFunctionDef::new(SourceFunctionId::new(id), source_name(name));
+        function.parameters = params
+            .into_iter()
+            .map(|(name, primitive)| {
+                SourceParameterDef::value(source_name(name), SourceTypeExpr::Primitive(primitive))
+            })
+            .collect();
+        function.returns = SourceReturnDef::value(SourceTypeExpr::Primitive(returns));
+        function
+    }
+
     #[test]
     fn adapter_builds_delegate_for_sync_primitive_function() {
         let mut contract = empty_contract();
-        contract.functions.push(sync_primitive_function(
+        let mut add = sync_primitive_function(
             "add",
             vec![("left", PrimitiveType::I32), ("right", PrimitiveType::I32)],
             ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I32)),
-        ));
+        );
+        add.doc = Some("Doc mentions Native.boltffi_add(left, right).".to_string());
+        contract.functions.push(add);
 
         let delegate = adapt(&contract);
         let function_plan = KmpFunctionPlan::new(
@@ -643,6 +719,14 @@ mod tests {
                 .jni_glue_source()
                 .contains("_result = boltffi_function_demo_add(left, right);")
         );
+        let internal_kotlin_source = function
+            .internal_kotlin_source()
+            .expect("adapter should provide delegated Kotlin source");
+        assert!(internal_kotlin_source.contains("fun add(left: Int, right: Int): Int"));
+        assert!(
+            internal_kotlin_source.contains("return Native.boltffi_function_demo_add(left, right)")
+        );
+        assert!(internal_kotlin_source.contains("Doc mentions Native.boltffi_add(left, right)."));
         assert!(
             !function
                 .jni_glue_source()
@@ -654,6 +738,123 @@ mod tests {
                 .contains("_result = boltffi_add(left, right);")
         );
         assert!(!function.jni_glue_source().contains("#include <jni.h>"));
+    }
+
+    #[test]
+    fn adapter_preserves_binding_docs_when_adapting_production_bindings() {
+        let mut add = source_primitive_function(
+            "demo::add",
+            "add",
+            vec![
+                ("left", SourcePrimitive::I32),
+                ("right", SourcePrimitive::I32),
+            ],
+            SourcePrimitive::I32,
+        );
+        add.doc = Some(DocComment::new(
+            "Adds two values through the production binding path.",
+        ));
+        let bindings = bindings_for_functions(vec![add]);
+
+        let delegate =
+            KmpJvmDelegateAdapter::new("com.example.demo", "Demo", KotlinOptions::default())
+                .adapt_bindings(&bindings)
+                .expect("delegate adapter should render production bindings");
+        let function_plan = KmpFunctionPlan::new(
+            "add",
+            "boltffi_function_demo_add",
+            vec![
+                KmpParamPlan::new("left", KmpTypePlan::Primitive(BackendPrimitive::I32)),
+                KmpParamPlan::new("right", KmpTypePlan::Primitive(BackendPrimitive::I32)),
+            ],
+            Some(KmpTypePlan::Primitive(BackendPrimitive::I32)),
+        );
+        let function = delegate
+            .function_for(&function_plan)
+            .expect("production primitive function should be covered by the adapter");
+
+        assert!(
+            function
+                .internal_kotlin_source()
+                .expect("adapter should provide delegated Kotlin source")
+                .contains("Adds two values through the production binding path.")
+        );
+    }
+
+    #[test]
+    fn adapter_sanitizes_binding_docs_in_internal_kotlin_source() {
+        let mut add = source_primitive_function(
+            "demo::add",
+            "add",
+            vec![
+                ("left", SourcePrimitive::I32),
+                ("right", SourcePrimitive::I32),
+            ],
+            SourcePrimitive::I32,
+        );
+        add.doc = Some(DocComment::new(
+            "Safe docs */ fun injected() {} /* still docs",
+        ));
+        let bindings = bindings_for_functions(vec![add]);
+
+        let delegate =
+            KmpJvmDelegateAdapter::new("com.example.demo", "Demo", KotlinOptions::default())
+                .adapt_bindings(&bindings)
+                .expect("delegate adapter should render production bindings");
+        let function_plan = KmpFunctionPlan::new(
+            "add",
+            "boltffi_function_demo_add",
+            vec![
+                KmpParamPlan::new("left", KmpTypePlan::Primitive(BackendPrimitive::I32)),
+                KmpParamPlan::new("right", KmpTypePlan::Primitive(BackendPrimitive::I32)),
+            ],
+            Some(KmpTypePlan::Primitive(BackendPrimitive::I32)),
+        );
+        let internal_kotlin_source = delegate
+            .function_for(&function_plan)
+            .expect("production primitive function should be covered by the adapter")
+            .internal_kotlin_source()
+            .expect("adapter should provide delegated Kotlin source");
+
+        assert!(!internal_kotlin_source.contains("*/ fun injected()"));
+        assert!(!internal_kotlin_source.contains("/* still docs"));
+        assert!(internal_kotlin_source.contains("Safe docs * / fun injected() {} / * still docs"));
+    }
+
+    #[test]
+    fn adapter_uses_backend_planned_parameter_names_in_internal_kotlin_source() {
+        let echo = source_primitive_function(
+            "demo::echo",
+            "echo",
+            vec![("HTTPHeader", SourcePrimitive::I32)],
+            SourcePrimitive::I32,
+        );
+        let bindings = bindings_for_functions(vec![echo]);
+
+        let delegate =
+            KmpJvmDelegateAdapter::new("com.example.demo", "Demo", KotlinOptions::default())
+                .adapt_bindings(&bindings)
+                .expect("delegate adapter should render production bindings");
+        let function_plan = KmpFunctionPlan::new(
+            "echo",
+            "boltffi_function_demo_echo",
+            vec![KmpParamPlan::new(
+                "httpheader",
+                KmpTypePlan::Primitive(BackendPrimitive::I32),
+            )],
+            Some(KmpTypePlan::Primitive(BackendPrimitive::I32)),
+        );
+        let function = delegate
+            .function_for(&function_plan)
+            .expect("production primitive function should be covered by the adapter");
+        let internal_kotlin_source = function
+            .internal_kotlin_source()
+            .expect("adapter should provide delegated Kotlin source");
+
+        assert!(internal_kotlin_source.contains("fun echo(httpheader: Int): Int"));
+        assert!(
+            internal_kotlin_source.contains("return Native.boltffi_function_demo_echo(httpheader)")
+        );
     }
 
     #[test]

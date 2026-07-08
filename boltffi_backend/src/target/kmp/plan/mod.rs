@@ -265,7 +265,7 @@ impl KmpJvmDelegateOutput {
         self.function_for(function).is_some()
     }
 
-    /// Returns delegated source for `function`, if covered.
+    /// Returns delegated source with structural coverage for `function`, if present.
     pub fn function_for(&self, function: &KmpFunctionPlan) -> Option<&KmpJvmDelegateFunction> {
         self.functions
             .iter()
@@ -281,6 +281,7 @@ pub struct KmpJvmDelegateFunction {
     kotlin_name: String,
     param_types: Vec<KmpTypePlan>,
     returns: Option<KmpTypePlan>,
+    internal_kotlin_source: Option<String>,
     jni_glue_source: String,
 }
 
@@ -298,8 +299,23 @@ impl KmpJvmDelegateFunction {
             kotlin_name: kotlin_name.into(),
             param_types,
             returns,
+            internal_kotlin_source: None,
             jni_glue_source: jni_glue_source.into(),
         }
+    }
+
+    /// Attaches trusted internal Kotlin function source emitted by the delegate owner.
+    ///
+    /// The backend treats this as generated delegate output, not arbitrary Kotlin input. Coverage
+    /// admission remains based on the typed delegate signature and JNI glue.
+    pub fn with_internal_kotlin_source(mut self, source: impl Into<String>) -> Self {
+        self.internal_kotlin_source = Some(source.into());
+        self
+    }
+
+    /// Returns the internal Kotlin function source emitted by the delegate owner.
+    pub fn internal_kotlin_source(&self) -> Option<&str> {
+        self.internal_kotlin_source.as_deref()
     }
 
     /// Returns the JNI C glue source snippet for this delegated function.
