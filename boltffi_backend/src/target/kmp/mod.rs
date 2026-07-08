@@ -19,7 +19,7 @@ pub use host::KmpHost;
 pub use lower::{KmpLowerError, KmpLowerer, KmpLoweringOptions};
 pub use plan::{
     KmpApiBody, KmpApiPlan, KmpCapability, KmpCapabilitySet, KmpCommonModule, KmpFunctionPlan,
-    KmpModule, KmpParamPlan, KmpPlatform, KmpPlatformModule, KmpSupportApi, KmpSupportMode,
-    KmpSupportReport, KmpTypePlan,
+    KmpJvmDelegateFunction, KmpJvmDelegateOutput, KmpModule, KmpParamPlan, KmpPlatform,
+    KmpPlatformModule, KmpSupportApi, KmpSupportMode, KmpSupportReport, KmpTypePlan,
 };
 pub use syntax::Syntax;

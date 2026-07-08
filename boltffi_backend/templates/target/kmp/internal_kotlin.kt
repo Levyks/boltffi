@@ -3,7 +3,8 @@
 package {{ internal_package }}
 {% if !functions.is_empty() %}
 
-class FfiException(val code: kotlin.Int, message: kotlin.String) : kotlin.Exception(message)
+{% if let Some(runtime_source) = runtime %}{{ runtime_source }}
+{% endif %}
 
 private object Native {
 {%- for function in functions %}
