@@ -125,6 +125,7 @@ pub(crate) fn pack_java(
             Some(config.java_jvm_output()),
             &source_directory,
             artifact_name,
+            &options.execution.cargo_args,
         )?;
         step.finish_success();
     }

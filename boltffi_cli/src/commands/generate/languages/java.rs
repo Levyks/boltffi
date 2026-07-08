@@ -33,12 +33,14 @@ impl JavaGenerator {
         output_override: Option<PathBuf>,
         source_directory: &Path,
         crate_name: &str,
+        cargo_args: &[String],
     ) -> Result<()> {
         let request = GenerateRequest::new(
             config,
             output_override,
             SourceCrate::new(source_directory, crate_name),
-        );
+        )
+        .with_cargo_args(cargo_args.iter().cloned());
 
         Self::generate(&request)
     }

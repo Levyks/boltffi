@@ -41,7 +41,10 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         return ir::run_ir_generation(config, &options);
     }
 
-    let legacy_request = || GenerateRequest::for_current_crate(config, options.output.clone());
+    let legacy_request = || {
+        GenerateRequest::for_current_crate(config, options.output.clone())
+            .with_cargo_args(options.cargo_args.iter().cloned())
+    };
 
     match &options.target {
         GenerateTarget::Swift => ir::run_ir_generation(config, &options),
@@ -137,8 +140,15 @@ pub fn run_generate_java_with_output_from_source_dir(
     output: Option<PathBuf>,
     source_directory: &Path,
     crate_name: &str,
+    cargo_args: &[String],
 ) -> Result<()> {
-    JavaGenerator::generate_from_source_directory(config, output, source_directory, crate_name)
+    JavaGenerator::generate_from_source_directory(
+        config,
+        output,
+        source_directory,
+        crate_name,
+        cargo_args,
+    )
 }
 
 pub fn run_generate_kmp_with_output_from_source_dir_and_desktop_fallback_library_name(

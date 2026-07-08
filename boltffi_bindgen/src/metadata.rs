@@ -149,12 +149,12 @@ impl std::fmt::Display for CargoStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CargoManifest {
+pub(crate) struct CargoManifest {
     path: PathBuf,
 }
 
 impl CargoManifest {
-    fn new(path: &Path) -> Result<Self, BindingMetadataBuildError> {
+    pub(crate) fn new(path: &Path) -> Result<Self, BindingMetadataBuildError> {
         fs::canonicalize(path)
             .map(|path| Self { path })
             .map_err(|source| BindingMetadataBuildError::ManifestPath {
@@ -191,12 +191,12 @@ impl SourceRoot {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct CargoMetadata {
+pub(crate) struct CargoMetadata {
     packages: Vec<MetadataPackage>,
 }
 
 impl CargoMetadata {
-    fn load(manifest: &CargoManifest) -> Result<Self, BindingMetadataBuildError> {
+    pub(crate) fn load(manifest: &CargoManifest) -> Result<Self, BindingMetadataBuildError> {
         let output = Command::new(CargoProgram::from_env().into_os_string())
             .arg("metadata")
             .arg("--format-version=1")
@@ -242,7 +242,7 @@ impl CargoMetadata {
         })
     }
 
-    fn active_features(
+    pub(crate) fn active_features(
         &self,
         manifest: &CargoManifest,
         args: &MetadataCargoArgs,
@@ -366,12 +366,12 @@ impl CargoProgram {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct MetadataCargoArgs {
+pub(crate) struct MetadataCargoArgs {
     arguments: Vec<String>,
 }
 
 impl MetadataCargoArgs {
-    fn new(arguments: impl IntoIterator<Item = String>) -> Self {
+    pub(crate) fn new(arguments: impl IntoIterator<Item = String>) -> Self {
         Self {
             arguments: Self::without_owned_selectors(arguments.into_iter().collect()),
         }
@@ -449,11 +449,15 @@ impl MetadataCargoArgs {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct MetadataFeatures {
+pub(crate) struct MetadataFeatures {
     names: BTreeSet<String>,
 }
 
 impl MetadataFeatures {
+    pub(crate) fn names(&self) -> &BTreeSet<String> {
+        &self.names
+    }
+
     fn resolve(available: &BTreeMap<String, Vec<String>>, args: &MetadataCargoArgs) -> Self {
         let flags = args.feature_flags();
         let mut names = match flags.all {

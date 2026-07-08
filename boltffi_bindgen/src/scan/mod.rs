@@ -515,6 +515,7 @@ pub struct SourceScanner {
     integer_constants: HashMap<String, i128>,
     source_root: Option<PathBuf>,
     target_pointer_width_bits: Option<u8>,
+    cfg: boltffi_scan::ActiveCfg,
 }
 
 impl SourceScanner {
@@ -525,6 +526,18 @@ impl SourceScanner {
     pub fn new_with_pointer_width(
         module_name: impl Into<String>,
         target_pointer_width_bits: Option<u8>,
+    ) -> Self {
+        Self::new_with_cfg(
+            module_name,
+            target_pointer_width_bits,
+            boltffi_scan::ActiveCfg::default(),
+        )
+    }
+
+    pub fn new_with_cfg(
+        module_name: impl Into<String>,
+        target_pointer_width_bits: Option<u8>,
+        cfg: boltffi_scan::ActiveCfg,
     ) -> Self {
         Self {
             module_name: module_name.into(),
@@ -537,6 +550,7 @@ impl SourceScanner {
             integer_constants: HashMap::new(),
             source_root: None,
             target_pointer_width_bits,
+            cfg,
         }
     }
 
@@ -550,10 +564,15 @@ impl SourceScanner {
         files.sort();
 
         self.source_root = Some(dir.to_path_buf());
-        self.global_aliases = Self::collect_global_aliases(&files)?;
-        self.integer_constants =
-            collect_integer_constants_from_files(dir, &files, self.target_pointer_width_bits)?;
-        let compiler_targets = Self::collect_compiler_type_targets(&files, &self.global_aliases)?;
+        self.global_aliases = Self::collect_global_aliases(&files, &self.cfg)?;
+        self.integer_constants = collect_integer_constants_from_files(
+            dir,
+            &files,
+            self.target_pointer_width_bits,
+            &self.cfg,
+        )?;
+        let compiler_targets =
+            Self::collect_compiler_type_targets(&files, &self.global_aliases, &self.cfg)?;
         self.compiler_canonical_types =
             compiler_type_resolution::resolve(crate_path, &self.module_name, compiler_targets)?;
         files
@@ -573,16 +592,13 @@ impl SourceScanner {
     fn collect_compiler_type_targets(
         files: &[std::path::PathBuf],
         global_aliases: &HashMap<String, Vec<String>>,
+        cfg: &boltffi_scan::ActiveCfg,
     ) -> Result<Vec<String>, String> {
         let mut targets = Vec::<String>::new();
         let mut seen = HashSet::<String>::new();
 
         files.iter().try_for_each(|path| {
-            let content = fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-            let syntax = syn::parse_file(&content)
-                .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+            let syntax = parse_file_with_cfg(path, cfg)?;
 
             let alias_resolver =
                 AliasResolver::from_items(&syntax.items).with_global(global_aliases);
@@ -830,16 +846,13 @@ impl SourceScanner {
 
     fn collect_global_aliases(
         files: &[std::path::PathBuf],
+        cfg: &boltffi_scan::ActiveCfg,
     ) -> Result<HashMap<String, Vec<String>>, String> {
         let mut aliases = HashMap::<String, Vec<String>>::new();
         let mut conflicts = HashSet::<String>::new();
 
         files.iter().try_for_each(|path| {
-            let content = fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-            let syntax = syn::parse_file(&content)
-                .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+            let syntax = parse_file_with_cfg(path, cfg)?;
 
             let local = AliasResolver::from_items(&syntax.items);
             syntax
@@ -886,11 +899,7 @@ impl SourceScanner {
     }
 
     fn collect_custom_types(&mut self, path: &Path) -> Result<(), String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-        let syntax = syn::parse_file(&content)
-            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+        let syntax = parse_file_with_cfg(path, &self.cfg)?;
 
         let alias_resolver =
             AliasResolver::from_items(&syntax.items).with_global(&self.global_aliases);
@@ -1024,11 +1033,7 @@ impl SourceScanner {
     }
 
     fn collect_type_names(&mut self, path: &Path) -> Result<(), String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-        let syntax = syn::parse_file(&content)
-            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+        let syntax = parse_file_with_cfg(path, &self.cfg)?;
 
         for item in &syntax.items {
             match item {
@@ -1084,11 +1089,7 @@ impl SourceScanner {
     }
 
     pub fn scan_file(&mut self, path: &Path) -> Result<(), String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-        let syntax = syn::parse_file(&content)
-            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+        let syntax = parse_file_with_cfg(path, &self.cfg)?;
 
         self.alias_resolver =
             AliasResolver::from_items(&syntax.items).with_global(&self.global_aliases);
@@ -1783,6 +1784,60 @@ fn shape_key_for_segment(path_segment: &syn::PathSegment) -> String {
     }
 }
 
+fn parse_file_with_cfg(path: &Path, cfg: &boltffi_scan::ActiveCfg) -> Result<syn::File, String> {
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let mut syntax = syn::parse_file(&content)
+        .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+    expand_item_cfg_attrs(&mut syntax.items, cfg)
+        .map_err(|e| format!("Failed to expand cfg_attr in {}: {}", path.display(), e))?;
+    Ok(syntax)
+}
+
+fn expand_item_cfg_attrs(items: &mut [Item], cfg: &boltffi_scan::ActiveCfg) -> Result<(), String> {
+    for item in items.iter_mut() {
+        let attrs = match item {
+            Item::Struct(item) => Some(&mut item.attrs),
+            Item::Enum(item) => Some(&mut item.attrs),
+            Item::Fn(item) => Some(&mut item.attrs),
+            Item::Impl(item) => Some(&mut item.attrs),
+            Item::Trait(item) => Some(&mut item.attrs),
+            Item::Const(item) => Some(&mut item.attrs),
+            Item::Mod(item) => Some(&mut item.attrs),
+            _ => None,
+        };
+        if let Some(attrs) = attrs {
+            *attrs = cfg
+                .expand_cfg_attrs(attrs)
+                .map_err(|error| error.to_string())?;
+        }
+        if let Item::Mod(item_mod) = item {
+            if let Some((_, inner_items)) = &mut item_mod.content {
+                expand_item_cfg_attrs(inner_items, cfg)?;
+            }
+        }
+        if let Item::Impl(item_impl) = item {
+            for impl_item in &mut item_impl.items {
+                if let ImplItem::Fn(method) = impl_item {
+                    method.attrs = cfg
+                        .expand_cfg_attrs(&method.attrs)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        if let Item::Trait(item_trait) = item {
+            for trait_item in &mut item_trait.items {
+                if let syn::TraitItem::Fn(method) = trait_item {
+                    method.attrs = cfg
+                        .expand_cfg_attrs(&method.attrs)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn has_attribute(attrs: &[Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident(name)
@@ -2088,14 +2143,12 @@ fn collect_integer_constants_from_files(
     source_root: &Path,
     files: &[PathBuf],
     target_pointer_width_bits: Option<u8>,
+    cfg: &boltffi_scan::ActiveCfg,
 ) -> Result<HashMap<String, i128>, String> {
     let mut candidates = Vec::<(String, syn::Expr)>::new();
     files.iter().try_for_each(|file_path| {
         let module_path = module_path_for_source_file(source_root, file_path)?;
-        let content = fs::read_to_string(file_path)
-            .map_err(|error| format!("Failed to read {}: {}", file_path.display(), error))?;
-        let syntax = syn::parse_file(&content)
-            .map_err(|error| format!("Failed to parse {}: {}", file_path.display(), error))?;
+        let syntax = parse_file_with_cfg(file_path, cfg)?;
         collect_integer_constant_candidates(&syntax.items, module_path.as_slice(), &mut candidates);
         Ok::<(), String>(())
     })?;
@@ -2862,14 +2915,20 @@ fn validate_no_symbol_collisions(module: &Module) -> Result<(), String> {
 struct LegacyPackageScanner<'a> {
     graph: &'a cargo_graph::PackageGraph,
     target_pointer_width_bits: Option<u8>,
+    cfg: boltffi_scan::ActiveCfg,
     modules: HashMap<cargo_graph::PackageId, Module>,
 }
 
 impl<'a> LegacyPackageScanner<'a> {
-    fn new(graph: &'a cargo_graph::PackageGraph, target_pointer_width_bits: Option<u8>) -> Self {
+    fn new(
+        graph: &'a cargo_graph::PackageGraph,
+        target_pointer_width_bits: Option<u8>,
+        cfg: boltffi_scan::ActiveCfg,
+    ) -> Self {
         Self {
             graph,
             target_pointer_width_bits,
+            cfg,
             modules: HashMap::new(),
         }
     }
@@ -2905,8 +2964,11 @@ impl<'a> LegacyPackageScanner<'a> {
             .map(|dependency| self.scan_package(dependency.id(), dependency.module_name()))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut scanner =
-            SourceScanner::new_with_pointer_width(module_name, self.target_pointer_width_bits);
+        let mut scanner = SourceScanner::new_with_cfg(
+            module_name,
+            self.target_pointer_width_bits,
+            self.cfg.clone(),
+        );
         dependency_modules
             .iter()
             .try_for_each(|module| scanner.import_module_exports(module))?;
@@ -2926,26 +2988,56 @@ pub fn scan_crate_with_pointer_width(
     module_name: &str,
     target_pointer_width_bits: Option<u8>,
 ) -> Result<Module, String> {
+    scan_crate_with_pointer_width_and_cargo_args(
+        crate_path,
+        module_name,
+        target_pointer_width_bits,
+        &[],
+    )
+}
+
+/// Like [`scan_crate_with_pointer_width`], but resolves `cfg_attr(...)` markers against
+/// the crate's features as seen with `cargo_args` applied.
+pub fn scan_crate_with_pointer_width_and_cargo_args(
+    crate_path: &Path,
+    module_name: &str,
+    target_pointer_width_bits: Option<u8>,
+    cargo_args: &[String],
+) -> Result<Module, String> {
     let target_pointer_width_bits = target_pointer_width_bits.or_else(parse_target_pointer_width);
+    let cfg = resolve_active_cfg(crate_path, cargo_args);
     if let Some(graph) = cargo_graph::PackageGraph::load_for_module(crate_path, module_name)
         .map_err(|error| error.to_string())?
     {
-        let module =
-            LegacyPackageScanner::new(&graph, target_pointer_width_bits).scan(module_name)?;
+        let module = LegacyPackageScanner::new(&graph, target_pointer_width_bits, cfg)
+            .scan(module_name)?;
         validate_no_symbol_collisions(&module)?;
         return Ok(module);
     }
 
-    scan_single_crate_with_pointer_width(crate_path, module_name, target_pointer_width_bits)
+    scan_single_crate_with_pointer_width(crate_path, module_name, target_pointer_width_bits, &cfg)
+}
+
+fn resolve_active_cfg(crate_path: &Path, cargo_args: &[String]) -> boltffi_scan::ActiveCfg {
+    (|| -> Result<boltffi_scan::ActiveCfg, crate::metadata::BindingMetadataBuildError> {
+        let manifest = crate::metadata::CargoManifest::new(&crate_path.join("Cargo.toml"))?;
+        let metadata = crate::metadata::CargoMetadata::load(&manifest)?;
+        let args = crate::metadata::MetadataCargoArgs::new(cargo_args.iter().cloned());
+        let features = metadata.active_features(&manifest, &args)?;
+        Ok(boltffi_scan::ActiveCfg::default().with_features(features.names().iter().cloned()))
+    })()
+    .unwrap_or_default()
 }
 
 fn scan_single_crate_with_pointer_width(
     crate_path: &Path,
     module_name: &str,
     target_pointer_width_bits: Option<u8>,
+    cfg: &boltffi_scan::ActiveCfg,
 ) -> Result<Module, String> {
     let src_path = crate_path.join("src");
-    let mut scanner = SourceScanner::new_with_pointer_width(module_name, target_pointer_width_bits);
+    let mut scanner =
+        SourceScanner::new_with_cfg(module_name, target_pointer_width_bits, cfg.clone());
     scanner.scan_directory(crate_path, &src_path)?;
     let module = scanner.into_module();
     validate_no_symbol_collisions(&module)?;
@@ -3604,8 +3696,13 @@ mod tests {
             .expect("write constants.rs");
 
         let files = vec![source_root.join("lib.rs"), source_root.join("constants.rs")];
-        let constants = collect_integer_constants_from_files(&source_root, files.as_slice(), None)
-            .expect("collect constants");
+        let constants = collect_integer_constants_from_files(
+            &source_root,
+            files.as_slice(),
+            None,
+            &boltffi_scan::ActiveCfg::default(),
+        )
+        .expect("collect constants");
         let expression: syn::Expr = syn::parse_quote!(crate::constants::TAG);
 
         assert_eq!(constants.get("constants::TAG").copied(), Some(7));
