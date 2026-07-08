@@ -365,6 +365,11 @@ class DemoValueTypesTest {
         assertEquals(emptyList(), echoVecOptionalI32(emptyList()))
         demoCase("case:options.complex.vec_optional_i32.should_roundtrip_all_none")
         assertEquals(listOf(null, null, null), echoVecOptionalI32(listOf(null, null, null)))
+
+        demoCase("case:options.complex.shape.should_return_radius_for_circle")
+        assertDoubleEquals(5.0, radiusIfCircle(Shape.Circle(5.0))!!)
+        demoCase("case:options.complex.shape.should_return_none_for_non_circle")
+        assertNull(radiusIfCircle(Shape.Rectangle(3.0, 4.0)))
     }
 
     @Test

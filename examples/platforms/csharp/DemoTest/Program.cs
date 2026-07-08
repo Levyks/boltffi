@@ -1854,6 +1854,11 @@ public static class DemoTest
             "EchoVecOptionalI32 all-Some preserved"
         );
 
+        DemoCase("case:options.complex.shape.should_return_radius_for_circle");
+        Require(RadiusIfCircle(new Shape.Circle(5.0)) == 5.0, "RadiusIfCircle(Circle) returns Some(radius)");
+        DemoCase("case:options.complex.shape.should_return_none_for_non_circle");
+        Require(RadiusIfCircle(new Shape.Rectangle(3.0, 4.0)) == null, "RadiusIfCircle(Rectangle) returns None");
+
         Console.WriteLine("  PASS\n");
     }
 

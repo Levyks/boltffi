@@ -1441,6 +1441,12 @@ public final class DemoTest {
             assert !v.isPresent() : "echoVecOptionalI32 all-none entry";
         }
 
+        demoCase("case:options.complex.shape.should_return_radius_for_circle");
+        Optional<Double> circleRadius = Demo.radiusIfCircle(new Shape.Circle(5.0));
+        assert circleRadius.isPresent() && Math.abs(circleRadius.get() - 5.0) < 0.0001 : "radiusIfCircle circle";
+        demoCase("case:options.complex.shape.should_return_none_for_non_circle");
+        assert !Demo.radiusIfCircle(new Shape.Rectangle(3.0, 4.0)).isPresent() : "radiusIfCircle non-circle";
+
         demoCase("case:options.primitives.bool.should_roundtrip_some");
         Optional<Boolean> optBoolSome = Demo.echoOptionalBool(Optional.of(true));
         assert optBoolSome.isPresent() && optBoolSome.get() : "echoOptionalBool some";
