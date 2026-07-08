@@ -28,7 +28,7 @@ pub fn composite_slot_decode_expr(layout: &CompositeLayout) -> String {
         .fields
         .iter()
         .map(|f| {
-            let name = camel_case(f.name.as_str());
+            let name = ts_property_name(f.name.as_str());
             let read = dataview_get(f.primitive, &format!("o + {}", f.offset));
             format!("{name}: {read}")
         })
@@ -43,7 +43,7 @@ pub fn composite_buf_decode_expr(layout: &CompositeLayout) -> String {
         .fields
         .iter()
         .map(|f| {
-            let name = camel_case(f.name.as_str());
+            let name = ts_property_name(f.name.as_str());
             let read = dataview_get(f.primitive, &format!("o + {}", f.offset));
             format!("{name}: {read}")
         })
@@ -57,7 +57,7 @@ pub fn composite_value_decode_expr(layout: &CompositeLayout, ptr_name: &str) -> 
         .fields
         .iter()
         .map(|field| {
-            let name = camel_case(field.name.as_str());
+            let name = ts_property_name(field.name.as_str());
             let read = dataview_get(field.primitive, &field.offset.to_string());
             format!("{name}: {read}")
         })
@@ -144,6 +144,10 @@ pub fn escape_ts_keyword(name: &str) -> String {
     }
 }
 
+fn ts_property_name(name: &str) -> String {
+    escape_ts_keyword(&camel_case(name))
+}
+
 pub fn ts_type(type_expr: &TypeExpr) -> String {
     match type_expr {
         TypeExpr::Void => "void".to_string(),
@@ -196,12 +200,12 @@ fn render_value(expr: &ValueExpr, root_value: &str) -> String {
         ValueExpr::Instance => root_value.to_string(),
         ValueExpr::Var(name) if name == "value" => root_value.to_string(),
         ValueExpr::Var(name) => name.clone(),
-        ValueExpr::Named(name) => camel_case(name),
+        ValueExpr::Named(name) => ts_property_name(name),
         ValueExpr::Field(parent, field) => {
             format!(
                 "{}.{}",
                 render_value(parent, root_value),
-                camel_case(field.as_str())
+                ts_property_name(field.as_str())
             )
         }
     }
@@ -534,7 +538,37 @@ fn to_pascal_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::ops::ValueExpr;
+    use crate::ir::ids::FieldName;
+    use crate::ir::ops::{ValueExpr, WireShape, WriteOp, WriteSeq};
+
+    #[test]
+    fn writer_write_escapes_ts_keyword_record_fields() {
+        let seq = WriteSeq {
+            size: SizeExpr::Fixed(0),
+            ops: vec![WriteOp::Option {
+                value: ValueExpr::Field(Box::new(ValueExpr::Var("v".into())), FieldName::new("type")),
+                some: Box::new(WriteSeq {
+                    size: SizeExpr::Fixed(0),
+                    ops: vec![WriteOp::String {
+                        value: ValueExpr::Var("value".into()),
+                    }],
+                    shape: WireShape::Value,
+                }),
+            }],
+            shape: WireShape::Value,
+        };
+
+        let rendered = emit_writer_write(&seq, "writer", "v");
+
+        assert!(
+            rendered.contains("v.type_"),
+            "expected escaped keyword field access, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("v.type,") && !rendered.contains("v.type)"),
+            "unexpected raw keyword field access: {rendered}"
+        );
+    }
 
     #[test]
     fn option_size_uses_optional_payload_binding() {
