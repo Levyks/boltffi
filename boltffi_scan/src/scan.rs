@@ -936,6 +936,29 @@ mod tests {
     }
 
     #[test]
+    fn scans_generic_type_alias_used_from_a_module_that_never_imported_its_error_type() {
+        let contract = scan(
+            "pub mod errors { \
+                 #[error] pub enum MyError { Bad } \
+                 pub type Result<T> = std::result::Result<T, MyError>; \
+             } \
+             pub mod api { \
+                 use crate::errors::Result; \
+                 #[data] pub struct Point { pub x: f64 } \
+                 #[export] pub fn origin() -> Result<Point> { todo!() } \
+             }",
+        );
+
+        assert_eq!(
+            value_return(&contract.functions[0].returns),
+            &TypeExpr::result(
+                record("demo::api::Point", "Point"),
+                enumeration("demo::errors::MyError", "MyError")
+            )
+        );
+    }
+
+    #[test]
     fn scans_custom_repr_reexported_from_root() {
         let contract = scan(
             "pub use core::location::{GeoCoord, GeographicCoordinate}; \

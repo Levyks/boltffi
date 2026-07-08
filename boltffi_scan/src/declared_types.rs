@@ -225,17 +225,15 @@ impl DeclaredTypes {
         }
     }
 
-    /// If `path` names a known type alias, returns its target type with the
-    /// use site's actual type arguments substituted in.
-    pub(super) fn resolve_alias_target(
+    /// If `path` names a known type alias, returns its (unsubstituted)
+    /// definition.
+    pub(super) fn resolve_alias_definition(
         &self,
         scope: &ModuleScope,
         path: &syn::Path,
-    ) -> Result<Option<syn::Type>, ScanError> {
+    ) -> Result<Option<&TypeAlias>, ScanError> {
         match self.source_types.resolve_alias(scope, path) {
-            AliasResolution::Known(alias) => {
-                Ok(Some(substitute_generic_alias_target(alias, path)))
-            }
+            AliasResolution::Known(alias) => Ok(Some(alias)),
             AliasResolution::Unknown => Ok(None),
             AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
                 path: spelling::path(path),
@@ -461,12 +459,26 @@ struct TypeNamespace {
     scopes: HashMap<String, ModuleScope>,
 }
 
-struct TypeAlias {
+pub(super) struct TypeAlias {
     path: String,
     scope: ModuleScope,
     target: syn::Type,
     /// `target`'s free type parameter names, in declaration order.
     generic_params: Vec<String>,
+}
+
+impl TypeAlias {
+    pub(super) fn scope(&self) -> &ModuleScope {
+        &self.scope
+    }
+
+    pub(super) fn target(&self) -> &syn::Type {
+        &self.target
+    }
+
+    pub(super) fn generic_params(&self) -> &[String] {
+        &self.generic_params
+    }
 }
 
 #[derive(Clone, Copy)]
