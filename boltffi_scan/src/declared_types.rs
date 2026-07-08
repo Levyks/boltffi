@@ -225,6 +225,20 @@ impl DeclaredTypes {
         }
     }
 
+    pub(super) fn resolve_alias_definition(
+        &self,
+        scope: &ModuleScope,
+        path: &syn::Path,
+    ) -> Result<Option<&TypeAlias>, ScanError> {
+        match self.source_types.resolve_alias(scope, path) {
+            AliasResolution::Known(alias) => Ok(Some(alias)),
+            AliasResolution::Unknown => Ok(None),
+            AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
+                path: spelling::path(path),
+            }),
+        }
+    }
+
     fn resolve_custom_remote_with_aliases<'a>(
         &'a self,
         scope: &ModuleScope,
@@ -239,7 +253,8 @@ impl DeclaredTypes {
         };
         match self.source_types.resolve_alias(scope, &type_path.path) {
             AliasResolution::Known(alias) if visited.insert(alias.path.clone()) => {
-                self.resolve_custom_remote_with_aliases(&alias.scope, &alias.target, visited)
+                let resolved_target = substitute_generic_alias_target(alias, &type_path.path);
+                self.resolve_custom_remote_with_aliases(&alias.scope, &resolved_target, visited)
             }
             AliasResolution::Known(_) | AliasResolution::Unknown => Ok(None),
             AliasResolution::Ambiguous => Err(ScanError::AmbiguousPath {
@@ -442,10 +457,40 @@ struct TypeNamespace {
     scopes: HashMap<String, ModuleScope>,
 }
 
-struct TypeAlias {
+pub(super) struct TypeAlias {
     path: String,
     scope: ModuleScope,
     target: syn::Type,
+    generic_params: Vec<AliasGenericParam>,
+}
+
+impl TypeAlias {
+    pub(super) fn scope(&self) -> &ModuleScope {
+        &self.scope
+    }
+
+    pub(super) fn target(&self) -> &syn::Type {
+        &self.target
+    }
+
+    pub(super) fn generic_params(&self) -> &[AliasGenericParam] {
+        &self.generic_params
+    }
+}
+
+pub(super) struct AliasGenericParam {
+    name: String,
+    default: Option<syn::Type>,
+}
+
+impl AliasGenericParam {
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn default(&self) -> Option<&syn::Type> {
+        self.default.as_ref()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -453,6 +498,79 @@ enum AliasResolution<'a> {
     Known(&'a TypeAlias),
     Ambiguous,
     Unknown,
+}
+
+fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> syn::Type {
+    if alias.generic_params.is_empty() {
+        return alias.target.clone();
+    }
+
+    let mut actual_args = use_site
+        .segments
+        .last()
+        .into_iter()
+        .flat_map(|segment| match &segment.arguments {
+            syn::PathArguments::AngleBracketed(args) => args.args.iter().collect::<Vec<_>>(),
+            syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => Vec::new(),
+        })
+        .filter_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => Some(ty.clone()),
+            _ => None,
+        });
+
+    let substitutions: HashMap<String, syn::Type> = alias
+        .generic_params
+        .iter()
+        .filter_map(|param| {
+            let value = actual_args.next().or_else(|| param.default.clone())?;
+            Some((param.name.clone(), value))
+        })
+        .collect();
+
+    if substitutions.is_empty() {
+        return alias.target.clone();
+    }
+
+    substitute_generics(&alias.target, &substitutions)
+}
+
+fn substitute_generics(ty: &syn::Type, substitutions: &HashMap<String, syn::Type>) -> syn::Type {
+    match ty {
+        syn::Type::Path(type_path) if type_path.qself.is_none() => {
+            if let Some(ident) = type_path.path.get_ident() {
+                if let Some(replacement) = substitutions.get(&ident.to_string()) {
+                    return replacement.clone();
+                }
+            }
+            let mut new_path = type_path.path.clone();
+            for segment in &mut new_path.segments {
+                if let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments {
+                    for arg in &mut args.args {
+                        if let syn::GenericArgument::Type(inner) = arg {
+                            *inner = substitute_generics(inner, substitutions);
+                        }
+                    }
+                }
+            }
+            syn::Type::Path(syn::TypePath {
+                qself: None,
+                path: new_path,
+            })
+        }
+        syn::Type::Reference(reference) => {
+            let mut new_reference = reference.clone();
+            *new_reference.elem = substitute_generics(&reference.elem, substitutions);
+            syn::Type::Reference(new_reference)
+        }
+        syn::Type::Tuple(tuple) => {
+            let mut new_tuple = tuple.clone();
+            for elem in &mut new_tuple.elems {
+                *elem = substitute_generics(elem, substitutions);
+            }
+            syn::Type::Tuple(new_tuple)
+        }
+        other => other.clone(),
+    }
 }
 
 impl TypeNamespace {
@@ -707,12 +825,25 @@ impl TypeNamespace {
 
     fn insert_alias(&mut self, module: &SourceModule, alias: &syn::ItemType) {
         let path = self.insert_source(module, alias.ident.to_string());
+        let generic_params = alias
+            .generics
+            .params
+            .iter()
+            .filter_map(|param| match param {
+                syn::GenericParam::Type(type_param) => Some(AliasGenericParam {
+                    name: type_param.ident.to_string(),
+                    default: type_param.default.clone(),
+                }),
+                syn::GenericParam::Lifetime(_) | syn::GenericParam::Const(_) => None,
+            })
+            .collect();
         self.aliases.insert(
             path.clone(),
             TypeAlias {
                 path,
                 scope: module.scope().clone(),
                 target: alias.ty.as_ref().clone(),
+                generic_params,
             },
         );
     }

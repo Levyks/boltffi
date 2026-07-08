@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use boltffi_ast::{
@@ -7,13 +8,14 @@ use boltffi_ast::{
 };
 use quote::ToTokens;
 
-use crate::declared_types::{DeclaredType, DeclaredTypes, SourceType};
+use crate::declared_types::{DeclaredType, DeclaredTypes, SourceType, TypeAlias};
 use crate::unsupported::UnsupportedFeature;
 use crate::{ModuleScope, ScanError};
 
 pub struct Scanner<'a> {
     declared_types: &'a DeclaredTypes,
     scope: &'a ModuleScope,
+    substitutions: Option<&'a HashMap<String, TypeExpr>>,
 }
 
 impl<'a> Scanner<'a> {
@@ -21,6 +23,19 @@ impl<'a> Scanner<'a> {
         Self {
             declared_types,
             scope,
+            substitutions: None,
+        }
+    }
+
+    fn with_substitutions(
+        declared_types: &'a DeclaredTypes,
+        scope: &'a ModuleScope,
+        substitutions: &'a HashMap<String, TypeExpr>,
+    ) -> Self {
+        Self {
+            declared_types,
+            scope,
+            substitutions: Some(substitutions),
         }
     }
 
@@ -30,6 +45,9 @@ impl<'a> Scanner<'a> {
 
     pub fn scan(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
         let unwrapped = unwrapped(ty);
+        if let Some(substituted) = self.substitution_for(unwrapped) {
+            return Ok(substituted.clone());
+        }
         if let Some(custom) = self.custom_remote(unwrapped)? {
             return Ok(TypeExpr::custom(
                 custom.clone(),
@@ -59,10 +77,56 @@ impl<'a> Scanner<'a> {
         if type_path.qself.is_some() {
             return Err(ScanError::unsupported_type(source));
         }
+        if let Some(alias) = self
+            .declared_types
+            .resolve_alias_definition(self.scope, &type_path.path)?
+        {
+            return self.scan_alias(alias, &type_path.path);
+        }
         if let Some(standard_type) = self.standard_type(type_path, source)? {
             return self.standard_path(standard_type, type_path, source);
         }
         self.named(type_path, source)
+    }
+
+    fn scan_alias(&self, alias: &TypeAlias, use_site: &syn::Path) -> Result<TypeExpr, ScanError> {
+        let mut actual_args = use_site
+            .segments
+            .last()
+            .into_iter()
+            .flat_map(|segment| match &segment.arguments {
+                syn::PathArguments::AngleBracketed(args) => args.args.iter().collect::<Vec<_>>(),
+                syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => Vec::new(),
+            })
+            .filter_map(|arg| match arg {
+                syn::GenericArgument::Type(ty) => Some(ty),
+                _ => None,
+            });
+
+        let alias_scanner = Scanner::new(self.declared_types, alias.scope());
+        let substitutions = alias
+            .generic_params()
+            .iter()
+            .filter_map(|param| match actual_args.next() {
+                Some(arg) => Some(self.scan(arg).map(|expr| (param.name().to_owned(), expr))),
+                None => param
+                    .default()
+                    .map(|default| alias_scanner.scan(default))
+                    .map(|result| result.map(|expr| (param.name().to_owned(), expr))),
+            })
+            .collect::<Result<HashMap<_, _>, ScanError>>()?;
+
+        Scanner::with_substitutions(self.declared_types, alias.scope(), &substitutions)
+            .scan(alias.target())
+    }
+
+    fn substitution_for(&self, ty: &syn::Type) -> Option<&TypeExpr> {
+        let substitutions = self.substitutions?;
+        let syn::Type::Path(type_path) = ty else {
+            return None;
+        };
+        let ident = type_path.path.get_ident()?;
+        substitutions.get(&ident.to_string())
     }
 
     fn standard_path(
