@@ -105,7 +105,7 @@ impl<'a> AndroidPackager<'a> {
             )?);
         }
 
-        if self.android_debug_symbols_enabled() {
+        if self.android_debug_symbols_archive_enabled() {
             write_android_debug_symbols(self.config, &linked_outputs)?;
         }
 
@@ -230,6 +230,11 @@ impl<'a> AndroidPackager<'a> {
     fn android_debug_symbols_enabled(&self) -> bool {
         matches!(self.binding_mode, AndroidBindingMode::Kotlin)
             && self.config.android_debug_symbols_enabled()
+    }
+
+    fn android_debug_symbols_archive_enabled(&self) -> bool {
+        matches!(self.binding_mode, AndroidBindingMode::Kotlin)
+            && self.config.android_debug_symbols_archive_enabled()
     }
 }
 

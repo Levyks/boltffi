@@ -154,7 +154,7 @@ pub(crate) fn pack_java(
     }
 
     let artifact_name = selected_jvm_package_artifact_name(&packaging_targets)?;
-    if config.java_jvm_debug_symbols_enabled() {
+    if config.java_jvm_debug_symbols_archive_enabled() {
         let step = reporter.step("Bundling JVM debug symbols");
         write_jvm_debug_symbols(config, artifact_name, &packaged_outputs)?;
         step.finish_success();
