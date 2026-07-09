@@ -525,6 +525,17 @@ impl RustTarget {
 }
 
 impl Platform {
+    pub const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Ios => "ios",
+            Self::IosSimulator => "ios-simulator",
+            Self::MacOs => "macos",
+            Self::Android => "android",
+            Self::Wasm => "wasm",
+            Self::Linux => "linux",
+        }
+    }
+
     pub const fn architectures(self) -> &'static [Architecture] {
         match self {
             Platform::Ios => Architecture::IOS,

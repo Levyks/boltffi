@@ -517,8 +517,17 @@ impl Config {
         self.targets.apple.debug_symbols.enabled
     }
 
-    pub fn apple_debug_symbols_archive_directory(&self) -> Option<&Path> {
-        self.targets.apple.debug_symbols.output.as_deref()
+    pub fn apple_debug_symbols_archive_enabled(&self) -> bool {
+        self.targets.apple.debug_symbols.archive_enabled()
+    }
+
+    pub fn apple_debug_symbols_output(&self) -> PathBuf {
+        self.targets
+            .apple
+            .debug_symbols
+            .output
+            .clone()
+            .unwrap_or_else(|| self.targets.apple.output.join("symbols"))
     }
 
     pub fn apple_debug_symbols_format(&self) -> DebugSymbolsFormat {
@@ -637,6 +646,10 @@ impl Config {
 
     pub fn android_debug_symbols_enabled(&self) -> bool {
         self.targets.android.debug_symbols.enabled
+    }
+
+    pub fn android_debug_symbols_archive_enabled(&self) -> bool {
+        self.targets.android.debug_symbols.archive_enabled()
     }
 
     pub fn android_debug_symbols_output(&self) -> PathBuf {
@@ -824,6 +837,10 @@ impl Config {
 
     pub fn java_jvm_debug_symbols_enabled(&self) -> bool {
         self.targets.java.jvm.debug_symbols.enabled
+    }
+
+    pub fn java_jvm_debug_symbols_archive_enabled(&self) -> bool {
+        self.targets.java.jvm.debug_symbols.archive_enabled()
     }
 
     pub fn java_jvm_debug_symbols_output(&self) -> PathBuf {
@@ -1694,10 +1711,17 @@ name = "mylib"
 
 [targets.java.jvm]
 enabled = true
+
+[targets.apple.debug_symbols]
+enabled = true
 "#,
         );
 
-        assert_eq!(config.apple_debug_symbols_archive_directory(), None);
+        assert!(config.apple_debug_symbols_archive_enabled());
+        assert_eq!(
+            config.apple_debug_symbols_output(),
+            PathBuf::from("dist/apple/symbols")
+        );
         assert_eq!(
             config.android_debug_symbols_output(),
             PathBuf::from("dist/android/symbols")
@@ -1720,6 +1744,7 @@ enabled = true
 output = "dist/apple/debug-artifacts"
 format = "zip"
 bundle = "unstripped"
+standalone_archive = false
 
 [targets.android.debug_symbols]
 enabled = true
@@ -1738,8 +1763,8 @@ output = "dist/java/debug-artifacts"
         assert!(config.android_debug_symbols_enabled());
         assert!(config.java_jvm_debug_symbols_enabled());
         assert_eq!(
-            config.apple_debug_symbols_archive_directory(),
-            Some(Path::new("dist/apple/debug-artifacts"))
+            config.apple_debug_symbols_output(),
+            PathBuf::from("dist/apple/debug-artifacts")
         );
         assert_eq!(
             config.android_debug_symbols_output(),
@@ -1754,6 +1779,9 @@ output = "dist/java/debug-artifacts"
             config.apple_debug_symbols_bundle(),
             DebugSymbolsBundle::Unstripped
         );
+        assert!(!config.apple_debug_symbols_archive_enabled());
+        assert!(config.android_debug_symbols_archive_enabled());
+        assert!(config.java_jvm_debug_symbols_archive_enabled());
     }
 
     #[test]
