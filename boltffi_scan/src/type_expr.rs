@@ -51,7 +51,32 @@ impl<'a> Scanner<'a> {
         match output {
             syn::ReturnType::Default => Ok(ReturnDef::Void),
             syn::ReturnType::Type(_, ty) if is_unit(ty) => Ok(ReturnDef::Void),
-            syn::ReturnType::Type(_, ty) => Ok(ReturnDef::Value(self.scan(ty)?)),
+            syn::ReturnType::Type(_, ty) => Ok(ReturnDef::Value(self.scan_return_type(ty)?)),
+        }
+    }
+
+    fn scan_return_type(&self, ty: &syn::Type) -> Result<TypeExpr, ScanError> {
+        match unwrapped(ty) {
+            syn::Type::Reference(reference) if reference.mutability.is_none() => {
+                self.borrowed_return(reference, ty)
+            }
+            _ => self.scan(ty),
+        }
+    }
+
+    fn borrowed_return(
+        &self,
+        reference: &syn::TypeReference,
+        source: &syn::Type,
+    ) -> Result<TypeExpr, ScanError> {
+        match self.scan(&reference.elem)? {
+            TypeExpr::Str => Ok(TypeExpr::Str),
+            TypeExpr::Slice(element)
+                if matches!(element.as_ref(), TypeExpr::Primitive(Primitive::U8)) =>
+            {
+                Ok(TypeExpr::Slice(element))
+            }
+            _ => Err(ScanError::unsupported_type(source)),
         }
     }
 

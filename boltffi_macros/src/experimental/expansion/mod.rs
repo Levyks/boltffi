@@ -3991,6 +3991,37 @@ mod tests {
     }
 
     #[test]
+    fn native_borrowed_string_return_expansion_encodes_result() {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::label"),
+            CanonicalName::single("label"),
+        );
+        function.returns = ReturnDef::value(TypeExpr::Str);
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        let native_lowered =
+            lower_with_declarations::<Native>(&source).expect("native lowered bindings");
+        let native_expansion = Expansion::new(&native_lowered);
+        let syntax: ItemFn = syn::parse_quote! {
+            pub fn label() -> &'static str {
+                "up"
+            }
+        };
+        let native_wrapper = wrapper::function::Renderer::new(
+            native_expansion.function(&source.functions[0]).unwrap(),
+            &native_expansion,
+        )
+        .render()
+        .expect("native wrapper");
+        let tokens = quote! {
+            #syntax
+            #native_wrapper
+        };
+
+        assert_generated_crate_checks("native_borrowed_string_return", tokens);
+    }
+
+    #[test]
     fn native_async_function_expansion_exports_poll_handle_lifecycle() {
         let source = async_answer_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");

@@ -713,6 +713,32 @@ mod tests {
     }
 
     #[test]
+    fn c_style_enum_scan_accepts_borrowed_string_export_return() {
+        let contract = scan(
+            "#[data] \
+             #[repr(i32)] \
+             pub enum Direction { Default = 0, Up = 1, Down = 2 } \
+             #[export] \
+             pub fn direction_name(direction: Direction) -> &'static str { \
+                 match direction { \
+                     Direction::Default => \"default\", \
+                     Direction::Up => \"up\", \
+                     Direction::Down => \"down\", \
+                 } \
+             }",
+        );
+
+        assert_eq!(
+            contract.functions[0].parameters[0].type_expr,
+            enumeration("demo::Direction", "Direction")
+        );
+        assert_eq!(
+            contract.functions[0].returns,
+            ReturnDef::value(TypeExpr::Str)
+        );
+    }
+
+    #[test]
     fn explicit_import_resolves_dependency_type_reexported_through_bare_module_paths() {
         // A uniform-path re-export (`pub use camera::CameraUpdate;` naming a
         // sibling module without a `crate::`/`self::` prefix) is stored

@@ -252,7 +252,7 @@ where
                     "binding encoded return requires a source return type",
                 ))?;
                 let result = locals.result();
-                let encoded_input = match input.source.borrowed_constant() {
+                let encoded_input = match input.source.borrowed_value()? {
                     true => {
                         encoded::Input::borrowed(codec, *shape, result.clone(), input.expansion)
                     }

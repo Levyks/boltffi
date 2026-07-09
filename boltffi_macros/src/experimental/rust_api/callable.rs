@@ -467,7 +467,7 @@ impl<'source> Return<'source> {
         ) {
             return Ok(None);
         }
-        if let CallableReturn::Constant(TypeExpr::Str | TypeExpr::Slice(_)) = self.definition {
+        if self.borrowed_value()? {
             let type_expr = self.value_type()?;
             return TypeTokens::parameter(ParameterPassing::Ref, type_expr.as_ref())
                 .map(TypeTokens::into_type)
@@ -481,11 +481,15 @@ impl<'source> Return<'source> {
         }
     }
 
-    pub fn borrowed_constant(self) -> bool {
-        matches!(
-            self.definition,
-            CallableReturn::Constant(TypeExpr::Str | TypeExpr::Slice(_))
-        )
+    pub fn borrowed_value(self) -> Result<bool, Error> {
+        match self.definition {
+            CallableReturn::Declaration(ReturnDef::Value(TypeExpr::Str | TypeExpr::Slice(_)))
+            | CallableReturn::Constant(TypeExpr::Str | TypeExpr::Slice(_)) => Ok(true),
+            CallableReturn::Declaration(ReturnDef::Value(_)) | CallableReturn::Constant(_) => {
+                Ok(false)
+            }
+            CallableReturn::Declaration(ReturnDef::Void) => Ok(false),
+        }
     }
 
     pub fn value_type(self) -> Result<Cow<'source, TypeExpr>, Error> {

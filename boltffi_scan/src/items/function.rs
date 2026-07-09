@@ -135,6 +135,23 @@ mod tests {
     }
 
     #[test]
+    fn scans_borrowed_string_return_as_string_slice() {
+        let function = scan("pub fn label() -> &'static str { \"up\" }").expect("scan");
+
+        assert_eq!(function.returns, ReturnDef::value(TypeExpr::Str));
+    }
+
+    #[test]
+    fn scans_borrowed_byte_slice_return_as_slice() {
+        let function = scan("pub fn bytes() -> &'static [u8] { b\"up\" }").expect("scan");
+
+        assert_eq!(
+            function.returns,
+            ReturnDef::value(TypeExpr::slice(TypeExpr::Primitive(Primitive::U8)))
+        );
+    }
+
+    #[test]
     fn async_function_records_only_execution_change() {
         let function = scan("pub async fn spin() {}").expect("scan");
 
