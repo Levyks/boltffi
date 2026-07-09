@@ -117,7 +117,8 @@ pub(crate) fn pack_apple(
         .into());
     }
 
-    if options.execution.no_build && config.apple_debug_symbols_enabled() {
+    if config.apple_debug_symbols_enabled() {
+        let step = reporter.step("Validating Apple debug symbols");
         ensure_existing_debug_symbol_artifacts_are_usable(
             &apple_libraries
                 .iter()
@@ -125,6 +126,7 @@ pub(crate) fn pack_apple(
                 .collect::<Vec<_>>(),
             "targets.apple.debug_symbols",
         )?;
+        step.finish_success();
     }
 
     if !headers_dir.exists() {
@@ -149,9 +151,11 @@ pub(crate) fn pack_apple(
         None
     };
 
-    if config.apple_debug_symbols_enabled() {
+    if config.apple_debug_symbols_enabled()
+        && let Some(output_directory) = config.apple_debug_symbols_archive_directory()
+    {
         let step = reporter.step("Bundling Apple debug symbols");
-        write_apple_debug_symbols(config, &apple_libraries)?;
+        write_apple_debug_symbols(config, output_directory, &apple_libraries)?;
         step.finish_success();
     }
 
@@ -365,7 +369,11 @@ fn detect_version() -> Option<String> {
         })
 }
 
-fn write_apple_debug_symbols(config: &Config, libraries: &[BuiltLibrary]) -> Result<()> {
+fn write_apple_debug_symbols(
+    config: &Config,
+    output_directory: &Path,
+    libraries: &[BuiltLibrary],
+) -> Result<()> {
     let archive_name = match config.apple_debug_symbols_format() {
         DebugSymbolsFormat::Zip => format!("{}.xcframework.symbols.zip", config.xcframework_name()),
     };
@@ -395,13 +403,7 @@ fn write_apple_debug_symbols(config: &Config, libraries: &[BuiltLibrary]) -> Res
         })
         .collect::<Vec<_>>();
 
-    write_debug_symbols_zip(
-        &config.apple_debug_symbols_output(),
-        &archive_name,
-        "apple",
-        bundle,
-        &artifacts,
-    )?;
+    write_debug_symbols_zip(output_directory, &archive_name, "apple", bundle, &artifacts)?;
 
     Ok(())
 }

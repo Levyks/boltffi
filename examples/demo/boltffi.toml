@@ -8,6 +8,9 @@ include_macos = true
 [targets.apple.xcframework]
 output = "../platforms/apple/ffi/Demo.xcframework"
 
+[targets.apple.debug_symbols]
+enabled = true
+
 [targets.apple.spm]
 output = "../platforms/apple/ffi"
 layout = "split"

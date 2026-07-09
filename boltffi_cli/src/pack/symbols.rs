@@ -398,7 +398,7 @@ pub(crate) fn ensure_existing_debug_symbol_artifacts_are_usable(
         if !artifact_has_debug_info_and_symbols(artifact_path)? {
             return Err(CliError::CommandFailed {
                 command: format!(
-                    "{config_path}.enabled requires existing unstripped artifacts with embedded debuginfo for --no-build packaging; '{}' is missing debug info or symbols",
+                    "{config_path}.enabled requires unstripped artifacts with embedded debuginfo; '{}' is missing debug info or symbols",
                     artifact_path.display()
                 ),
                 status: None,
