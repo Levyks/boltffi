@@ -2,9 +2,9 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
-use boltffi_bindgen::render::kmp::{
-    KMP_GENERATED_C_HEADER_DIR, KMP_SELECTED_PLATFORMS, KMP_SUPPORT_REPORT_SCHEMA_VERSION,
-    KmpSupportPolicy, KmpSupportReport,
+use boltffi_backend::target::kmp::{
+    KMP_GENERATED_C_HEADER_DIR, KMP_SUPPORT_REPORT_SCHEMA_VERSION, KmpPlatform, KmpSupportMetadata,
+    KmpSupportMode,
 };
 use boltffi_bindgen::target::Target;
 
@@ -156,7 +156,7 @@ fn verify_kmp_support_metadata(config: &Config, layout: &layout::KmpPackageLayou
             }
         }
     })?;
-    let report = serde_json::from_str::<KmpSupportReport>(&contents).map_err(|source| {
+    let report = serde_json::from_str::<KmpSupportMetadata>(&contents).map_err(|source| {
         CliError::CommandFailed {
             command: format!("read {}: {source}", path.display()),
             status: None,
@@ -166,7 +166,7 @@ fn verify_kmp_support_metadata(config: &Config, layout: &layout::KmpPackageLayou
     validate_kmp_support_report(config, &report)
 }
 
-fn validate_kmp_support_report(config: &Config, report: &KmpSupportReport) -> Result<()> {
+fn validate_kmp_support_report(config: &Config, report: &KmpSupportMetadata) -> Result<()> {
     if report.schema_version != KMP_SUPPORT_REPORT_SCHEMA_VERSION {
         return Err(kmp_support_metadata_error(format!(
             "expected schema_version {}, found {}",
@@ -182,9 +182,9 @@ fn validate_kmp_support_report(config: &Config, report: &KmpSupportReport) -> Re
         )));
     }
 
-    let expected_platforms = KMP_SELECTED_PLATFORMS
+    let expected_platforms = KmpPlatform::default_selected()
         .iter()
-        .map(|platform| (*platform).to_string())
+        .map(|platform| platform.label().to_string())
         .collect::<Vec<_>>();
     if report.selected_platforms != expected_platforms {
         return Err(kmp_support_metadata_error(format!(
@@ -217,7 +217,7 @@ fn validate_kmp_support_report(config: &Config, report: &KmpSupportReport) -> Re
         )));
     }
 
-    if report.mode == KmpSupportPolicy::Strict && !report.rejected_apis.is_empty() {
+    if report.mode == KmpSupportMode::Strict && !report.rejected_apis.is_empty() {
         return Err(kmp_support_metadata_error(
             "strict support report contains rejected APIs".to_string(),
         ));
@@ -226,11 +226,11 @@ fn validate_kmp_support_report(config: &Config, report: &KmpSupportReport) -> Re
     Ok(())
 }
 
-fn kmp_support_policy(config: &Config) -> KmpSupportPolicy {
+fn kmp_support_policy(config: &Config) -> KmpSupportMode {
     if config.kotlin_multiplatform_preview_prune_unsupported() {
-        KmpSupportPolicy::PreviewPruneUnsupported
+        KmpSupportMode::PreviewPruneUnsupported
     } else {
-        KmpSupportPolicy::Strict
+        KmpSupportMode::Strict
     }
 }
 
@@ -545,9 +545,9 @@ mod tests {
     };
     use crate::cli::CliError;
     use crate::config::Config;
-    use boltffi_bindgen::render::kmp::{
-        KMP_SELECTED_PLATFORMS, KMP_SUPPORT_REPORT_SCHEMA_VERSION, KmpSupportApi, KmpSupportPolicy,
-        KmpSupportReport,
+    use boltffi_backend::target::kmp::{
+        KMP_SUPPORT_REPORT_SCHEMA_VERSION, KmpPlatform, KmpSupportApiMetadata, KmpSupportMetadata,
+        KmpSupportMode,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -926,18 +926,18 @@ output = "{}"
         fs::remove_dir_all(output_directory).expect("cleanup temp output");
     }
 
-    fn support_report(config: &Config, mode: KmpSupportPolicy) -> KmpSupportReport {
-        KmpSupportReport {
+    fn support_report(config: &Config, mode: KmpSupportMode) -> KmpSupportMetadata {
+        KmpSupportMetadata {
             schema_version: KMP_SUPPORT_REPORT_SCHEMA_VERSION,
             mode,
-            selected_platforms: KMP_SELECTED_PLATFORMS
+            selected_platforms: KmpPlatform::default_selected()
                 .iter()
-                .map(|platform| (*platform).to_string())
+                .map(|platform| platform.label().to_string())
                 .collect(),
             package_name: config.kotlin_multiplatform_package(),
             module_name: config.kotlin_multiplatform_module_name(),
             min_sdk: config.android_min_sdk(),
-            admitted_apis: vec![KmpSupportApi {
+            admitted_apis: vec![KmpSupportApiMetadata {
                 kind: "function".to_string(),
                 name: "ping".to_string(),
                 reason: None,
@@ -1094,7 +1094,7 @@ package = "com.example.demo"
 module_name = "Demo"
 "#,
         );
-        let report = support_report(&config, KmpSupportPolicy::Strict);
+        let report = support_report(&config, KmpSupportMode::Strict);
 
         validate_kmp_support_report(&config, &report).expect("strict report should match config");
     }
@@ -1116,8 +1116,8 @@ module_name = "Demo"
 preview_prune_unsupported = true
 "#,
         );
-        let mut report = support_report(&config, KmpSupportPolicy::PreviewPruneUnsupported);
-        report.rejected_apis.push(KmpSupportApi {
+        let mut report = support_report(&config, KmpSupportMode::PreviewPruneUnsupported);
+        report.rejected_apis.push(KmpSupportApiMetadata {
             kind: "class".to_string(),
             name: "Service".to_string(),
             reason: Some("class APIs are not supported".to_string()),
@@ -1142,7 +1142,7 @@ package = "com.example.demo"
 module_name = "Demo"
 "#,
         );
-        let report = support_report(&config, KmpSupportPolicy::PreviewPruneUnsupported);
+        let report = support_report(&config, KmpSupportMode::PreviewPruneUnsupported);
 
         let error = validate_kmp_support_report(&config, &report)
             .expect_err("preview report should not package under strict config");

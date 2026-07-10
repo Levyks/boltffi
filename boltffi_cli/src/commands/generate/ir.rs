@@ -23,7 +23,18 @@ use crate::config::{
     targets::kotlin::{KotlinApiStyle, KotlinDesktopLoader},
 };
 
-use super::{GenerateOptions, GenerateTarget, languages::remove_stale_kmp_generated_paths};
+use super::{GenerateOptions, GenerateTarget};
+
+const KMP_MANAGED_GENERATED_PATHS: &[&str] = &[
+    "settings.gradle.kts",
+    "build.gradle.kts",
+    KMP_SUPPORT_REPORT_FILE,
+    "src/commonMain/kotlin",
+    "src/jvmMain/kotlin",
+    "src/androidMain/kotlin",
+    "src/jvmMain/c",
+    "src/androidMain/c",
+];
 
 pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<()> {
     match &options.target {
@@ -416,6 +427,29 @@ impl SelectedCrate {
             artifact_name: library_target.name.clone(),
             cargo_args: cargo.probe_command_arguments(),
         })
+    }
+}
+
+fn remove_stale_kmp_generated_paths(output_directory: &Path) -> Result<()> {
+    KMP_MANAGED_GENERATED_PATHS
+        .iter()
+        .map(|relative_path| output_directory.join(relative_path))
+        .try_for_each(remove_stale_generated_path)
+}
+
+fn remove_stale_generated_path(path: PathBuf) -> Result<()> {
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(CliError::ReadFailed { path, source });
+        }
+    };
+
+    if metadata.is_dir() {
+        fs::remove_dir_all(&path).map_err(|source| CliError::WriteFailed { path, source })
+    } else {
+        fs::remove_file(&path).map_err(|source| CliError::WriteFailed { path, source })
     }
 }
 

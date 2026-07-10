@@ -17,9 +17,10 @@ mod gradle;
 mod jvm;
 mod output;
 
-pub use output::{KMP_SUPPORT_REPORT_FILE, KMP_SUPPORT_REPORT_SCHEMA_VERSION};
-
-use output::KmpSupportMetadata;
+pub use output::{
+    KMP_GENERATED_C_HEADER_DIR, KMP_SUPPORT_REPORT_FILE, KMP_SUPPORT_REPORT_SCHEMA_VERSION,
+    KmpSupportApiMetadata, KmpSupportMetadata,
+};
 
 /// Options that affect KMP output files but not support admission.
 #[derive(Clone, Debug, Eq, PartialEq)]

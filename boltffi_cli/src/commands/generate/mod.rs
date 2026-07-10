@@ -237,11 +237,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use boltffi_bindgen::render::kmp::{
-        KMP_SUPPORT_REPORT_FILE, KmpSupportPolicy, KmpSupportReport,
+    use boltffi_backend::target::kmp::{
+        KMP_SUPPORT_REPORT_FILE, KmpSupportMetadata, KmpSupportMode,
     };
 
-    use super::languages::KMPGenerator;
     use crate::config::Config;
 
     fn parse_config(input: &str) -> Config {
@@ -261,6 +260,10 @@ mod tests {
 
     fn demo_source_directory() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/demo")
+    }
+
+    fn demo_manifest_path() -> PathBuf {
+        demo_source_directory().join("Cargo.toml")
     }
 
     #[test]
@@ -367,12 +370,18 @@ Email = { type = "java.net.URI", conversion = "url_string" }
 "#,
         );
 
-        KMPGenerator::generate_from_source_directory_with_desktop_fallback_library_name(
+        super::run_generate_with_output(
             &config,
-            Some(output_directory.clone()),
-            &demo_source_directory(),
-            "demo",
-            None,
+            super::GenerateOptions {
+                target: super::GenerateTarget::KotlinMultiplatform,
+                output: Some(output_directory.clone()),
+                experimental: false,
+                ir: false,
+                cargo_args: vec![
+                    "--manifest-path".to_string(),
+                    demo_manifest_path().display().to_string(),
+                ],
+            },
         )
         .expect("kotlin multiplatform generate should succeed");
 
@@ -400,54 +409,23 @@ Email = { type = "java.net.URI", conversion = "url_string" }
             fs::read_to_string(&build_gradle_path).expect("gradle file should be readable");
         let settings_gradle =
             fs::read_to_string(&settings_gradle_path).expect("settings file should be readable");
-        let support_report: KmpSupportReport = serde_json::from_str(
+        let support_report: KmpSupportMetadata = serde_json::from_str(
             &fs::read_to_string(&support_report_path).expect("support report should be readable"),
         )
         .expect("support report should be valid JSON");
 
         assert!(common.contains("package com.boltffi.demo"));
-        assert!(common.contains("typealias Email = String"));
-        assert!(common.contains(
-            "class FfiException(val code: kotlin.Int, message: kotlin.String) : kotlin.Exception(message)"
-        ));
-        assert!(common.contains("sealed class BoltFFIResult<out T, out E>"));
-        assert!(common.contains("data class Point("));
-        assert!(common.contains("sealed class MathError : kotlin.Exception()"));
-        assert!(common.contains("data class AppError("));
-        assert!(common.contains("sealed class ComputeError : kotlin.Exception()"));
-        assert!(common.contains("data class Triangle(val a: com.boltffi.demo.Point"));
-        assert!(common.contains("data class BenchmarkResponse("));
-        assert!(common.contains("val result: BoltFFIResult<DataPoint, ComputeError>"));
-        assert!(common.contains("enum class LogLevel(val value: Byte)"));
-        assert!(common.contains("expect fun echoBytes"));
-        assert!(common.contains("expect fun checkedDivide(a: Int, b: Int): Int"));
-        assert!(
-            common.contains("expect fun resultToString(v: BoltFFIResult<Int, String>): String")
-        );
         assert!(!common.contains("Unsupported in the initial KMP generator slice"));
-        assert_eq!(
-            support_report.mode,
-            KmpSupportPolicy::PreviewPruneUnsupported
-        );
+        assert_eq!(support_report.mode, KmpSupportMode::PreviewPruneUnsupported);
+        assert_eq!(support_report.selected_platforms, vec!["jvm", "android"]);
         assert!(!support_report.rejected_apis.is_empty());
-        assert!(jvm_actual.contains("actual fun echoBytes"));
-        assert!(jvm_actual.contains("actual fun checkedDivide(a: Int, b: Int): Int"));
-        assert!(jvm_actual.contains("catch (err: com.boltffi.demo.jvm.MathError)"));
-        assert!(jvm_actual.contains("catch (err: com.boltffi.demo.jvm.FfiException)"));
-        assert!(jvm_actual.contains("private fun MathError.toBoltFfiJvm()"));
-        assert!(
-            jvm_actual.contains("private fun com.boltffi.demo.jvm.MathError.toBoltFfiCommon()")
-        );
-        assert!(jvm_actual.contains("com.boltffi.demo.jvm.echoBytes"));
-        assert!(jvm_actual.contains("toBoltFfiJvm"));
+        assert!(jvm_actual.contains("package com.boltffi.demo"));
         assert_eq!(jvm_actual, android_actual);
         assert!(jvm_internal.contains("package com.boltffi.demo.jvm"));
-        assert!(jvm_internal.contains("typealias Email = String"));
-        assert!(jvm_internal.contains("@JvmStatic external fun"));
-        assert!(jni_glue.contains("JNIEXPORT"));
+        assert!(jvm_internal.contains("private object Native"));
+        assert!(jni_glue.contains("#include <boltffi_generated/demo.h>"));
         assert!(build_gradle.contains("kotlin(\"multiplatform\")"));
         assert!(build_gradle.contains("kotlin(\"multiplatform\") version \"2.3.21\""));
-        assert!(build_gradle.contains("kotlinx-coroutines-core:1.11.0"));
         assert!(build_gradle.contains("import org.jetbrains.kotlin.gradle.dsl.JvmTarget"));
         assert!(build_gradle.contains("jvmTarget.set(JvmTarget.JVM_1_8)"));
         assert!(build_gradle.contains("androidTarget {"));
@@ -480,69 +458,29 @@ package = "com.boltffi.demo"
 "#,
         );
 
-        let error =
-            KMPGenerator::generate_from_source_directory_with_desktop_fallback_library_name(
-                &config,
-                Some(output_directory.clone()),
-                &demo_source_directory(),
-                "demo",
-                None,
-            )
-            .expect_err("strict KMP generation should reject unsupported demo APIs");
+        let error = super::run_generate_with_output(
+            &config,
+            super::GenerateOptions {
+                target: super::GenerateTarget::KotlinMultiplatform,
+                output: Some(output_directory.clone()),
+                experimental: false,
+                ir: false,
+                cargo_args: vec![
+                    "--manifest-path".to_string(),
+                    demo_manifest_path().display().to_string(),
+                ],
+            },
+        )
+        .expect_err("strict KMP generation should reject unsupported demo APIs");
 
         assert!(
             matches!(error, crate::cli::CliError::CommandFailed { command, status: None }
-                if command.contains("unsupported KMP APIs in strict mode"))
+                if command.contains("generate kmp: render bindings")
+                    && command.contains("did not render every declaration"))
         );
 
         if output_directory.exists() {
             fs::remove_dir_all(output_directory).expect("cleanup generated output");
         }
-    }
-
-    #[test]
-    fn kotlin_multiplatform_generate_uses_configured_native_load_name() {
-        let output_directory = unique_temp_dir("boltffi-kmp-generate-load-name-test");
-        let config = parse_config(
-            r#"
-experimental = ["kotlin_multiplatform"]
-
-[package]
-name = "my-lib"
-version = "0.1.0"
-
-[targets.android.kotlin]
-library_name = "configured-library"
-
-[targets.kotlin_multiplatform]
-enabled = true
-package = "com.boltffi.demo"
-module_name = "Demo"
-preview_prune_unsupported = true
-"#,
-        );
-
-        KMPGenerator::generate_from_source_directory_with_desktop_fallback_library_name(
-            &config,
-            Some(output_directory.clone()),
-            &demo_source_directory(),
-            "my-lib",
-            None,
-        )
-        .expect("kotlin multiplatform generate should succeed");
-
-        let jvm_internal_path =
-            output_directory.join("src/jvmMain/kotlin/com/boltffi/demo/jvm/Demo.kt");
-        let jni_glue_path = output_directory.join("src/jvmMain/c/jni_glue.c");
-        let jvm_internal =
-            fs::read_to_string(&jvm_internal_path).expect("jvm source should be readable");
-        let jni_glue = fs::read_to_string(&jni_glue_path).expect("jni glue should be readable");
-
-        assert!(jvm_internal.contains("val androidLibrary = \"configured-library\""));
-        assert!(jvm_internal.contains("val desktopPreferredLibrary = \"configured_library_jni\""));
-        assert!(jvm_internal.contains("val desktopFallbackLibrary = \"my_lib\""));
-        assert!(jni_glue.contains("#include <boltffi_generated/my-lib.h>"));
-
-        fs::remove_dir_all(output_directory).expect("cleanup generated output");
     }
 }

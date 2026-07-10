@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use boltffi_backend::target::kmp::lower::lower_native_function_plan;
 use boltffi_backend::target::kmp::{
-    KmpFunctionPlan, KmpJvmDelegateFunction, KmpJvmDelegateOutput, KmpTypePlan,
+    KMP_GENERATED_C_HEADER_DIR, KmpFunctionPlan, KmpJvmDelegateFunction, KmpJvmDelegateOutput,
+    KmpTypePlan,
 };
 use boltffi_binding::{
     Bindings, CanonicalName as BindingName, Decl, DirectValueType, ErrorChannel, ExecutionDecl,
@@ -16,10 +17,6 @@ use crate::ir::definitions::{FunctionDef, ParamDef, ParamPassing, ReturnDef};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::ir::{FfiContract, Lowerer, PackageInfo, TypeCatalog};
 use crate::render::jni::{JniEmitter, JniFunction, JniLowerer, JniModule, JvmBindingStyle};
-use crate::render::kmp::{
-    KmpSurfaceSupport, filter_abi_for_kmp_surface, filter_contract_for_kmp_surface,
-    kmp_generated_c_header_include,
-};
 use crate::render::kotlin::{
     KotlinEmitter, KotlinFunction, KotlinLowerer, KotlinModule, KotlinOptions,
 };
@@ -75,9 +72,8 @@ impl KmpJvmDelegateAdapter {
         delegate_entries_by_legacy_symbol: &HashMap<String, KmpFunctionPlan>,
     ) -> Result<KmpJvmDelegateOutput, KmpJvmDelegateAdapterError> {
         let internal_package = format!("{}.jvm", self.package_name);
-        let support = KmpSurfaceSupport::for_contract(contract);
-        let internal_contract = filter_contract_for_kmp_delegate_surface(contract, &support);
-        let internal_abi = filter_abi_for_kmp_surface(&internal_contract, abi, &support);
+        let internal_contract = filter_contract_for_kmp_delegate_surface(contract);
+        let internal_abi = filter_abi_for_kmp_delegate_surface(&internal_contract, abi);
 
         let kotlin_module = KotlinLowerer::new(
             &internal_contract,
@@ -115,6 +111,10 @@ impl KmpJvmDelegateAdapter {
                 .with_shared_jni_source(shared_jni_source),
         )
     }
+}
+
+fn kmp_generated_c_header_include(module_name: &str) -> String {
+    format!("{KMP_GENERATED_C_HEADER_DIR}/{module_name}.h")
 }
 
 fn delegate_functions(
@@ -356,15 +356,49 @@ fn legacy_primitive(primitive: BackendPrimitive) -> Option<PrimitiveType> {
     }
 }
 
-fn filter_contract_for_kmp_delegate_surface(
-    contract: &FfiContract,
-    support: &KmpSurfaceSupport,
-) -> FfiContract {
-    let mut contract = filter_contract_for_kmp_surface(contract, support);
-    contract
+fn filter_contract_for_kmp_delegate_surface(contract: &FfiContract) -> FfiContract {
+    FfiContract {
+        package: contract.package.clone(),
+        catalog: TypeCatalog::new(),
+        functions: contract
+            .functions
+            .iter()
+            .filter(|function| kmp_function_signature(function).is_some())
+            .cloned()
+            .collect(),
+    }
+}
+
+fn filter_abi_for_kmp_delegate_surface(contract: &FfiContract, abi: &AbiContract) -> AbiContract {
+    let supported_function_ids = contract
         .functions
-        .retain(|function| kmp_function_signature(function).is_some());
-    contract
+        .iter()
+        .map(|function| function.id.as_str().to_string())
+        .collect::<HashSet<_>>();
+
+    AbiContract {
+        package: abi.package.clone(),
+        calls: abi
+            .calls
+            .iter()
+            .filter(|call| match &call.id {
+                CallId::Function(id) => supported_function_ids.contains(id.as_str()),
+                CallId::Method { .. }
+                | CallId::Constructor { .. }
+                | CallId::RecordMethod { .. }
+                | CallId::RecordConstructor { .. }
+                | CallId::EnumMethod { .. }
+                | CallId::EnumConstructor { .. } => false,
+            })
+            .cloned()
+            .collect(),
+        callbacks: Vec::new(),
+        streams: Vec::new(),
+        records: Vec::new(),
+        enums: Vec::new(),
+        free_buf: abi.free_buf.clone(),
+        atomic_cas: abi.atomic_cas.clone(),
+    }
 }
 
 fn function_defs_by_symbol<'contract>(

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use boltffi_bindgen::render::kmp::KMP_SUPPORT_REPORT_FILE;
+use boltffi_backend::target::kmp::KMP_SUPPORT_REPORT_FILE;
 
 use crate::config::Config;
 use crate::pack::android::AndroidPackageLayout;

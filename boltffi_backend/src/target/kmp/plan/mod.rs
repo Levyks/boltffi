@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use boltffi_binding::Primitive;
+use serde::{Deserialize, Serialize};
 
 /// Feature required by one generated KMP API.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -109,7 +110,7 @@ pub enum KmpPlatform {
 }
 
 impl KmpPlatform {
-    /// Returns the production platforms currently owned by the legacy KMP path.
+    /// Returns the production platforms currently owned by the IR KMP path.
     pub fn default_selected() -> Vec<Self> {
         vec![Self::Jvm, Self::Android]
     }
@@ -142,8 +143,9 @@ impl KmpPlatform {
 }
 
 /// Effective support mode used while planning the KMP module.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[non_exhaustive]
+#[serde(rename_all = "snake_case")]
 pub enum KmpSupportMode {
     /// Unsupported APIs fail planning.
     #[default]

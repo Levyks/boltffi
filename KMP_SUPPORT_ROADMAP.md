@@ -74,6 +74,7 @@ M2 has started:
 - M2d added a production-generation smoke that validates the strict primitive-sync KMP module shape across common, JVM actual, Android actual, internal Kotlin/JNI, Gradle, and support metadata.
 - M2e isolated generated KMP C headers under `boltffi_generated/`, made KMP pack validate JVM/Android glue against that generated-header contract, and removed stale root headers that could shadow regenerated headers.
 - M2f added an opt-in Gradle smoke that writes the IR-generated primitive-sync KMP module and runs configured Gradle tasks when explicitly enabled.
+- M2g deleted the legacy non-IR KMP generator path; production `generate kmp` now routes through IR, KMP pack validates backend-owned support metadata, and `render/kmp` only retains the JVM-family delegate adapter.
 - Unsupported KMP surfaces remain strict and fail-closed unless explicit preview pruning is enabled.
 
 ## Target Architecture
@@ -354,29 +355,29 @@ Verification:
 
 Goal: make IR generation the only production KMP JVM/Android path before starting Apple support.
 
-Planned:
+Completed:
 
-- Remove the legacy CLI generator path in `boltffi_cli/src/commands/generate/languages/kmp.rs` and any remaining production dispatch that can call `KMPEmitter::emit` for KMP generation.
-- Keep `boltffi generate kmp --experimental` routed through `commands::generate::ir` and `Generation::render(Target::KotlinMultiplatform)`.
-- Move or delete any remaining tests that depend on `KMPEmitter::emit`; retain only migrated helper tests with clear ownership in the new backend, delegate adapter, or packaging modules.
-- Extract any still-useful helper snippets from `boltffi_bindgen/src/render/kmp/mod.rs` into owner-correct modules, then delete the monolithic emitter surface instead of leaving it as a fallback.
-- Add route-level regressions proving KMP generation cannot take a non-IR path.
-- Keep the support metadata/report types available from their new owner before deleting old modules that currently export shared constants.
+- Removed the legacy CLI generator path in `boltffi_cli/src/commands/generate/languages/kmp.rs`; stale generated-output cleanup now lives with the IR KMP writer.
+- Kept `boltffi generate kmp --experimental` routed through `commands::generate::ir` and `Generation::render(Target::KotlinMultiplatform)`.
+- Deleted tests that depended on `KMPEmitter::emit` and retained route-level, backend, delegate-adapter, and packaging tests under their current owners.
+- Deleted the monolithic `boltffi_bindgen/src/render/kmp/mod.rs` renderer body; `render/kmp` now only exposes the JVM-family delegate adapter.
+- Moved generated support metadata parsing and the generated-header directory constant to `boltffi_backend::target::kmp`.
+- KMP pack now validates backend-owned support metadata instead of importing legacy bindgen KMP report structs.
 
 Exit criteria:
 
-- `KMPEmitter::emit` is not reachable from production code.
-- The legacy `KMPGenerator` path is deleted or reduced to no production behavior.
+- `KMPEmitter::emit` is gone from the source tree.
+- The legacy `KMPGenerator` path is deleted.
 - `boltffi generate kmp --experimental` and `pack kmp` still work for the currently admitted JVM/Android surface through the IR path.
 - No KMP-specific duplicate JNI implementation remains outside the delegate adapter.
 
 Verification:
 
 - Generated KMP project still matches the M2d/M2f smoke expectations.
-- `rg "KMPEmitter::emit|KMPGenerator|commands/generate/languages/kmp" boltffi_bindgen/src boltffi_cli/src` finds no production KMP generation path.
+- `rg "KMPEmitter|KMPGenerator|commands/generate/languages/kmp|KmpSupportPolicy|boltffi_bindgen::render::kmp" boltffi_bindgen/src boltffi_cli/src` finds no legacy production KMP generation path.
 - `rg "boltffiNativeRuntimeNotImplemented|NotImplementedError|NativeRuntimeNotImplemented" boltffi_bindgen/src/render/kmp boltffi_backend/src/target/kmp` confirms no legacy fallback runtime path remains.
 
-Remaining M2 work after M2f:
+Remaining M2 work after M2g:
 
 - Extend admitted JVM/Android coverage beyond infallible primitive sync functions through explicit common-to-JVM conversion plans.
 - Preserve the shared Kotlin `Native` runtime inside the owner object that declares external methods as more API shapes are admitted.
@@ -385,7 +386,6 @@ Remaining M2 work after M2f:
 - Wire the M2f environment-gated Gradle compile/assemble smoke into CI once Android-capable Gradle workers are provisioned.
 - Keep Android `jniLibs` packaging through the existing Android packager.
 - Keep JVM native resources through the existing JVM packager.
-- Delete the old monolithic `KMPEmitter` production flow through M2g before starting Apple support.
 - Keep JVM/Android packaging on the new `pack/kmp/*` orchestration while production parity moves over.
 - Retain only migrated helpers, snippets, and tests with clear ownership in the new modules.
 
@@ -563,8 +563,8 @@ Verification:
 5. Done: connect `boltffi_bindgen` Kotlin/JNI lowerers to the KMP JVM delegate seam.
 6. Done: prove current JVM/Android primitive-sync KMP shape and generated-header isolation.
 7. Done: add an environment-gated Gradle compile smoke for the current admitted JVM/Android surface.
-8. Next: delete the legacy non-IR KMP JVM/Android production path.
-9. Add Apple target/layout planning and static library staging.
+8. Done: delete the legacy non-IR KMP JVM/Android production path.
+9. Next: add Apple target/layout planning and static library staging.
 10. Add Apple sync value actuals.
 11. Add Apple classes/handles.
 12. Add callbacks.

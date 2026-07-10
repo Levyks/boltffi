@@ -14,7 +14,10 @@ pub mod plan;
 mod syntax;
 
 pub use bridge::{KmpBridge, KmpBridgeContract};
-pub use emit::{KMP_SUPPORT_REPORT_FILE, KmpEmissionOptions, KmpEmitter};
+pub use emit::{
+    KMP_GENERATED_C_HEADER_DIR, KMP_SUPPORT_REPORT_FILE, KMP_SUPPORT_REPORT_SCHEMA_VERSION,
+    KmpEmissionOptions, KmpEmitter, KmpSupportApiMetadata, KmpSupportMetadata,
+};
 pub use host::{DEFAULT_KMP_MODULE_NAME, DEFAULT_KMP_PACKAGE_NAME, KmpHost};
 pub use lower::{KmpLowerError, KmpLowerer, KmpLoweringOptions};
 pub use plan::{
