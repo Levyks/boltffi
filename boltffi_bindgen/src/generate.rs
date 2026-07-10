@@ -583,7 +583,11 @@ fn write_file(path: &Path, contents: &str) -> Result<(), GenerationError> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use boltffi_ast::{
         CanonicalName as SourceCanonicalName, FunctionDef as SourceFunctionDef,
@@ -653,6 +657,15 @@ mod tests {
             .iter()
             .map(|file| file.path().as_path().display().to_string())
             .collect()
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("{prefix}-{unique_suffix}"))
     }
 
     fn render_primitive_kmp_output() -> GeneratedOutput {
@@ -827,6 +840,138 @@ mod tests {
             serde_json::json!([{ "kind": "function", "name": "add" }])
         );
         assert_eq!(report["rejected_apis"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn kmp_generation_gradle_smoke_compiles_current_project_when_enabled() {
+        if !kmp_gradle_smoke_enabled() {
+            return;
+        }
+
+        let gradle = kmp_gradle_command();
+        let tasks = kmp_gradle_smoke_tasks();
+        let output_directory = unique_temp_dir("boltffi-kmp-gradle-smoke");
+        let output = render_primitive_kmp_output();
+        Generation::write_output(output, &output_directory)
+            .expect("generated KMP Gradle project should be written");
+
+        let result = Command::new(&gradle)
+            .current_dir(&output_directory)
+            .args(["--no-daemon", "--stacktrace"])
+            .args(&tasks)
+            .output()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to run Gradle command `{}` for KMP smoke in `{}`: {error}\n\
+                     note: this smoke compiles a generated KMP module that configures androidTarget, \
+                     so opt-in runs require Gradle plus Android SDK/tooling",
+                    gradle.to_string_lossy(),
+                    output_directory.display()
+                )
+            });
+
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+
+        assert!(
+            result.status.success(),
+            "KMP Gradle smoke failed with status {:?}\n\
+             generated project retained at: {}\n\
+             note: this smoke compiles a generated KMP module that configures androidTarget, \
+             so opt-in runs require Gradle plus Android SDK/tooling\n\
+             stdout:\n{}\nstderr:\n{}",
+            result.status.code(),
+            output_directory.display(),
+            stdout,
+            stderr
+        );
+
+        fs::remove_dir_all(output_directory).expect("cleanup generated KMP Gradle smoke project");
+    }
+
+    fn kmp_gradle_command() -> OsString {
+        std::env::var_os("BOLTFFI_KMP_GRADLE")
+            .map(resolve_kmp_gradle_command)
+            .unwrap_or_else(|| OsString::from("gradle"))
+    }
+
+    fn resolve_kmp_gradle_command(command: OsString) -> OsString {
+        let path = PathBuf::from(command.clone());
+        if path.is_relative() && path.components().count() > 1 {
+            return workspace_root().join(path).into_os_string();
+        }
+
+        command
+    }
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("boltffi_bindgen should be a workspace member")
+            .to_path_buf()
+    }
+
+    fn kmp_gradle_smoke_enabled() -> bool {
+        match std::env::var("BOLTFFI_KMP_GRADLE_SMOKE") {
+            Ok(value)
+                if matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                ) =>
+            {
+                true
+            }
+            Ok(value)
+                if matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                ) =>
+            {
+                false
+            }
+            Ok(value) => panic!(
+                "BOLTFFI_KMP_GRADLE_SMOKE must be one of 1/true/yes/on or 0/false/no/off, got `{value}`"
+            ),
+            Err(_) => false,
+        }
+    }
+
+    fn kmp_gradle_smoke_tasks() -> Vec<String> {
+        let tasks = std::env::var("BOLTFFI_KMP_GRADLE_TASKS")
+            .unwrap_or_else(|_| "compileKotlinJvm".to_string());
+        parse_kmp_gradle_smoke_tasks(&tasks)
+    }
+
+    fn parse_kmp_gradle_smoke_tasks(tasks: &str) -> Vec<String> {
+        let tasks = tasks
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert!(
+            !tasks.is_empty(),
+            "BOLTFFI_KMP_GRADLE_TASKS must contain at least one Gradle task"
+        );
+        tasks
+    }
+
+    #[test]
+    fn kmp_gradle_command_resolves_repository_relative_path_overrides() {
+        assert_eq!(
+            PathBuf::from(resolve_kmp_gradle_command(OsString::from(
+                "tools/gradle/bin/gradle"
+            ))),
+            workspace_root().join("tools/gradle/bin/gradle")
+        );
+        assert_eq!(
+            resolve_kmp_gradle_command(OsString::from("gradle")),
+            OsString::from("gradle")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "BOLTFFI_KMP_GRADLE_TASKS must contain at least one Gradle task")]
+    fn kmp_gradle_smoke_tasks_rejects_empty_task_override() {
+        parse_kmp_gradle_smoke_tasks(" \t\n ");
     }
 
     #[test]

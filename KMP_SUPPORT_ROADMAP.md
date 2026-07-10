@@ -73,6 +73,7 @@ M2 has started:
 - M2c let the delegate supply trusted generated internal Kotlin function bodies, so JVM/Android emission now reuses the mature Kotlin/JNI function renderer for the currently admitted surface.
 - M2d added a production-generation smoke that validates the strict primitive-sync KMP module shape across common, JVM actual, Android actual, internal Kotlin/JNI, Gradle, and support metadata.
 - M2e isolated generated KMP C headers under `boltffi_generated/`, made KMP pack validate JVM/Android glue against that generated-header contract, and removed stale root headers that could shadow regenerated headers.
+- M2f added an opt-in Gradle smoke that writes the IR-generated primitive-sync KMP module and runs configured Gradle tasks when explicitly enabled.
 - Unsupported KMP surfaces remain strict and fail-closed unless explicit preview pruning is enabled.
 
 ## Target Architecture
@@ -327,18 +328,27 @@ Verification:
 
 Goal: prove the current admitted JVM/Android KMP project compiles through Gradle before widening API coverage or deleting more legacy code.
 
-Planned:
+Completed:
 
-- Generate the strict primitive-sync KMP smoke project through the IR path.
-- Add an opt-in/env-gated Gradle check so default Rust tests do not depend on local Gradle, Android SDK, or plugin downloads.
-- Validate at least JVM compilation for the generated module and Android assemble/source-set wiring when the Android toolchain is available.
-- Keep the smoke focused on the currently admitted surface; do not use this slice to admit strings, records, callbacks, classes, or Apple targets.
+- Added `kmp_generation_gradle_smoke_compiles_current_project_when_enabled`.
+- The test is skipped by default and runs only when `BOLTFFI_KMP_GRADLE_SMOKE=1` or another true value is set.
+- The smoke writes the strict primitive-sync KMP module generated through the IR path to a temporary Gradle project.
+- The default Gradle task is `compileKotlinJvm`.
+- The generated KMP project configures `androidTarget`, so opt-in runs require Gradle plus Android SDK/tooling even when the default task is JVM-only.
+- `BOLTFFI_KMP_GRADLE` can override the Gradle executable with a command on `PATH`, an absolute path, or a repository-relative path, and `BOLTFFI_KMP_GRADLE_TASKS` can override or extend the task list for Android-capable environments.
+- The slice does not admit strings, records, callbacks, classes, or Apple targets.
 
 Exit criteria:
 
 - CI/local developers can opt into a real generated-project compile check.
 - The smoke exercises the IR-generated KMP files that pack will consume.
 - Failures point to generation, Gradle configuration, or packaging layout with actionable diagnostics.
+
+Verification:
+
+- Default skipped smoke: `cargo test -p boltffi_bindgen kmp_generation_gradle_smoke_compiles_current_project_when_enabled`
+- Opt-in Gradle smoke: `BOLTFFI_KMP_GRADLE_SMOKE=1 cargo test -p boltffi_bindgen kmp_generation_gradle_smoke_compiles_current_project_when_enabled`
+- Optional custom tasks: `BOLTFFI_KMP_GRADLE_SMOKE=1 BOLTFFI_KMP_GRADLE_TASKS="compileKotlinJvm assemble" cargo test -p boltffi_bindgen kmp_generation_gradle_smoke_compiles_current_project_when_enabled`
 
 #### M2g: Delete Legacy Non-IR KMP JVM/Android Production Path
 
@@ -366,13 +376,13 @@ Verification:
 - `rg "KMPEmitter::emit|KMPGenerator|commands/generate/languages/kmp" boltffi_bindgen/src boltffi_cli/src` finds no production KMP generation path.
 - `rg "boltffiNativeRuntimeNotImplemented|NotImplementedError|NativeRuntimeNotImplemented" boltffi_bindgen/src/render/kmp boltffi_backend/src/target/kmp` confirms no legacy fallback runtime path remains.
 
-Remaining M2 work after M2e:
+Remaining M2 work after M2f:
 
 - Extend admitted JVM/Android coverage beyond infallible primitive sync functions through explicit common-to-JVM conversion plans.
 - Preserve the shared Kotlin `Native` runtime inside the owner object that declares external methods as more API shapes are admitted.
 - Preserve shared JNI C preamble/includes/helpers once per generated translation unit as more API shapes are admitted.
 - Keep delegate functions filtered to the admitted KMP support surface.
-- Add the environment-gated Gradle compile/assemble smoke from M2f once the generated KMP project is ready for CI toolchain provisioning.
+- Wire the M2f environment-gated Gradle compile/assemble smoke into CI once Android-capable Gradle workers are provisioned.
 - Keep Android `jniLibs` packaging through the existing Android packager.
 - Keep JVM native resources through the existing JVM packager.
 - Delete the old monolithic `KMPEmitter` production flow through M2g before starting Apple support.
@@ -552,8 +562,8 @@ Verification:
 4. In progress: rebuild JVM/Android KMP generation and packaging.
 5. Done: connect `boltffi_bindgen` Kotlin/JNI lowerers to the KMP JVM delegate seam.
 6. Done: prove current JVM/Android primitive-sync KMP shape and generated-header isolation.
-7. Next: add an environment-gated Gradle compile/assemble smoke for the current admitted JVM/Android surface.
-8. Delete the legacy non-IR KMP JVM/Android production path.
+7. Done: add an environment-gated Gradle compile smoke for the current admitted JVM/Android surface.
+8. Next: delete the legacy non-IR KMP JVM/Android production path.
 9. Add Apple target/layout planning and static library staging.
 10. Add Apple sync value actuals.
 11. Add Apple classes/handles.
