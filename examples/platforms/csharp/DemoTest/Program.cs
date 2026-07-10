@@ -610,6 +610,13 @@ public static class DemoTest
             ServiceConfig.FromStringRefName("stringref").Describe() == "stringref:3:standard:none:https://default",
             "ServiceConfig.FromStringRefName(string)"
         );
+        DemoCase("case:records.default_values.service_config.from_non_empty_name.should_return_config_for_non_empty_values");
+        ServiceConfig? validatedConfig = ServiceConfig.FromNonEmptyName("optional", "eu-west");
+        Require(validatedConfig?.Name == "optional", "ServiceConfig.FromNonEmptyName name");
+        Require(validatedConfig?.Region == "eu-west", "ServiceConfig.FromNonEmptyName region");
+        DemoCase("case:records.default_values.service_config.from_non_empty_name.should_return_none_for_empty_values");
+        Require(ServiceConfig.FromNonEmptyName("", "eu-west") is null, "ServiceConfig.FromNonEmptyName empty name");
+        Require(ServiceConfig.FromNonEmptyName("optional", "") is null, "ServiceConfig.FromNonEmptyName empty region");
 
         Console.WriteLine("  PASS\n");
     }

@@ -385,6 +385,13 @@ fn swift_target_renders_documented_record_and_enum_methods() {
 }
 
 #[test]
+fn swift_target_allocates_scoped_optional_initializer_locals() {
+    insta::assert_snapshot!(rendered_fixture(
+        "associated/scoped_optional_enum_initializer"
+    ));
+}
+
+#[test]
 fn swift_target_renders_class_handles_and_methods() {
     insta::assert_snapshot!(rendered_fixture("exports/kotlin_class_handles"));
 }

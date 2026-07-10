@@ -591,6 +591,14 @@ public final class DemoTest {
         assert ServiceConfig.fromBorrowedName("borrowed").describe().equals("borrowed:3:standard:none:https://default") : "ServiceConfig.fromBorrowedName";
         demoCase("case:records.default_values.service_config.from_string_ref_name.should_return_config");
         assert ServiceConfig.fromStringRefName("stringref").describe().equals("stringref:3:standard:none:https://default") : "ServiceConfig.fromStringRefName";
+        demoCase("case:records.default_values.service_config.from_non_empty_name.should_return_config_for_non_empty_values");
+        Optional<ServiceConfig> validatedConfig = ServiceConfig.fromNonEmptyName("optional", "eu-west");
+        assert validatedConfig.isPresent() : "ServiceConfig.fromNonEmptyName(optional, eu-west)";
+        assert validatedConfig.get().name().equals("optional") : "ServiceConfig.fromNonEmptyName name";
+        assert validatedConfig.get().region().equals("eu-west") : "ServiceConfig.fromNonEmptyName region";
+        demoCase("case:records.default_values.service_config.from_non_empty_name.should_return_none_for_empty_values");
+        assert !ServiceConfig.fromNonEmptyName("", "eu-west").isPresent() : "ServiceConfig.fromNonEmptyName empty name";
+        assert !ServiceConfig.fromNonEmptyName("optional", "").isPresent() : "ServiceConfig.fromNonEmptyName empty region";
         System.out.println("  PASS\n");
     }
 
