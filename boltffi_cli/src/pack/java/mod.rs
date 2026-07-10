@@ -5,5 +5,5 @@ pub(crate) mod plan;
 
 pub(crate) use self::plan::{
     check_java_packaging_prereqs, ensure_java_no_build_supported, pack_java,
-    prepare_java_packaging, prepare_kmp_jvm_packaging,
+    prepare_android_kotlin_jvm_packaging, prepare_java_packaging, prepare_kmp_jvm_packaging,
 };

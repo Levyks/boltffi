@@ -21,6 +21,14 @@ static inline bool boltffi_consume_pending_exception(JNIEnv* env) {
     return true;
 }
 
+{%- if has_async %}
+static inline void boltffi_describe_pending_load_exception(JNIEnv* env) {
+    if (!boltffi_exception_pending(env)) return;
+    (*env)->ExceptionDescribe(env);
+    (*env)->ExceptionClear(env);
+}
+{%- endif %}
+
 static inline void boltffi_throw_out_of_memory(JNIEnv* env, const char* message) {
     jclass oom_class = (*env)->FindClass(env, "java/lang/OutOfMemoryError");
     if (oom_class == NULL) return;
@@ -340,6 +348,29 @@ static inline bool boltffi_lookup_static_method(
     return false;
 }
 
+{%- if has_async %}
+static inline bool boltffi_lookup_static_method_for_load(
+    JNIEnv* env,
+    jclass cls,
+    const char* class_name,
+    const char* name,
+    const char* signature,
+    jmethodID* out_method
+) {
+    *out_method = (*env)->GetStaticMethodID(env, cls, name, signature);
+    if (*out_method != NULL) return true;
+    fprintf(
+        stderr,
+        "BoltFFI JNI_OnLoad failed: could not resolve static method %s.%s%s\n",
+        class_name,
+        name,
+        signature
+    );
+    boltffi_describe_pending_load_exception(env);
+    return false;
+}
+{%- endif %}
+
 typedef enum {
     BOLTFFI_GLOBAL_CLASS_OK = 0,
     BOLTFFI_GLOBAL_CLASS_MISSING = 1,
@@ -366,6 +397,35 @@ static inline BoltFFIGlobalClassResult boltffi_lookup_global_class(
     *out_class = global_class;
     return BOLTFFI_GLOBAL_CLASS_OK;
 }
+
+{%- if has_async %}
+static inline bool boltffi_lookup_required_global_class(
+    JNIEnv* env,
+    const char* class_name,
+    jclass* out_class
+) {
+    *out_class = NULL;
+    jclass local_class = (*env)->FindClass(env, class_name);
+    if (local_class == NULL) {
+        fprintf(stderr, "BoltFFI JNI_OnLoad failed: could not find JVM class '%s'\n", class_name);
+        boltffi_describe_pending_load_exception(env);
+        return false;
+    }
+    jclass global_class = (*env)->NewGlobalRef(env, local_class);
+    (*env)->DeleteLocalRef(env, local_class);
+    if (global_class == NULL) {
+        fprintf(
+            stderr,
+            "BoltFFI JNI_OnLoad failed: could not create global reference for JVM class '%s'\n",
+            class_name
+        );
+        boltffi_describe_pending_load_exception(env);
+        return false;
+    }
+    *out_class = global_class;
+    return true;
+}
+{%- endif %}
 
 typedef enum {
     BOLTFFI_STATIC_CALL_CACHE_UNINIT = 0,
@@ -592,11 +652,11 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
         return JNI_ERR;
     }
 {%- if has_async_runtime %}
-    if (boltffi_lookup_global_class(env, "{{ package_path }}/Native", &g_callback_class) != BOLTFFI_GLOBAL_CLASS_OK) {
+    if (!boltffi_lookup_required_global_class(env, "{{ package_path }}/Native", &g_callback_class)) {
         g_callback_class = NULL;
         return JNI_ERR;
     }
-    if (!boltffi_lookup_static_method(env, g_callback_class, "boltffiFutureContinuationCallback", "(JB)V", &g_callback_method)) {
+    if (!boltffi_lookup_static_method_for_load(env, g_callback_class, "{{ package_path }}/Native", "boltffiFutureContinuationCallback", "(JB)V", &g_callback_method)) {
         (*env)->DeleteGlobalRef(env, g_callback_class);
         g_callback_class = NULL;
         g_callback_method = NULL;
@@ -1613,17 +1673,17 @@ static BoltFFICallbackInitResult init_{{ cb.trait_name }}_callbacks(JNIEnv* env)
     if (class_result != BOLTFFI_GLOBAL_CLASS_OK) {
         return BOLTFFI_CALLBACK_INIT_FATAL;
     }
-    if (!boltffi_lookup_static_method(env, g_{{ cb.trait_name }}_callbacks_class, "free", "(J)V", &g_{{ cb.trait_name }}_free_method)) goto fail;
-    if (!boltffi_lookup_static_method(env, g_{{ cb.trait_name }}_callbacks_class, "clone", "(J)J", &g_{{ cb.trait_name }}_clone_method)) goto fail;
+    if (!boltffi_lookup_static_method_for_load(env, g_{{ cb.trait_name }}_callbacks_class, "{{ cb.callbacks_class }}", "free", "(J)V", &g_{{ cb.trait_name }}_free_method)) goto fail;
+    if (!boltffi_lookup_static_method_for_load(env, g_{{ cb.trait_name }}_callbacks_class, "{{ cb.callbacks_class }}", "clone", "(J)J", &g_{{ cb.trait_name }}_clone_method)) goto fail;
 {%- for method in cb.sync_methods %}
-    if (!boltffi_lookup_static_method(env, g_{{ cb.trait_name }}_callbacks_class, "{{ method.jni_method_name }}", "{{ method.jni_signature }}", &g_{{ cb.trait_name }}_{{ method.ffi_name }}_method)) goto fail;
+    if (!boltffi_lookup_static_method_for_load(env, g_{{ cb.trait_name }}_callbacks_class, "{{ cb.callbacks_class }}", "{{ method.jni_method_name }}", "{{ method.jni_signature }}", &g_{{ cb.trait_name }}_{{ method.ffi_name }}_method)) goto fail;
 {%- endfor %}
 {%- for method in cb.async_methods %}
-    if (!boltffi_lookup_static_method(env, g_{{ cb.trait_name }}_callbacks_class, "{{ method.jni_method_name }}", "{{ method.jni_signature }}", &g_{{ cb.trait_name }}_{{ method.ffi_name }}_method)) goto fail;
+    if (!boltffi_lookup_static_method_for_load(env, g_{{ cb.trait_name }}_callbacks_class, "{{ cb.callbacks_class }}", "{{ method.jni_method_name }}", "{{ method.jni_signature }}", &g_{{ cb.trait_name }}_{{ method.ffi_name }}_method)) goto fail;
 {%- endfor %}
 {%- for method in cb.proxy_async_methods %}
-    if (!boltffi_lookup_static_method(env, g_{{ cb.trait_name }}_callbacks_class, "{{ method.success_method_name }}", "{{ method.success_signature }}", &{{ method.success_method_id }})) goto fail;
-    if (!boltffi_lookup_static_method(env, g_{{ cb.trait_name }}_callbacks_class, "{{ method.failure_method_name }}", "(J)V", &{{ method.failure_method_id }})) goto fail;
+    if (!boltffi_lookup_static_method_for_load(env, g_{{ cb.trait_name }}_callbacks_class, "{{ cb.callbacks_class }}", "{{ method.success_method_name }}", "{{ method.success_signature }}", &{{ method.success_method_id }})) goto fail;
+    if (!boltffi_lookup_static_method_for_load(env, g_{{ cb.trait_name }}_callbacks_class, "{{ cb.callbacks_class }}", "{{ method.failure_method_name }}", "(J)V", &{{ method.failure_method_id }})) goto fail;
 {%- endfor %}
     {{ cb.register_fn }}(&g_{{ cb.trait_name }}_vtable);
     return BOLTFFI_CALLBACK_INIT_OK;

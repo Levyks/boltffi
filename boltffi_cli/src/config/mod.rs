@@ -609,6 +609,10 @@ impl Config {
         self.targets.android.kotlin.desktop_loader
     }
 
+    pub fn android_kotlin_desktop_pack_enabled(&self) -> bool {
+        self.targets.android.kotlin.desktop_pack.enabled
+    }
+
     pub fn android_kotlin_api_style(&self) -> KotlinApiStyle {
         self.targets.android.kotlin.api_style
     }
@@ -642,6 +646,10 @@ impl Config {
             .output
             .clone()
             .unwrap_or_else(|| self.targets.android.output.join("jniLibs"))
+    }
+
+    pub fn android_kotlin_desktop_pack_output(&self) -> PathBuf {
+        self.targets.android.output.join("desktopJniLibs")
     }
 
     pub fn android_debug_symbols_enabled(&self) -> bool {

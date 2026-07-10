@@ -1,11 +1,18 @@
 mod link;
 
-use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
+use crate::build::{
+    BindingExpansion, BuildOptions, Builder, OutputCallback, all_successful, failed_targets,
+};
 use crate::cli::{CliError, Result};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use crate::commands::pack::PackAndroidOptions;
-use crate::config::Config;
+use crate::config::{Config, KotlinDesktopLoader};
 use crate::pack::PackError;
+use crate::pack::java::link::{
+    JvmNativePackageLayout, build_jvm_native_library, compile_jni_library_with_layout,
+};
+use crate::pack::java::outputs::remove_stale_structured_jvm_outputs;
+use crate::pack::java::prepare_android_kotlin_jvm_packaging;
 use crate::pack::symbols::{
     ensure_debug_symbols_profile_has_debuginfo, ensure_existing_debug_symbol_artifacts_are_usable,
 };
@@ -39,7 +46,14 @@ pub(crate) fn pack_android(
 
     reporter.section("🤖", "Packing Android");
 
+    ensure_android_kotlin_desktop_no_build_supported(config, options.execution.no_build)?;
+
     let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
+    let cargo_env = if options.execution.no_build {
+        Vec::new()
+    } else {
+        BindingExpansion::resolve(config, &build_cargo_args)?.env()?
+    };
     let build_profile =
         crate::build::resolve_build_profile(options.execution.release, &build_cargo_args);
     let android_targets = config.android_targets();
@@ -62,6 +76,7 @@ pub(crate) fn pack_android(
             &android_targets,
             options.execution.release,
             &build_cargo_args,
+            &cargo_env,
             &step,
         )?;
         step.finish_success();
@@ -129,7 +144,87 @@ pub(crate) fn pack_android(
     packager.package()?;
     step.finish_success();
 
+    package_android_kotlin_desktop_natives(config, &options, &cargo_env, reporter)?;
+
     Ok(())
+}
+
+fn ensure_android_kotlin_desktop_no_build_supported(config: &Config, no_build: bool) -> Result<()> {
+    if no_build && should_package_android_kotlin_desktop_natives(config) {
+        return Err(CliError::CommandFailed {
+            command: "pack android --no-build is unsupported while Kotlin desktop native packaging is enabled; rerun without --no-build".to_string(),
+            status: None,
+        });
+    }
+
+    Ok(())
+}
+
+fn should_package_android_kotlin_desktop_natives(config: &Config) -> bool {
+    config.android_kotlin_desktop_pack_enabled()
+        && matches!(
+            config.android_kotlin_desktop_loader(),
+            KotlinDesktopLoader::Bundled
+        )
+}
+
+fn package_android_kotlin_desktop_natives(
+    config: &Config,
+    options: &PackAndroidOptions,
+    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    reporter: &Reporter,
+) -> Result<()> {
+    if !should_package_android_kotlin_desktop_natives(config) {
+        return Ok(());
+    }
+
+    let step = reporter.step("Validating Kotlin desktop JVM toolchains");
+    let prepared_jvm_packaging = prepare_android_kotlin_jvm_packaging(
+        config,
+        options.execution.release,
+        &options.execution.cargo_args,
+    )?;
+    step.finish_success();
+
+    let layout = android_kotlin_desktop_native_layout(config);
+
+    for packaging_target in &prepared_jvm_packaging.packaging_targets {
+        let host_target = packaging_target.cargo_context.host_target;
+        let step = reporter.step(&format!(
+            "Building Kotlin desktop Rust library for {}",
+            host_target.canonical_name()
+        ));
+        let build_artifacts = build_jvm_native_library(
+            packaging_target,
+            options.execution.release,
+            cargo_env,
+            &step,
+        )?;
+        step.finish_success();
+
+        let step = reporter.step(&format!(
+            "Compiling Kotlin desktop JNI library for {}",
+            host_target.canonical_name()
+        ));
+        compile_jni_library_with_layout(packaging_target, &build_artifacts, &layout, &step)?;
+        step.finish_success();
+    }
+
+    remove_stale_structured_jvm_outputs(
+        &config.android_kotlin_desktop_pack_output(),
+        &prepared_jvm_packaging.host_targets,
+    )?;
+
+    Ok(())
+}
+
+fn android_kotlin_desktop_native_layout(config: &Config) -> JvmNativePackageLayout {
+    JvmNativePackageLayout::kotlin_desktop(
+        config,
+        config.android_kotlin_output().join("jni"),
+        config.library_name(),
+        config.android_kotlin_desktop_pack_output(),
+    )
 }
 
 pub(crate) fn build_android_targets(
@@ -137,6 +232,7 @@ pub(crate) fn build_android_targets(
     targets: &[crate::target::RustTarget],
     release: bool,
     build_cargo_args: &[String],
+    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
     step: &crate::reporter::Step,
 ) -> Result<()> {
     build_android_targets_for_package(
@@ -145,6 +241,7 @@ pub(crate) fn build_android_targets(
         release,
         config.library_name(),
         build_cargo_args,
+        cargo_env,
         step,
     )
 }
@@ -155,6 +252,7 @@ pub(crate) fn build_android_targets_for_package(
     release: bool,
     package: impl Into<String>,
     build_cargo_args: &[String],
+    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
     step: &crate::reporter::Step,
 ) -> Result<()> {
     let on_output: Option<OutputCallback> = if step.is_verbose() {
@@ -167,7 +265,7 @@ pub(crate) fn build_android_targets_for_package(
         release,
         package: Some(package.into()),
         cargo_args: build_cargo_args.to_vec(),
-        env: Vec::new(),
+        env: cargo_env.to_vec(),
         on_output,
     };
     let builder = Builder::new(config, build_options);
@@ -179,4 +277,93 @@ pub(crate) fn build_android_targets_for_package(
 
     let failed = failed_targets(&results);
     Err(PackError::BuildFailed { targets: failed }.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        android_kotlin_desktop_native_layout, should_package_android_kotlin_desktop_natives,
+    };
+    use crate::config::Config;
+    use std::path::PathBuf;
+
+    fn parse_config(input: &str) -> Config {
+        let parsed: Config = toml::from_str(input).expect("toml parse failed");
+        parsed.validate().expect("config validation failed");
+        parsed
+    }
+
+    #[test]
+    fn android_kotlin_desktop_layout_uses_kotlin_jni_glue_and_android_output() {
+        let config = parse_config(
+            r#"
+[package]
+name = "demo-lib"
+
+[targets.android]
+output = "dist/android"
+
+[targets.android.kotlin]
+output = "dist/android/kotlin"
+library_name = "configured-library"
+
+[targets.java.jvm]
+enabled = true
+"#,
+        );
+
+        let layout = android_kotlin_desktop_native_layout(&config);
+
+        assert_eq!(layout.jni_dir, PathBuf::from("dist/android/kotlin/jni"));
+        assert_eq!(layout.header_name, "demo-lib");
+        assert_eq!(layout.jni_library_name, "configured_library");
+        assert_eq!(
+            layout.native_output_root,
+            PathBuf::from("dist/android/desktopJniLibs")
+        );
+        assert!(layout.flat_output_root.is_none());
+        assert!(!layout.strip_symbols);
+        assert!(!layout.debug_symbols_enabled);
+    }
+
+    #[test]
+    fn android_kotlin_desktop_packaging_is_gated_by_desktop_pack_and_bundled_loader() {
+        let bundled_enabled = parse_config(
+            r#"
+[package]
+name = "demo"
+
+[targets.android.kotlin.desktop_pack]
+enabled = true
+"#,
+        );
+        let bundled_disabled = parse_config(
+            r#"
+[package]
+name = "demo"
+"#,
+        );
+        let system_loader = parse_config(
+            r#"
+[package]
+name = "demo"
+
+[targets.android.kotlin]
+desktop_loader = "system"
+
+[targets.android.kotlin.desktop_pack]
+enabled = true
+"#,
+        );
+
+        assert!(should_package_android_kotlin_desktop_natives(
+            &bundled_enabled
+        ));
+        assert!(!should_package_android_kotlin_desktop_natives(
+            &bundled_disabled
+        ));
+        assert!(!should_package_android_kotlin_desktop_natives(
+            &system_loader
+        ));
+    }
 }

@@ -8,6 +8,7 @@ use boltffi_bindgen::render::kmp::{
 };
 use boltffi_bindgen::target::Target;
 
+use crate::build::BindingExpansion;
 use crate::cli::{CliError, Result};
 use crate::commands::generate::{
     run_generate_c_header_with_manifest, run_generate_kmp_with_manifest,
@@ -21,7 +22,7 @@ use crate::pack::android::{
 use crate::pack::java::link::{build_jvm_native_library, compile_jni_library_with_layout};
 use crate::pack::java::outputs::remove_stale_structured_jvm_outputs;
 use crate::pack::java::prepare_kmp_jvm_packaging;
-use crate::pack::missing_built_libraries;
+use crate::pack::{missing_built_libraries, resolve_build_cargo_args};
 use crate::reporter::Reporter;
 use crate::target::Platform;
 
@@ -44,6 +45,10 @@ pub(crate) fn pack_kmp(
     )?;
 
     reporter.section("🧩", "Packing Kotlin Multiplatform");
+
+    let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
+    let selected_crate = BindingExpansion::resolve(config, &build_cargo_args)?;
+    let cargo_env = selected_crate.env()?;
 
     let step = reporter.step("Validating JVM toolchains");
     let prepared_jvm_packaging = prepare_kmp_jvm_packaging(
@@ -100,7 +105,7 @@ pub(crate) fn pack_kmp(
 
     remove_stale_kmp_root_headers(plan.layout())?;
     verify_kmp_support_metadata(config, plan.layout())?;
-    package_kmp_android_libraries(config, &options, &plan, &header_name, reporter)?;
+    package_kmp_android_libraries(config, &options, &plan, &header_name, &cargo_env, reporter)?;
 
     let kmp_jvm_layout = plan.layout().jvm_native_layout(config, &header_name);
     for packaging_target in &plan.jvm_packaging().packaging_targets {
@@ -109,8 +114,12 @@ pub(crate) fn pack_kmp(
             "Building Rust library for {}",
             host_target.canonical_name()
         ));
-        let build_artifacts =
-            build_jvm_native_library(packaging_target, options.execution.release, &step)?;
+        let build_artifacts = build_jvm_native_library(
+            packaging_target,
+            options.execution.release,
+            &cargo_env,
+            &step,
+        )?;
         step.finish_success();
 
         let step = reporter.step(&format!(
@@ -455,6 +464,7 @@ fn package_kmp_android_libraries(
     options: &PackKmpOptions,
     plan: &KmpPackagingPlan,
     header_name: &str,
+    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
     reporter: &Reporter,
 ) -> Result<()> {
     let build_cargo_args = plan.android_build_cargo_args();
@@ -469,6 +479,7 @@ fn package_kmp_android_libraries(
         options.execution.release,
         plan.build_package_selector(),
         &build_cargo_args,
+        cargo_env,
         &step,
     )?;
     step.finish_success();

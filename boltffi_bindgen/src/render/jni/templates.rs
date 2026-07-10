@@ -374,6 +374,38 @@ mod tests {
     }
 
     #[test]
+    fn jni_onload_reports_class_and_method_lookup_failures() {
+        let module = build_test_module();
+        let mut ir_module = module.clone();
+        let contract = ir::build_contract(&mut ir_module);
+        let abi_contract = ir::Lowerer::new(&contract).to_abi_contract();
+        let jni_module = JniLowerer::new(
+            &contract,
+            &abi_contract,
+            "com.example".to_string(),
+            "Native".to_string(),
+        )
+        .lower();
+
+        let glue = JniEmitter::emit(&jni_module);
+
+        assert!(
+            glue.contains("BoltFFI JNI_OnLoad failed: could not find JVM class"),
+            "JNI_OnLoad should report the missing class name before returning JNI_ERR"
+        );
+        assert!(
+            glue.contains("BoltFFI JNI_OnLoad failed: could not resolve static method %s.%s%s"),
+            "JNI_OnLoad should report the class, method, and signature for missing static methods"
+        );
+        assert!(
+            glue.contains(
+                "boltffi_lookup_static_method_for_load(env, g_Listener_callbacks_class, \"com/example/ListenerCallbacks\", \"on_value\", \"(JI)V\", &g_Listener_on_value_method)"
+            ),
+            "callback registration should pass the failing method details through the reporting helper"
+        );
+    }
+
+    #[test]
     fn android_callback_glue_caches_native_thread_attachment_with_local_frames() {
         let module = build_test_module();
         let mut ir_module = module.clone();

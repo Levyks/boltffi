@@ -248,7 +248,7 @@ pub(crate) enum PackTargetArg {
 
     #[command(
         about = "Build + package Android artifacts",
-        long_about = "Build + package Android artifacts.\n\nOutputs:\n  - Kotlin/JNI: {targets.android.kotlin.output}\n  - jniLibs:    {targets.android.pack.output}\n"
+        long_about = "Build + package Android artifacts.\n\nOutputs:\n  - Kotlin/JNI:             {targets.android.kotlin.output}\n  - jniLibs:                {targets.android.pack.output}\n  - Kotlin desktop natives: {targets.android.output}/desktopJniLibs when targets.android.kotlin.desktop_pack.enabled is true and targets.android.kotlin.desktop_loader is bundled\n"
     )]
     Android {
         #[arg(long)]

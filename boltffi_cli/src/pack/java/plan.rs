@@ -138,7 +138,7 @@ pub(crate) fn pack_java(
             host_target.canonical_name()
         ));
         let build_artifacts =
-            build_jvm_native_library(packaging_target, options.execution.release, &step)?;
+            build_jvm_native_library(packaging_target, options.execution.release, &[], &step)?;
         step.finish_success();
 
         let step = reporter.step(&format!(
@@ -212,6 +212,14 @@ pub(crate) fn prepare_kmp_jvm_packaging(
     cargo_args: &[String],
 ) -> Result<PreparedJvmPackaging> {
     prepare_jvm_packaging_matrix(config, release, cargo_args, false, "pack kmp")
+}
+
+pub(crate) fn prepare_android_kotlin_jvm_packaging(
+    config: &Config,
+    release: bool,
+    cargo_args: &[String],
+) -> Result<PreparedJvmPackaging> {
+    prepare_jvm_packaging_matrix(config, release, cargo_args, false, "pack android")
 }
 
 fn prepare_jvm_packaging_matrix(

@@ -72,14 +72,11 @@ impl KmpPackageLayout {
         config: &Config,
         header_name: &str,
     ) -> JvmNativePackageLayout {
-        JvmNativePackageLayout {
-            jni_dir: self.jvm_jni_dir.clone(),
-            header_name: header_name.to_string(),
-            jni_library_name: config.resolved_android_kotlin_desktop_library_name(),
-            native_output_root: self.jvm_native_resource_root.clone(),
-            flat_output_root: None,
-            strip_symbols: false,
-            debug_symbols_enabled: false,
-        }
+        JvmNativePackageLayout::kotlin_desktop(
+            config,
+            self.jvm_jni_dir.clone(),
+            header_name,
+            self.jvm_native_resource_root.clone(),
+        )
     }
 }

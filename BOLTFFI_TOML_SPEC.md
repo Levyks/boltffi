@@ -187,6 +187,12 @@ Debug information for Apple slice libraries collected by `boltffi pack apple`.
   - `bundled`: extract bundled desktop natives when present, otherwise fall back to `System.loadLibrary`
   - `system`: call `System.loadLibrary` on desktop JVMs
   - `none`: skip desktop JVM loading and assume the host process has already loaded the native library
+- `desktop_pack.enabled` (bool): Whether `boltffi pack android` also builds
+  Kotlin-compatible desktop JNI libraries for the generated Kotlin bindings.
+  - Default: `false`
+  - Requires `desktop_loader = "bundled"` to produce desktop native resources.
+  - Uses `[targets.java.jvm].host_targets` to select desktop host targets.
+  - Output: `{targets.android.output}/desktopJniLibs/<host-target>/`
 - `api_style` (`top_level` | `module_object`): How functions are exposed.
   - Default: `top_level`
 - `factory_style` (`constructors` | `companion_methods`): How factory constructors are exposed.
