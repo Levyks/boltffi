@@ -31,7 +31,7 @@ use crate::{
 
 pub use crate::target::jvm::DesktopLoader as JavaDesktopLoader;
 pub use name_style::{JavaFile, JavaPackage};
-use render::{Call, ErasedSignature, Module, Record};
+use render::{Call, Enumeration, ErasedSignature, Module, Record};
 use syntax::{Syntax, TypeIdentifier};
 pub use version::JavaVersion;
 
@@ -260,43 +260,81 @@ impl JavaHost {
         )
     }
 
+    fn enum_plan(
+        &self,
+        declaration: &EnumDecl<Native>,
+        bridge: &JniBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Enumeration> {
+        Enumeration::from_declaration(
+            declaration,
+            bridge,
+            &self.native_owner(),
+            self.package(),
+            self.java_version,
+            context,
+        )
+    }
+
     fn validate_signatures(
         &self,
         bindings: &Bindings<Native>,
         bridge: &JniBridgeContract,
         context: &RenderContext<Native>,
     ) -> Result<()> {
-        let signatures = bindings
+        let functions = bindings
             .decls()
             .iter()
             .filter_map(|declaration| match DeclarationRef::from(declaration) {
                 DeclarationRef::Function(function) => Some(function),
                 _ => None,
             })
-            .try_fold(
-                Vec::new(),
-                |mut signatures, function| match Call::from_function(
-                    function,
-                    bridge,
-                    &self.native_owner(),
-                    self.java_version,
-                    context,
-                ) {
-                    Ok(signature) => {
-                        signatures.push(signature.signature().erased());
-                        Ok(signatures)
-                    }
-                    Err(error) => Err(error),
-                },
-            )?;
-        ErasedSignature::validate_owner(self.file(), &signatures)
+            .map(|function| {
+                self.function_plan(function, bridge, context)
+                    .map(|call| call.signature().erased())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ErasedSignature::validate_owner(self.file(), &functions)?;
+        bindings.decls().iter().try_for_each(|declaration| {
+            match DeclarationRef::from(declaration) {
+                DeclarationRef::Record(declaration) => {
+                    let record = self.record_plan(declaration, bridge, context)?;
+                    let signatures = record
+                        .initializers()
+                        .iter()
+                        .chain(record.static_methods())
+                        .chain(record.instance_methods())
+                        .map(Call::signature)
+                        .map(|signature| signature.erased())
+                        .collect::<Vec<_>>();
+                    ErasedSignature::validate_owner(
+                        &Record::file_for(declaration, self.java_version)?,
+                        &signatures,
+                    )
+                }
+                DeclarationRef::Enum(declaration) => {
+                    let enumeration = self.enum_plan(declaration, bridge, context)?;
+                    let signatures = enumeration
+                        .calls()
+                        .iter()
+                        .map(Call::signature)
+                        .map(|signature| signature.erased())
+                        .collect::<Vec<_>>();
+                    ErasedSignature::validate_owner(
+                        &Enumeration::file_for(declaration, self.java_version)?,
+                        &signatures,
+                    )
+                }
+                _ => Ok(()),
+            }
+        })
     }
 
     fn capabilities(&self) -> HostCapabilities {
         HostCapabilities::new()
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Records)
-            .unsupported(BindingCapability::Enums, "Java enum migration is pending")
+            .stable(BindingCapability::Enums)
             .unsupported(
                 BindingCapability::Classes,
                 "Java class migration is pending",
@@ -359,11 +397,12 @@ impl host::HostBackend for JavaHost {
 
     fn enumeration(
         &self,
-        _: &EnumDecl<Self::Surface>,
-        _: &Self::Bridge,
-        _: &RenderContext<Self::Surface>,
+        declaration: &EnumDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("enum declaration"))
+        self.enum_plan(declaration, bridge, context)?
+            .render(self.package())
     }
 
     fn function(

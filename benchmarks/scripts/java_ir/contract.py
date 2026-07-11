@@ -184,11 +184,59 @@ RECORD_CASES = (
         "boltffi_function_demo_records_with_collections_sum_user_scores",
     ),
 )
+ENUM_CASES = (
+    BenchmarkCase(
+        "simple_enum",
+        "boltffi_opposite_direction",
+        "boltffi_function_demo_enums_c_style_opposite_direction",
+    ),
+    BenchmarkCase(
+        "echo_direction",
+        "boltffi_echo_direction",
+        "boltffi_function_demo_enums_c_style_echo_direction",
+    ),
+    BenchmarkCase(
+        "find_direction",
+        "boltffi_find_direction",
+        "boltffi_function_demo_enums_c_style_find_direction",
+    ),
+    BenchmarkCase(
+        "data_enum_input",
+        "boltffi_get_status_progress",
+        "boltffi_function_demo_enums_data_enum_get_status_progress",
+    ),
+    BenchmarkCase(
+        "echo_task_status_unit_variant",
+        "boltffi_echo_task_status",
+        "boltffi_function_demo_enums_data_enum_echo_task_status",
+    ),
+    BenchmarkCase(
+        "echo_task_status_small_payload",
+        "boltffi_echo_task_status",
+        "boltffi_function_demo_enums_data_enum_echo_task_status",
+    ),
+    BenchmarkCase(
+        "echo_task_status_completed_payload",
+        "boltffi_echo_task_status",
+        "boltffi_function_demo_enums_data_enum_echo_task_status",
+    ),
+    BenchmarkCase(
+        "generate_directions_100",
+        "boltffi_generate_directions",
+        "boltffi_function_demo_enums_c_style_generate_directions",
+    ),
+    BenchmarkCase(
+        "count_north_100",
+        "boltffi_count_north",
+        "boltffi_function_demo_enums_c_style_count_north",
+    ),
+)
 SUITES = {
     suite.name: suite
     for suite in (
         BenchmarkSuite("primitive", "BoltffiJavaPrimitiveBench", PRIMITIVE_CASES),
         BenchmarkSuite("record", "BoltffiJavaRecordBench", RECORD_CASES),
+        BenchmarkSuite("enum", "BoltffiJavaEnumBench", ENUM_CASES),
     )
 }
 ALL_CASES = tuple(case for suite in SUITES.values() for case in suite.cases)

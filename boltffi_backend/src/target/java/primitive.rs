@@ -1,6 +1,6 @@
 use std::fmt;
 
-use boltffi_binding::Primitive as BindingPrimitive;
+use boltffi_binding::{IntegerValue, Primitive as BindingPrimitive};
 
 use crate::{
     bridge::jni::JniType,
@@ -124,6 +124,41 @@ impl Primitive {
             Identifier::known("hashCode"),
             [value].into_iter().collect(),
         )
+    }
+
+    pub fn integer_literal(
+        self,
+        source: BindingPrimitive,
+        value: IntegerValue,
+    ) -> Result<Expression> {
+        let value = value.get();
+        match (self, source) {
+            (Self::Byte, BindingPrimitive::I8 | BindingPrimitive::U8) => Ok(Expression::cast(
+                Self::Byte,
+                Expression::signed_integer(value),
+            )),
+            (Self::Short, BindingPrimitive::I16 | BindingPrimitive::U16) => Ok(Expression::cast(
+                Self::Short,
+                Expression::signed_integer(value),
+            )),
+            (Self::Int, BindingPrimitive::I32) => Ok(Expression::signed_integer(value)),
+            (Self::Int, BindingPrimitive::U32) => i32::try_from(value).map_or_else(
+                |_| {
+                    i64::try_from(value)
+                        .map(Expression::long)
+                        .map(|value| Expression::cast(Self::Int, value))
+                        .map_err(|_| Self::unsupported("u32 Java enum literal"))
+                },
+                |value| Ok(Expression::signed_integer(i128::from(value))),
+            ),
+            (Self::Long, BindingPrimitive::I64 | BindingPrimitive::ISize) => i64::try_from(value)
+                .map(Expression::long)
+                .map_err(|_| Self::unsupported("signed Java enum literal")),
+            (Self::Long, BindingPrimitive::U64 | BindingPrimitive::USize) => u64::try_from(value)
+                .map(Expression::hexadecimal_long)
+                .map_err(|_| Self::unsupported("unsigned Java enum literal")),
+            _ => Err(Self::unsupported("integer Java enum literal")),
+        }
     }
 
     fn unsupported(shape: &'static str) -> Error {

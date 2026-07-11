@@ -15,6 +15,12 @@ val boltffiJavaComparisonSuite = providers.gradleProperty("boltffiJavaComparison
 val boltffiJavaPreparedDir = providers.gradleProperty("boltffiJavaPreparedDir")
     .orNull
     ?.let(::file)
+val boltffiJavaComparisonBuildDir = providers.gradleProperty("boltffiJavaComparisonBuildDir")
+    .orNull
+    ?.let(::file)
+if (boltffiJavaComparisonBuildDir != null) {
+    layout.buildDirectory.set(boltffiJavaComparisonBuildDir)
+}
 val boltffiJavaSourceDir = boltffiJavaPreparedDir ?: file(boltffiJvmDir)
 val nativePath = if (boltffiJavaComparisonSuite != null && boltffiJavaPreparedDir != null) {
     boltffiJavaSourceDir.absolutePath
@@ -25,8 +31,8 @@ val nativePath = if (boltffiJavaComparisonSuite != null && boltffiJavaPreparedDi
 if (boltffiJavaGenerator.get() !in setOf("legacy", "ir")) {
     throw GradleException("boltffiJavaGenerator must be 'legacy' or 'ir'")
 }
-if (boltffiJavaComparisonSuite != null && boltffiJavaComparisonSuite !in setOf("primitive", "record")) {
-    throw GradleException("boltffiJavaComparisonSuite must be 'primitive' or 'record'")
+if (boltffiJavaComparisonSuite != null && boltffiJavaComparisonSuite !in setOf("primitive", "record", "enum")) {
+    throw GradleException("boltffiJavaComparisonSuite must be 'primitive', 'record', or 'enum'")
 }
 if (boltffiJavaPreparedDir != null) {
     val actualGenerator = boltffiJavaPreparedDir
@@ -148,15 +154,24 @@ java {
                     java.exclude("com/example/bench_compare/UniffiJavaBench.java")
                     java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
                     java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
+                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
                 }
                 "record" -> {
                     java.exclude("com/example/bench_compare/UniffiJavaBench.java")
                     java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
                     java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
+                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
+                }
+                "enum" -> {
+                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
+                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
+                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
+                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
                 }
                 else -> {
                     java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
                     java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
+                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
                 }
             }
         }

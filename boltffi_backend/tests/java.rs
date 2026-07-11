@@ -170,6 +170,81 @@ const ERROR_RECORD: &str = r#"
     }
 "#;
 
+const ENUMS: &str = r#"
+    #[repr(u8)]
+    #[data]
+    pub enum Mode {
+        Fast = 1,
+        Slow = 7,
+    }
+
+    #[repr(u64)]
+    #[data]
+    pub enum WideMode {
+        Zero = 0,
+        Maximum = 18446744073709551615,
+    }
+
+    #[data(impl)]
+    impl Mode {
+        pub fn fast() -> Self { Self::Fast }
+        pub fn is_fast(&self) -> bool { matches!(self, Self::Fast) }
+    }
+
+    #[data]
+    pub enum Shape {
+        Empty,
+        Circle { radius: f64 },
+        Label(String),
+    }
+
+    #[data(impl)]
+    impl Shape {
+        pub fn empty() -> Self { Self::Empty }
+        pub fn is_empty(&self) -> bool { matches!(self, Self::Empty) }
+    }
+
+    #[export]
+    pub fn echo_mode(value: Mode) -> Mode { value }
+
+    #[export]
+    pub fn echo_modes(values: Vec<Mode>) -> Vec<Mode> { values }
+
+    #[export]
+    pub fn echo_wide_mode(value: WideMode) -> WideMode { value }
+
+    #[export]
+    pub fn echo_shape(value: Shape) -> Shape { value }
+"#;
+
+const ERROR_ENUMS: &str = r#"
+    #[error]
+    pub enum ParseError {
+        Missing,
+        Invalid,
+    }
+
+    #[error]
+    pub enum ApiError {
+        Message { message: String },
+        Code(i32),
+    }
+
+    #[export]
+    pub fn parse(valid: bool) -> Result<i32, ParseError> {
+        if valid { Ok(1) } else { Err(ParseError::Invalid) }
+    }
+
+    #[export]
+    pub fn request(valid: bool) -> Result<String, ApiError> {
+        if valid {
+            Ok("ok".to_owned())
+        } else {
+            Err(ApiError::Message { message: "failed".to_owned() })
+        }
+    }
+"#;
+
 fn bindings(source: &str) -> boltffi_binding::Bindings<Native> {
     let file = syn::parse_str(source).expect("valid Java source fixture");
     let source = boltffi_scan::scan_file(file, PackageInfo::new("demo", None))
@@ -353,6 +428,62 @@ fn java_target_uses_error_record_messages_for_exceptions() {
     assert!(error.contains("public final class AppError extends RuntimeException"));
     assert!(error.contains("super(message);"));
     assert!(error.contains("public AppError getError()"));
+}
+
+#[test]
+fn java_target_renders_c_style_and_data_enums_from_binding_ir() {
+    let output = render(ENUMS, CoverageMode::Complete);
+    let mode = java_source(&output, "com.boltffi.demo", "Mode");
+    let shape = java_source(&output, "com.boltffi.demo", "Shape");
+    let module = java_source(&output, "com.boltffi.demo", "Demo");
+
+    assert!(mode.contains("public enum Mode"));
+    assert!(mode.contains("FAST((byte) (1))"));
+    assert!(mode.contains("case (byte) (7): return SLOW;"));
+    assert!(module.contains("writeByte"));
+    assert!(module.contains("readByte()"));
+    assert!(mode.contains("public boolean isFast()"));
+    let wide = java_source(&output, "com.boltffi.demo", "WideMode");
+    assert!(wide.contains("MAXIMUM(0xFFFFFFFFFFFFFFFFL)"));
+    assert!(wide.contains("if (value == 0xFFFFFFFFFFFFFFFFL) return MAXIMUM;"));
+    assert!(shape.contains("public abstract class Shape"));
+    assert!(shape.contains("public static final class Empty extends Shape"));
+    assert!(shape.contains("public static final class Circle extends Shape"));
+    assert!(shape.contains("writer.writeDouble(this.radius);"));
+    assert!(shape.contains("reader.readString()"));
+    assert!(shape.contains("public boolean isEmpty()"));
+    assert!(module.contains("static native byte"));
+    assert!(module.contains("static native byte[]"));
+}
+
+#[test]
+fn java_target_preserves_typed_enum_errors() {
+    let output = render(ERROR_ENUMS, CoverageMode::Complete);
+    let parse_error = java_source(&output, "com.boltffi.demo", "ParseError");
+    let api_error = java_source(&output, "com.boltffi.demo", "ApiError");
+    let module = java_source(&output, "com.boltffi.demo", "Demo");
+
+    assert!(parse_error.contains("public enum ParseError"));
+    assert!(parse_error.contains("public static final class Exception extends RuntimeException"));
+    assert!(api_error.contains("public abstract class ApiError extends RuntimeException"));
+    assert!(api_error.contains("super(message);"));
+    assert!(module.contains("throw new ParseError.Exception"));
+    assert!(module.contains("throw ApiError.fromReader"));
+}
+
+#[test]
+fn java_seventeen_uses_sealed_data_enums_when_value_semantics_are_safe() {
+    let output = render_with_host(
+        ENUMS,
+        CoverageMode::Complete,
+        JavaHost::for_version("com.boltffi.demo", "Demo", JavaVersion::JAVA_17)
+            .expect("Java 17 enum host"),
+    );
+    let shape = java_source(&output, "com.boltffi.demo", "Shape");
+
+    assert!(shape.contains("public sealed interface Shape permits"));
+    assert!(shape.contains("record Circle(double radius) implements Shape"));
+    assert!(shape.contains("default boolean isEmpty()"));
 }
 
 #[test]
@@ -937,6 +1068,49 @@ fn generated_record_defaults_and_errors_compile_for_java_eight_when_available() 
 }
 
 #[test]
+fn generated_enums_compile_for_java_eight_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    let output = render_with_host(
+        ENUMS,
+        CoverageMode::Complete,
+        JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
+    );
+    compile_generated_java(&compiler, &output, "boltffi-java-enums");
+}
+
+#[test]
+fn generated_sealed_enums_compile_for_java_seventeen_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    let output = render_with_host(
+        ENUMS,
+        CoverageMode::Complete,
+        JavaHost::for_version("com.boltffi.demo", "Demo", JavaVersion::JAVA_17)
+            .expect("Java 17 enum host"),
+    );
+    compile_generated_java_for_release(&compiler, &output, "boltffi-java-sealed-enums", 17);
+}
+
+#[test]
+fn generated_enum_errors_compile_for_java_eight_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    let output = render_with_host(
+        ERROR_ENUMS,
+        CoverageMode::Complete,
+        JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
+    );
+    compile_generated_java(&compiler, &output, "boltffi-java-enum-errors");
+}
+
+#[test]
 fn generated_result_api_compiles_from_an_external_package_when_available() {
     let Some(compiler) = JavaCompiler::discover() else {
         return;
@@ -997,6 +1171,25 @@ fn compile_generated_java_with(
     prefix: &str,
     additional_sources: &[(&str, &str)],
 ) {
+    compile_generated_java_with_release(compiler, output, prefix, additional_sources, None);
+}
+
+fn compile_generated_java_for_release(
+    compiler: &JavaCompiler,
+    output: &boltffi_backend::GeneratedOutput,
+    prefix: &str,
+    release: u16,
+) {
+    compile_generated_java_with_release(compiler, output, prefix, &[], Some(release));
+}
+
+fn compile_generated_java_with_release(
+    compiler: &JavaCompiler,
+    output: &boltffi_backend::GeneratedOutput,
+    prefix: &str,
+    additional_sources: &[(&str, &str)],
+    release: Option<u16>,
+) {
     assert!(output.files().iter().any(|file| {
         file.path().as_path() == Path::new("com/boltffi/demo/BoltFFINativeRuntime.java")
     }));
@@ -1034,7 +1227,14 @@ fn compile_generated_java_with(
 
     let mut javac = Command::new("javac");
     javac.args(["-encoding", "UTF-8"]);
-    compiler.configure_java_eight(&mut javac);
+    match release {
+        Some(release) if !compiler.configure_release(&mut javac, release) => {
+            fs::remove_dir_all(&directory).expect("remove unsupported Java release test directory");
+            return;
+        }
+        Some(_) => {}
+        None => compiler.configure_java_eight(&mut javac),
+    }
     let compilation = javac
         .arg("-d")
         .arg(&classes)

@@ -71,6 +71,10 @@ impl Expression {
         Self(format!("{value}L"))
     }
 
+    pub fn hexadecimal_long(value: u64) -> Self {
+        Self(format!("0x{value:016X}L"))
+    }
+
     pub fn float32(value: f32) -> Self {
         match value.is_finite() {
             true => Self(format!("{value:?}f")),

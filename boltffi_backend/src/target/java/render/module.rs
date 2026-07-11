@@ -16,7 +16,7 @@ use crate::{
     target::java::{JavaFile, JavaHost, JavaPackage, runtime::Loader, syntax::TypeIdentifier},
 };
 
-use super::{Record, ResultClass};
+use super::{Enumeration, Record, ResultClass};
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/java/module.java", escape = "none")]
@@ -137,6 +137,14 @@ impl ModuleChunks {
                     DeclarationRef::Record(record) if !primary.is_empty() => {
                         files.push(GeneratedFile::new(
                             FilePath::new(Record::file_for(record, version)?.path(package))?,
+                            primary.as_str(),
+                        ));
+                    }
+                    DeclarationRef::Enum(enumeration) if !primary.is_empty() => {
+                        files.push(GeneratedFile::new(
+                            FilePath::new(
+                                Enumeration::file_for(enumeration, version)?.path(package),
+                            )?,
                             primary.as_str(),
                         ));
                     }

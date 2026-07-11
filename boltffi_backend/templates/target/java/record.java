@@ -56,20 +56,11 @@ package {{ package }};
 {% endif %}    }
 {% endif %}
 {% for call in record.initializers() %}
-{% if let Some(doc) = call.doc() %}{{ doc }}
-{% endif %}    public static {{ call.returns() }} {{ call.name() }}({% for parameter in call.parameters() %}{{ parameter.ty() }} {{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}) {
-{% for statement in call.body() %}        {{ statement }}
-{% endfor %}    }
+{% include "target/java/call/initializer.java" %}
 {% endfor %}{% for call in record.static_methods() %}
-{% if let Some(doc) = call.doc() %}{{ doc }}
-{% endif %}    public static {{ call.returns() }} {{ call.name() }}({% for parameter in call.parameters() %}{{ parameter.ty() }} {{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}) {
-{% for statement in call.body() %}        {{ statement }}
-{% endfor %}    }
+{% include "target/java/call/static_method.java" %}
 {% endfor %}{% for call in record.instance_methods() %}
-{% if let Some(doc) = call.doc() %}{{ doc }}
-{% endif %}    public {{ call.returns() }} {{ call.name() }}({% for parameter in call.parameters() %}{{ parameter.ty() }} {{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}) {
-{% for statement in call.body() %}        {{ statement }}
-{% endfor %}    }
+{% include "target/java/call/instance_method.java" %}
 {% endfor %}{% if record.codec_payload() %}
     int wireSize() {
         return {{ record.wire_size() }};

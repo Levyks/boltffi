@@ -11,8 +11,11 @@ case "$SUITE" in
     record)
         BENCHMARK_CLASS="BoltffiJavaRecordBench"
         ;;
+    enum)
+        BENCHMARK_CLASS="BoltffiJavaEnumBench"
+        ;;
     *)
-        printf 'Usage: %s [primitive|record]\n' "$0" >&2
+        printf 'Usage: %s [primitive|record|enum]\n' "$0" >&2
         exit 2
         ;;
 esac
@@ -45,6 +48,7 @@ prepare_generator() {
     local benchmark_jar="$prepared_root/benchmark.jar"
     local java_class="$prepared_root/BenchBoltFFI.class"
     local java_launcher="$prepared_root/java-launcher.txt"
+    local gradle_build="$WORK_DIR/gradle/$generator"
 
     mkdir -p "$prepared_root"
     "$GENERATED_ROOT/build-java.sh" --generator "$generator"
@@ -58,16 +62,16 @@ prepare_generator() {
     chmod -R a-w "$generated" "$generation_artifacts"
     "$SCRIPT_DIR/gradlew" \
         -p "$SCRIPT_DIR" \
-        clean \
         jmhJar \
         writeBenchmarkJavaLauncher \
         --rerun-tasks \
         "-PboltffiJavaGenerator=$generator" \
         "-PboltffiJavaComparisonSuite=$SUITE" \
-        "-PboltffiJavaPreparedDir=$generated"
-    cp "$SCRIPT_DIR/build/libs/java-jvm-bench-1.0-SNAPSHOT-jmh.jar" "$benchmark_jar"
-    cp "$SCRIPT_DIR/build/classes/java/main/com/example/bench_boltffi/BenchBoltFFI.class" "$java_class"
-    cp "$SCRIPT_DIR/build/java-launcher.txt" "$java_launcher"
+        "-PboltffiJavaPreparedDir=$generated" \
+        "-PboltffiJavaComparisonBuildDir=$gradle_build"
+    cp "$gradle_build/libs/java-jvm-bench-1.0-SNAPSHOT-jmh.jar" "$benchmark_jar"
+    cp "$gradle_build/classes/java/main/com/example/bench_boltffi/BenchBoltFFI.class" "$java_class"
+    cp "$gradle_build/java-launcher.txt" "$java_launcher"
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$ANALYZER_ROOT" python3 -m java_ir prepare \
         --generator "$generator" \
         --suite "$SUITE" \

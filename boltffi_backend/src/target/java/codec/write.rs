@@ -4,7 +4,7 @@ use boltffi_binding::{
 };
 
 use crate::{
-    core::Result,
+    core::{RenderContext, Result},
     target::java::{
         JavaHost, JavaVersion,
         codec::{
@@ -32,11 +32,12 @@ pub struct WireBuffer {
     version: JavaVersion,
 }
 
-pub struct Writer {
+pub struct Writer<'context> {
     writer: Identifier,
     current: Expression,
     member_access: ValueMemberAccess,
     version: JavaVersion,
+    context: &'context RenderContext<'context, boltffi_binding::Native>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,12 +76,19 @@ impl WireBuffer {
         })
     }
 
-    pub fn write(self, plan: &WritePlan, value: Expression) -> Result<EncodedWrite> {
+    pub fn write<'context>(
+        self,
+        plan: &WritePlan,
+        value: Expression,
+        context: &'context RenderContext<'context, boltffi_binding::Native>,
+    ) -> Result<EncodedWrite> {
         let size = plan
-            .size_with(&mut Sizer::new(self.version).current(value.clone()))?
+            .size_with(&mut Sizer::new(self.version, context).current(value.clone()))?
             .into_expression();
         let writes = plan
-            .render_with(&mut Writer::new(self.writer.clone(), self.version).current(value))
+            .render_with(
+                &mut Writer::new(self.writer.clone(), self.version, context).current(value),
+            )
             .into_iter()
             .map(|statement| statement.map(WriteStatement::into_statement))
             .collect::<Result<Vec<_>>>()?;
@@ -133,13 +141,18 @@ impl WireBuffer {
     }
 }
 
-impl Writer {
-    pub fn new(writer: Identifier, version: JavaVersion) -> Self {
+impl<'context> Writer<'context> {
+    pub fn new(
+        writer: Identifier,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, boltffi_binding::Native>,
+    ) -> Self {
         Self {
             writer,
             current: Expression::identifier(Identifier::known("value")),
             member_access: ValueMemberAccess::Accessor,
             version,
+            context,
         }
     }
 
@@ -206,7 +219,7 @@ impl WriteStatement {
     }
 }
 
-impl CodecWrite for Writer {
+impl CodecWrite for Writer<'_> {
     type Stmt = Result<WriteStatement>;
 
     fn primitive(&mut self, primitive: BindingPrimitive, value: &ValueRef) -> Vec<Self::Stmt> {
@@ -255,12 +268,41 @@ impl CodecWrite for Writer {
         self.direct_record(id, value)
     }
 
-    fn c_style_enum(&mut self, _id: EnumId, _value: &ValueRef) -> Vec<Self::Stmt> {
-        Self::unsupported("c-style enum wire write")
+    fn c_style_enum(&mut self, id: EnumId, value: &ValueRef) -> Vec<Self::Stmt> {
+        vec![
+            crate::target::java::render::Enumeration::c_style_primitive(id, self.context).and_then(
+                |primitive| {
+                    Identifier::parse_for(
+                        format!("write{}", primitive.wire_method_suffix()),
+                        self.version,
+                    )
+                    .and_then(|method| {
+                        self.value(value).map(|value| {
+                            WriteStatement::new(self.call(
+                                method,
+                                value.call(
+                                    Identifier::known("nativeValue"),
+                                    ArgumentList::default(),
+                                ),
+                            ))
+                        })
+                    })
+                },
+            ),
+        ]
     }
 
-    fn data_enum(&mut self, _id: EnumId, _value: &ValueRef) -> Vec<Self::Stmt> {
-        Self::unsupported("data enum wire write")
+    fn data_enum(&mut self, _id: EnumId, value: &ValueRef) -> Vec<Self::Stmt> {
+        vec![self.value(value).map(|value| {
+            WriteStatement::new(Statement::expression(
+                value.call(
+                    Identifier::known("writeTo"),
+                    [Expression::identifier(self.writer.clone())]
+                        .into_iter()
+                        .collect(),
+                ),
+            ))
+        })]
     }
 
     fn class_handle(&mut self, _id: ClassId, _value: &ValueRef) -> Vec<Self::Stmt> {
@@ -335,7 +377,7 @@ impl CodecWrite for Writer {
                         self.version,
                     )?),
                     SequenceElement::String => Some(Identifier::known("writeStringSequence")),
-                    SequenceElement::General => None,
+                    SequenceElement::General | SequenceElement::Fixed(_) => None,
                 };
                 if let Some(method) = method {
                     return Ok(WriteStatement::new(self.call(method, value)));

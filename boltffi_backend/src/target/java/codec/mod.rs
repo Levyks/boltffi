@@ -9,6 +9,7 @@ use super::primitive::Primitive;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SequenceElement {
     General,
+    Fixed(u64),
     Primitive(Primitive),
     String,
 }

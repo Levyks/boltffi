@@ -7,7 +7,7 @@ use crate::{
     core::{RenderContext, Result},
     target::java::{
         JavaHost, JavaVersion,
-        name_style::Name,
+        name_style::{JavaPackage, Name},
         primitive::Primitive,
         render::ResultClass,
         syntax::{Expression, Identifier, TypeIdentifier, TypeName},
@@ -40,6 +40,7 @@ enum ValueSemantics {
 struct JavaTypeRef<'context> {
     context: &'context RenderContext<'context, Native>,
     version: JavaVersion,
+    package: Option<&'context JavaPackage>,
 }
 
 struct ApiType {
@@ -54,8 +55,12 @@ impl JavaType {
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<TypeName> {
-        ty.render_with(&mut JavaTypeRef { context, version })
-            .map(ApiType::into_value)
+        ty.render_with(&mut JavaTypeRef {
+            context,
+            version,
+            package: None,
+        })
+        .map(ApiType::into_value)
     }
 
     pub fn field(
@@ -63,11 +68,46 @@ impl JavaType {
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<JavaFieldType> {
-        ty.render_with(&mut JavaTypeRef { context, version })
-            .map(|ty| JavaFieldType {
-                ty: ty.value,
-                semantics: ty.semantics,
-            })
+        ty.render_with(&mut JavaTypeRef {
+            context,
+            version,
+            package: None,
+        })
+        .map(|ty| JavaFieldType {
+            ty: ty.value,
+            semantics: ty.semantics,
+        })
+    }
+
+    pub fn qualified_type_ref<'context>(
+        ty: &TypeRef,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, Native>,
+        package: &'context JavaPackage,
+    ) -> Result<TypeName> {
+        ty.render_with(&mut JavaTypeRef {
+            context,
+            version,
+            package: Some(package),
+        })
+        .map(ApiType::into_value)
+    }
+
+    pub fn qualified_field<'context>(
+        ty: &TypeRef,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, Native>,
+        package: &'context JavaPackage,
+    ) -> Result<JavaFieldType> {
+        ty.render_with(&mut JavaTypeRef {
+            context,
+            version,
+            package: Some(package),
+        })
+        .map(|ty| JavaFieldType {
+            ty: ty.value,
+            semantics: ty.semantics,
+        })
     }
 
     pub fn optional_primitive(primitive: Primitive, version: JavaVersion) -> TypeName {
@@ -336,7 +376,7 @@ impl TypeRefRender for JavaTypeRef<'_> {
                 "record type was not found in render context",
             ))
             .and_then(|record| Name::new(record.name()).type_name(self.version))
-            .map(TypeName::named)
+            .map(|name| self.qualify(name))
             .map(ApiType::reference)
     }
 
@@ -347,7 +387,7 @@ impl TypeRefRender for JavaTypeRef<'_> {
                 "enum type was not found in render context",
             ))
             .and_then(|enumeration| Name::new(enumeration.name()).type_name(self.version))
-            .map(TypeName::named)
+            .map(|name| self.qualify(name))
             .map(ApiType::reference)
     }
 
@@ -358,7 +398,7 @@ impl TypeRefRender for JavaTypeRef<'_> {
                 "class type was not found in render context",
             ))
             .and_then(|class| Name::new(class.name()).type_name(self.version))
-            .map(TypeName::named)
+            .map(|name| self.qualify(name))
             .map(ApiType::reference)
     }
 
@@ -369,7 +409,7 @@ impl TypeRefRender for JavaTypeRef<'_> {
                 "callback type was not found in render context",
             ))
             .and_then(|callback| Name::new(callback.name()).type_name(self.version))
-            .map(TypeName::named)
+            .map(|name| self.qualify(name))
             .map(ApiType::reference)
     }
 
@@ -469,5 +509,14 @@ impl TypeRefRender for JavaTypeRef<'_> {
                 value: Box::new(value.semantics),
             },
         })
+    }
+}
+
+impl JavaTypeRef<'_> {
+    fn qualify(&self, name: TypeIdentifier) -> TypeName {
+        match self.package {
+            Some(package) => package.type_name(name),
+            None => TypeName::named(name),
+        }
     }
 }

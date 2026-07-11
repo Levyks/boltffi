@@ -4,7 +4,7 @@ use boltffi_binding::{
 };
 
 use crate::{
-    core::Result,
+    core::{RenderContext, Result},
     target::java::{
         JavaHost, JavaVersion,
         codec::{
@@ -16,10 +16,11 @@ use crate::{
     },
 };
 
-pub struct Sizer {
+pub struct Sizer<'context> {
     current: Expression,
     member_access: ValueMemberAccess,
     version: JavaVersion,
+    context: &'context RenderContext<'context, boltffi_binding::Native>,
 }
 
 pub struct SizeExpression {
@@ -27,12 +28,16 @@ pub struct SizeExpression {
     sequence_element: SequenceElement,
 }
 
-impl Sizer {
-    pub fn new(version: JavaVersion) -> Self {
+impl<'context> Sizer<'context> {
+    pub fn new(
+        version: JavaVersion,
+        context: &'context RenderContext<'context, boltffi_binding::Native>,
+    ) -> Self {
         Self {
             current: Expression::identifier(Identifier::known("value")),
             member_access: ValueMemberAccess::Accessor,
             version,
+            context,
         }
     }
 
@@ -95,9 +100,16 @@ impl SizeExpression {
             sequence_element: SequenceElement::String,
         }
     }
+
+    fn fixed(size: u64) -> Self {
+        Self {
+            expression: Expression::integer(size),
+            sequence_element: SequenceElement::Fixed(size),
+        }
+    }
 }
 
-impl CodecSize for Sizer {
+impl CodecSize for Sizer<'_> {
     type Expr = Result<SizeExpression>;
 
     fn primitive(&mut self, primitive: BindingPrimitive, _value: &ValueRef) -> Self::Expr {
@@ -127,12 +139,17 @@ impl CodecSize for Sizer {
         self.direct_record(id, value)
     }
 
-    fn c_style_enum(&mut self, _id: EnumId, _value: &ValueRef) -> Self::Expr {
-        Self::unsupported("c-style enum wire size")
+    fn c_style_enum(&mut self, id: EnumId, _value: &ValueRef) -> Self::Expr {
+        crate::target::java::render::Enumeration::c_style_primitive(id, self.context)
+            .map(Primitive::wire_size)
+            .map(SizeExpression::fixed)
     }
 
-    fn data_enum(&mut self, _id: EnumId, _value: &ValueRef) -> Self::Expr {
-        Self::unsupported("data enum wire size")
+    fn data_enum(&mut self, _id: EnumId, value: &ValueRef) -> Self::Expr {
+        Ok(SizeExpression::new(self.value(value)?.call(
+            Identifier::known("wireSize"),
+            ArgumentList::default(),
+        )))
     }
 
     fn class_handle(&mut self, _id: ClassId, _value: &ValueRef) -> Self::Expr {
@@ -199,6 +216,13 @@ impl CodecSize for Sizer {
             )),
             SequenceElement::String => Ok(SizeExpression::new(
                 self.runtime_call("stringSequence", [value]),
+            )),
+            SequenceElement::Fixed(size) => Ok(SizeExpression::new(
+                Expression::integer(4).add(
+                    value
+                        .call(Identifier::known("size"), ArgumentList::default())
+                        .multiply(Expression::integer(size)),
+                ),
             )),
             SequenceElement::General => Ok(SizeExpression::new(self.runtime_call(
                 "sequence",

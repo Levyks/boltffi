@@ -6,10 +6,10 @@ use boltffi_binding::{
 use crate::{
     core::{RenderContext, Result},
     target::java::{
-        JavaHost, JavaVersion,
+        JavaHost, JavaPackage, JavaVersion,
         codec::SequenceElement,
         primitive::Primitive,
-        render::{Record, ResultClass},
+        render::{Enumeration, Record, ResultClass},
         syntax::{ArgumentList, Expression, Identifier, TypeName},
     },
 };
@@ -18,6 +18,7 @@ pub struct Reader<'context> {
     reader: Identifier,
     version: JavaVersion,
     context: &'context RenderContext<'context, Native>,
+    package: Option<&'context JavaPackage>,
 }
 
 pub struct ReadExpression {
@@ -35,7 +36,13 @@ impl<'context> Reader<'context> {
             reader,
             version,
             context,
+            package: None,
         }
+    }
+
+    pub fn package(mut self, package: &'context JavaPackage) -> Self {
+        self.package = Some(package);
+        self
     }
 
     fn call(&self, method: impl Into<String>) -> Result<ReadExpression> {
@@ -49,7 +56,7 @@ impl<'context> Reader<'context> {
 
     fn record(&self, id: RecordId) -> Result<ReadExpression> {
         Ok(ReadExpression::new(Expression::static_call(
-            TypeName::named(Record::type_name_for(id, self.context, self.version)?),
+            self.generated_type(Record::type_name_for(id, self.context, self.version)?),
             Identifier::known("fromReader"),
             [Expression::identifier(self.reader.clone())]
                 .into_iter()
@@ -59,6 +66,13 @@ impl<'context> Reader<'context> {
 
     fn unsupported(shape: &'static str) -> Result<ReadExpression> {
         Err(JavaHost::unsupported(shape))
+    }
+
+    fn generated_type(&self, name: crate::target::java::syntax::TypeIdentifier) -> TypeName {
+        match self.package {
+            Some(package) => package.type_name(name),
+            None => TypeName::named(name),
+        }
     }
 }
 
@@ -115,12 +129,29 @@ impl CodecRead for Reader<'_> {
         self.record(id)
     }
 
-    fn c_style_enum(&mut self, _id: EnumId) -> Self::Expr {
-        Self::unsupported("c-style enum wire read")
+    fn c_style_enum(&mut self, id: EnumId) -> Self::Expr {
+        let primitive = Enumeration::c_style_primitive(id, self.context)?;
+        let enumeration = Enumeration::type_name_for(id, self.context, self.version)?;
+        self.call(format!("read{}", primitive.wire_method_suffix()))
+            .map(|value| {
+                ReadExpression::new(Expression::static_call(
+                    self.generated_type(enumeration),
+                    Identifier::known("fromValue"),
+                    [value.expression].into_iter().collect(),
+                ))
+            })
     }
 
-    fn data_enum(&mut self, _id: EnumId) -> Self::Expr {
-        Self::unsupported("data enum wire read")
+    fn data_enum(&mut self, id: EnumId) -> Self::Expr {
+        Enumeration::type_name_for(id, self.context, self.version).map(|enumeration| {
+            ReadExpression::new(Expression::static_call(
+                self.generated_type(enumeration),
+                Identifier::known("fromReader"),
+                [Expression::identifier(self.reader.clone())]
+                    .into_iter()
+                    .collect(),
+            ))
+        })
     }
 
     fn class_handle(&mut self, _id: ClassId) -> Self::Expr {
@@ -162,7 +193,7 @@ impl CodecRead for Reader<'_> {
                 self.call(format!("read{}Array", primitive.wire_method_suffix()))
             }
             SequenceElement::String => self.call("readStringSequence"),
-            SequenceElement::General => Ok(ReadExpression::new(
+            SequenceElement::General | SequenceElement::Fixed(_) => Ok(ReadExpression::new(
                 Expression::identifier(self.reader.clone()).call(
                     Identifier::known("readSequence"),
                     [Expression::lambda([], element.expression)]

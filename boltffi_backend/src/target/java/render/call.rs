@@ -1,9 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClosureReturn, DirectValueType, DirectVectorElementType, Direction, ErrorChannel,
-    ErrorPlacement, ExportedCallable, ExportedMethodDecl, FunctionDecl, HandlePresence,
-    HandleTarget, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust, ParamDecl,
-    ParamPlanRender, Primitive as BindingPrimitive, ReadPlan, Receive, ReturnPlanRender,
+    ClosureReturn, DataVariantPayload, DirectValueType, DirectVectorElementType, Direction,
+    EnumDecl, ErrorChannel, ErrorPlacement, ExportedCallable, ExportedMethodDecl, FunctionDecl,
+    HandlePresence, HandleTarget, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust,
+    ParamDecl, ParamPlanRender, Primitive as BindingPrimitive, ReadPlan, Receive, ReturnPlanRender,
     ReturnValueSlot, TypeRef, native,
 };
 
@@ -11,12 +11,13 @@ use crate::{
     bridge::jni::JniBridgeContract,
     core::{AuxChunk, Emitted, RenderContext, Result},
     target::java::{
-        JavaHost, JavaVersion,
+        JavaHost, JavaPackage, JavaVersion,
         admission::{FunctionShape, ReceiverSupport},
         codec::{Reader, Runtime, WireBuffer},
         name_style::Name,
         primitive::Primitive,
         render::{
+            Enumeration,
             native::Method,
             record::Record,
             signature::{CallSignature, Parameter, ReturnType, ValueType},
@@ -52,6 +53,32 @@ pub struct Receiver {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValueCalls {
+    initializers: Vec<Call>,
+    static_methods: Vec<Call>,
+    instance_methods: Vec<Call>,
+}
+
+#[derive(Clone, Copy)]
+pub struct ValueCallContext<'scope, 'bindings> {
+    bridge: &'scope JniBridgeContract,
+    native_owner: &'scope TypeIdentifier,
+    package: Option<&'scope JavaPackage>,
+    version: JavaVersion,
+    context: &'scope RenderContext<'bindings, Native>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ValueReceiver {
+    DirectRecord(TypeIdentifier),
+    DirectEnum(TypeIdentifier),
+    Encoded {
+        ty: TypeIdentifier,
+        codec: boltffi_binding::WritePlan,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum ReceiverMutation {
     Direct(Identifier),
     Encoded,
@@ -78,28 +105,32 @@ enum RuntimeRequirement {
     Wire,
 }
 
-struct NativeArgumentRender {
+struct NativeArgumentRender<'context> {
     source: Name,
     name: Identifier,
     version: JavaVersion,
+    context: &'context RenderContext<'context, Native>,
 }
 
 enum ReturnConversion {
     Void,
     Direct,
-    DirectRecord(TypeIdentifier),
+    DirectRecord(TypeName),
+    DirectEnum(TypeName),
     Encoded(ReadPlan),
     ScalarOption(Primitive),
 }
 
 struct CallReturn {
     ty: ReturnType,
+    native: ReturnType,
     conversion: ReturnConversion,
 }
 
 struct CallReturnRender<'context> {
     version: JavaVersion,
     context: &'context RenderContext<'context, Native>,
+    package: Option<&'context JavaPackage>,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +139,7 @@ struct CallScope<'scope, 'bindings> {
     native_owner: &'scope TypeIdentifier,
     version: JavaVersion,
     context: &'scope RenderContext<'bindings, Native>,
+    package: Option<&'scope JavaPackage>,
 }
 
 enum ErrorConversion {
@@ -131,7 +163,7 @@ impl Call {
             declaration.callable(),
             declaration.meta().doc().map(Javadoc::new),
             None,
-            CallScope::new(bridge, native_owner, version, context),
+            CallScope::new(bridge, native_owner, version, context, None),
         )
     }
 
@@ -139,6 +171,7 @@ impl Call {
         declaration: &InitializerDecl<Native>,
         bridge: &JniBridgeContract,
         native_owner: &TypeIdentifier,
+        package: Option<&JavaPackage>,
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
@@ -150,7 +183,7 @@ impl Call {
             declaration.callable(),
             declaration.meta().doc().map(Javadoc::new),
             None,
-            CallScope::new(bridge, native_owner, version, context),
+            CallScope::new(bridge, native_owner, version, context, package),
         )
     }
 
@@ -159,6 +192,7 @@ impl Call {
         receiver: Option<Receiver>,
         bridge: &JniBridgeContract,
         native_owner: &TypeIdentifier,
+        package: Option<&JavaPackage>,
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
@@ -175,7 +209,7 @@ impl Call {
             declaration.callable(),
             declaration.meta().doc().map(Javadoc::new),
             receiver,
-            CallScope::new(bridge, native_owner, version, context),
+            CallScope::new(bridge, native_owner, version, context, package),
         )
     }
 
@@ -232,7 +266,12 @@ impl Call {
             .params()
             .iter()
             .map(|parameter| {
-                BoundParameter::from_declaration(parameter, scope.version, scope.context)
+                BoundParameter::from_declaration(
+                    parameter,
+                    scope.version,
+                    scope.context,
+                    scope.package,
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         let declared_return = callable
@@ -241,6 +280,7 @@ impl Call {
             .render_with(&mut CallReturnRender {
                 version: scope.version,
                 context: scope.context,
+                package: scope.package,
             })?;
         let native = Method::from_symbol(symbol, scope.bridge, scope.version)?;
         let receiver_arguments = receiver
@@ -291,13 +331,18 @@ impl Call {
                 (
                     ReturnType::Value(ValueType::Record(ty.clone())),
                     ReturnType::Value(ValueType::Record(ty.clone())),
-                    CallReturn::encoded_record_statements(ty, native_call),
+                    CallReturn::encoded_record_statements(TypeName::named(ty), native_call),
                 )
             }
             None => (
                 declared_return.ty.clone(),
-                declared_return.ty.clone(),
-                declared_return.statements(native_call, scope.version, scope.context)?,
+                declared_return.native.clone(),
+                declared_return.statements(
+                    native_call,
+                    scope.version,
+                    scope.context,
+                    scope.package,
+                )?,
             ),
         };
         native.validate_return(&native_returns)?;
@@ -308,7 +353,7 @@ impl Call {
             .chain(parameters.iter().map(|parameter| parameter.native.runtime))
             .fold(declared_return.runtime(), RuntimeRequirement::merge)
             .merge(error.runtime());
-        let success = error.wrap(success, scope.version, scope.context)?;
+        let success = error.wrap(success, scope.version, scope.context, scope.package)?;
         let protected = receiver
             .iter()
             .flat_map(|receiver| receiver.native.prepare.iter().cloned())
@@ -359,8 +404,102 @@ impl Call {
     }
 }
 
-impl<'scope, 'bindings> CallScope<'scope, 'bindings> {
-    fn new(
+impl ValueCalls {
+    pub fn from_declarations(
+        initializers: &[InitializerDecl<Native>],
+        methods: &[ExportedMethodDecl<Native, NativeSymbol>],
+        receiver: ValueReceiver,
+        scope: ValueCallContext<'_, '_>,
+    ) -> Result<Self> {
+        let initializers = initializers
+            .iter()
+            .map(|initializer| {
+                Call::from_initializer(
+                    initializer,
+                    scope.bridge,
+                    scope.native_owner,
+                    scope.package,
+                    scope.version,
+                    scope.context,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let static_methods = methods
+            .iter()
+            .filter(|method| method.callable().receiver().is_none())
+            .map(|method| {
+                Call::from_method(
+                    method,
+                    None,
+                    scope.bridge,
+                    scope.native_owner,
+                    scope.package,
+                    scope.version,
+                    scope.context,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let instance_methods = methods
+            .iter()
+            .filter_map(|method| {
+                method
+                    .callable()
+                    .receiver()
+                    .map(|receive| (method, receive))
+            })
+            .map(|(method, receive)| {
+                receiver
+                    .build(receive, scope.version, scope.context)
+                    .and_then(|receiver| {
+                        Call::from_method(
+                            method,
+                            Some(receiver),
+                            scope.bridge,
+                            scope.native_owner,
+                            scope.package,
+                            scope.version,
+                            scope.context,
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            initializers,
+            static_methods,
+            instance_methods,
+        })
+    }
+
+    pub fn initializers(&self) -> &[Call] {
+        &self.initializers
+    }
+
+    pub fn static_methods(&self) -> &[Call] {
+        &self.static_methods
+    }
+
+    pub fn instance_methods(&self) -> &[Call] {
+        &self.instance_methods
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Call> {
+        self.initializers
+            .iter()
+            .chain(&self.static_methods)
+            .chain(&self.instance_methods)
+    }
+
+    pub fn into_parts(self) -> (Vec<Call>, Vec<Call>, Vec<Call>) {
+        (
+            self.initializers,
+            self.static_methods,
+            self.instance_methods,
+        )
+    }
+}
+
+impl<'scope, 'bindings> ValueCallContext<'scope, 'bindings> {
+    pub fn local(
         bridge: &'scope JniBridgeContract,
         native_owner: &'scope TypeIdentifier,
         version: JavaVersion,
@@ -369,8 +508,60 @@ impl<'scope, 'bindings> CallScope<'scope, 'bindings> {
         Self {
             bridge,
             native_owner,
+            package: None,
             version,
             context,
+        }
+    }
+
+    pub fn nested(
+        bridge: &'scope JniBridgeContract,
+        native_owner: &'scope TypeIdentifier,
+        package: &'scope JavaPackage,
+        version: JavaVersion,
+        context: &'scope RenderContext<'bindings, Native>,
+    ) -> Self {
+        Self {
+            bridge,
+            native_owner,
+            package: Some(package),
+            version,
+            context,
+        }
+    }
+}
+
+impl ValueReceiver {
+    fn build<'context>(
+        &self,
+        receive: Receive,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, Native>,
+    ) -> Result<Receiver> {
+        match self {
+            Self::DirectRecord(ty) => Receiver::direct(ty.clone(), receive),
+            Self::DirectEnum(ty) => Receiver::enumeration(ty.clone(), receive),
+            Self::Encoded { ty, codec } => {
+                Receiver::encoded(ty.clone(), receive, codec, version, context)
+            }
+        }
+    }
+}
+
+impl<'scope, 'bindings> CallScope<'scope, 'bindings> {
+    fn new(
+        bridge: &'scope JniBridgeContract,
+        native_owner: &'scope TypeIdentifier,
+        version: JavaVersion,
+        context: &'scope RenderContext<'bindings, Native>,
+        package: Option<&'scope JavaPackage>,
+    ) -> Self {
+        Self {
+            bridge,
+            native_owner,
+            version,
+            context,
+            package,
         }
     }
 }
@@ -380,6 +571,7 @@ impl BoundParameter {
         parameter: &ParamDecl<Native, IntoRust>,
         version: JavaVersion,
         context: &RenderContext<Native>,
+        package: Option<&JavaPackage>,
     ) -> Result<Self> {
         let source = Name::new(parameter.name());
         let name = source.parameter(version)?;
@@ -388,11 +580,12 @@ impl BoundParameter {
             .as_value()
             .ok_or_else(FunctionShape::unexpected_shape)?;
         Ok(Self {
-            signature: Parameter::from_declaration(parameter, version, context)?,
+            signature: Parameter::from_declaration(parameter, version, context, package)?,
             native: plan.render_with(&mut NativeArgumentRender {
                 source,
                 name,
                 version,
+                context,
             })?,
         })
     }
@@ -430,7 +623,7 @@ impl RuntimeRequirement {
     }
 }
 
-impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
+impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_> {
     type Output = Result<NativeArgument>;
 
     fn direct(&mut self, ty: &'plan DirectValueType, _receive: Receive) -> Self::Output {
@@ -440,6 +633,13 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
             DirectValueType::Record(_) => Ok(NativeArgument::direct(
                 value.call(Identifier::known("toDirectBuffer"), ArgumentList::default()),
             )),
+            DirectValueType::Enum(enumeration) => {
+                Enumeration::type_name_for(*enumeration, self.context, self.version).map(|_| {
+                    NativeArgument::direct(
+                        value.call(Identifier::known("nativeValue"), ArgumentList::default()),
+                    )
+                })
+            }
             _ => Err(JavaHost::unsupported("unknown direct function parameter")),
         }
     }
@@ -455,7 +655,13 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender {
             return Err(JavaHost::unsupported("mutable encoded parameter"));
         }
         WireBuffer::new(&self.source, self.version)
-            .and_then(|buffer| buffer.write(codec, Expression::identifier(self.name.clone())))
+            .and_then(|buffer| {
+                buffer.write(
+                    codec,
+                    Expression::identifier(self.name.clone()),
+                    self.context,
+                )
+            })
             .map(NativeArgument::encoded)
     }
 
@@ -522,6 +728,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
     fn void(&mut self) -> Self::Output {
         Ok(CallReturn {
             ty: ReturnType::Void,
+            native: ReturnType::Void,
             conversion: ReturnConversion::Void,
         })
     }
@@ -530,13 +737,25 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
         match ty {
             DirectValueType::Primitive(primitive) => Ok(CallReturn {
                 ty: ReturnType::Value(ValueType::Primitive(Primitive::try_from(*primitive)?)),
+                native: ReturnType::Value(ValueType::Primitive(Primitive::try_from(*primitive)?)),
                 conversion: ReturnConversion::Direct,
             }),
             DirectValueType::Record(record) => {
                 let record = Record::type_name_for(*record, self.context, self.version)?;
+                let public = self.generated_type(record.clone());
                 Ok(CallReturn {
-                    ty: ReturnType::Value(ValueType::Record(record.clone())),
-                    conversion: ReturnConversion::DirectRecord(record),
+                    ty: ReturnType::Value(ValueType::Reference(public)),
+                    native: ReturnType::Value(ValueType::Record(record.clone())),
+                    conversion: ReturnConversion::DirectRecord(self.generated_type(record)),
+                })
+            }
+            DirectValueType::Enum(enumeration) => {
+                let ty = Enumeration::type_name_for(*enumeration, self.context, self.version)?;
+                let primitive = Enumeration::c_style_primitive(*enumeration, self.context)?;
+                Ok(CallReturn {
+                    ty: ReturnType::Value(ValueType::Reference(self.generated_type(ty.clone()))),
+                    native: ReturnType::Value(ValueType::Primitive(primitive)),
+                    conversion: ReturnConversion::DirectEnum(self.generated_type(ty)),
                 })
             }
             _ => Err(JavaHost::unsupported("unknown direct function return")),
@@ -551,7 +770,8 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
         _shape: native::BufferShape,
     ) -> Self::Output {
         Ok(CallReturn {
-            ty: ReturnType::Value(ValueType::Reference(JavaType::type_ref(
+            ty: ReturnType::Value(ValueType::Reference(self.type_ref(ty)?)),
+            native: ReturnType::Value(ValueType::Reference(JavaType::type_ref(
                 ty,
                 self.version,
                 self.context,
@@ -577,6 +797,10 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
                 primitive,
                 self.version,
             ))),
+            native: ReturnType::Value(ValueType::Reference(JavaType::optional_primitive(
+                primitive,
+                self.version,
+            ))),
             conversion: ReturnConversion::ScalarOption(primitive),
         })
     }
@@ -590,6 +814,22 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
     }
 }
 
+impl CallReturnRender<'_> {
+    fn generated_type(&self, name: TypeIdentifier) -> TypeName {
+        match self.package {
+            Some(package) => package.type_name(name),
+            None => TypeName::named(name),
+        }
+    }
+
+    fn type_ref(&self, ty: &TypeRef) -> Result<TypeName> {
+        match self.package {
+            Some(package) => JavaType::qualified_type_ref(ty, self.version, self.context, package),
+            None => JavaType::type_ref(ty, self.version, self.context),
+        }
+    }
+}
+
 impl CallReturn {
     fn runtime(&self) -> RuntimeRequirement {
         match self.conversion {
@@ -598,7 +838,8 @@ impl CallReturn {
             }
             ReturnConversion::Void
             | ReturnConversion::Direct
-            | ReturnConversion::DirectRecord(_) => RuntimeRequirement::None,
+            | ReturnConversion::DirectRecord(_)
+            | ReturnConversion::DirectEnum(_) => RuntimeRequirement::None,
         }
     }
 
@@ -607,6 +848,7 @@ impl CallReturn {
         call: Expression,
         version: JavaVersion,
         context: &RenderContext<Native>,
+        package: Option<&JavaPackage>,
     ) -> Result<Vec<Statement>> {
         match &self.conversion {
             ReturnConversion::Void => Ok(vec![Statement::expression(call)]),
@@ -614,12 +856,21 @@ impl CallReturn {
             ReturnConversion::DirectRecord(record) => {
                 Ok(Self::encoded_record_statements(record.clone(), call))
             }
+            ReturnConversion::DirectEnum(enumeration) => {
+                Ok(vec![Statement::return_value(Expression::static_call(
+                    enumeration.clone(),
+                    Identifier::known("fromValue"),
+                    [call].into_iter().collect(),
+                ))])
+            }
             ReturnConversion::Encoded(codec) => {
                 let result = Identifier::known("__boltffi_result");
                 let reader = Identifier::known("__boltffi_reader");
-                let decoded = codec
-                    .render_with(&mut Reader::new(reader.clone(), version, context))?
-                    .into_expression();
+                let mut codec_reader = Reader::new(reader.clone(), version, context);
+                if let Some(package) = package {
+                    codec_reader = codec_reader.package(package);
+                }
+                let decoded = codec.render_with(&mut codec_reader)?.into_expression();
                 Ok(vec![
                     Statement::value(Self::byte_array(), result.clone(), call),
                     Statement::value(
@@ -668,9 +919,9 @@ impl CallReturn {
         }
     }
 
-    fn encoded_record_statements(record: TypeIdentifier, call: Expression) -> Vec<Statement> {
+    fn encoded_record_statements(record: TypeName, call: Expression) -> Vec<Statement> {
         vec![Statement::return_value(Expression::static_call(
-            TypeName::named(record),
+            record,
             Identifier::known("fromByteArray"),
             [call].into_iter().collect(),
         ))]
@@ -712,23 +963,59 @@ impl ErrorConversion {
         success: Vec<Statement>,
         version: JavaVersion,
         context: &RenderContext<Native>,
+        package: Option<&JavaPackage>,
     ) -> Result<Vec<Statement>> {
         match self {
             Self::None | Self::Status => Ok(success),
             Self::Encoded { ty, codec } => {
                 let error = Identifier::known("__boltffi_error");
                 let reader = Identifier::known("__boltffi_error_reader");
-                let decoded = codec
-                    .render_with(&mut Reader::new(reader.clone(), version, context))?
-                    .into_expression();
-                let thrown = match ty {
-                    TypeRef::String => Expression::construct(
-                        TypeName::named(TypeIdentifier::known("RuntimeException", version)),
-                        [decoded].into_iter().collect(),
-                    ),
-                    TypeRef::Record(_) | TypeRef::Enum(_) => decoded,
-                    _ => return Err(JavaHost::unsupported("Java throwable error type")),
-                };
+                let mut codec_reader = Reader::new(reader.clone(), version, context);
+                if let Some(package) = package {
+                    codec_reader = codec_reader.package(package);
+                }
+                let decoded = codec.render_with(&mut codec_reader)?.into_expression();
+                let thrown =
+                    match ty {
+                        TypeRef::String => Expression::construct(
+                            TypeName::named(TypeIdentifier::known("RuntimeException", version)),
+                            [decoded].into_iter().collect(),
+                        ),
+                        TypeRef::Record(_) => decoded,
+                        TypeRef::Enum(id) => match context.enumeration(id).ok_or(
+                            JavaHost::broken_bridge_contract(
+                                "enum error type was not found in render context",
+                            ),
+                        )? {
+                            EnumDecl::CStyle(_) => Expression::construct(
+                                TypeName::nested(
+                                    TypeName::named(Enumeration::type_name_for(
+                                        id, context, version,
+                                    )?),
+                                    TypeIdentifier::known("Exception", version),
+                                ),
+                                [decoded].into_iter().collect(),
+                            ),
+                            EnumDecl::Data(enumeration)
+                                if enumeration.variants().iter().all(|variant| {
+                                    matches!(variant.payload(), DataVariantPayload::Unit)
+                                }) =>
+                            {
+                                Expression::construct(
+                                    TypeName::nested(
+                                        TypeName::named(Enumeration::type_name_for(
+                                            id, context, version,
+                                        )?),
+                                        TypeIdentifier::known("Exception", version),
+                                    ),
+                                    [decoded].into_iter().collect(),
+                                )
+                            }
+                            EnumDecl::Data(_) => decoded,
+                            _ => return Err(JavaHost::unsupported("unknown Java enum error type")),
+                        },
+                        _ => return Err(JavaHost::unsupported("Java throwable error type")),
+                    };
                 Ok(vec![Statement::try_catch(
                     success,
                     TypeName::named(TypeIdentifier::known(
@@ -798,9 +1085,10 @@ impl Receiver {
         receive: Receive,
         codec: &boltffi_binding::WritePlan,
         version: JavaVersion,
+        context: &RenderContext<Native>,
     ) -> Result<Self> {
         WireBuffer::receiver(version)
-            .and_then(|buffer| buffer.write(codec, Expression::this()))
+            .and_then(|buffer| buffer.write(codec, Expression::this(), context))
             .map(NativeArgument::encoded)
             .map(|native| Self {
                 ty,
@@ -808,5 +1096,19 @@ impl Receiver {
                 mutation: (receive == Receive::ByMutRef).then_some(ReceiverMutation::Encoded),
                 support: ReceiverSupport::Encoded,
             })
+    }
+
+    pub fn enumeration(ty: TypeIdentifier, receive: Receive) -> Result<Self> {
+        match receive {
+            Receive::ByRef | Receive::ByValue => Ok(Self {
+                ty,
+                native: NativeArgument::direct(
+                    Expression::this().call(Identifier::known("nativeValue"), Default::default()),
+                ),
+                mutation: None,
+                support: ReceiverSupport::Direct,
+            }),
+            _ => Err(JavaHost::unsupported("mutable c-style enum receiver")),
+        }
     }
 }

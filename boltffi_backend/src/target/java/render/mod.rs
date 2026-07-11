@@ -1,5 +1,6 @@
 mod call;
 mod default_value;
+mod enumeration;
 mod identity;
 mod module;
 mod native;
@@ -9,6 +10,7 @@ mod signature;
 mod type_name;
 
 pub use call::Call;
+pub use enumeration::Enumeration;
 pub use identity::ValueIdentity;
 pub use module::Module;
 pub use record::Record;

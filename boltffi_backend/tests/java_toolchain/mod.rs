@@ -8,23 +8,7 @@ pub enum JavaEightCompilation {
 
 impl JavaEightCompilation {
     pub fn from_version_output(version: &str) -> Option<Self> {
-        let release = version
-            .split_whitespace()
-            .find(|token| {
-                token
-                    .chars()
-                    .next()
-                    .is_some_and(|character| character.is_ascii_digit())
-            })?
-            .split(['.', '-'])
-            .filter_map(|component| component.parse::<u16>().ok())
-            .collect::<Vec<_>>();
-        let major = match release.as_slice() {
-            [1, major, ..] => *major,
-            [major, ..] => *major,
-            [] => return None,
-        };
-        match major {
+        match JavaCompiler::major_from_version_output(version)? {
             8 => Some(Self::SourceAndTarget),
             9.. => Some(Self::Release),
             _ => None,
@@ -45,6 +29,7 @@ impl JavaEightCompilation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JavaCompiler {
+    major: u16,
     java_eight: JavaEightCompilation,
 }
 
@@ -54,14 +39,47 @@ impl JavaCompiler {
         if !version_output.status.success() {
             return None;
         }
-        let java_eight =
-            JavaEightCompilation::from_version_output(&Self::combined_output(&version_output))?;
+        let version = Self::combined_output(&version_output);
+        let major = Self::major_from_version_output(&version)?;
+        let java_eight = JavaEightCompilation::from_version_output(&version)?;
 
-        Some(Self { java_eight })
+        Some(Self { major, java_eight })
     }
 
     pub fn configure_java_eight(&self, compiler: &mut Command) {
-        self.java_eight.configure(compiler);
+        let configured = self.configure_release(compiler, 8);
+        debug_assert!(configured);
+    }
+
+    pub fn configure_release(&self, compiler: &mut Command, release: u16) -> bool {
+        if release == 8 {
+            self.java_eight.configure(compiler);
+            return true;
+        }
+        if self.major < release || self.major < 9 {
+            return false;
+        }
+        compiler.args(["--release", &release.to_string()]);
+        true
+    }
+
+    fn major_from_version_output(version: &str) -> Option<u16> {
+        let release = version
+            .split_whitespace()
+            .find(|token| {
+                token
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_digit())
+            })?
+            .split(['.', '-'])
+            .filter_map(|component| component.parse::<u16>().ok())
+            .collect::<Vec<_>>();
+        match release.as_slice() {
+            [1, major, ..] => Some(*major),
+            [major, ..] => Some(*major),
+            [] => None,
+        }
     }
 
     fn combined_output(output: &Output) -> String {

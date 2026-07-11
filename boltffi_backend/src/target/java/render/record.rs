@@ -15,7 +15,7 @@ use crate::{
         primitive::Primitive,
         render::{
             ValueIdentity,
-            call::{Call, Receiver},
+            call::{Call, ValueCallContext, ValueCalls, ValueReceiver},
             default_value::DefaultExpression,
             signature::Parameter,
             type_name::JavaType,
@@ -43,15 +43,6 @@ enum Body {
 enum FieldStorage {
     Direct { read: Expression, write: Expression },
     Encoded,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ReceiverShape {
-    Direct(TypeIdentifier),
-    Encoded {
-        name: TypeIdentifier,
-        codec: boltffi_binding::WritePlan,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -241,15 +232,13 @@ impl Record {
             .iter()
             .map(|field| Field::from_direct(field, record, version))
             .collect::<Result<Vec<_>>>()?;
-        let (initializers, static_methods, instance_methods) = Self::calls(
+        let (initializers, static_methods, instance_methods) = ValueCalls::from_declarations(
             record.initializers(),
             record.methods(),
-            Some(ReceiverShape::Direct(name.clone())),
-            bridge,
-            native_owner,
-            version,
-            context,
-        )?;
+            ValueReceiver::DirectRecord(name.clone()),
+            ValueCallContext::local(bridge, native_owner, version, context),
+        )?
+        .into_parts();
         let default_constructors = DefaultConstructor::from_fields(&fields);
         let error = record.is_error_payload();
         Ok(Self {
@@ -290,18 +279,16 @@ impl Record {
             .iter()
             .map(|field| Field::from_encoded(field, version, context))
             .collect::<Result<Vec<_>>>()?;
-        let (initializers, static_methods, instance_methods) = Self::calls(
+        let (initializers, static_methods, instance_methods) = ValueCalls::from_declarations(
             record.initializers(),
             record.methods(),
-            Some(ReceiverShape::Encoded {
-                name: name.clone(),
+            ValueReceiver::Encoded {
+                ty: name.clone(),
                 codec: record.write().clone(),
-            }),
-            bridge,
-            native_owner,
-            version,
-            context,
-        )?;
+            },
+            ValueCallContext::local(bridge, native_owner, version, context),
+        )?
+        .into_parts();
         let default_constructors = DefaultConstructor::from_fields(&fields);
         let error = record.is_error_payload();
         Ok(Self {
@@ -324,66 +311,6 @@ impl Record {
             instance_methods,
             doc: record.meta().doc().map(Javadoc::new),
         })
-    }
-
-    fn calls(
-        initializers: &[boltffi_binding::InitializerDecl<Native>],
-        methods: &[boltffi_binding::ExportedMethodDecl<Native, boltffi_binding::NativeSymbol>],
-        receiver: Option<ReceiverShape>,
-        bridge: &JniBridgeContract,
-        native_owner: &TypeIdentifier,
-        version: JavaVersion,
-        context: &RenderContext<Native>,
-    ) -> Result<(Vec<Call>, Vec<Call>, Vec<Call>)> {
-        let initializers = initializers
-            .iter()
-            .map(|initializer| {
-                Call::from_initializer(initializer, bridge, native_owner, version, context)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let static_methods = methods
-            .iter()
-            .filter(|method| method.callable().receiver().is_none())
-            .map(|method| Call::from_method(method, None, bridge, native_owner, version, context))
-            .collect::<Result<Vec<_>>>()?;
-        let instance_methods = methods
-            .iter()
-            .filter_map(|method| {
-                method
-                    .callable()
-                    .receiver()
-                    .map(|receive| (method, receive))
-            })
-            .map(|(method, receive)| match &receiver {
-                Some(ReceiverShape::Direct(name)) => Receiver::direct(name.clone(), receive)
-                    .and_then(|receiver| {
-                        Call::from_method(
-                            method,
-                            Some(receiver),
-                            bridge,
-                            native_owner,
-                            version,
-                            context,
-                        )
-                    }),
-                Some(ReceiverShape::Encoded { name, codec }) => {
-                    Receiver::encoded(name.clone(), receive, codec, version).and_then(|receiver| {
-                        Call::from_method(
-                            method,
-                            Some(receiver),
-                            bridge,
-                            native_owner,
-                            version,
-                            context,
-                        )
-                    })
-                }
-                None => Err(JavaHost::broken_bridge_contract(
-                    "record method has no record receiver",
-                )),
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok((initializers, static_methods, instance_methods))
     }
 
     fn requires_wire_runtime(&self) -> bool {
@@ -445,6 +372,10 @@ impl Field {
         &self.wire_write
     }
 
+    pub fn wire_size(&self) -> &Expression {
+        &self.wire_size
+    }
+
     pub fn equals(&self) -> &Expression {
         &self.equals
     }
@@ -457,11 +388,11 @@ impl Field {
         self.doc.as_ref()
     }
 
-    fn native_record_safe(&self) -> bool {
+    pub fn native_record_safe(&self) -> bool {
         self.native_record_safe
     }
 
-    fn requires_identity(&self) -> bool {
+    pub fn requires_identity(&self) -> bool {
         self.requires_identity
     }
 
@@ -523,24 +454,49 @@ impl Field {
         })
     }
 
-    fn from_encoded(
+    pub fn from_encoded(
         field: &EncodedFieldDecl,
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
+        Self::from_encoded_with_package(field, version, context, None)
+    }
+
+    pub fn from_enum_payload<'context>(
+        field: &EncodedFieldDecl,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, Native>,
+        package: &'context JavaPackage,
+    ) -> Result<Self> {
+        Self::from_encoded_with_package(field, version, context, Some(package))
+    }
+
+    fn from_encoded_with_package<'context>(
+        field: &EncodedFieldDecl,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, Native>,
+        package: Option<&'context JavaPackage>,
+    ) -> Result<Self> {
         let name = Self::name_from_key(field.key(), version)?;
-        let ty = JavaType::field(field.ty(), version, context)?;
+        let ty = match package {
+            Some(package) => JavaType::qualified_field(field.ty(), version, context, package)?,
+            None => JavaType::field(field.ty(), version, context)?,
+        };
         let reader = Identifier::known("reader");
         let writer = Identifier::known("writer");
         let current = Expression::this();
+        let mut codec_reader = Reader::new(reader, version, context);
+        if let Some(package) = package {
+            codec_reader = codec_reader.package(package);
+        }
         let wire_read = field
             .read()
-            .render_with(&mut Reader::new(reader, version, context))?
+            .render_with(&mut codec_reader)?
             .into_expression();
         let wire_write = field
             .write()
             .render_with(
-                &mut Writer::new(writer, version)
+                &mut Writer::new(writer, version, context)
                     .current(current.clone())
                     .field_members(),
             )
@@ -551,7 +507,11 @@ impl Field {
             .collect::<Result<Vec<_>>>()?;
         let wire_size = field
             .write()
-            .size_with(&mut Sizer::new(version).current(current).field_members())?
+            .size_with(
+                &mut Sizer::new(version, context)
+                    .current(current)
+                    .field_members(),
+            )?
             .into_expression();
         let left = Expression::this().member(name.clone());
         let right = Expression::identifier(Identifier::known("other")).member(name.clone());

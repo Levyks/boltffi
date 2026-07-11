@@ -22,7 +22,6 @@ pub enum FunctionShape {
     ClosureParameter,
     ParameterSlots,
     PrimitiveParameter,
-    DirectEnumParameter,
     UnknownDirectParameter,
     EncodedParameter,
     MutableEncodedParameter,
@@ -146,7 +145,6 @@ impl FunctionShape {
             Self::ClosureParameter => Some("closure function parameter"),
             Self::ParameterSlots => Some("method parameter slots exceed 255 units"),
             Self::PrimitiveParameter => Some("primitive Java representation"),
-            Self::DirectEnumParameter => Some("direct enum function parameter"),
             Self::UnknownDirectParameter => Some("unknown direct function parameter"),
             Self::EncodedParameter => Some("encoded function parameter"),
             Self::MutableEncodedParameter => Some("mutable encoded function parameter"),
@@ -177,7 +175,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterShape {
                 .map(|primitive| vec![CarrierWidth(primitive.slot_width())])
                 .map_err(|_| FunctionShape::PrimitiveParameter),
             DirectValueType::Record(_) => Ok(vec![CarrierWidth(SlotWidth::Single)]),
-            DirectValueType::Enum(_) => Err(FunctionShape::DirectEnumParameter),
+            DirectValueType::Enum(_) => Ok(vec![CarrierWidth(SlotWidth::Single)]),
             _ => Err(FunctionShape::UnknownDirectParameter),
         }
     }
@@ -250,7 +248,10 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnShape {
             }
             (ReturnValueSlot::ReturnSlot, DirectValueType::Record(_)) => FunctionShape::Supported,
             (ReturnValueSlot::OutPointer, DirectValueType::Record(_)) => FunctionShape::Supported,
-            (_, DirectValueType::Enum(_)) => FunctionShape::DirectEnumReturn,
+            (ReturnValueSlot::ReturnSlot, DirectValueType::Enum(_)) => FunctionShape::Supported,
+            (ReturnValueSlot::OutPointer, DirectValueType::Enum(_)) => {
+                FunctionShape::DirectEnumReturn
+            }
             _ => FunctionShape::UnknownDirectReturn,
         }
     }
@@ -392,8 +393,8 @@ mod tests {
             BTreeMap::from([
                 ("encoded_parameter", Some("encoded function parameter")),
                 ("encoded_return", Some("encoded function return")),
-                ("enum_parameter", Some("direct enum function parameter")),
-                ("enum_return", Some("direct enum function return")),
+                ("enum_parameter", None),
+                ("enum_return", None),
                 ("handle_parameter", Some("handle function parameter")),
                 ("handle_return", Some("handle function return")),
                 ("option_parameter", Some("scalar option function parameter")),

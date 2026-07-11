@@ -8,11 +8,11 @@ use boltffi_binding::{
 use crate::{
     core::{Error, RenderContext, Result},
     target::java::{
-        JavaFile, JavaVersion,
+        JavaFile, JavaPackage, JavaVersion,
         admission::FunctionShape,
         name_style::Name,
         primitive::Primitive,
-        render::{record::Record, type_name::JavaType},
+        render::{Enumeration, record::Record, type_name::JavaType},
         syntax::{Identifier, TypeIdentifier, TypeName},
     },
     target::jvm::method::{Parameter as JvmParameter, Parameters as JvmParameters, SlotWidth},
@@ -54,6 +54,7 @@ struct ParameterRender<'context, 'bindings> {
     name: Identifier,
     version: JavaVersion,
     context: &'context RenderContext<'bindings, Native>,
+    package: Option<&'context JavaPackage>,
 }
 
 impl<T> Parameter<T> {
@@ -88,6 +89,7 @@ impl Parameter<ValueType> {
         parameter: &ParamDecl<Native, IntoRust>,
         version: JavaVersion,
         context: &RenderContext<Native>,
+        package: Option<&JavaPackage>,
     ) -> Result<Self> {
         let name = Name::new(parameter.name()).parameter(version)?;
         parameter
@@ -98,6 +100,7 @@ impl Parameter<ValueType> {
                 name,
                 version,
                 context,
+                package,
             })
     }
 }
@@ -270,7 +273,19 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterRender<'_, '_>
             }
             DirectValueType::Record(record) => Ok(Parameter::new(
                 self.name.clone(),
-                ValueType::Record(Record::type_name_for(*record, self.context, self.version)?),
+                ValueType::Reference(self.generated_type(Record::type_name_for(
+                    *record,
+                    self.context,
+                    self.version,
+                )?)),
+            )),
+            DirectValueType::Enum(enumeration) => Ok(Parameter::new(
+                self.name.clone(),
+                ValueType::Reference(self.generated_type(Enumeration::type_name_for(
+                    *enumeration,
+                    self.context,
+                    self.version,
+                )?)),
             )),
             _ => Err(FunctionShape::unexpected_shape()),
         }
@@ -283,7 +298,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterRender<'_, '_>
         _: native::BufferShape,
         _: Receive,
     ) -> Self::Output {
-        JavaType::type_ref(ty, self.version, self.context)
+        self.type_ref(ty)
             .map(ValueType::Reference)
             .map(|ty| Parameter::new(self.name.clone(), ty))
     }
@@ -308,6 +323,22 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterRender<'_, '_>
 
     fn direct_vector(&mut self, _: &'plan DirectVectorElementType) -> Self::Output {
         Err(FunctionShape::unexpected_shape())
+    }
+}
+
+impl ParameterRender<'_, '_> {
+    fn generated_type(&self, name: TypeIdentifier) -> TypeName {
+        match self.package {
+            Some(package) => package.type_name(name),
+            None => TypeName::named(name),
+        }
+    }
+
+    fn type_ref(&self, ty: &TypeRef) -> Result<TypeName> {
+        match self.package {
+            Some(package) => JavaType::qualified_type_ref(ty, self.version, self.context, package),
+            None => JavaType::type_ref(ty, self.version, self.context),
+        }
     }
 }
 

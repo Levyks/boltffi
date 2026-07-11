@@ -1,12 +1,12 @@
 use std::{fmt, path::PathBuf};
 
-use boltffi_binding::CanonicalName;
+use boltffi_binding::{CanonicalName, NamePart};
 
 use crate::{
     core::{Error, Result, name_case},
     target::java::{
         JavaVersion,
-        syntax::{Identifier, TypeIdentifier},
+        syntax::{Identifier, TypeIdentifier, TypeName},
     },
 };
 
@@ -77,6 +77,18 @@ impl JavaPackage {
         self.segments
             .iter()
             .try_for_each(|segment| segment.value().validate(version))
+    }
+
+    /// Qualifies a generated Java type inside this package.
+    pub fn type_name(&self, name: TypeIdentifier) -> TypeName {
+        TypeName::qualified(
+            self.segments
+                .iter()
+                .map(PathComponent::value)
+                .cloned()
+                .collect(),
+            name,
+        )
     }
 }
 
@@ -152,6 +164,23 @@ impl Name {
 
     pub fn type_name(&self, version: JavaVersion) -> Result<TypeIdentifier> {
         TypeIdentifier::escape(name_case::upper_camel(&self.source), version)
+    }
+
+    pub fn variant(&self, version: JavaVersion) -> Result<TypeIdentifier> {
+        self.type_name(version)
+    }
+
+    pub fn enum_entry(&self, version: JavaVersion) -> Result<Identifier> {
+        Identifier::escape_for(
+            self.source
+                .parts()
+                .iter()
+                .map(NamePart::as_str)
+                .map(str::to_ascii_uppercase)
+                .collect::<Vec<_>>()
+                .join("_"),
+            version,
+        )
     }
 
     pub fn generated(&self, suffix: &str, version: JavaVersion) -> Result<Identifier> {

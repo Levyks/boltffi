@@ -1,3 +1,4 @@
+mod enumeration;
 mod function;
 mod record;
 
@@ -97,7 +98,11 @@ impl Decision {
             DeclarationRef::Record(record) => RecordShape::classify(record)
                 .unsupported_reason()
                 .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
+            DeclarationRef::Enum(enumeration) => EnumShape::classify(enumeration)
+                .unsupported_reason()
+                .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
             _ => Self::Accepted,
         }
     }
 }
+pub use enumeration::EnumShape;

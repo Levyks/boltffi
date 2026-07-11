@@ -18,6 +18,10 @@ enum TypeShape {
     },
     Primitive(Primitive),
     Array(Box<TypeName>),
+    Nested {
+        owner: Box<TypeName>,
+        name: TypeIdentifier,
+    },
     Parameterized {
         raw: Box<TypeName>,
         arguments: Vec<TypeName>,
@@ -42,6 +46,13 @@ impl TypeName {
 
     pub fn array(element: Self) -> Self {
         Self(TypeShape::Array(Box::new(element)))
+    }
+
+    pub fn nested(owner: Self, name: TypeIdentifier) -> Self {
+        Self(TypeShape::Nested {
+            owner: Box::new(owner),
+            name,
+        })
     }
 
     pub fn parameterized(raw: Self, arguments: impl IntoIterator<Item = Self>) -> Self {
@@ -78,6 +89,7 @@ impl fmt::Display for TypeName {
             }
             TypeShape::Primitive(primitive) => primitive.fmt(formatter),
             TypeShape::Array(element) => write!(formatter, "{element}[]"),
+            TypeShape::Nested { owner, name } => write!(formatter, "{owner}.{name}"),
             TypeShape::Parameterized { raw, arguments } => write!(
                 formatter,
                 "{raw}<{}>",
