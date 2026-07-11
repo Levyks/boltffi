@@ -6,7 +6,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         fprintf(stderr, "BoltFFI JNI_OnLoad failed: GetEnv(JNI_VERSION_1_6) returned %d\n", (int)env_result);
         return JNI_ERR;
     }
-    if (!boltffi_jni_lookup_global_class(env, {{ class_name }}, &boltffi_jni_native_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, {{ class_name.lookup() }}, {{ class_name.diagnostic() }}, &boltffi_jni_native_class)) {
         return JNI_ERR;
     }
 {%- if uses_continuations %}

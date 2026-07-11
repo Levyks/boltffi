@@ -84,16 +84,16 @@ static ___StatusMapperVTable g____StatusMapperVTable_vtable = {
 };
 
 static bool boltffi_jni_load____StatusMapperVTable_callbacks(JNIEnv *env) {
-    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/StatusMapperCallbacks", &g____StatusMapperVTable_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, "com/boltffi/demo/StatusMapperCallbacks", "com/boltffi/demo/StatusMapperCallbacks", &g____StatusMapperVTable_class)) {
         return false;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____StatusMapperVTable_class, "com/boltffi/demo/StatusMapperCallbacks", "free", "(J)V", &g____StatusMapperVTable_free_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____StatusMapperVTable_class, "com/boltffi/demo/StatusMapperCallbacks", "free", "free", "(J)V", "(J)V", &g____StatusMapperVTable_free_method)) {
         goto fail;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____StatusMapperVTable_class, "com/boltffi/demo/StatusMapperCallbacks", "clone", "(J)J", &g____StatusMapperVTable_clone_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____StatusMapperVTable_class, "com/boltffi/demo/StatusMapperCallbacks", "clone", "clone", "(J)J", "(J)J", &g____StatusMapperVTable_clone_method)) {
         goto fail;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____StatusMapperVTable_class, "com/boltffi/demo/StatusMapperCallbacks", "map_status", "(JJI)[B", &g____StatusMapperVTable_map_status_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____StatusMapperVTable_class, "com/boltffi/demo/StatusMapperCallbacks", "map_status", "map_status", "(JJI)[B", "(JJI)[B", &g____StatusMapperVTable_map_status_method)) {
         goto fail;
     }
     boltffi_register_callback_demo_status_mapper(&g____StatusMapperVTable_vtable);
@@ -131,7 +131,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         fprintf(stderr, "BoltFFI JNI_OnLoad failed: GetEnv(JNI_VERSION_1_6) returned %d\n", (int)env_result);
         return JNI_ERR;
     }
-    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, "com/boltffi/demo/Native", "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
         return JNI_ERR;
     }
     if (!boltffi_jni_load____StatusMapperVTable_callbacks(env)) {

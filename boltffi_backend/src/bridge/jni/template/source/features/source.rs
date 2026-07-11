@@ -28,6 +28,7 @@ pub struct SourceFeatures {
     pub checks_error_buffer: bool,
     pub uses_byte_arrays: bool,
     pub uses_record_arrays: bool,
+    pub uses_direct_buffers: bool,
     pub uses_exceptions: bool,
     pub uses_lifecycle: bool,
     pub uses_continuations: bool,
@@ -71,6 +72,7 @@ impl SourceFeatures {
             || callbacks.returns_records
             || completions.uses_record_arrays
             || success_writers_use_record_arrays;
+        let uses_direct_buffers = methods.uses_direct_buffers || callbacks.uses_direct_buffers;
 
         Self {
             uses_limits: uses_byte_arrays
@@ -83,6 +85,7 @@ impl SourceFeatures {
             checks_error_buffer: methods.checks_error_buffer || callbacks.checks_error_buffer,
             uses_byte_arrays,
             uses_record_arrays,
+            uses_direct_buffers,
             uses_exceptions: callbacks.uses_byte_arrays
                 || callbacks.uses_direct_vectors
                 || callbacks.uses_record_arrays
@@ -99,7 +102,8 @@ impl SourceFeatures {
                 || completions.uses_byte_arrays
                 || !success_out_writers.is_empty()
                 || streams.returns_direct_batches
-                || methods.uses_exceptions,
+                || methods.uses_exceptions
+                || uses_direct_buffers,
             uses_continuations: methods.uses_continuations,
             uses_lifecycle: methods.uses_continuations
                 || callbacks.has_registrations

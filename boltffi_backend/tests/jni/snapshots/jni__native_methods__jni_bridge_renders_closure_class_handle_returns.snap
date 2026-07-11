@@ -50,13 +50,13 @@ static void boltffi_jni____closure__to_demo_engine_release(void *user_data) {
 }
 
 static bool boltffi_jni_load____closure__to_demo_engine(JNIEnv *env) {
-    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/ClosureToDemoEngineCallbacks", &g____closure__to_demo_engine_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, "com/boltffi/demo/ClosureToDemoEngineCallbacks", "com/boltffi/demo/ClosureToDemoEngineCallbacks", &g____closure__to_demo_engine_class)) {
         return false;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____closure__to_demo_engine_class, "com/boltffi/demo/ClosureToDemoEngineCallbacks", "call", "(J)J", &g____closure__to_demo_engine_call_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____closure__to_demo_engine_class, "com/boltffi/demo/ClosureToDemoEngineCallbacks", "call", "call", "(J)J", "(J)J", &g____closure__to_demo_engine_call_method)) {
         goto fail;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____closure__to_demo_engine_class, "com/boltffi/demo/ClosureToDemoEngineCallbacks", "free", "(J)V", &g____closure__to_demo_engine_free_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____closure__to_demo_engine_class, "com/boltffi/demo/ClosureToDemoEngineCallbacks", "free", "free", "(J)V", "(J)V", &g____closure__to_demo_engine_free_method)) {
         goto fail;
     }
     return true;
@@ -83,7 +83,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         fprintf(stderr, "BoltFFI JNI_OnLoad failed: GetEnv(JNI_VERSION_1_6) returned %d\n", (int)env_result);
         return JNI_ERR;
     }
-    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, "com/boltffi/demo/Native", "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
         return JNI_ERR;
     }
     if (!boltffi_jni_load____closure__to_demo_engine(env)) {

@@ -40,10 +40,14 @@ pub fn bridge(source: &str) -> BridgeOutput<JniBridgeContract> {
 }
 
 fn bridge_with_class(source: &str, class: &str) -> BridgeOutput<JniBridgeContract> {
+    bridge_with_owner(source, "com.boltffi.demo", class)
+}
+
+fn bridge_with_owner(source: &str, package: &str, class: &str) -> BridgeOutput<JniBridgeContract> {
     let bindings = bindings(source);
     let stack = BridgeLayer::new(
         CBridge::new("jni/demo.h").expect("C header bridge"),
-        JniBridge::new("com.boltffi.demo", class, "jni/jni_glue.c").expect("JNI bridge"),
+        JniBridge::new(package, class, "jni/jni_glue.c").expect("JNI bridge"),
     );
     stack.build(&bindings).expect("JNI bridge stack")
 }

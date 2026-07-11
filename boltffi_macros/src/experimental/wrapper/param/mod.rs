@@ -23,13 +23,6 @@ pub struct Renderer;
 pub fn requires_failure_return<S: RenderSurface>(param: &ParamDecl<S, IntoRust>) -> bool {
     match param.payload() {
         IncomingParam::Value(ParamPlan::Direct { ty, receive }) => {
-            // A direct record needs a failure return only when it crosses as a
-            // nullable pointer that the wrapper null-checks:
-            //   * surfaces that pass every direct record by pointer (e.g. wasm)
-            //     null-check all of them, including by-value; or
-            //   * surfaces that only borrow direct records by pointer (native)
-            //     null-check just the borrowed `&T` / `&mut T` cases. By-value
-            //     records there are passed directly and can never be null.
             matches!(ty, DirectValueType::Record(_))
                 && (matches!(S::DIRECT_RECORD_PARAMS, DirectRecordCrossing::Pointer)
                     || (S::BORROWED_DIRECT_RECORD_PARAMS
