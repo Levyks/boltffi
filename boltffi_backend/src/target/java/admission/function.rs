@@ -1,8 +1,7 @@
 use boltffi_binding::{
-    ClosureReturn, DirectValueType, DirectVectorElementType, Direction, ErrorChannel,
-    ErrorPlacement, ExportedCallable, FunctionDecl, HandlePresence, HandleTarget, IntoRust, Native,
-    OutOfRust, ParamPlanRender, Primitive as BindingPrimitive, Receive, ReturnPlanRender,
-    ReturnValueSlot, TypeRef, native,
+    ClosureReturn, DirectValueType, DirectVectorElementType, Direction, ExportedCallable,
+    FunctionDecl, HandlePresence, HandleTarget, IntoRust, Native, OutOfRust, ParamPlanRender,
+    Primitive as BindingPrimitive, Receive, ReturnPlanRender, ReturnValueSlot, TypeRef, native,
 };
 
 use crate::{
@@ -18,7 +17,6 @@ pub enum FunctionShape {
     Supported,
     Receiver,
     Asynchronous,
-    Fallible,
     ClosureParameter,
     ParameterSlots,
     PrimitiveParameter,
@@ -42,6 +40,7 @@ pub enum ReceiverSupport {
     Forbidden,
     Direct,
     Encoded,
+    Handle(native::HandleCarrier),
 }
 
 struct ParameterShape;
@@ -76,6 +75,11 @@ impl FunctionShape {
                         CarrierWidth(SlotWidth::Single),
                         CarrierWidth(SlotWidth::Single),
                     ],
+                    ReceiverSupport::Handle(carrier) => {
+                        return Primitive::from_handle_carrier(carrier)
+                            .map(|primitive| vec![CarrierWidth(primitive.slot_width())])
+                            .map_err(|_| Self::HandleParameter);
+                    }
                     ReceiverSupport::Forbidden => Vec::new(),
                 })
             })
@@ -101,14 +105,6 @@ impl FunctionShape {
                 .execution()
                 .uses_async_execution()
                 .then_some(Self::Asynchronous),
-            matches!(
-                callable.error().channel(),
-                ErrorChannel::Encoded {
-                    placement: ErrorPlacement::OutPointer,
-                    ..
-                }
-            )
-            .then_some(Self::Fallible),
             parameter,
             (!returns.is_supported()).then_some(returns),
         ]
@@ -141,7 +137,6 @@ impl FunctionShape {
             Self::Supported => None,
             Self::Receiver => Some("free function receiver"),
             Self::Asynchronous => Some("asynchronous function"),
-            Self::Fallible => Some("fallible function"),
             Self::ClosureParameter => Some("closure function parameter"),
             Self::ParameterSlots => Some("method parameter slots exceed 255 units"),
             Self::PrimitiveParameter => Some("primitive Java representation"),
@@ -201,12 +196,19 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterShape {
 
     fn handle(
         &mut self,
-        _: &'plan HandleTarget,
-        _: native::HandleCarrier,
-        _: HandlePresence,
+        target: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
         _: Receive,
     ) -> Self::Output {
-        Err(FunctionShape::HandleParameter)
+        match (target, presence) {
+            (HandleTarget::Class(_), HandlePresence::Required | HandlePresence::Nullable) => {
+                Primitive::from_handle_carrier(carrier)
+                    .map(|primitive| vec![CarrierWidth(primitive.slot_width())])
+                    .map_err(|_| FunctionShape::HandleParameter)
+            }
+            _ => Err(FunctionShape::HandleParameter),
+        }
     }
 
     fn scalar_option(&mut self, _: BindingPrimitive) -> Self::Output {
@@ -268,12 +270,19 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnShape {
 
     fn handle(
         &mut self,
-        _: ReturnValueSlot,
-        _: &'plan HandleTarget,
-        _: native::HandleCarrier,
-        _: HandlePresence,
+        slot: ReturnValueSlot,
+        target: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
     ) -> Self::Output {
-        FunctionShape::HandleReturn
+        match (slot, target, presence) {
+            (
+                ReturnValueSlot::ReturnSlot | ReturnValueSlot::OutPointer,
+                HandleTarget::Class(_),
+                HandlePresence::Required | HandlePresence::Nullable,
+            ) if Primitive::from_handle_carrier(carrier).is_ok() => FunctionShape::Supported,
+            _ => FunctionShape::HandleReturn,
+        }
     }
 
     fn scalar_option(&mut self, primitive: BindingPrimitive) -> Self::Output {
@@ -391,14 +400,14 @@ mod tests {
         assert_eq!(
             shapes,
             BTreeMap::from([
-                ("encoded_parameter", Some("encoded function parameter")),
-                ("encoded_return", Some("encoded function return")),
+                ("encoded_parameter", None),
+                ("encoded_return", None),
                 ("enum_parameter", None),
                 ("enum_return", None),
-                ("handle_parameter", Some("handle function parameter")),
-                ("handle_return", Some("handle function return")),
-                ("option_parameter", Some("scalar option function parameter")),
-                ("option_return", Some("scalar option function return")),
+                ("handle_parameter", None),
+                ("handle_return", None),
+                ("option_parameter", None),
+                ("option_return", None),
                 ("primitive", None),
                 ("record_parameter", None),
                 ("record_return", None),

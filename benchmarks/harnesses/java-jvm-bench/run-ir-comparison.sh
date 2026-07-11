@@ -14,8 +14,11 @@ case "$SUITE" in
     enum)
         BENCHMARK_CLASS="BoltffiJavaEnumBench"
         ;;
+    class)
+        BENCHMARK_CLASS="BoltffiJavaClassBench"
+        ;;
     *)
-        printf 'Usage: %s [primitive|record|enum]\n' "$0" >&2
+        printf 'Usage: %s [primitive|record|enum|class]\n' "$0" >&2
         exit 2
         ;;
 esac

@@ -1,7 +1,7 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClosureReturn, DataVariantPayload, DirectValueType, DirectVectorElementType, Direction,
-    EnumDecl, ErrorChannel, ErrorPlacement, ExportedCallable, ExportedMethodDecl, FunctionDecl,
+    ClassId, ClosureReturn, DataVariantPayload, DirectValueType, DirectVectorElementType,
+    Direction, EnumDecl, ErrorChannel, ExportedCallable, ExportedMethodDecl, FunctionDecl,
     HandlePresence, HandleTarget, InitializerDecl, IntoRust, Native, NativeSymbol, OutOfRust,
     ParamDecl, ParamPlanRender, Primitive as BindingPrimitive, ReadPlan, Receive, ReturnPlanRender,
     ReturnValueSlot, TypeRef, native,
@@ -18,6 +18,7 @@ use crate::{
         primitive::Primitive,
         render::{
             Enumeration,
+            class::ClassHandle,
             native::Method,
             record::Record,
             signature::{CallSignature, Parameter, ReturnType, ValueType},
@@ -60,7 +61,7 @@ pub struct ValueCalls {
 }
 
 #[derive(Clone, Copy)]
-pub struct ValueCallContext<'scope, 'bindings> {
+pub struct AssociatedCallContext<'scope, 'bindings> {
     bridge: &'scope JniBridgeContract,
     native_owner: &'scope TypeIdentifier,
     package: Option<&'scope JavaPackage>,
@@ -117,8 +118,15 @@ enum ReturnConversion {
     Direct,
     DirectRecord(TypeName),
     DirectEnum(TypeName),
+    ClassHandle(ClassHandle),
     Encoded(ReadPlan),
     ScalarOption(Primitive),
+}
+
+#[derive(Clone, Copy)]
+enum ReturnContext {
+    Api,
+    ClassInitializer(ClassId),
 }
 
 struct CallReturn {
@@ -131,6 +139,7 @@ struct CallReturnRender<'context> {
     version: JavaVersion,
     context: &'context RenderContext<'context, Native>,
     package: Option<&'context JavaPackage>,
+    return_context: ReturnContext,
 }
 
 #[derive(Clone, Copy)]
@@ -140,6 +149,7 @@ struct CallScope<'scope, 'bindings> {
     version: JavaVersion,
     context: &'scope RenderContext<'bindings, Native>,
     package: Option<&'scope JavaPackage>,
+    return_context: ReturnContext,
 }
 
 enum ErrorConversion {
@@ -163,7 +173,7 @@ impl Call {
             declaration.callable(),
             declaration.meta().doc().map(Javadoc::new),
             None,
-            CallScope::new(bridge, native_owner, version, context, None),
+            CallScope::api(bridge, native_owner, version, context, None),
         )
     }
 
@@ -183,7 +193,32 @@ impl Call {
             declaration.callable(),
             declaration.meta().doc().map(Javadoc::new),
             None,
-            CallScope::new(bridge, native_owner, version, context, package),
+            CallScope::api(bridge, native_owner, version, context, package),
+        )
+    }
+
+    pub fn from_class_initializer(
+        declaration: &InitializerDecl<Native>,
+        class: ClassId,
+        name: Identifier,
+        scope: AssociatedCallContext<'_, '_>,
+    ) -> Result<Self> {
+        FunctionShape::classify_callable(declaration.callable(), ReceiverSupport::Forbidden)
+            .require_supported()?;
+        Self::build(
+            name,
+            declaration.symbol(),
+            declaration.callable(),
+            declaration.meta().doc().map(Javadoc::new),
+            None,
+            CallScope::class_initializer(
+                scope.bridge,
+                scope.native_owner,
+                scope.package,
+                scope.version,
+                scope.context,
+                class,
+            ),
         )
     }
 
@@ -209,7 +244,7 @@ impl Call {
             declaration.callable(),
             declaration.meta().doc().map(Javadoc::new),
             receiver,
-            CallScope::new(bridge, native_owner, version, context, package),
+            CallScope::api(bridge, native_owner, version, context, package),
         )
     }
 
@@ -281,6 +316,7 @@ impl Call {
                 version: scope.version,
                 context: scope.context,
                 package: scope.package,
+                return_context: scope.return_context,
             })?;
         let native = Method::from_symbol(symbol, scope.bridge, scope.version)?;
         let receiver_arguments = receiver
@@ -409,7 +445,7 @@ impl ValueCalls {
         initializers: &[InitializerDecl<Native>],
         methods: &[ExportedMethodDecl<Native, NativeSymbol>],
         receiver: ValueReceiver,
-        scope: ValueCallContext<'_, '_>,
+        scope: AssociatedCallContext<'_, '_>,
     ) -> Result<Self> {
         let initializers = initializers
             .iter()
@@ -498,7 +534,7 @@ impl ValueCalls {
     }
 }
 
-impl<'scope, 'bindings> ValueCallContext<'scope, 'bindings> {
+impl<'scope, 'bindings> AssociatedCallContext<'scope, 'bindings> {
     pub fn local(
         bridge: &'scope JniBridgeContract,
         native_owner: &'scope TypeIdentifier,
@@ -549,7 +585,7 @@ impl ValueReceiver {
 }
 
 impl<'scope, 'bindings> CallScope<'scope, 'bindings> {
-    fn new(
+    fn api(
         bridge: &'scope JniBridgeContract,
         native_owner: &'scope TypeIdentifier,
         version: JavaVersion,
@@ -562,6 +598,25 @@ impl<'scope, 'bindings> CallScope<'scope, 'bindings> {
             version,
             context,
             package,
+            return_context: ReturnContext::Api,
+        }
+    }
+
+    fn class_initializer(
+        bridge: &'scope JniBridgeContract,
+        native_owner: &'scope TypeIdentifier,
+        package: Option<&'scope JavaPackage>,
+        version: JavaVersion,
+        context: &'scope RenderContext<'bindings, Native>,
+        class: ClassId,
+    ) -> Self {
+        Self {
+            bridge,
+            native_owner,
+            version,
+            context,
+            package,
+            return_context: ReturnContext::ClassInitializer(class),
         }
     }
 }
@@ -667,12 +722,21 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
 
     fn handle(
         &mut self,
-        _target: &'plan HandleTarget,
-        _carrier: native::HandleCarrier,
-        _presence: HandlePresence,
+        target: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
         _receive: Receive,
     ) -> Self::Output {
-        Err(JavaHost::unsupported("handle function parameter"))
+        match target {
+            HandleTarget::Class(class) => {
+                ClassHandle::new(*class, carrier, presence, self.version, self.context, None)
+                    .and_then(|handle| {
+                        handle.native_argument(Expression::identifier(self.name.clone()))
+                    })
+                    .map(NativeArgument::direct)
+            }
+            _ => Err(JavaHost::unsupported("handle function parameter")),
+        }
     }
 
     fn scalar_option(&mut self, primitive: BindingPrimitive) -> Self::Output {
@@ -783,11 +847,41 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
     fn handle(
         &mut self,
         _slot: ReturnValueSlot,
-        _target: &'plan HandleTarget,
-        _carrier: native::HandleCarrier,
-        _presence: HandlePresence,
+        target: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
     ) -> Self::Output {
-        Err(JavaHost::unsupported("handle function return"))
+        let HandleTarget::Class(class) = target else {
+            return Err(JavaHost::unsupported("handle function return"));
+        };
+        let handle = ClassHandle::new(
+            *class,
+            carrier,
+            presence,
+            self.version,
+            self.context,
+            self.package,
+        )?;
+        let carrier = ReturnType::Value(ValueType::Primitive(handle.carrier()));
+        match self.return_context {
+            ReturnContext::Api => Ok(CallReturn {
+                ty: ReturnType::Value(ValueType::Reference(handle.ty().clone())),
+                native: carrier,
+                conversion: ReturnConversion::ClassHandle(handle),
+            }),
+            ReturnContext::ClassInitializer(expected)
+                if expected == *class && presence == HandlePresence::Required =>
+            {
+                Ok(CallReturn {
+                    ty: carrier.clone(),
+                    native: carrier,
+                    conversion: ReturnConversion::Direct,
+                })
+            }
+            ReturnContext::ClassInitializer(_) => Err(JavaHost::broken_bridge_contract(
+                "class initializer returns its owner",
+            )),
+        }
     }
 
     fn scalar_option(&mut self, primitive: BindingPrimitive) -> Self::Output {
@@ -839,7 +933,8 @@ impl CallReturn {
             ReturnConversion::Void
             | ReturnConversion::Direct
             | ReturnConversion::DirectRecord(_)
-            | ReturnConversion::DirectEnum(_) => RuntimeRequirement::None,
+            | ReturnConversion::DirectEnum(_)
+            | ReturnConversion::ClassHandle(_) => RuntimeRequirement::None,
         }
     }
 
@@ -863,6 +958,7 @@ impl CallReturn {
                     [call].into_iter().collect(),
                 ))])
             }
+            ReturnConversion::ClassHandle(handle) => handle.value_statements(call),
             ReturnConversion::Encoded(codec) => {
                 let result = Identifier::known("__boltffi_result");
                 let reader = Identifier::known("__boltffi_reader");
@@ -944,16 +1040,10 @@ impl ErrorConversion {
         match channel {
             ErrorChannel::None => Ok(Self::None),
             ErrorChannel::Status => Ok(Self::Status),
-            ErrorChannel::Encoded {
-                placement: ErrorPlacement::ReturnSlot,
-                ty,
-                codec,
-                ..
-            } => Ok(Self::Encoded {
+            ErrorChannel::Encoded { ty, codec, .. } => Ok(Self::Encoded {
                 ty: ty.clone(),
                 codec: codec.clone(),
             }),
-            ErrorChannel::Encoded { .. } => Err(JavaHost::unsupported("encoded error out-pointer")),
             _ => Err(JavaHost::unsupported("unknown function error channel")),
         }
     }
@@ -1044,6 +1134,25 @@ impl ErrorConversion {
 }
 
 impl Receiver {
+    pub fn class(
+        ty: TypeIdentifier,
+        carrier: native::HandleCarrier,
+        receive: Receive,
+    ) -> Result<Self> {
+        Primitive::from_handle_carrier(carrier)?;
+        match receive {
+            Receive::ByRef | Receive::ByMutRef => Ok(Self {
+                ty,
+                native: NativeArgument::direct(
+                    Expression::this().call(Identifier::known("rawHandle"), Default::default()),
+                ),
+                mutation: None,
+                support: ReceiverSupport::Handle(carrier),
+            }),
+            _ => Err(JavaHost::unsupported("class method receiver")),
+        }
+    }
+
     pub fn direct(ty: TypeIdentifier, receive: Receive) -> Result<Self> {
         let value =
             Expression::this().call(Identifier::known("toDirectBuffer"), Default::default());

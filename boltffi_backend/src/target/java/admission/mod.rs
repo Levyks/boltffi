@@ -1,3 +1,4 @@
+mod class;
 mod enumeration;
 mod function;
 mod record;
@@ -11,6 +12,7 @@ use crate::core::{
     UnsupportedDeclaration,
 };
 
+pub use self::class::ClassShape;
 use super::JavaHost;
 pub use function::{FunctionShape, ReceiverSupport};
 pub use record::RecordShape;
@@ -99,6 +101,9 @@ impl Decision {
                 .unsupported_reason()
                 .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
             DeclarationRef::Enum(enumeration) => EnumShape::classify(enumeration)
+                .unsupported_reason()
+                .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
+            DeclarationRef::Class(class) => ClassShape::classify(class)
                 .unsupported_reason()
                 .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
             _ => Self::Accepted,

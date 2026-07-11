@@ -31,7 +31,7 @@ use crate::{
 
 pub use crate::target::jvm::DesktopLoader as JavaDesktopLoader;
 pub use name_style::{JavaFile, JavaPackage};
-use render::{Call, Enumeration, ErasedSignature, Module, Record};
+use render::{Call, Class, Enumeration, ErasedSignature, Module, Record};
 use syntax::{Syntax, TypeIdentifier};
 pub use version::JavaVersion;
 
@@ -276,6 +276,21 @@ impl JavaHost {
         )
     }
 
+    fn class_plan(
+        &self,
+        declaration: &ClassDecl<Native>,
+        bridge: &JniBridgeContract,
+        context: &RenderContext<Native>,
+    ) -> Result<Class> {
+        Class::from_declaration(
+            declaration,
+            bridge,
+            &self.native_owner(),
+            self.java_version,
+            context,
+        )
+    }
+
     fn validate_signatures(
         &self,
         bindings: &Bindings<Native>,
@@ -325,6 +340,14 @@ impl JavaHost {
                         &signatures,
                     )
                 }
+                DeclarationRef::Class(declaration) => {
+                    let class = self.class_plan(declaration, bridge, context)?;
+                    let signatures = class.signatures();
+                    ErasedSignature::validate_owner(
+                        &Class::file_for(declaration, self.java_version)?,
+                        &signatures,
+                    )
+                }
                 _ => Ok(()),
             }
         })
@@ -335,10 +358,7 @@ impl JavaHost {
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Records)
             .stable(BindingCapability::Enums)
-            .unsupported(
-                BindingCapability::Classes,
-                "Java class migration is pending",
-            )
+            .stable(BindingCapability::Classes)
             .unsupported(
                 BindingCapability::Callbacks,
                 "Java callback migration is pending",
@@ -416,11 +436,12 @@ impl host::HostBackend for JavaHost {
 
     fn class(
         &self,
-        _: &ClassDecl<Self::Surface>,
-        _: &Self::Bridge,
-        _: &RenderContext<Self::Surface>,
+        declaration: &ClassDecl<Self::Surface>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("class declaration"))
+        self.class_plan(declaration, bridge, context)?
+            .render(self.package())
     }
 
     fn callback(

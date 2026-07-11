@@ -15,7 +15,7 @@ use crate::{
         primitive::Primitive,
         render::{
             ValueIdentity,
-            call::{ValueCallContext, ValueCalls, ValueReceiver},
+            call::{AssociatedCallContext, ValueCalls, ValueReceiver},
             record::Field,
         },
         syntax::{Expression, Identifier, Javadoc, Statement, TypeIdentifier, TypeName},
@@ -213,7 +213,7 @@ impl CStyle {
                 enumeration.initializers(),
                 enumeration.methods(),
                 ValueReceiver::DirectEnum(name),
-                ValueCallContext::nested(bridge, native_owner, package, version, context),
+                AssociatedCallContext::nested(bridge, native_owner, package, version, context),
             )?,
             doc: enumeration.meta().doc().map(Javadoc::new),
         })
@@ -302,7 +302,7 @@ impl Data {
                     ty: name,
                     codec: enumeration.write().clone(),
                 },
-                ValueCallContext::nested(bridge, native_owner, package, version, context),
+                AssociatedCallContext::nested(bridge, native_owner, package, version, context),
             )?,
             doc: enumeration.meta().doc().map(Javadoc::new),
         })

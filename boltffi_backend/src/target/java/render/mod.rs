@@ -1,4 +1,5 @@
 mod call;
+mod class;
 mod default_value;
 mod enumeration;
 mod identity;
@@ -10,6 +11,7 @@ mod signature;
 mod type_name;
 
 pub use call::Call;
+pub use class::Class;
 pub use enumeration::Enumeration;
 pub use identity::ValueIdentity;
 pub use module::Module;

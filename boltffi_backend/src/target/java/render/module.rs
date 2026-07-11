@@ -16,7 +16,7 @@ use crate::{
     target::java::{JavaFile, JavaHost, JavaPackage, runtime::Loader, syntax::TypeIdentifier},
 };
 
-use super::{Enumeration, Record, ResultClass};
+use super::{Class, Enumeration, Record, ResultClass};
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/java/module.java", escape = "none")]
@@ -72,7 +72,7 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             !declaration.emitted().primary_chunk().is_empty()
                 && declaration.declaration().uses_result_codec()
         });
-        let (chunks, mut record_files) = ModuleChunks::from_declarations(
+        let (chunks, mut declaration_files) = ModuleChunks::from_declarations(
             self.declarations,
             host.package(),
             host.java_version(),
@@ -97,7 +97,7 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             FilePath::new(host.file().path(host.package()))?,
             contents,
         )];
-        files.append(&mut record_files);
+        files.append(&mut declaration_files);
         if let Some(runtime) = loader.desktop_source(host.package())? {
             files.push(GeneratedFile::new(
                 FilePath::new(host.runtime_file().path(host.package()))?,
@@ -145,6 +145,12 @@ impl ModuleChunks {
                             FilePath::new(
                                 Enumeration::file_for(enumeration, version)?.path(package),
                             )?,
+                            primary.as_str(),
+                        ));
+                    }
+                    DeclarationRef::Class(class) if !primary.is_empty() => {
+                        files.push(GeneratedFile::new(
+                            FilePath::new(Class::file_for(class, version)?.path(package))?,
                             primary.as_str(),
                         ));
                     }

@@ -245,6 +245,72 @@ const ERROR_ENUMS: &str = r#"
     }
 "#;
 
+const CLASSES: &str = r#"
+    pub struct Counter {
+        value: i32,
+    }
+
+    #[export(single_threaded)]
+    impl Counter {
+        pub fn new(value: i32) -> Self { Self { value } }
+
+        pub fn try_new(value: i32) -> Result<Self, String> {
+            if value < 0 {
+                Err("negative counter".to_owned())
+            } else {
+                Ok(Self { value })
+            }
+        }
+
+        pub fn get(&self) -> i32 { self.value }
+
+        pub fn set(&mut self, value: i32) { self.value = value; }
+    }
+
+    pub struct FallibleOnly {
+        name: String,
+    }
+
+    #[export]
+    impl FallibleOnly {
+        pub fn open(name: String) -> Result<Self, String> {
+            if name.is_empty() {
+                Err("empty name".to_owned())
+            } else {
+                Ok(Self { name })
+            }
+        }
+
+        pub fn name(&self) -> String { self.name.clone() }
+    }
+
+    pub struct Factory;
+
+    #[export]
+    impl Factory {
+        pub fn new() -> Self { Self }
+
+        pub fn make(value: i32) -> Counter { Counter { value } }
+
+        pub fn maybe(&self, value: i32) -> Option<Counter> {
+            (value >= 0).then_some(Counter { value })
+        }
+
+        pub fn read(&self, counter: &Counter) -> i32 { counter.value }
+    }
+
+    #[export]
+    pub fn describe(counter: &Counter) -> String { counter.value.to_string() }
+
+    #[export]
+    pub fn make_counter(value: i32) -> Counter { Counter { value } }
+
+    #[export]
+    pub fn maybe_counter(value: i32) -> Option<Counter> {
+        (value >= 0).then_some(Counter { value })
+    }
+"#;
+
 fn bindings(source: &str) -> boltffi_binding::Bindings<Native> {
     let file = syn::parse_str(source).expect("valid Java source fixture");
     let source = boltffi_scan::scan_file(file, PackageInfo::new("demo", None))
@@ -484,6 +550,152 @@ fn java_seventeen_uses_sealed_data_enums_when_value_semantics_are_safe() {
     assert!(shape.contains("public sealed interface Shape permits"));
     assert!(shape.contains("record Circle(double radius) implements Shape"));
     assert!(shape.contains("default boolean isEmpty()"));
+}
+
+#[test]
+fn java_target_renders_class_ownership_and_handle_calls_from_binding_ir() {
+    let output = render(CLASSES, CoverageMode::Complete);
+    let counter = java_source(&output, "com.boltffi.demo", "Counter");
+    let fallible = java_source(&output, "com.boltffi.demo", "FallibleOnly");
+    let factory = java_source(&output, "com.boltffi.demo", "Factory");
+    let module = java_source(&output, "com.boltffi.demo", "Demo");
+
+    assert!(counter.contains("public final class Counter implements AutoCloseable"));
+    assert!(counter.contains("private final long handle;"));
+    assert!(counter.contains("private final AtomicBoolean closed = new AtomicBoolean(false);"));
+    assert!(counter.contains("public Counter(int value)"));
+    assert!(counter.contains("private static long __boltffiCreateHandle0(int value)"));
+    assert!(counter.contains("return Native.boltffi_init_class_demo_counter_new(value);"));
+    assert!(counter.contains("public static Counter tryNew(int value)"));
+    assert!(
+        counter
+            .contains("return new Counter(Native.boltffi_init_class_demo_counter_try_new(value));")
+    );
+    assert!(counter.contains("if (!closed.compareAndSet(false, true)) return;"));
+    assert!(counter.contains("Native.boltffi_release_class_demo_counter(this.handle);"));
+    assert!(counter.contains("public int get()"));
+    assert!(counter.contains("public void set(int value)"));
+    assert!(
+        counter.contains("Native.boltffi_method_class_demo_counter_set(this.rawHandle(), value);")
+    );
+
+    assert!(fallible.contains("public FallibleOnly(String name)"));
+    assert!(fallible.contains("private static long __boltffiCreateHandle0(String name)"));
+    assert!(fallible.contains("catch (BoltFfiErrorBufferException __boltffi_error)"));
+    assert!(!fallible.contains("this(new FallibleOnly"));
+
+    assert!(factory.contains("public static Counter make(int value)"));
+    assert!(
+        factory
+            .contains("return new Counter(Native.boltffi_method_class_demo_factory_make(value));")
+    );
+    assert!(factory.contains("public Counter maybe(int value)"));
+    assert!(factory.contains(
+        "long __boltffi_handle = Native.boltffi_method_class_demo_factory_maybe(this.rawHandle(), value);"
+    ));
+    assert!(
+        factory.contains("return (__boltffi_handle == 0L ? null : new Counter(__boltffi_handle));")
+    );
+    assert!(factory.contains("public int read(Counter counter)"));
+    assert!(factory.contains("counter.rawHandle()"));
+
+    assert!(module.contains("public static String describe(Counter counter)"));
+    assert!(module.contains("counter.rawHandle()"));
+    assert!(module.contains("public static Counter makeCounter(int value)"));
+    assert!(module.contains("public static Counter maybeCounter(int value)"));
+    assert!(module.contains("static native long"));
+}
+
+#[test]
+fn java_partial_target_reports_unsupported_async_classes_before_building_the_bridge() {
+    let source = r#"
+        pub struct Counter { value: i32 }
+
+        #[export]
+        impl Counter {
+            pub fn new(value: i32) -> Self { Self { value } }
+            pub fn get(&self) -> i32 { self.value }
+        }
+
+        pub struct Worker;
+
+        #[export]
+        impl Worker {
+            pub fn new() -> Self { Self }
+            pub async fn run(&self) -> i32 { 1 }
+        }
+    "#;
+    let bindings = bindings(source);
+    let worker_symbols = bindings
+        .decls()
+        .iter()
+        .find_map(|declaration| match DeclarationRef::from(declaration) {
+            DeclarationRef::Class(class) if class.name().source_spelling() == Some("Worker") => {
+                Some(
+                    std::iter::once(class.release().name().as_str())
+                        .chain(
+                            class
+                                .initializers()
+                                .iter()
+                                .map(|initializer| initializer.symbol().name().as_str()),
+                        )
+                        .chain(
+                            class
+                                .methods()
+                                .iter()
+                                .map(|method| method.target().name().as_str()),
+                        )
+                        .collect::<Vec<_>>(),
+                )
+            }
+            _ => None,
+        })
+        .expect("Worker binding symbols");
+    let output = host()
+        .render_with_coverage(&bindings, CoverageMode::Partial)
+        .expect("partial Java target should reject an asynchronous class");
+    let unsupported = output.coverage().unsupported();
+
+    assert!(
+        output
+            .files()
+            .iter()
+            .any(|file| { file.path().as_path() == Path::new("com/boltffi/demo/Counter.java") })
+    );
+    assert!(output.files().iter().all(|file| {
+        file.path().as_path() != Path::new("com/boltffi/demo/Worker.java")
+            && worker_symbols
+                .iter()
+                .all(|symbol| !file.contents().contains(symbol))
+    }));
+    assert_eq!(unsupported.len(), 1);
+    assert_eq!(unsupported[0].declaration().kind(), "class");
+    assert_eq!(unsupported[0].declaration().name(), "worker");
+    assert_eq!(unsupported[0].reason(), "asynchronous function");
+}
+
+#[test]
+fn java_target_rejects_class_lifecycle_signature_collisions() {
+    let source = r#"
+        pub struct Resource;
+
+        #[export]
+        impl Resource {
+            pub fn new() -> Self { Self }
+            pub fn close(&self) {}
+        }
+    "#;
+    let error = host()
+        .render_with_coverage(&bindings(source), CoverageMode::Complete)
+        .expect_err("class lifecycle methods must retain their generated signatures");
+
+    assert_eq!(
+        error,
+        Error::JavaNameCollision {
+            scope: "Resource".to_owned(),
+            name: "close()".to_owned(),
+        }
+    );
 }
 
 #[test]
@@ -1108,6 +1320,53 @@ fn generated_enum_errors_compile_for_java_eight_when_available() {
         JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
     );
     compile_generated_java(&compiler, &output, "boltffi-java-enum-errors");
+}
+
+#[test]
+fn generated_classes_compile_for_java_eight_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    let output = render_with_host(
+        CLASSES,
+        CoverageMode::Complete,
+        JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
+    );
+    compile_generated_java_with(
+        &compiler,
+        &output,
+        "boltffi-java-classes",
+        &[(
+            "consumer/ClassConsumer.java",
+            r#"
+                package consumer;
+
+                import com.boltffi.demo.Counter;
+                import com.boltffi.demo.Demo;
+                import com.boltffi.demo.Factory;
+                import com.boltffi.demo.FallibleOnly;
+
+                public final class ClassConsumer {
+                    private ClassConsumer() {}
+
+                    public static int exercise() {
+                        try (
+                            Counter counter = new Counter(3);
+                            Factory factory = new Factory();
+                            FallibleOnly opened = new FallibleOnly("ready");
+                            Counter made = factory.make(4)
+                        ) {
+                            counter.set(factory.read(made));
+                            return counter.get()
+                                + Demo.describe(counter).length()
+                                + opened.name().length();
+                        }
+                    }
+                }
+            "#,
+        )],
+    );
 }
 
 #[test]

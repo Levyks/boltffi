@@ -15,7 +15,7 @@ use crate::{
         primitive::Primitive,
         render::{
             ValueIdentity,
-            call::{Call, ValueCallContext, ValueCalls, ValueReceiver},
+            call::{AssociatedCallContext, Call, ValueCalls, ValueReceiver},
             default_value::DefaultExpression,
             signature::Parameter,
             type_name::JavaType,
@@ -236,7 +236,7 @@ impl Record {
             record.initializers(),
             record.methods(),
             ValueReceiver::DirectRecord(name.clone()),
-            ValueCallContext::local(bridge, native_owner, version, context),
+            AssociatedCallContext::local(bridge, native_owner, version, context),
         )?
         .into_parts();
         let default_constructors = DefaultConstructor::from_fields(&fields);
@@ -286,7 +286,7 @@ impl Record {
                 ty: name.clone(),
                 codec: record.write().clone(),
             },
-            ValueCallContext::local(bridge, native_owner, version, context),
+            AssociatedCallContext::local(bridge, native_owner, version, context),
         )?
         .into_parts();
         let default_constructors = DefaultConstructor::from_fields(&fields);

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use boltffi_binding::{IntegerValue, Primitive as BindingPrimitive};
+use boltffi_binding::{IntegerValue, Primitive as BindingPrimitive, native};
 
 use crate::{
     bridge::jni::JniType,
@@ -21,6 +21,13 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    pub fn from_handle_carrier(carrier: native::HandleCarrier) -> Result<Self> {
+        match carrier {
+            native::HandleCarrier::U64 | native::HandleCarrier::USize => Ok(Self::Long),
+            _ => Err(Self::unsupported("Java class handle carrier")),
+        }
+    }
+
     pub const fn wire_size(self) -> u64 {
         match self {
             Self::Boolean | Self::Byte => 1,

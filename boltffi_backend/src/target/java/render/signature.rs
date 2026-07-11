@@ -12,7 +12,7 @@ use crate::{
         admission::FunctionShape,
         name_style::Name,
         primitive::Primitive,
-        render::{Enumeration, record::Record, type_name::JavaType},
+        render::{Enumeration, class::ClassHandle, record::Record, type_name::JavaType},
         syntax::{Identifier, TypeIdentifier, TypeName},
     },
     target::jvm::method::{Parameter as JvmParameter, Parameters as JvmParameters, SlotWidth},
@@ -305,12 +305,25 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterRender<'_, '_>
 
     fn handle(
         &mut self,
-        _: &'plan HandleTarget,
-        _: native::HandleCarrier,
-        _: HandlePresence,
+        target: &'plan HandleTarget,
+        carrier: native::HandleCarrier,
+        presence: HandlePresence,
         _: Receive,
     ) -> Self::Output {
-        Err(FunctionShape::unexpected_shape())
+        match target {
+            HandleTarget::Class(class) => ClassHandle::new(
+                *class,
+                carrier,
+                presence,
+                self.version,
+                self.context,
+                self.package,
+            )
+            .map(|handle| {
+                Parameter::new(self.name.clone(), ValueType::Reference(handle.ty().clone()))
+            }),
+            _ => Err(FunctionShape::unexpected_shape()),
+        }
     }
 
     fn scalar_option(&mut self, primitive: BindingPrimitive) -> Self::Output {

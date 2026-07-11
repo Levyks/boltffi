@@ -231,12 +231,60 @@ ENUM_CASES = (
         "boltffi_function_demo_enums_c_style_count_north",
     ),
 )
+CLASS_CASES = (
+    BenchmarkCase(
+        "construct_close_counter",
+        "boltffi_counter_new",
+        "boltffi_init_class_demo_classes_methods_counter_new",
+    ),
+    BenchmarkCase(
+        "counter_get",
+        "boltffi_counter_get",
+        "boltffi_method_class_demo_classes_methods_counter_get",
+    ),
+    BenchmarkCase(
+        "counter_increment",
+        "boltffi_counter_increment",
+        "boltffi_method_class_demo_classes_methods_counter_increment",
+    ),
+    BenchmarkCase(
+        "accumulator_add",
+        "boltffi_accumulator_add",
+        "boltffi_method_class_demo_classes_thread_safe_accumulator_add",
+    ),
+    BenchmarkCase(
+        "inventory_count",
+        "boltffi_inventory_count",
+        "boltffi_method_class_demo_classes_constructors_inventory_count",
+    ),
+    BenchmarkCase(
+        "inventory_add_remove",
+        "boltffi_inventory_add",
+        "boltffi_method_class_demo_classes_constructors_inventory_add",
+    ),
+    BenchmarkCase(
+        "static_math_add",
+        "boltffi_math_utils_add",
+        "boltffi_method_class_demo_classes_static_methods_math_utils_add",
+    ),
+    BenchmarkCase(
+        "map_view_add_marker",
+        "boltffi_map_view_add_marker",
+        "boltffi_method_class_demo_classes_unsafe_single_threaded_map_view_add_marker",
+    ),
+    BenchmarkCase(
+        "describe_counter",
+        "boltffi_describe_counter",
+        "boltffi_function_demo_classes_borrowed_describe_counter",
+    ),
+)
 SUITES = {
     suite.name: suite
     for suite in (
         BenchmarkSuite("primitive", "BoltffiJavaPrimitiveBench", PRIMITIVE_CASES),
         BenchmarkSuite("record", "BoltffiJavaRecordBench", RECORD_CASES),
         BenchmarkSuite("enum", "BoltffiJavaEnumBench", ENUM_CASES),
+        BenchmarkSuite("class", "BoltffiJavaClassBench", CLASS_CASES),
     )
 }
 ALL_CASES = tuple(case for suite in SUITES.values() for case in suite.cases)
