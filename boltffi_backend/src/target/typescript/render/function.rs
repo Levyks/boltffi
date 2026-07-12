@@ -1,9 +1,9 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     ClassId, DirectValueType, DirectVectorElementType, EnumDecl, EnumId, ErrorChannel,
-    ExportedCallable, ExportedMethodDecl, FunctionDecl, HandlePresence, HandleTarget,
-    InitializerDecl, IntoRust, NativeSymbol, ParamPlanRender, Primitive, Receive, RecordDecl,
-    RecordId, ReturnPlanRender, ReturnValueSlot, TypeRef, Wasm32, wasm32,
+    ExecutionDecl, ExportedCallable, ExportedMethodDecl, FunctionDecl, HandlePresence,
+    HandleTarget, InitializerDecl, IntoRust, NativeSymbol, ParamPlanRender, Primitive, Receive,
+    RecordDecl, RecordId, ReturnPlanRender, ReturnValueSlot, TypeRef, Wasm32, wasm32,
 };
 
 use crate::core::{CoverageMode, Diagnostic, Emitted, Error, RenderContext, Result};
@@ -25,6 +25,7 @@ pub struct Function {
     parameters: Vec<Parameter>,
     returns: TypeName,
     body: Vec<Statement>,
+    asynchronous: bool,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -157,6 +158,7 @@ impl Function {
             returns: &'function TypeName,
             body: &'function [Statement],
             static_method: bool,
+            asynchronous: bool,
         }
 
         Ok(MethodDeclaration::new(
@@ -166,6 +168,7 @@ impl Function {
                 returns: &self.returns,
                 body: &self.body,
                 static_method,
+                asynchronous: self.asynchronous,
             }
             .render()?,
         ))
@@ -228,6 +231,7 @@ impl Function {
             parameters: &'function [Parameter],
             returns: &'function TypeName,
             body: &'function [Statement],
+            asynchronous: bool,
         }
 
         Ok(MethodDeclaration::new(
@@ -236,6 +240,7 @@ impl Function {
                 parameters: &self.parameters,
                 returns: &self.returns,
                 body: &self.body,
+                asynchronous: self.asynchronous,
             }
             .render()?,
         ))
@@ -292,9 +297,6 @@ impl Function {
         receiver: Option<CallReceiver>,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
-        if callable.execution().uses_async_execution() {
-            return Err(Self::unsupported("asynchronous function"));
-        }
         if !matches!(callable.error().channel(), ErrorChannel::None) {
             return Err(Self::unsupported("fallible function"));
         }
@@ -324,23 +326,43 @@ impl Function {
                     .iter()
                     .flat_map(|parameter| parameter.arguments.iter().cloned()),
             )
-            .chain(returns.arguments.iter().cloned())
             .collect::<ArgumentList>();
-        let call = Expression::native_call(Identifier::parse(symbol.name().as_str())?, arguments);
-        let call = returns.render(call);
-        let setup = parameters
+        let symbol = Identifier::parse(symbol.name().as_str())?;
+        let parameter_setup = parameters
             .iter()
-            .flat_map(|parameter| parameter.setup.iter().cloned())
-            .chain(returns.setup.iter().cloned());
-        let cleanup = parameters
+            .flat_map(|parameter| parameter.setup.iter().cloned());
+        let parameter_cleanup = parameters
             .iter()
             .flat_map(|parameter| parameter.cleanup.iter().cloned())
-            .chain(returns.cleanup.iter().cloned())
             .collect::<Vec<_>>();
-        let body = setup
-            .chain(match cleanup.is_empty() {
+        let (call, asynchronous) = match callable.execution() {
+            ExecutionDecl::Synchronous(_) => {
+                let arguments = arguments
+                    .into_iter()
+                    .chain(returns.arguments.iter().cloned())
+                    .collect::<ArgumentList>();
+                let call = returns.render(Expression::native_call(symbol, arguments));
+                let call = returns
+                    .setup
+                    .iter()
+                    .cloned()
+                    .chain(match returns.cleanup.is_empty() {
+                        true => call,
+                        false => vec![Statement::try_finally(call, returns.cleanup.clone())],
+                    })
+                    .collect();
+                (call, false)
+            }
+            ExecutionDecl::Asynchronous(protocol) => (
+                returns.render_async(Expression::native_call(symbol, arguments), protocol)?,
+                true,
+            ),
+            _ => return Err(Self::unsupported("unknown execution protocol")),
+        };
+        let body = parameter_setup
+            .chain(match parameter_cleanup.is_empty() {
                 true => call,
-                false => vec![Statement::try_finally(call, cleanup)],
+                false => vec![Statement::try_finally(call, parameter_cleanup)],
             })
             .collect();
         let name = Name::new(name);
@@ -350,6 +372,7 @@ impl Function {
             parameters,
             returns: returns.ty,
             body,
+            asynchronous,
         })
     }
 
@@ -735,6 +758,99 @@ impl Return {
                 [writer_value].into_iter().collect::<ArgumentList>(),
             ))],
         })
+    }
+
+    fn render_async(
+        &self,
+        start: Expression,
+        protocol: &wasm32::AsyncProtocol,
+    ) -> Result<Vec<Statement>> {
+        let wasm32::AsyncProtocol::PollHandle {
+            handle,
+            poll_sync,
+            complete,
+            free,
+            panic_message,
+            ..
+        } = protocol
+        else {
+            return Err(Function::unsupported("unknown asynchronous protocol"));
+        };
+        if !matches!(handle, wasm32::HandleCarrier::U32) {
+            return Err(Function::unsupported("unknown asynchronous handle carrier"));
+        }
+        let future = Identifier::known("__boltffiFuture");
+        let awaited = Identifier::known("__boltffiAwaitedFuture");
+        let callback_handle = Identifier::known("__boltffiHandle");
+        let callback_value = Expression::identifier(callback_handle.clone());
+        let lifecycle = [poll_sync, panic_message, free]
+            .into_iter()
+            .map(|symbol| {
+                Ok(Expression::parameter_lambda(
+                    callback_handle.clone(),
+                    Expression::native_call(
+                        Identifier::parse(symbol.name().as_str())?,
+                        [callback_value.clone()]
+                            .into_iter()
+                            .collect::<ArgumentList>(),
+                    ),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let poll = Expression::call(
+            Expression::property(
+                Expression::identifier(Identifier::known("_module")),
+                Identifier::known("asyncManager"),
+            ),
+            Identifier::known("pollAsync"),
+            std::iter::once(Expression::identifier(future.clone()))
+                .chain(lifecycle)
+                .collect::<ArgumentList>(),
+        )
+        .await_value();
+        let complete = Identifier::parse(complete.name().as_str())?;
+        let completion =
+            self.render_async_completion(complete, Expression::identifier(awaited.clone()));
+        let release = Statement::expression(Expression::native_call(
+            Identifier::parse(free.name().as_str())?,
+            [Expression::identifier(awaited.clone())]
+                .into_iter()
+                .collect::<ArgumentList>(),
+        ));
+        Ok(vec![
+            Statement::constant(future, start),
+            Statement::constant(awaited, poll),
+            Statement::try_finally(completion, vec![release]),
+        ])
+    }
+
+    fn render_async_completion(&self, complete: Identifier, awaited: Expression) -> Vec<Statement> {
+        let status = Identifier::known("__boltffiStatus");
+        let complete_call = Expression::native_call(
+            complete,
+            [awaited, Expression::identifier(status.clone())]
+                .into_iter()
+                .chain(self.arguments.iter().cloned())
+                .collect::<ArgumentList>(),
+        );
+        let complete_call = Expression::call(
+            Expression::identifier(Identifier::known("_module")),
+            Identifier::known("completeAsync"),
+            [Expression::parameter_lambda(status, complete_call)]
+                .into_iter()
+                .collect::<ArgumentList>(),
+        );
+        self.setup
+            .iter()
+            .cloned()
+            .chain(match self.cleanup.is_empty() {
+                true => self.render(complete_call),
+                false => vec![Statement::try_finally(
+                    self.render(complete_call),
+                    self.cleanup.clone(),
+                )],
+            })
+            .collect()
     }
 
     fn render(&self, call: Expression) -> Vec<Statement> {

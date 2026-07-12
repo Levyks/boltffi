@@ -3083,6 +3083,48 @@ mod tests {
     }
 
     #[test]
+    fn wasm_direct_record_expansion_writes_async_return_out_pointer() {
+        let mut method = record_method(
+            "duplicate",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::SelfType),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        syn::parse2::<syn::File>(quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub async fn duplicate(&self) -> Self {
+                    *self
+                }
+            }
+
+            #tokens
+        })
+        .expect("wasm direct record async return expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_duplicate_complete"));
+        assert!(rendered.contains(
+            "__boltffi_return_out : * mut < Point as :: boltffi :: __private :: Passable > :: Out"
+        ));
+        assert!(rendered.contains(
+            "< Point as :: boltffi :: __private :: Passable > :: pack (__boltffi_result)"
+        ));
+    }
+
+    #[test]
     fn native_direct_record_expansion_writes_mutable_receiver_back() {
         let method = record_method(
             "shift",

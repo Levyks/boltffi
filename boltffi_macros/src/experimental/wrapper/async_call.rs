@@ -657,6 +657,28 @@ impl PlainComplete {
                     }
                 },
             }),
+            ReturnPlan::DirectViaOutPointer { .. } => {
+                let out = names::Locals::new(proc_macro2::Span::call_site()).return_out();
+                Ok(Self {
+                    items: Vec::new(),
+                    ffi_parameters: vec![quote! {
+                        #out: *mut <#rust_return_type as ::boltffi::__private::Passable>::Out
+                    }],
+                    return_type: TokenStream::new(),
+                    ok_pattern: quote! { #result },
+                    ok_body: quote! {
+                        if !#out.is_null() {
+                            unsafe {
+                                ::core::ptr::write(
+                                    #out,
+                                    <#rust_return_type as ::boltffi::__private::Passable>::pack(#result),
+                                );
+                            }
+                        }
+                    },
+                    err_body: TokenStream::new(),
+                })
+            }
             ReturnPlan::EncodedViaReturnSlot { codec, shape, .. } => {
                 let encoded = <encoded::Renderer as Render<S, _>>::render(
                     encoded::Renderer,

@@ -372,6 +372,48 @@ mod tests {
         lower::<Wasm32>(&source).expect("source lowers")
     }
 
+    fn async_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub async fn async_add(left: i32, right: i32) -> i32 { left + right }
+
+                #[export]
+                pub async fn async_name(value: String) -> String { value }
+
+                #[export]
+                pub async fn async_values(value: Vec<i32>) -> Vec<i32> { value }
+
+                #[data]
+                #[repr(C)]
+                pub struct AsyncPoint {
+                    pub x: f64,
+                    pub y: f64,
+                }
+
+                #[export]
+                pub async fn async_point(value: AsyncPoint) -> AsyncPoint { value }
+
+                pub struct Worker(i32);
+
+                #[export]
+                impl Worker {
+                    pub fn new(value: i32) -> Self { Self(value) }
+
+                    pub async fn get(&self) -> i32 { self.0 }
+
+                    pub async fn duplicate(&self) -> Self { Self(self.0) }
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        lower::<Wasm32>(&source).expect("source lowers")
+    }
+
     #[test]
     fn renders_primitive_functions_through_the_wasm_surface() {
         let output = TypeScriptHost::new("demo")
@@ -679,5 +721,56 @@ mod tests {
                 .contents()
                 .contains("export function describeCounter(value: Counter): number")
         );
+    }
+
+    #[test]
+    fn renders_async_calls_from_the_wasm_execution_protocol() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render_partial(&async_bindings())
+            .expect("target renders");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+
+        assert!(browser.contents().contains(
+            "export async function asyncAdd(left: number, right: number): Promise<number>"
+        ));
+        assert!(
+            browser
+                .contents()
+                .contains("await _module.asyncManager.pollAsync(")
+        );
+        assert!(browser.contents().contains("_module.completeAsync("));
+        assert!(
+            browser
+                .contents()
+                .contains("export async function asyncName(value: string): Promise<string>")
+        );
+        assert!(browser.contents().contains("_module.takePackedUtf8String("));
+        assert!(browser.contents().contains(
+            "export async function asyncValues(value: readonly number[] | Int32Array): Promise<Int32Array>"
+        ));
+        assert!(browser.contents().contains("_module.takeSlotI32Array()"));
+        assert!(
+            browser
+                .contents()
+                .contains("(__boltffiAwaitedFuture, __boltffiStatus, __boltffiReturnWriter.ptr)")
+        );
+        assert!(
+            browser.contents().contains(
+                "AsyncPointCodec.decode(_module.readerFromWriter(__boltffiReturnWriter))"
+            )
+        );
+        assert!(browser.contents().contains("async get(): Promise<number>"));
+        assert!(
+            browser
+                .contents()
+                .contains("async duplicate(): Promise<Worker>")
+        );
+        assert!(browser.contents().contains("Worker._fromHandle("));
     }
 }

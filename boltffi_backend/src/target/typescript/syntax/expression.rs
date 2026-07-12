@@ -81,6 +81,10 @@ impl Expression {
         Self("Number.NaN".to_owned())
     }
 
+    pub fn await_value(self) -> Self {
+        Self(format!("await {self}"))
+    }
+
     pub fn add(self, other: Self) -> Self {
         Self(format!("({self} + {other})"))
     }
@@ -145,6 +149,15 @@ impl Statement {
 impl FromIterator<Expression> for ArgumentList {
     fn from_iter<T: IntoIterator<Item = Expression>>(expressions: T) -> Self {
         Self(expressions.into_iter().collect())
+    }
+}
+
+impl IntoIterator for ArgumentList {
+    type Item = Expression;
+    type IntoIter = std::vec::IntoIter<Expression>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
