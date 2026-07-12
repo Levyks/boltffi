@@ -1,4 +1,4 @@
-import { BoltFFIModule, CallbackRegistry, instantiateBoltFFI, matchWireResult, utf8ByteCount, wireArraySize, wireOptionalSize, wireResultSize, wireStringSize } from {{ runtime_package }};
+import { BoltFFIModule, CallbackRegistry, StreamCancellable, StreamSession, instantiateBoltFFI, matchWireResult, utf8ByteCount, wireArraySize, wireOptionalSize, wireResultSize, wireStringSize } from {{ runtime_package }};
 import type { BoltFFIExports, Duration, WireCodec, WireResult } from {{ runtime_package }};
 
 let _module: BoltFFIModule;

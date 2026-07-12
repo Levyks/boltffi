@@ -9,6 +9,7 @@ mod imported;
 mod module;
 mod record;
 mod scalar_option;
+mod stream;
 mod type_name;
 
 pub use callback::Callback;
@@ -19,4 +20,5 @@ pub use enumeration::Enumeration;
 pub use function::Function;
 pub use module::Module;
 pub use record::Record;
+pub use stream::Stream;
 pub use type_name::Type;

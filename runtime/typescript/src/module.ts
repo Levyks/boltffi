@@ -381,6 +381,15 @@ export class BoltFFIModule {
     return { ptr, len: value.length };
   }
 
+  allocStreamBuffer(itemCapacity: number, itemSize: number): StringAlloc {
+    const len = itemCapacity * itemSize;
+    const ptr = this.exports.boltffi_wasm_alloc(len);
+    if (ptr === 0 && len > 0) {
+      throw new Error("Failed to allocate stream buffer");
+    }
+    return { ptr, len };
+  }
+
   allocI8Array(value: Int8Array | readonly number[]): PrimitiveBufferAlloc {
     const len = value.length;
     const byteLen = len;

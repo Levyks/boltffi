@@ -12,6 +12,8 @@ export {
 } from "./wire.js";
 export type { Duration, WireOk, WireErr, WireResult, WasmWireWriterAllocator, WireCodec } from "./wire.js";
 export { CallbackRegistry } from "./callback.js";
+export { StreamCancellable, StreamSession } from "./stream.js";
+export type { StreamBatch, StreamLifecycle } from "./stream.js";
 export {
   BoltFFIModule,
   BoltFFIExports,

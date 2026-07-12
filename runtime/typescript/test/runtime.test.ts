@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AsyncFutureManager, BoltFFIModule } from "../src/module.js";
 import { CallbackRegistry } from "../src/callback.js";
+import { StreamSession } from "../src/stream.js";
 import {
   WireReader,
   WireWriter,
@@ -471,6 +472,43 @@ describe("BoltFFIModule async completion", () => {
     ).toThrow("invalid argument");
 
     expect(freedAllocations).toContainEqual([256, 4]);
+  });
+});
+
+describe("StreamSession", () => {
+  it("drains batches and releases a subscription exactly once", () => {
+    const unsubscribe = vi.fn();
+    const free = vi.fn();
+    const session = new StreamSession(
+      7,
+      (_handle, maxCount) => [1, 2, 3].slice(0, maxCount),
+      unsubscribe,
+      free
+    );
+
+    expect(session.popBatch(2)).toEqual([1, 2]);
+    session.dispose();
+    session.dispose();
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledWith(7);
+    expect(free).toHaveBeenCalledOnce();
+    expect(free).toHaveBeenCalledWith(7);
+    expect(session.popBatch()).toEqual([]);
+  });
+
+  it("delivers asynchronously produced items through AsyncIterator", async () => {
+    const batches: number[][] = [[], [9]];
+    const session = new StreamSession(
+      3,
+      () => batches.shift() ?? [],
+      () => {},
+      () => {}
+    );
+    const iterator = session[Symbol.asyncIterator]();
+
+    expect(await iterator.next()).toEqual({ value: 9, done: false });
+    await iterator.return?.();
   });
 });
 
