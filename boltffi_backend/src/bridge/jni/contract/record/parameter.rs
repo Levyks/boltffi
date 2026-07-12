@@ -24,6 +24,7 @@ const JNI_BRIDGE: &str = "jni";
 pub struct RecordParameter {
     name: Identifier,
     value: RecordValue,
+    pointer: Identifier,
     local: Identifier,
     writeback: Option<RecordWriteback>,
 }
@@ -44,6 +45,11 @@ impl RecordParameter {
         &self.local
     }
 
+    /// Returns the direct-buffer address used during the native call.
+    pub fn pointer(&self) -> &Identifier {
+        &self.pointer
+    }
+
     /// Returns the expression passed to the C bridge function.
     pub fn c_argument(&self) -> Expression {
         self.value.c_argument(self.local.clone())
@@ -62,6 +68,7 @@ impl RecordParameter {
         let name = Identifier::escape(parameter.name())?;
         Ok(Some(Self {
             local: Identifier::parse(format!("__boltffi_{}_value", name.as_str()))?,
+            pointer: Identifier::parse(format!("__boltffi_{}_ptr", name.as_str()))?,
             name,
             value,
             writeback: None,
@@ -83,6 +90,7 @@ impl RecordParameter {
         let name = Identifier::escape(writeback.name())?;
         Ok(Self {
             local: Identifier::parse(format!("__boltffi_{}_value", name.as_str()))?,
+            pointer: Identifier::parse(format!("__boltffi_{}_ptr", name.as_str()))?,
             name,
             value,
             writeback: Some(RecordWriteback::from_c_parameter(

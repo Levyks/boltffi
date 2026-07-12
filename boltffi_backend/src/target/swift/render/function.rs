@@ -2230,14 +2230,24 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for ParameterPlan<'_, '_> {
         })
     }
 
-    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
+    fn direct_vector(
+        &mut self,
+        element: &'plan DirectVectorElementType,
+        receive: Receive,
+    ) -> Self::Output {
         let vector = DirectVector::from_element(element, self.bridge, self.context)?;
+        let ty = match receive {
+            Receive::ByMutRef => TypeName::new(format!("inout {}", vector.ty())),
+            _ => vector.ty().clone(),
+        };
         Ok(Parameter {
             name: self.name.clone(),
-            ty: vector.ty().clone(),
-            argument: Argument::DirectVector(
-                vector.borrowed(&self.source_name, self.name.clone())?,
-            ),
+            ty,
+            argument: Argument::DirectVector(vector.borrowed(
+                &self.source_name,
+                self.name.clone(),
+                receive,
+            )?),
         })
     }
 }

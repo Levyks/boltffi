@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use boltffi_backend::target::kmp::KMP_SUPPORT_REPORT_FILE;
 
+use crate::cli::Result;
 use crate::config::Config;
 use crate::pack::android::AndroidPackageLayout;
 use crate::pack::java::link::JvmNativePackageLayout;
@@ -71,7 +72,7 @@ impl KmpPackageLayout {
         &self,
         config: &Config,
         header_name: &str,
-    ) -> JvmNativePackageLayout {
+    ) -> Result<JvmNativePackageLayout> {
         JvmNativePackageLayout::kotlin_desktop(
             config,
             self.jvm_jni_dir.clone(),

@@ -1,7 +1,8 @@
 mod link;
 
 use crate::build::{
-    BindingExpansion, BuildOptions, Builder, OutputCallback, all_successful, failed_targets,
+    BindingExpansion, BuildOptions, BuildSelection, Builder, OutputCallback, all_successful,
+    failed_targets,
 };
 use crate::cli::{CliError, Result};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
@@ -17,7 +18,7 @@ use crate::pack::symbols::{
     ensure_debug_symbols_profile_has_debuginfo, ensure_existing_debug_symbol_artifacts_are_usable,
 };
 use crate::reporter::Reporter;
-use crate::target::Platform;
+use crate::target::{BuiltLibrary, Platform};
 
 use super::{
     discover_built_libraries_for_targets, missing_built_libraries, print_cargo_line,
@@ -49,16 +50,14 @@ pub(crate) fn pack_android(
     ensure_android_kotlin_desktop_no_build_supported(config, options.execution.no_build)?;
 
     let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
-    let cargo_env = if options.execution.no_build {
-        Vec::new()
-    } else {
-        BindingExpansion::resolve(config, &build_cargo_args)?.env()?
-    };
+    let binding_expansion = (!options.execution.no_build)
+        .then(|| BindingExpansion::resolve(config, &build_cargo_args))
+        .transpose()?;
     let build_profile =
         crate::build::resolve_build_profile(options.execution.release, &build_cargo_args);
     let android_targets = config.android_targets();
 
-    if !options.execution.no_build {
+    if let Some(binding_expansion) = binding_expansion.as_ref() {
         if config.android_debug_symbols_enabled() {
             ensure_debug_symbols_profile_has_debuginfo(
                 &build_cargo_args,
@@ -75,8 +74,7 @@ pub(crate) fn pack_android(
             config,
             &android_targets,
             options.execution.release,
-            &build_cargo_args,
-            &cargo_env,
+            binding_expansion,
             &step,
         )?;
         step.finish_success();
@@ -110,11 +108,19 @@ pub(crate) fn pack_android(
         step.finish_success();
     }
 
-    let libraries = discover_built_libraries_for_targets(
-        &config.crate_artifact_name(),
-        build_profile.output_directory_name(),
-        &android_targets,
-    )?;
+    let libraries = match binding_expansion.as_ref() {
+        Some(expansion) => BuiltLibrary::discover_for_targets(
+            expansion.target_directory(),
+            expansion.artifact_name(),
+            build_profile.output_directory_name(),
+            &android_targets,
+        ),
+        None => discover_built_libraries_for_targets(
+            &config.crate_artifact_name(),
+            build_profile.output_directory_name(),
+            &android_targets,
+        )?,
+    };
     let android_libraries: Vec<_> = libraries
         .into_iter()
         .filter(|library| library.target.platform() == Platform::Android)
@@ -144,7 +150,7 @@ pub(crate) fn pack_android(
     packager.package()?;
     step.finish_success();
 
-    package_android_kotlin_desktop_natives(config, &options, &cargo_env, reporter)?;
+    package_android_kotlin_desktop_natives(config, &options, binding_expansion.as_ref(), reporter)?;
 
     Ok(())
 }
@@ -171,22 +177,27 @@ fn should_package_android_kotlin_desktop_natives(config: &Config) -> bool {
 fn package_android_kotlin_desktop_natives(
     config: &Config,
     options: &PackAndroidOptions,
-    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    binding_expansion: Option<&BindingExpansion>,
     reporter: &Reporter,
 ) -> Result<()> {
     if !should_package_android_kotlin_desktop_natives(config) {
         return Ok(());
     }
+    let binding_expansion = binding_expansion.ok_or_else(|| CliError::CommandFailed {
+        command: "Kotlin desktop native packaging requires a Binding IR build".to_string(),
+        status: None,
+    })?;
 
     let step = reporter.step("Validating Kotlin desktop JVM toolchains");
     let prepared_jvm_packaging = prepare_android_kotlin_jvm_packaging(
         config,
         options.execution.release,
         &options.execution.cargo_args,
+        binding_expansion,
     )?;
     step.finish_success();
 
-    let layout = android_kotlin_desktop_native_layout(config);
+    let layout = android_kotlin_desktop_native_layout(config)?;
 
     for packaging_target in &prepared_jvm_packaging.packaging_targets {
         let host_target = packaging_target.cargo_context.host_target;
@@ -197,7 +208,7 @@ fn package_android_kotlin_desktop_natives(
         let build_artifacts = build_jvm_native_library(
             packaging_target,
             options.execution.release,
-            cargo_env,
+            Some(binding_expansion),
             &step,
         )?;
         step.finish_success();
@@ -218,7 +229,7 @@ fn package_android_kotlin_desktop_natives(
     Ok(())
 }
 
-fn android_kotlin_desktop_native_layout(config: &Config) -> JvmNativePackageLayout {
+fn android_kotlin_desktop_native_layout(config: &Config) -> Result<JvmNativePackageLayout> {
     JvmNativePackageLayout::kotlin_desktop(
         config,
         config.android_kotlin_output().join("jni"),
@@ -231,28 +242,7 @@ pub(crate) fn build_android_targets(
     config: &Config,
     targets: &[crate::target::RustTarget],
     release: bool,
-    build_cargo_args: &[String],
-    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
-    step: &crate::reporter::Step,
-) -> Result<()> {
-    build_android_targets_for_package(
-        config,
-        targets,
-        release,
-        config.library_name(),
-        build_cargo_args,
-        cargo_env,
-        step,
-    )
-}
-
-pub(crate) fn build_android_targets_for_package(
-    config: &Config,
-    targets: &[crate::target::RustTarget],
-    release: bool,
-    package: impl Into<String>,
-    build_cargo_args: &[String],
-    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    binding_expansion: &BindingExpansion,
     step: &crate::reporter::Step,
 ) -> Result<()> {
     let on_output: Option<OutputCallback> = if step.is_verbose() {
@@ -263,9 +253,7 @@ pub(crate) fn build_android_targets_for_package(
 
     let build_options = BuildOptions {
         release,
-        package: Some(package.into()),
-        cargo_args: build_cargo_args.to_vec(),
-        env: cargo_env.to_vec(),
+        selection: BuildSelection::Expanded(binding_expansion.clone()),
         on_output,
     };
     let builder = Builder::new(config, build_options);
@@ -312,11 +300,11 @@ enabled = true
 "#,
         );
 
-        let layout = android_kotlin_desktop_native_layout(&config);
+        let layout = android_kotlin_desktop_native_layout(&config).unwrap();
 
         assert_eq!(layout.jni_dir, PathBuf::from("dist/android/kotlin/jni"));
         assert_eq!(layout.header_name, "demo-lib");
-        assert_eq!(layout.jni_library_name, "configured_library");
+        assert_eq!(layout.jni_library_name.as_str(), "configured_library_jni");
         assert_eq!(
             layout.native_output_root,
             PathBuf::from("dist/android/desktopJniLibs")

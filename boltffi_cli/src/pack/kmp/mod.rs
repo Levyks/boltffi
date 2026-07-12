@@ -16,9 +16,7 @@ use crate::commands::generate::{
 use crate::commands::pack::PackKmpOptions;
 use crate::config::Config;
 use crate::pack::PackError;
-use crate::pack::android::{
-    AndroidBindingMode, AndroidPackager, build_android_targets_for_package,
-};
+use crate::pack::android::{AndroidBindingMode, AndroidPackager, build_android_targets};
 use crate::pack::java::link::{build_jvm_native_library, compile_jni_library_with_layout};
 use crate::pack::java::outputs::remove_stale_structured_jvm_outputs;
 use crate::pack::java::prepare_kmp_jvm_packaging;
@@ -48,13 +46,13 @@ pub(crate) fn pack_kmp(
 
     let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
     let selected_crate = BindingExpansion::resolve(config, &build_cargo_args)?;
-    let cargo_env = selected_crate.env()?;
 
     let step = reporter.step("Validating JVM toolchains");
     let prepared_jvm_packaging = prepare_kmp_jvm_packaging(
         config,
         options.execution.release,
         &options.execution.cargo_args,
+        &selected_crate,
     )?;
     step.finish_success();
 
@@ -105,9 +103,16 @@ pub(crate) fn pack_kmp(
 
     remove_stale_kmp_root_headers(plan.layout())?;
     verify_kmp_support_metadata(config, plan.layout())?;
-    package_kmp_android_libraries(config, &options, &plan, &header_name, &cargo_env, reporter)?;
+    package_kmp_android_libraries(
+        config,
+        &options,
+        &plan,
+        &header_name,
+        &selected_crate,
+        reporter,
+    )?;
 
-    let kmp_jvm_layout = plan.layout().jvm_native_layout(config, &header_name);
+    let kmp_jvm_layout = plan.layout().jvm_native_layout(config, &header_name)?;
     for packaging_target in &plan.jvm_packaging().packaging_targets {
         let host_target = packaging_target.cargo_context.host_target;
         let step = reporter.step(&format!(
@@ -117,7 +122,7 @@ pub(crate) fn pack_kmp(
         let build_artifacts = build_jvm_native_library(
             packaging_target,
             options.execution.release,
-            &cargo_env,
+            Some(&selected_crate),
             &step,
         )?;
         step.finish_success();
@@ -464,22 +469,17 @@ fn package_kmp_android_libraries(
     options: &PackKmpOptions,
     plan: &KmpPackagingPlan,
     header_name: &str,
-    cargo_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    binding_expansion: &BindingExpansion,
     reporter: &Reporter,
 ) -> Result<()> {
-    let build_cargo_args = plan.android_build_cargo_args();
-    let build_profile =
-        crate::build::resolve_build_profile(options.execution.release, &build_cargo_args);
     let android_targets = config.android_targets();
 
     let step = reporter.step("Building Android targets for Kotlin Multiplatform");
-    build_android_targets_for_package(
+    build_android_targets(
         config,
         &android_targets,
         options.execution.release,
-        plan.build_package_selector(),
-        &build_cargo_args,
-        cargo_env,
+        binding_expansion,
         &step,
     )?;
     step.finish_success();
@@ -487,7 +487,7 @@ fn package_kmp_android_libraries(
     let libraries = crate::target::BuiltLibrary::discover_for_targets(
         plan.target_directory(),
         plan.artifact_name(),
-        build_profile.output_directory_name(),
+        plan.build_profile().output_directory_name(),
         &android_targets,
     );
     let android_libraries: Vec<_> = libraries
@@ -507,7 +507,7 @@ fn package_kmp_android_libraries(
     let packager = AndroidPackager::new_with_layout(
         config,
         android_libraries,
-        build_profile.is_release_like(),
+        plan.build_profile().is_release_like(),
         AndroidBindingMode::KotlinMultiplatform,
         plan.layout().android_native_layout(header_name),
     );
@@ -964,7 +964,7 @@ module_name = "Demo"
         );
         let layout = KmpPackageLayout::from_config(&config);
         let android_layout = layout.android_native_layout("demo_lib");
-        let jvm_layout = layout.jvm_native_layout(&config, "demo-lib");
+        let jvm_layout = layout.jvm_native_layout(&config, "demo-lib").unwrap();
 
         assert_eq!(layout.output_root(), &PathBuf::from("dist/kmp"));
         assert_eq!(
@@ -998,7 +998,7 @@ module_name = "Demo"
         );
         assert_eq!(jvm_layout.jni_dir, PathBuf::from("dist/kmp/src/jvmMain/c"));
         assert_eq!(jvm_layout.header_name, "demo-lib");
-        assert_eq!(jvm_layout.jni_library_name, "demo_lib");
+        assert_eq!(jvm_layout.jni_library_name.as_str(), "demo_lib_jni");
         assert_eq!(
             jvm_layout.native_output_root,
             PathBuf::from("dist/kmp/src/jvmMain/resources/native")
@@ -1027,7 +1027,7 @@ module_name = "Demo"
 "#,
         );
         let layout = KmpPackageLayout::from_config(&config);
-        let jvm_layout = layout.jvm_native_layout(&config, "demo");
+        let jvm_layout = layout.jvm_native_layout(&config, "demo").unwrap();
 
         assert_eq!(
             layout.jvm_jni_dir(),
@@ -1039,7 +1039,10 @@ module_name = "Demo"
         );
         assert_eq!(jvm_layout.jni_dir, PathBuf::from("dist/kmp/src/jvmMain/c"));
         assert_eq!(jvm_layout.header_name, "demo");
-        assert_eq!(jvm_layout.jni_library_name, "configured_library");
+        assert_eq!(
+            jvm_layout.jni_library_name.as_str(),
+            "configured_library_jni"
+        );
         assert_eq!(
             jvm_layout.native_output_root,
             PathBuf::from("dist/kmp/src/jvmMain/resources/native")
@@ -1069,7 +1072,9 @@ strip_symbols = true
 enabled = true
 "#,
         );
-        let layout = KmpPackageLayout::from_config(&config).jvm_native_layout(&config, "demo");
+        let layout = KmpPackageLayout::from_config(&config)
+            .jvm_native_layout(&config, "demo")
+            .unwrap();
 
         assert!(config.java_jvm_strip_symbols());
         assert!(config.java_jvm_debug_symbols_enabled());

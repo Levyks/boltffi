@@ -1,21 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use crate::build::CargoBuildProfile;
 use crate::cli::Result;
 use crate::config::Config;
-use crate::pack::java::plan::PreparedJvmPackaging;
+use crate::pack::java::plan::{JvmCargoContext, PreparedJvmPackaging};
 
 use super::layout::KmpPackageLayout;
 
 /// Inputs and derived paths needed to package a generated KMP module.
 pub(crate) struct KmpPackagingPlan {
-    cargo_manifest_path: PathBuf,
-    manifest_path: PathBuf,
-    package_name: String,
-    package_selector: Option<String>,
-    artifact_name: String,
-    target_directory: PathBuf,
-    cargo_command_args: Vec<String>,
-    toolchain_selector: Option<String>,
     layout: KmpPackageLayout,
     jvm_packaging: PreparedJvmPackaging,
 }
@@ -23,23 +16,13 @@ pub(crate) struct KmpPackagingPlan {
 impl KmpPackagingPlan {
     /// Builds a KMP packaging plan from the configured crate and prepared JVM matrix.
     pub(crate) fn new(config: &Config, jvm_packaging: PreparedJvmPackaging) -> Result<Self> {
-        let cargo_context = jvm_packaging
-            .packaging_targets
-            .first()
-            .map(|target| &target.cargo_context)
-            .ok_or_else(|| crate::cli::CliError::CommandFailed {
+        jvm_packaging.packaging_targets.first().ok_or_else(|| {
+            crate::cli::CliError::CommandFailed {
                 command: "could not resolve selected Cargo package for KMP packaging".to_string(),
                 status: None,
-            })?;
+            }
+        })?;
         Ok(Self {
-            cargo_manifest_path: cargo_context.cargo_manifest_path.clone(),
-            manifest_path: cargo_context.manifest_path.clone(),
-            package_name: cargo_context.package_name.clone(),
-            package_selector: cargo_context.package_selector.clone(),
-            artifact_name: cargo_context.artifact_name.clone(),
-            target_directory: cargo_context.target_directory.clone(),
-            cargo_command_args: cargo_context.cargo_command_args.clone(),
-            toolchain_selector: cargo_context.toolchain_selector.clone(),
             layout: KmpPackageLayout::from_config(config),
             jvm_packaging,
         })
@@ -47,56 +30,43 @@ impl KmpPackagingPlan {
 
     /// Returns the selected package manifest path used for metadata-backed generation.
     pub(crate) fn manifest_path(&self) -> &Path {
-        &self.manifest_path
+        self.cargo_context().library.manifest_path()
     }
 
     /// Returns the native artifact name selected from the JVM packaging matrix.
     pub(crate) fn artifact_name(&self) -> &str {
-        &self.artifact_name
+        self.cargo_context().library.artifact_name()
     }
 
     /// Returns the fallback C header basename for generated glue with no package include.
     pub(crate) fn fallback_header_name(&self) -> String {
-        self.package_name.replace('-', "_")
+        self.cargo_context()
+            .library
+            .package_name()
+            .replace('-', "_")
     }
 
     /// Returns the rustup toolchain selector used for metadata-backed generation.
     pub(crate) fn generation_toolchain_selector(&self) -> Option<&str> {
-        self.toolchain_selector.as_deref()
-    }
-
-    /// Returns the Cargo package selector to use for KMP-owned native builds.
-    pub(crate) fn build_package_selector(&self) -> String {
-        self.package_selector
-            .clone()
-            .unwrap_or_else(|| self.package_name.clone())
+        self.cargo_context().toolchain_selector.as_deref()
     }
 
     /// Returns the target directory reported by Cargo metadata for selected package builds.
     pub(crate) fn target_directory(&self) -> &Path {
-        &self.target_directory
+        &self.cargo_context().target_directory
+    }
+
+    pub(crate) fn build_profile(&self) -> &CargoBuildProfile {
+        &self.cargo_context().build_profile
     }
 
     /// Returns Cargo arguments used for metadata-backed generation.
     pub(crate) fn generation_cargo_args(&self, release: bool) -> Vec<String> {
-        let mut args = self.cargo_command_args.clone();
+        let mut args = self.cargo_context().cargo_command_args.as_slice().to_vec();
         if release && !cargo_args_select_profile(&args) {
             args.insert(0, "--release".to_string());
         }
         args
-    }
-
-    /// Returns Cargo arguments used for Android native builds owned by KMP packaging.
-    pub(crate) fn android_build_cargo_args(&self) -> Vec<String> {
-        self.toolchain_selector
-            .iter()
-            .cloned()
-            .chain([
-                "--manifest-path".to_string(),
-                self.cargo_manifest_path.display().to_string(),
-            ])
-            .chain(self.cargo_command_args.iter().cloned())
-            .collect()
     }
 
     /// Returns the generated KMP project layout.
@@ -108,6 +78,10 @@ impl KmpPackagingPlan {
     pub(crate) fn jvm_packaging(&self) -> &PreparedJvmPackaging {
         &self.jvm_packaging
     }
+
+    fn cargo_context(&self) -> &JvmCargoContext {
+        &self.jvm_packaging.packaging_targets[0].cargo_context
+    }
 }
 
 fn cargo_args_select_profile(cargo_args: &[String]) -> bool {
@@ -118,15 +92,15 @@ fn cargo_args_select_profile(cargo_args: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crate::build::CargoBuildProfile;
+    use crate::cargo::SelectedLibrary;
     use crate::config::Config;
-    use crate::pack::java::plan::{
-        JvmCargoContext, JvmCrateOutputs, JvmPackagingTarget, PreparedJvmPackaging,
-    };
+    use crate::pack::java::plan::{JvmCargoContext, JvmPackagingTarget, PreparedJvmPackaging};
     use crate::target::JavaHostTarget;
     use crate::toolchain::NativeHostToolchain;
+    use boltffi_bindgen::cargo::LibraryCargoArgs;
 
     use super::KmpPackagingPlan;
 
@@ -136,7 +110,7 @@ mod tests {
         parsed
     }
 
-    fn jvm_packaging(package_selector: Option<String>) -> PreparedJvmPackaging {
+    fn jvm_packaging() -> PreparedJvmPackaging {
         let current_host = JavaHostTarget::current().expect("current host");
         PreparedJvmPackaging {
             host_targets: vec![current_host],
@@ -146,21 +120,28 @@ mod tests {
                     rust_target_triple: "x86_64-unknown-linux-gnu".to_string(),
                     release: true,
                     build_profile: CargoBuildProfile::Release,
-                    package_name: "workspace-member".to_string(),
-                    artifact_name: "workspace_member_ffi".to_string(),
-                    cargo_manifest_path: PathBuf::from("/tmp/workspace/Cargo.toml"),
-                    manifest_path: PathBuf::from("/tmp/workspace/member/Cargo.toml"),
-                    package_selector,
+                    library: SelectedLibrary::fixture(
+                        "workspace-member",
+                        "/tmp/workspace/member/Cargo.toml",
+                        "workspace_member_ffi",
+                    )
+                    .fixture_cargo_manifest("/tmp/workspace/Cargo.toml"),
                     target_directory: PathBuf::from("/tmp/workspace/target"),
-                    cargo_command_args: vec!["--features".to_string(), "ffi".to_string()],
+                    cargo_command_args: LibraryCargoArgs::parse([
+                        "--features".to_string(),
+                        "ffi".to_string(),
+                    ])
+                    .unwrap(),
                     toolchain_selector: Some("+nightly".to_string()),
-                    crate_outputs: JvmCrateOutputs {
-                        builds_staticlib: true,
-                        builds_cdylib: true,
-                    },
                 },
-                toolchain: NativeHostToolchain::discover(None, &[], current_host, current_host)
-                    .expect("native host toolchain"),
+                toolchain: NativeHostToolchain::discover(
+                    None,
+                    &[],
+                    Path::new("/tmp/workspace/Cargo.toml"),
+                    current_host,
+                    current_host,
+                )
+                .expect("native host toolchain"),
             }],
         }
     }
@@ -180,9 +161,7 @@ output = "dist/kmp"
 "#,
         );
 
-        let plan =
-            KmpPackagingPlan::new(&config, jvm_packaging(Some("workspace-member".to_string())))
-                .expect("KMP plan");
+        let plan = KmpPackagingPlan::new(&config, jvm_packaging()).expect("KMP plan");
 
         assert_eq!(
             plan.manifest_path(),
@@ -191,7 +170,6 @@ output = "dist/kmp"
         assert_eq!(plan.artifact_name(), "workspace_member_ffi");
         assert_eq!(plan.fallback_header_name(), "workspace_member");
         assert_eq!(plan.generation_toolchain_selector(), Some("+nightly"));
-        assert_eq!(plan.build_package_selector(), "workspace-member");
         assert_eq!(
             plan.target_directory(),
             PathBuf::from("/tmp/workspace/target")
@@ -204,16 +182,7 @@ output = "dist/kmp"
                 "ffi".to_string(),
             ]
         );
-        assert_eq!(
-            plan.android_build_cargo_args(),
-            vec![
-                "+nightly".to_string(),
-                "--manifest-path".to_string(),
-                "/tmp/workspace/Cargo.toml".to_string(),
-                "--features".to_string(),
-                "ffi".to_string(),
-            ]
-        );
+        assert_eq!(plan.build_profile(), &CargoBuildProfile::Release);
     }
 
     #[test]
@@ -229,10 +198,11 @@ name = "workspace-root"
 enabled = true
 "#,
         );
-        let mut packaging = jvm_packaging(None);
+        let mut packaging = jvm_packaging();
         packaging.packaging_targets[0]
             .cargo_context
-            .cargo_command_args = vec!["--profile".to_string(), "dist".to_string()];
+            .cargo_command_args =
+            LibraryCargoArgs::parse(["--profile".to_string(), "dist".to_string()]).unwrap();
 
         let plan = KmpPackagingPlan::new(&config, packaging).expect("KMP plan");
 
@@ -240,6 +210,5 @@ enabled = true
             plan.generation_cargo_args(true),
             vec!["--profile".to_string(), "dist".to_string()]
         );
-        assert_eq!(plan.build_package_selector(), "workspace-member");
     }
 }

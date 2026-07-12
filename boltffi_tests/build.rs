@@ -684,10 +684,7 @@ static int boltffi_tests_check_i32_vec_buf(FfiBuf_u8 buf, const int32_t *expecte
     if (bump.code != FFI_STATUS_OK.code) {
         return 114;
     }
-    FfiStatus noop = boltffi_function_boltffi_tests_primitives_noop();
-    if (noop.code != FFI_STATUS_OK.code) {
-        return 115;
-    }
+    boltffi_function_boltffi_tests_primitives_noop();
     return 0;
 }
 "#

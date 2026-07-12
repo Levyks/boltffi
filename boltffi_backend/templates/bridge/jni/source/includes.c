@@ -7,6 +7,9 @@
 {%- if uses_limits %}
 #include <limits.h>
 {%- endif %}
+{%- if uses_direct_buffers %}
+#include <string.h>
+{%- endif %}
 {%- if uses_callback_handles || uses_closure_handles || uses_byte_arrays %}
 #include <stdlib.h>
 {%- endif %}

@@ -146,6 +146,12 @@ pub enum BackendError {
         /// Invalid identifier text.
         identifier: String,
     },
+    /// A generated Java identifier was invalid.
+    #[error("invalid Java identifier `{identifier}`")]
+    InvalidJavaIdentifier {
+        /// Invalid identifier text.
+        identifier: String,
+    },
     /// A generated Swift identifier was invalid.
     #[error("invalid Swift identifier `{identifier}`")]
     InvalidSwiftIdentifier {
@@ -170,6 +176,14 @@ pub enum BackendError {
         /// Kotlin scope where the collision was found.
         scope: String,
         /// Generated Kotlin name used more than once.
+        name: String,
+    },
+    /// Two generated Java declarations require the same name in one scope.
+    #[error("java name collision in {scope}: `{name}` is already used")]
+    JavaNameCollision {
+        /// Java scope where the collision was found.
+        scope: String,
+        /// Generated Java name used more than once.
         name: String,
     },
     /// A backend template failed to render.

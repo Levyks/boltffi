@@ -412,6 +412,13 @@ fn swift_target_passes_primitive_direct_vectors() {
 }
 
 #[test]
+fn swift_target_passes_mutable_primitive_slices_inout() {
+    insta::assert_snapshot!(rendered_fixture(
+        "direct_vector/mutable_primitive_slice_parameter"
+    ));
+}
+
+#[test]
 fn swift_target_returns_primitive_direct_vectors() {
     insta::assert_snapshot!(rendered_fixture("direct_vector/primitive_vector_return"));
 }

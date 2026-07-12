@@ -16,7 +16,7 @@ use crate::ir::abi::{AbiContract, CallId, CallMode};
 use crate::ir::definitions::{FunctionDef, ParamDef, ParamPassing, ReturnDef};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::ir::{FfiContract, Lowerer, PackageInfo, TypeCatalog};
-use crate::render::jni::{JniEmitter, JniFunction, JniLowerer, JniModule, JvmBindingStyle};
+use crate::render::jni::{JniEmitter, JniFunction, JniLowerer, JniModule};
 use crate::render::kotlin::{
     KotlinEmitter, KotlinFunction, KotlinLowerer, KotlinModule, KotlinOptions,
 };
@@ -89,7 +89,6 @@ impl KmpJvmDelegateAdapter {
             internal_package.clone(),
             self.module_name.clone(),
         )
-        .with_jvm_binding_style(JvmBindingStyle::Kotlin)
         .with_header_include(kmp_generated_c_header_include(&kmp_c_header_basename(
             &internal_contract.package.name,
         )))

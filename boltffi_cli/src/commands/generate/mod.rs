@@ -1,6 +1,7 @@
 mod generator;
 mod header;
 mod ir;
+pub(crate) mod java;
 mod languages;
 
 use std::path::{Path, PathBuf};
@@ -11,7 +12,7 @@ use boltffi_bindgen::CHeaderLowerer;
 use generator::ScanPointerWidth;
 use generator::{GenerateRequest, run_generator};
 use header::HeaderGenerator;
-use languages::{CSharpGenerator, DartGenerator, JavaGenerator, TypeScriptGenerator};
+use languages::{CSharpGenerator, DartGenerator, TypeScriptGenerator};
 
 use boltffi_bindgen::target::Target;
 
@@ -50,9 +51,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::Swift => ir::run_ir_generation(config, &options),
         GenerateTarget::Kotlin => ir::run_ir_generation(config, &options),
         GenerateTarget::KotlinMultiplatform => ir::run_ir_generation(config, &options),
-        GenerateTarget::Java => {
-            run_generator::<JavaGenerator>(&legacy_request(), options.experimental)
-        }
+        GenerateTarget::Java => ir::run_ir_generation(config, &options),
         GenerateTarget::Header => {
             run_generator::<HeaderGenerator>(&legacy_request(), options.experimental)
         }
@@ -109,7 +108,16 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             }
 
             if config.should_process(Target::Java, options.experimental) {
-                run_generator::<JavaGenerator>(&request, options.experimental)?;
+                ir::run_ir_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::Java,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        ir: true,
+                        cargo_args: options.cargo_args.clone(),
+                    },
+                )?;
             }
 
             if config.should_process(Target::TypeScript, options.experimental) {
@@ -142,13 +150,13 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
     }
 }
 
-pub fn run_generate_java_with_output_from_source_dir(
+pub fn run_generate_java_with_generations(
     config: &Config,
     output: Option<PathBuf>,
-    source_directory: &Path,
-    crate_name: &str,
+    artifact_name: &str,
+    generations: impl IntoIterator<Item = java::TargetGeneration>,
 ) -> Result<()> {
-    JavaGenerator::generate_from_source_directory(config, output, source_directory, crate_name)
+    ir::run_java_generations(config, output, artifact_name, generations)
 }
 
 #[cfg(test)]
@@ -184,8 +192,16 @@ pub fn run_generate_python_with_manifest(
     manifest_path: PathBuf,
     artifact_name: String,
     cargo_args: Vec<String>,
+    toolchain_selector: Option<String>,
 ) -> Result<()> {
-    ir::run_python_generation(config, output, manifest_path, artifact_name, cargo_args)
+    ir::run_python_generation(
+        config,
+        output,
+        manifest_path,
+        artifact_name,
+        cargo_args,
+        toolchain_selector,
+    )
 }
 
 pub fn run_generate_kmp_with_manifest(

@@ -886,6 +886,10 @@ impl Config {
         self.targets.java.android.output.clone()
     }
 
+    pub fn java_android_min_sdk(&self) -> u32 {
+        self.targets.java.android.min_sdk
+    }
+
     pub fn python_output(&self) -> PathBuf {
         self.targets.python.output.clone()
     }

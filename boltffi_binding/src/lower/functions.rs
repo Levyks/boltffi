@@ -954,6 +954,7 @@ mod tests {
             &ParamPlan::DirectVec {
                 element: DirectVectorElementType::primitive(BindingPrimitive::U32)
                     .expect("u32 is a direct-vector primitive"),
+                receive: Receive::ByValue,
             }
         );
     }
@@ -974,6 +975,7 @@ mod tests {
             &ParamPlan::DirectVec {
                 element: DirectVectorElementType::primitive(BindingPrimitive::U32)
                     .expect("u32 is a direct-vector primitive"),
+                receive: Receive::ByValue,
             }
         );
     }
@@ -993,6 +995,7 @@ mod tests {
         match first_param_lower(&bindings) {
             ParamPlan::DirectVec {
                 element: DirectVectorElementType::Record(_),
+                ..
             } => {}
             other => panic!("expected DirectVec of direct record, got {other:?}"),
         }
@@ -1050,5 +1053,53 @@ mod tests {
             first_param_lower(&bindings),
             ParamPlan::Encoded { .. }
         ));
+    }
+
+    #[test]
+    fn ref_slice_primitive_param_lowers_to_borrowed_direct_vec() {
+        let mut decl = function("demo::peek", "peek");
+        decl.parameters = vec![ParameterDef {
+            name: name("values").into(),
+            type_expr: TypeExpr::Slice(Box::new(TypeExpr::Primitive(Primitive::U32))),
+            passing: boltffi_ast::ParameterPassing::Ref,
+            doc: None,
+            default: None,
+            user_attrs: Vec::new(),
+            source: boltffi_ast::Source::exported(),
+        }];
+        let bindings = TestContract::new().with_function(decl).lower_ok::<Native>();
+
+        assert_eq!(
+            first_param_lower(&bindings),
+            &ParamPlan::DirectVec {
+                element: DirectVectorElementType::primitive(BindingPrimitive::U32)
+                    .expect("u32 is a direct-vector primitive"),
+                receive: Receive::ByRef,
+            }
+        );
+    }
+
+    #[test]
+    fn mut_slice_primitive_param_lowers_to_mutable_direct_vec() {
+        let mut decl = function("demo::increment", "increment");
+        decl.parameters = vec![ParameterDef {
+            name: name("values").into(),
+            type_expr: TypeExpr::Slice(Box::new(TypeExpr::Primitive(Primitive::U64))),
+            passing: boltffi_ast::ParameterPassing::RefMut,
+            doc: None,
+            default: None,
+            user_attrs: Vec::new(),
+            source: boltffi_ast::Source::exported(),
+        }];
+        let bindings = TestContract::new().with_function(decl).lower_ok::<Native>();
+
+        assert_eq!(
+            first_param_lower(&bindings),
+            &ParamPlan::DirectVec {
+                element: DirectVectorElementType::primitive(BindingPrimitive::U64)
+                    .expect("u64 is a direct-vector primitive"),
+                receive: Receive::ByMutRef,
+            }
+        );
     }
 }

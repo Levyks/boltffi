@@ -101,16 +101,16 @@ static ___CollectorVTable g____CollectorVTable_vtable = {
 };
 
 static bool boltffi_jni_load____CollectorVTable_callbacks(JNIEnv *env) {
-    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/CollectorCallbacks", &g____CollectorVTable_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, "com/boltffi/demo/CollectorCallbacks", "com/boltffi/demo/CollectorCallbacks", &g____CollectorVTable_class)) {
         return false;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____CollectorVTable_class, "com/boltffi/demo/CollectorCallbacks", "free", "(J)V", &g____CollectorVTable_free_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____CollectorVTable_class, "com/boltffi/demo/CollectorCallbacks", "free", "free", "(J)V", "(J)V", &g____CollectorVTable_free_method)) {
         goto fail;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____CollectorVTable_class, "com/boltffi/demo/CollectorCallbacks", "clone", "(J)J", &g____CollectorVTable_clone_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____CollectorVTable_class, "com/boltffi/demo/CollectorCallbacks", "clone", "clone", "(J)J", "(J)J", &g____CollectorVTable_clone_method)) {
         goto fail;
     }
-    if (!boltffi_jni_lookup_static_method(env, g____CollectorVTable_class, "com/boltffi/demo/CollectorCallbacks", "on_values", "(J[I)V", &g____CollectorVTable_on_values_method)) {
+    if (!boltffi_jni_lookup_static_method_with_diagnostic(env, g____CollectorVTable_class, "com/boltffi/demo/CollectorCallbacks", "on_values", "on_values", "(J[I)V", "(J[I)V", &g____CollectorVTable_on_values_method)) {
         goto fail;
     }
     boltffi_register_callback_demo_collector(&g____CollectorVTable_vtable);
@@ -139,7 +139,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         fprintf(stderr, "BoltFFI JNI_OnLoad failed: GetEnv(JNI_VERSION_1_6) returned %d\n", (int)env_result);
         return JNI_ERR;
     }
-    if (!boltffi_jni_lookup_global_class(env, "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
+    if (!boltffi_jni_lookup_global_class_with_diagnostic(env, "com/boltffi/demo/Native", "com/boltffi/demo/Native", &boltffi_jni_native_class)) {
         return JNI_ERR;
     }
     if (!boltffi_jni_load____CollectorVTable_callbacks(env)) {

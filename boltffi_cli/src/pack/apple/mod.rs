@@ -7,22 +7,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use boltffi_backend::GeneratedOutput;
-use boltffi_bindgen::generate::{Generation, GenerationError};
+use boltffi_bindgen::generate::GenerationError;
 use boltffi_bindgen::target::Target as BindgenTarget;
 
 use crate::build::{
-    BindingExpansion, BuildOptions, Builder, OutputCallback, all_successful, failed_targets,
+    BindingExpansion, BuildOptions, BuildSelection, Builder, OutputCallback, all_successful,
+    failed_targets,
 };
 use crate::cli::{CliError, Result};
 use crate::commands::pack::PackAppleOptions;
 use crate::config::{Config, SpmDistribution, SpmLayout};
 use crate::pack::PackError;
 use crate::reporter::Reporter;
+use crate::target::BuiltLibrary;
 
-use super::{
-    discover_built_libraries_for_targets, missing_built_libraries, print_cargo_line,
-    resolve_build_cargo_args, scratch,
-};
+use super::{missing_built_libraries, print_cargo_line, resolve_build_cargo_args, scratch};
 
 pub(crate) use self::spm::SpmPackageGenerator;
 pub(crate) use self::xcframework::{XcframeworkBuilder, compute_checksum};
@@ -68,7 +67,6 @@ pub(crate) fn pack_apple(
             config,
             &apple_targets,
             options.execution.release,
-            &build_cargo_args,
             &selected_crate,
             &step,
         )?;
@@ -87,11 +85,12 @@ pub(crate) fn pack_apple(
         step.finish_success();
     }
 
-    let libraries = discover_built_libraries_for_targets(
-        &config.crate_artifact_name(),
+    let libraries = BuiltLibrary::discover_for_targets(
+        selected_crate.target_directory(),
+        selected_crate.artifact_name(),
         build_profile.output_directory_name(),
         &apple_targets,
-    )?;
+    );
     let apple_libraries: Vec<_> = libraries
         .into_iter()
         .filter(|library| library.target.platform().is_apple())
@@ -193,7 +192,6 @@ fn build_apple_targets(
     config: &Config,
     targets: &[crate::target::RustTarget],
     release: bool,
-    build_cargo_args: &[String],
     selected_crate: &BindingExpansion,
     step: &crate::reporter::Step,
 ) -> Result<()> {
@@ -207,9 +205,7 @@ fn build_apple_targets(
 
     let build_options = BuildOptions {
         release,
-        package: Some(config.library_name().to_string()),
-        cargo_args: build_cargo_args.to_vec(),
-        env: selected_crate.env()?,
+        selection: BuildSelection::Expanded(selected_crate.clone()),
         on_output,
     };
     let builder = Builder::new(config, build_options);
@@ -239,8 +235,8 @@ fn generate_apple_bindings(
         SpmLayout::Split => config.apple_swift_output().join("BoltFFI"),
     };
 
-    let output = Generation::new(selected_crate.manifest_path())
-        .cargo_args(selected_crate.cargo_args())
+    let output = selected_crate
+        .generation()
         .swift_ffi_module(apple_ffi_module_name(config))
         .swift_file(config.swift_bindings_file_stem())
         .swift_custom_mappings(config.apple_swift_custom_mappings())

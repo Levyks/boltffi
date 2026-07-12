@@ -87,6 +87,7 @@ mod metadata;
 mod name;
 mod op;
 mod primitive;
+mod reference;
 mod surface;
 mod symbol;
 mod types;
@@ -138,6 +139,7 @@ pub use op::{
     ValueRef, ValueRoot,
 };
 pub use primitive::{IntegerRepr, Primitive};
+pub use reference::DeclarationShape;
 pub use surface::{
     AsyncProtocolIntrospect, BufferShapeRules, CallbackProtocolIntrospect,
     ClosureRegistrationIntrospect, Native, Surface, Wasm32, native, wasm32,

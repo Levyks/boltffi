@@ -1,6 +1,6 @@
 use boltffi_binding::{
     CallableScope, ClosureParameter as BindingClosureParameter, ClosureReturn, ClosureSignature,
-    DirectValueType, DirectVectorElementType, Direction, ErrorDecl, ExecutionDecl,
+    DeclarationId, DirectValueType, DirectVectorElementType, Direction, ErrorDecl, ExecutionDecl,
     ExportedCallable, ForeignBody, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native,
     NativeSymbol, OutOfRust, OutgoingParam, ParamDecl, ParamDirection, ParamPlan, ParamPlanRender,
     Primitive, Receive, ReturnPlan, ReturnPlanRender, ReturnValueSlot, RustBody, TypeRef, native,
@@ -43,10 +43,15 @@ struct AsyncCallbackPayloadType {
 
 struct FallibleAsyncCallbackSuccess;
 
-trait EncodedWritebackReceive {
+trait ReceiveAbi {
     fn needs_encoded_writeback(self) -> bool;
     fn needs_mutable_pointer(self) -> bool;
     fn direct_param_type(self, ty: &DirectValueType, value: Type) -> Type;
+    fn direct_vector_pointer(
+        self,
+        name: &str,
+        element: DirectVectorElementAbi,
+    ) -> Result<Parameter>;
 }
 
 /// C ABI projection for the callable body behind a closure handle.
@@ -60,7 +65,7 @@ where
     ) -> Result<Vec<Parameter>>;
 }
 
-impl EncodedWritebackReceive for Receive {
+impl ReceiveAbi for Receive {
     fn needs_encoded_writeback(self) -> bool {
         self == Receive::ByMutRef
     }
@@ -76,9 +81,20 @@ impl EncodedWritebackReceive for Receive {
             _ => value,
         }
     }
+
+    fn direct_vector_pointer(
+        self,
+        name: &str,
+        element: DirectVectorElementAbi,
+    ) -> Result<Parameter> {
+        match self {
+            Receive::ByMutRef => Parameter::mutable_direct_vector_pointer(name, element),
+            _ => Parameter::direct_vector_pointer(name, element),
+        }
+    }
 }
 
-impl EncodedWritebackReceive for () {
+impl ReceiveAbi for () {
     fn needs_encoded_writeback(self) -> bool {
         false
     }
@@ -89,6 +105,14 @@ impl EncodedWritebackReceive for () {
 
     fn direct_param_type(self, _: &DirectValueType, value: Type) -> Type {
         value
+    }
+
+    fn direct_vector_pointer(
+        self,
+        name: &str,
+        element: DirectVectorElementAbi,
+    ) -> Result<Parameter> {
+        Parameter::direct_vector_pointer(name, element)
     }
 }
 
@@ -161,7 +185,7 @@ impl CallableReturnType {
 impl<'plan, D> ParamPlanRender<'plan, Native, D> for ValueParameter
 where
     D: Direction,
-    D::Receive: EncodedWritebackReceive,
+    D::Receive: ReceiveAbi,
 {
     type Output = Result<Vec<Parameter>>;
 
@@ -230,8 +254,13 @@ where
         ])
     }
 
-    fn direct_vector(&mut self, element: &'plan DirectVectorElementType) -> Self::Output {
-        self.signature.direct_vec_param(&self.name, element)
+    fn direct_vector(
+        &mut self,
+        element: &'plan DirectVectorElementType,
+        receive: D::Receive,
+    ) -> Self::Output {
+        self.signature
+            .direct_vec_param(&self.name, element, receive)
     }
 }
 
@@ -333,7 +362,7 @@ where
     type Output = Result<Type>;
 
     fn void(&mut self) -> Self::Output {
-        Ok(Type::Status)
+        Ok(Type::Void)
     }
 
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
@@ -613,12 +642,13 @@ impl Signature {
 
     pub fn exported(
         self,
+        declaration: DeclarationId,
         symbol: &NativeSymbol,
         callable: &ExportedCallable<Native>,
     ) -> Result<Vec<Function>> {
         match callable.execution() {
             ExecutionDecl::Synchronous(_) => self
-                .synchronous(symbol.name().as_str(), callable)
+                .synchronous(declaration, symbol, callable)
                 .map(|function| vec![function]),
             ExecutionDecl::Asynchronous(native::AsyncProtocol::PollHandle {
                 poll,
@@ -628,6 +658,7 @@ impl Signature {
                 panic_message,
                 ..
             }) => self.async_poll_handle(
+                declaration,
                 callable,
                 PollHandleSymbols::new(symbol, poll, complete, cancel, free, panic_message),
             ),
@@ -653,8 +684,13 @@ impl Signature {
         }
     }
 
-    fn synchronous(&self, name: &str, callable: &ExportedCallable<Native>) -> Result<Function> {
-        let params = self
+    fn synchronous(
+        &self,
+        declaration: DeclarationId,
+        symbol: &NativeSymbol,
+        callable: &ExportedCallable<Native>,
+    ) -> Result<Function> {
+        let params: Vec<Parameter> = self
             .receiver
             .clone()
             .into_iter()
@@ -662,17 +698,33 @@ impl Signature {
             .chain(self.return_params(callable.returns().plan(), callable.error())?)
             .chain(self.error_params(callable.error())?)
             .collect();
-        let returns = self.return_type(callable.returns().plan(), callable.error())?;
-        Function::with_return_channel(name, params, returns, self.return_channel(callable.error()))
+        let returns = match (
+            callable.returns().plan(),
+            callable.error(),
+            params.is_empty(),
+        ) {
+            (ReturnPlan::Void, ErrorDecl::None(_), true) => Type::Void,
+            (ReturnPlan::Void, ErrorDecl::None(_), false) => Type::Status,
+            (plan, error, _) => self.return_type(plan, error)?,
+        };
+        Function::exported_with_channel(
+            declaration,
+            symbol,
+            params,
+            returns,
+            self.return_channel(callable.error()),
+        )
     }
 
     fn async_poll_handle(
         &self,
+        declaration: DeclarationId,
         callable: &ExportedCallable<Native>,
         symbols: PollHandleSymbols,
     ) -> Result<Vec<Function>> {
-        let start = Function::new(
-            symbols.start.name().as_str(),
+        let start = Function::exported(
+            declaration,
+            &symbols.start,
             self.receiver
                 .clone()
                 .into_iter()
@@ -686,8 +738,9 @@ impl Signature {
             .collect();
         Ok(vec![
             start,
-            Function::new(
-                symbols.poll.name().as_str(),
+            Function::exported(
+                declaration,
+                &symbols.poll,
                 vec![
                     Parameter::new("handle", Type::FutureHandle)?,
                     Parameter::continuation_data("callback")?,
@@ -695,24 +748,28 @@ impl Signature {
                 ],
                 Type::Void,
             )?,
-            Function::with_return_channel(
-                symbols.complete.name().as_str(),
+            Function::exported_with_channel(
+                declaration,
+                &symbols.complete,
                 complete_params,
                 self.async_complete_return(callable.returns().plan(), callable.error())?,
                 self.return_channel(callable.error()),
             )?,
-            Function::new(
-                symbols.panic_message.name().as_str(),
+            Function::exported(
+                declaration,
+                &symbols.panic_message,
                 vec![Parameter::new("handle", Type::FutureHandle)?],
                 Type::Buffer,
             )?,
-            Function::new(
-                symbols.cancel.name().as_str(),
+            Function::exported(
+                declaration,
+                &symbols.cancel,
                 vec![Parameter::new("handle", Type::FutureHandle)?],
                 Type::Void,
             )?,
-            Function::new(
-                symbols.free.name().as_str(),
+            Function::exported(
+                declaration,
+                &symbols.free,
                 vec![Parameter::new("handle", Type::FutureHandle)?],
                 Type::Void,
             )?,
@@ -755,7 +812,7 @@ impl Signature {
     fn value_param<D>(&self, name: &str, plan: &ParamPlan<Native, D>) -> Result<Vec<Parameter>>
     where
         D: Direction,
-        D::Receive: EncodedWritebackReceive,
+        D::Receive: ReceiveAbi,
     {
         plan.render_with(&mut ValueParameter {
             signature: self.clone(),
@@ -767,10 +824,11 @@ impl Signature {
         &self,
         name: &str,
         element: &DirectVectorElementType,
+        receive: impl ReceiveAbi,
     ) -> Result<Vec<Parameter>> {
         let element = DirectVectorElementAbi::from_binding(element)?;
         Ok(vec![
-            Parameter::direct_vector_pointer(name, element.clone())?,
+            receive.direct_vector_pointer(name, element.clone())?,
             Parameter::direct_vector_length(name, &element)?,
         ])
     }

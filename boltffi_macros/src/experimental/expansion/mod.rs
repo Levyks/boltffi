@@ -4583,7 +4583,7 @@ mod tests {
     }
 
     #[test]
-    fn void_function_expansion_returns_status() {
+    fn void_function_expansion_returns_void() {
         let source = void_source_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
         let expansion = Expansion::new(&lowered);
@@ -4600,9 +4600,8 @@ mod tests {
                 pub fn ping() {}
                 #[cfg(not(target_arch = "wasm32"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_ping() -> ::boltffi::__private::FfiStatus {
+                pub extern "C" fn boltffi_function_demo_ping() {
                     ping();
-                    ::boltffi::__private::FfiStatus::OK
                 }
             }
             .to_string()

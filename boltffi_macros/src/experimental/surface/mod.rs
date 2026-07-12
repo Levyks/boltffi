@@ -54,6 +54,8 @@ pub trait RenderSurface:
     /// Whether borrowed direct record parameters use typed native pointers.
     const BORROWED_DIRECT_RECORD_PARAMS: bool;
 
+    const INFALLIBLE_VOID_RETURN: InfallibleVoidReturn;
+
     /// Returns the `cfg` attribute applied to generated wrapper items for this surface.
     fn cfg_attr() -> TokenStream;
 }
@@ -76,10 +78,17 @@ pub enum DirectRecordCrossing {
     Pointer,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum InfallibleVoidReturn {
+    Direct,
+    Status,
+}
+
 impl RenderSurface for Native {
     const SCALAR_OPTION: ScalarOptionCrossing = ScalarOptionCrossing::WireEncoded;
     const DIRECT_RECORD_PARAMS: DirectRecordCrossing = DirectRecordCrossing::Value;
     const BORROWED_DIRECT_RECORD_PARAMS: bool = true;
+    const INFALLIBLE_VOID_RETURN: InfallibleVoidReturn = InfallibleVoidReturn::Direct;
 
     fn cfg_attr() -> TokenStream {
         quote! { #[cfg(not(target_arch = "wasm32"))] }
@@ -90,6 +99,7 @@ impl RenderSurface for Wasm32 {
     const SCALAR_OPTION: ScalarOptionCrossing = ScalarOptionCrossing::NanBoxedF64;
     const DIRECT_RECORD_PARAMS: DirectRecordCrossing = DirectRecordCrossing::Pointer;
     const BORROWED_DIRECT_RECORD_PARAMS: bool = false;
+    const INFALLIBLE_VOID_RETURN: InfallibleVoidReturn = InfallibleVoidReturn::Status;
 
     fn cfg_attr() -> TokenStream {
         quote! { #[cfg(target_arch = "wasm32")] }

@@ -238,8 +238,9 @@ impl<'source> Parameter<'source> {
     }
 
     pub fn direct_vec(self) -> Result<(), Error> {
-        match self.type_expr().as_ref() {
-            TypeExpr::Vec(_) => Ok(()),
+        match (self.definition.passing, self.type_expr().as_ref()) {
+            (ParameterPassing::Value, TypeExpr::Vec(_))
+            | (ParameterPassing::Ref | ParameterPassing::RefMut, TypeExpr::Slice(_)) => Ok(()),
             _ => Err(Error::SourceSyntaxMismatch(
                 "source parameter is not a direct vector",
             )),
@@ -248,7 +249,7 @@ impl<'source> Parameter<'source> {
 
     pub fn direct_vec_element_type(self) -> Result<Type, Error> {
         let source_type = self.type_expr();
-        let TypeExpr::Vec(element) = source_type.as_ref() else {
+        let (TypeExpr::Vec(element) | TypeExpr::Slice(element)) = source_type.as_ref() else {
             return Err(Error::SourceSyntaxMismatch(
                 "source direct-vector parameter is missing element type",
             ));

@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -5,6 +6,7 @@ use boltffi_backend::bridge::c::CBridge;
 use boltffi_backend::core::bridge::BridgeBackend;
 use boltffi_backend::core::{CoverageMode, bridge, host};
 use boltffi_backend::target::{
+    java::{JavaDesktopLoader, JavaHost, JavaVersion},
     kmp::{DEFAULT_KMP_MODULE_NAME, DEFAULT_KMP_PACKAGE_NAME, KmpHost, KmpSupportMode},
     kotlin::{KotlinApiStyle, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost},
     python::PythonCExtHost,
@@ -33,11 +35,20 @@ pub struct Generation {
     triple: Option<String>,
     coverage: CoverageMode,
     cargo_args: Vec<String>,
+    cargo_environment: Vec<(OsString, OsString)>,
     cargo_toolchain_selector: Option<String>,
     python_package_module: Option<String>,
     python_distribution_name: Option<String>,
     python_package_version: Option<String>,
     python_native_library: Option<String>,
+    java_package: Option<String>,
+    java_file: Option<String>,
+    java_android_library: Option<String>,
+    java_desktop_jni_library: Option<String>,
+    java_desktop_fallback_library: Option<String>,
+    java_c_header: Option<PathBuf>,
+    java_desktop_loader: JavaDesktopLoader,
+    java_version: JavaVersion,
     kotlin_package: Option<String>,
     kotlin_file: Option<String>,
     kotlin_android_library: Option<String>,
@@ -67,11 +78,20 @@ impl Generation {
             triple: None,
             coverage: CoverageMode::Complete,
             cargo_args: Vec::new(),
+            cargo_environment: Vec::new(),
             cargo_toolchain_selector: None,
             python_package_module: None,
             python_distribution_name: None,
             python_package_version: None,
             python_native_library: None,
+            java_package: None,
+            java_file: None,
+            java_android_library: None,
+            java_desktop_jni_library: None,
+            java_desktop_fallback_library: None,
+            java_c_header: None,
+            java_desktop_loader: JavaDesktopLoader::default(),
+            java_version: JavaVersion::default(),
             kotlin_package: None,
             kotlin_file: None,
             kotlin_android_library: None,
@@ -103,6 +123,19 @@ impl Generation {
     /// Passes Cargo build arguments to metadata generation.
     pub fn cargo_args(mut self, cargo_args: impl IntoIterator<Item = String>) -> Self {
         self.cargo_args = cargo_args.into_iter().collect();
+        self
+    }
+
+    /// Passes environment values to Cargo metadata and build commands.
+    pub fn cargo_environment<K, V>(mut self, environment: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.cargo_environment = environment
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
         self
     }
 
@@ -139,6 +172,54 @@ impl Generation {
     /// Sets the native library artifact name loaded by the Python package.
     pub fn python_native_library(mut self, native_library: impl Into<String>) -> Self {
         self.python_native_library = Some(native_library.into());
+        self
+    }
+
+    /// Sets the generated Java package name.
+    pub fn java_package(mut self, package: impl Into<String>) -> Self {
+        self.java_package = Some(package.into());
+        self
+    }
+
+    /// Sets the generated Java owner file name.
+    pub fn java_file(mut self, file: impl Into<String>) -> Self {
+        self.java_file = Some(file.into());
+        self
+    }
+
+    /// Sets the Android native library load name used by Java.
+    pub fn java_android_library(mut self, library: impl Into<String>) -> Self {
+        self.java_android_library = Some(library.into());
+        self
+    }
+
+    /// Sets the desktop JNI wrapper library load name used by Java.
+    pub fn java_desktop_jni_library(mut self, library: impl Into<String>) -> Self {
+        self.java_desktop_jni_library = Some(library.into());
+        self
+    }
+
+    /// Sets the desktop fallback native library load name used by Java.
+    pub fn java_desktop_fallback_library(mut self, library: impl Into<String>) -> Self {
+        self.java_desktop_fallback_library = Some(library.into());
+        self
+    }
+
+    /// Sets the generated C header included by the Java JNI bridge.
+    pub fn java_c_header(mut self, path: impl Into<PathBuf>) -> Self {
+        self.java_c_header = Some(path.into());
+        self
+    }
+
+    /// Sets how the generated Java module loads desktop native libraries.
+    pub fn java_desktop_loader(mut self, loader: JavaDesktopLoader) -> Self {
+        self.java_desktop_loader = loader;
+        self
+    }
+
+    /// Sets the generated Java source and runtime release.
+    pub fn java_version(mut self, version: JavaVersion) -> Self {
+        self.java_version = version;
         self
     }
 
@@ -265,12 +346,12 @@ impl Generation {
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
-            Target::Python | Target::Kotlin | Target::KotlinMultiplatform => {
+            Target::Python | Target::Java | Target::Kotlin | Target::KotlinMultiplatform => {
                 let bindings = self.bindings::<Native>()?;
                 self.render_native_bindings(target, &bindings)
             }
             Target::Swift => self.render_swift(),
-            Target::Java | Target::TypeScript | Target::Header | Target::Dart | Target::CSharp => {
+            Target::TypeScript | Target::Header | Target::Dart | Target::CSharp => {
                 Err(GenerationError::UnsupportedTarget { target })
             }
         }
@@ -302,15 +383,56 @@ impl Generation {
     ) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python => self.render_python_bindings(bindings),
+            Target::Java => self.render_java_bindings(bindings),
             Target::Kotlin => self.render_kotlin_bindings(bindings),
             Target::KotlinMultiplatform => self.render_kmp_bindings(bindings),
-            Target::Swift
-            | Target::Java
-            | Target::TypeScript
-            | Target::Header
-            | Target::Dart
-            | Target::CSharp => Err(GenerationError::UnsupportedTarget { target }),
+            Target::Swift | Target::TypeScript | Target::Header | Target::Dart | Target::CSharp => {
+                Err(GenerationError::UnsupportedTarget { target })
+            }
         }
+    }
+
+    fn render_java_bindings(
+        &self,
+        bindings: &Bindings<Native>,
+    ) -> Result<GeneratedOutput, GenerationError> {
+        let package = self
+            .java_package
+            .as_deref()
+            .unwrap_or("com.example.boltffi");
+        let file = self.java_file.as_deref().unwrap_or("BoltFfi");
+        self.java_host(package, file)?
+            .render_with_coverage(bindings, self.coverage)
+            .map_err(GenerationError::Render)
+    }
+
+    fn java_host(&self, package: &str, file: &str) -> Result<JavaHost, GenerationError> {
+        let host = JavaHost::for_version(package, file, self.java_version)
+            .map_err(GenerationError::Render)?
+            .desktop_loader(self.java_desktop_loader);
+        let host = self
+            .java_android_library
+            .iter()
+            .try_fold(host, |host, library| host.android_library(library.clone()))
+            .map_err(GenerationError::Render)?;
+        let host = self
+            .java_desktop_jni_library
+            .iter()
+            .try_fold(host, |host, library| {
+                host.desktop_jni_library(library.clone())
+            })
+            .map_err(GenerationError::Render)?;
+        let host = self
+            .java_desktop_fallback_library
+            .iter()
+            .try_fold(host, |host, library| {
+                host.desktop_fallback_library(library.clone())
+            })
+            .map_err(GenerationError::Render)?;
+        Ok(self
+            .java_c_header
+            .iter()
+            .fold(host, |host, header| host.c_header(header.clone())))
     }
 
     fn render_kotlin_bindings(
@@ -512,7 +634,17 @@ impl Generation {
 
     fn bindings<S: Surface>(&self) -> Result<Bindings<S>, GenerationError> {
         let surface = BindingMetadataSurface::from_target_triple(self.triple.as_deref());
-        let mut build = BindingMetadataBuild::new(&self.manifest_path);
+        self.metadata_build()
+            .read()?
+            .into_iter()
+            .find(|envelope| envelope.surface() == surface)
+            .and_then(|envelope| S::from_serialized(envelope.into_bindings()))
+            .ok_or(GenerationError::MissingSurface { surface })
+    }
+
+    fn metadata_build(&self) -> BindingMetadataBuild {
+        let mut build = BindingMetadataBuild::new(&self.manifest_path)
+            .cargo_environment(self.cargo_environment.clone());
         if !self.cargo_args.is_empty() {
             build = build.cargo_args(self.cargo_args.clone());
         }
@@ -523,11 +655,6 @@ impl Generation {
             build = build.target(triple);
         }
         build
-            .read()?
-            .into_iter()
-            .find(|envelope| envelope.surface() == surface)
-            .and_then(|envelope| S::from_serialized(envelope.into_bindings()))
-            .ok_or(GenerationError::MissingSurface { surface })
     }
 }
 
@@ -680,6 +807,30 @@ mod tests {
     }
 
     #[test]
+    fn generation_preserves_the_complete_cargo_build_contract() {
+        let generation = Generation::new("selected/Cargo.toml")
+            .triple("x86_64-unknown-linux-gnu")
+            .cargo_args(["--features".to_string(), "ffi".to_string()])
+            .cargo_environment([(
+                OsString::from("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"),
+                OsString::from("/opt/cross/bin/clang"),
+            )])
+            .cargo_toolchain_selector(Some("+nightly".to_string()));
+
+        assert_eq!(
+            generation.metadata_build(),
+            BindingMetadataBuild::new("selected/Cargo.toml")
+                .target("x86_64-unknown-linux-gnu")
+                .cargo_args(["--features".to_string(), "ffi".to_string()])
+                .cargo_environment([(
+                    OsString::from("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"),
+                    OsString::from("/opt/cross/bin/clang"),
+                )])
+                .rustup_toolchain("+nightly")
+        );
+    }
+
+    #[test]
     fn kmp_generation_public_render_route_attempts_metadata_read() {
         let error = Generation::new("missing-kmp-fixture/Cargo.toml")
             .render(Target::KotlinMultiplatform)
@@ -705,6 +856,33 @@ mod tests {
                 .contents()
                 .contains("boltffi_function_demo_add")
         );
+    }
+
+    #[test]
+    fn java_generation_wires_primitive_bindings_through_shared_jni() {
+        let bindings = primitive_function_bindings();
+        let output = Generation::new("Cargo.toml")
+            .java_package("com.boltffi.demo")
+            .java_file("Demo")
+            .java_android_library("demo")
+            .java_desktop_jni_library("demo_jni")
+            .java_desktop_fallback_library("demo")
+            .java_desktop_loader(JavaDesktopLoader::None)
+            .java_c_header("jni/demo.h")
+            .render_native_bindings(Target::Java, &bindings)
+            .expect("primitive Java bindings should render through the production target route");
+
+        assert_eq!(
+            output_paths(&output),
+            vec!["jni/demo.h", "jni/jni_glue.c", "com/boltffi/demo/Demo.java",]
+        );
+        assert!(
+            file(&output, "com/boltffi/demo/Demo.java")
+                .contains("public static int add(int left, int right)")
+        );
+        assert!(file(&output, "jni/jni_glue.c").contains(
+            "JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1add"
+        ));
     }
 
     #[test]

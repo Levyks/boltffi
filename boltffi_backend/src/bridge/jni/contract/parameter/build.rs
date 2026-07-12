@@ -79,9 +79,9 @@ impl NativeParameter {
                 ClosureParameter::from_c_group(closure, closures)
                     .map(|closure| Some(Self::new(NativeParameterKind::Closure(closure))))
             }
-            c::ParameterGroup::ClosureReturn(_) => Err(Error::BrokenBridgeContract {
+            c::ParameterGroup::ClosureReturn(_) => Err(Error::UnsupportedBridge {
                 bridge: JNI_BRIDGE,
-                invariant: "closure return out-pointer cannot appear on a JNI native method",
+                shape: "closure return out-pointer on a native method",
             }),
         }
     }
@@ -123,7 +123,6 @@ mod tests {
         let params = native_parameters_for(Type::ConstPointer(Box::new(point_type())));
 
         assert_eq!(params.len(), 1);
-        assert_eq!(params[0].ty().to_string(), "jbyteArray");
         assert!(
             params[0].record().is_some(),
             "borrowed direct records must stay record-shaped instead of falling through to jlong"
@@ -148,7 +147,6 @@ mod tests {
             .c_arguments()
             .expect("record parameter call arguments");
 
-        assert_eq!(params[0].ty().to_string(), "jbyteArray");
         assert_eq!(arguments.len(), 1);
         assert_eq!(arguments[0].to_string(), "__boltffi_point_value");
     }

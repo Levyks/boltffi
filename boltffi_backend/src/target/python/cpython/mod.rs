@@ -615,6 +615,30 @@ mod tests {
     }
 
     #[test]
+    fn python_target_returns_mutated_primitive_slices() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn increment(values: &mut [u64]) {
+                    values.iter_mut().for_each(|value| *value += 1);
+                }
+                "#,
+            ))
+            .expect("Python target should render mutable primitive slice");
+        let extension = extension(&output);
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(extension.contains(
+            "FfiStatus status = boltffi_python_boltffi_function_demo_increment((uint64_t *)values_ptr, values_len);"
+        ));
+        assert!(extension.contains(
+            "result = boltffi_python_box_vec_u64((const uint64_t *)values_ptr, values_len);"
+        ));
+        assert!(stub.contains("def increment(values: Sequence[int]) -> Sequence[int]: ..."));
+    }
+
+    #[test]
     fn python_target_renders_nested_vector_lengths_from_bound_value() {
         let output = target()
             .render(&bindings(
