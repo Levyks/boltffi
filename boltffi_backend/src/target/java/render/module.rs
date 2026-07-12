@@ -76,10 +76,10 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             host.java_version(),
             self.context,
         )?;
-        let uses_result = self.declarations.iter().any(|declaration| {
-            !declaration.emitted().primary_chunk().is_empty()
-                && declaration.declaration().uses_result_codec()
-        });
+        let uses_result = self
+            .declarations
+            .iter()
+            .any(|declaration| declaration.declaration().uses_result_codec());
         let (mut chunks, mut declaration_files) = ModuleChunks::from_declarations(
             self.declarations,
             host.package(),

@@ -18,6 +18,15 @@ val boltffiJavaPreparedDir = providers.gradleProperty("boltffiJavaPreparedDir")
 val boltffiJavaComparisonBuildDir = providers.gradleProperty("boltffiJavaComparisonBuildDir")
     .orNull
     ?.let(::file)
+val comparisonBenchmarks = mapOf(
+    "primitive" to "BoltffiJavaPrimitiveBench.java",
+    "record" to "BoltffiJavaRecordBench.java",
+    "enum" to "BoltffiJavaEnumBench.java",
+    "class" to "BoltffiJavaClassBench.java",
+    "callback" to "BoltffiJavaCallbackBench.java",
+    "async" to "BoltffiJavaAsyncBench.java",
+    "stream" to "BoltffiJavaStreamBench.java",
+)
 if (boltffiJavaComparisonBuildDir != null) {
     layout.buildDirectory.set(boltffiJavaComparisonBuildDir)
 }
@@ -31,8 +40,10 @@ val nativePath = if (boltffiJavaComparisonSuite != null && boltffiJavaPreparedDi
 if (boltffiJavaGenerator.get() !in setOf("legacy", "ir")) {
     throw GradleException("boltffiJavaGenerator must be 'legacy' or 'ir'")
 }
-if (boltffiJavaComparisonSuite != null && boltffiJavaComparisonSuite !in setOf("primitive", "record", "enum", "class", "callback", "async")) {
-    throw GradleException("boltffiJavaComparisonSuite must be 'primitive', 'record', 'enum', 'class', 'callback', or 'async'")
+if (boltffiJavaComparisonSuite != null && boltffiJavaComparisonSuite !in comparisonBenchmarks) {
+    throw GradleException(
+        "boltffiJavaComparisonSuite must be one of ${comparisonBenchmarks.keys.joinToString()}",
+    )
 }
 if (boltffiJavaPreparedDir != null) {
     val actualGenerator = boltffiJavaPreparedDir
@@ -149,70 +160,14 @@ java {
             java.srcDir(boltffiJavaSourceDir)
         }
         named("jmh") {
-            when (boltffiJavaComparisonSuite) {
-                "primitive" -> {
-                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaClassBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaCallbackBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaAsyncBench.java")
-                }
-                "record" -> {
-                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaClassBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaCallbackBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaAsyncBench.java")
-                }
-                "enum" -> {
-                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaClassBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaCallbackBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaAsyncBench.java")
-                }
-                "class" -> {
-                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaCallbackBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaAsyncBench.java")
-                }
-                "callback" -> {
-                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaClassBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaAsyncBench.java")
-                }
-                "async" -> {
-                    java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaClassBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaCallbackBench.java")
-                }
-                else -> {
-                    java.exclude("com/example/bench_compare/BoltffiJavaPrimitiveBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaRecordBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaEnumBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaClassBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaCallbackBench.java")
-                    java.exclude("com/example/bench_compare/BoltffiJavaAsyncBench.java")
-                }
+            if (boltffiJavaComparisonSuite != null) {
+                java.exclude("com/example/bench_compare/UniffiJavaBench.java")
+                java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
             }
+            comparisonBenchmarks
+                .filterKeys { it != boltffiJavaComparisonSuite }
+                .values
+                .forEach { java.exclude("com/example/bench_compare/$it") }
         }
     }
 }

@@ -27,6 +27,12 @@ struct CallbackFailureTemplate;
 #[template(path = "target/java/runtime/callback_future.java", escape = "none")]
 struct CallbackFutureTemplate;
 
+#[derive(AskamaTemplate)]
+#[template(path = "target/java/runtime/stream.java", escape = "none")]
+struct StreamTemplate {
+    flow: bool,
+}
+
 pub struct Runtime;
 
 impl Runtime {
@@ -68,6 +74,13 @@ impl Runtime {
         Ok(AuxChunk::Helper {
             id: HelperId::new(CanonicalName::single("java_callback_future_runtime")),
             text: TextChunk::new(CallbackFutureTemplate.render()?),
+        })
+    }
+
+    pub fn stream_helper(flow: bool) -> Result<AuxChunk> {
+        Ok(AuxChunk::Helper {
+            id: HelperId::new(CanonicalName::single("java_stream_runtime")),
+            text: TextChunk::new(StreamTemplate { flow }.render()?),
         })
     }
 }

@@ -297,6 +297,13 @@ ASYNC_CASES = (
         "boltffi_function_demo_async_fns_async_add",
     ),
 )
+STREAM_CASES = (
+    BenchmarkCase(
+        "stream_batch_round_trip",
+        "boltffi_event_bus_subscribe_values_batch_pop_batch",
+        "boltffi_stream_demo_classes_streams_event_bus_subscribe_values_batch_pop_batch",
+    ),
+)
 SUITES = {
     suite.name: suite
     for suite in (
@@ -306,6 +313,7 @@ SUITES = {
         BenchmarkSuite("class", "BoltffiJavaClassBench", CLASS_CASES),
         BenchmarkSuite("callback", "BoltffiJavaCallbackBench", CALLBACK_CASES),
         BenchmarkSuite("async", "BoltffiJavaAsyncBench", ASYNC_CASES),
+        BenchmarkSuite("stream", "BoltffiJavaStreamBench", STREAM_CASES),
     )
 }
 ALL_CASES = tuple(case for suite in SUITES.values() for case in suite.cases)

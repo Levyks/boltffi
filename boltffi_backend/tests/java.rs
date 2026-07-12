@@ -466,6 +466,301 @@ const ASYNC_FUNCTIONS: &str = r#"
     }
 "#;
 
+const STREAMS: &str = r#"
+    use std::sync::Arc;
+    use boltffi::EventSubscription;
+
+    #[repr(C)]
+    #[data]
+    pub struct StreamPoint {
+        pub x: f64,
+        pub y: f64,
+    }
+
+    #[data]
+    pub struct StreamMessage {
+        pub text: String,
+        pub values: Vec<i32>,
+    }
+
+    #[repr(u32)]
+    #[data]
+    pub enum StreamMode {
+        Fast = 1,
+        Slow = 2,
+    }
+
+    pub struct EventBus;
+
+    #[export(single_threaded)]
+    impl EventBus {
+        pub fn new() -> Self { Self }
+
+        #[ffi_stream(item = i32)]
+        pub fn values(&self) -> Arc<EventSubscription<i32>> { todo!() }
+
+        #[ffi_stream(item = StreamPoint)]
+        pub fn points(&self) -> Arc<EventSubscription<StreamPoint>> { todo!() }
+
+        #[ffi_stream(item = StreamMode)]
+        pub fn modes(&self) -> Arc<EventSubscription<StreamMode>> { todo!() }
+
+        #[ffi_stream(item = StreamMessage)]
+        pub fn messages(&self) -> Arc<EventSubscription<StreamMessage>> { todo!() }
+
+        #[ffi_stream(item = Result<i32, String>)]
+        pub fn results(&self) -> Arc<EventSubscription<Result<i32, String>>> { todo!() }
+
+        #[ffi_stream(item = i32, mode = "batch")]
+        pub fn value_batches(&self) -> Arc<EventSubscription<i32>> { todo!() }
+
+        #[ffi_stream(item = i32, mode = "callback")]
+        pub fn value_callbacks(&self) -> Arc<EventSubscription<i32>> { todo!() }
+    }
+"#;
+
+const STREAM_RUNTIME_PROBE: &str = r#"
+    package com.boltffi.demo;
+
+    import java.util.Arrays;
+    import java.util.Collections;
+    import java.util.List;
+    import java.util.concurrent.atomic.AtomicInteger;
+    import java.util.concurrent.atomic.AtomicLong;
+
+    public final class StreamRuntimeProbe {
+        private StreamRuntimeProbe() {}
+
+        public static void main(String[] arguments) {
+            callbackDelivery();
+            callbackFailure();
+            batchLifecycle();
+            directBatches();
+        }
+
+        private static void callbackDelivery() {
+            AtomicInteger polls = new AtomicInteger();
+            AtomicInteger reads = new AtomicInteger();
+            AtomicInteger unsubscribed = new AtomicInteger();
+            AtomicInteger freed = new AtomicInteger();
+            AtomicLong pending = new AtomicLong();
+            java.util.concurrent.CopyOnWriteArrayList<Integer> received =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+            StreamSubscription<Integer> subscription = BoltFfiStream.callback(
+                7L,
+                16L,
+                (stream, maxCount) -> reads.getAndIncrement() == 0
+                    ? Arrays.asList(11, 13)
+                    : Collections.emptyList(),
+                (stream, continuation) -> {
+                    if (polls.getAndIncrement() == 0) {
+                        BoltFfiAsync.resume(continuation, (byte) 0);
+                    } else {
+                        pending.set(continuation);
+                    }
+                },
+                stream -> {
+                    unsubscribed.incrementAndGet();
+                    BoltFfiAsync.resume(pending.get(), (byte) 1);
+                },
+                stream -> freed.incrementAndGet(),
+                received::add
+            );
+            require(received.equals(Arrays.asList(11, 13)), "callback values");
+            require(polls.get() == 2, "callback repoll");
+            subscription.close();
+            subscription.close();
+            require(unsubscribed.get() == 1, "callback unsubscribe");
+            require(freed.get() == 1, "callback free");
+        }
+
+        private static void callbackFailure() {
+            AtomicInteger unsubscribed = new AtomicInteger();
+            AtomicInteger freed = new AtomicInteger();
+            try {
+                BoltFfiStream.callback(
+                    8L,
+                    16L,
+                    (stream, maxCount) -> { throw new IllegalStateException("decode"); },
+                    (stream, continuation) -> BoltFfiAsync.resume(continuation, (byte) 0),
+                    stream -> unsubscribed.incrementAndGet(),
+                    stream -> freed.incrementAndGet(),
+                    item -> {}
+                );
+                fail("callback decode failure");
+            } catch (IllegalStateException failure) {
+                require(failure.getMessage().equals("decode"), "callback failure value");
+            }
+            require(unsubscribed.get() == 1, "failure unsubscribe");
+            require(freed.get() == 1, "failure free");
+        }
+
+        private static void batchLifecycle() {
+            AtomicInteger unsubscribed = new AtomicInteger();
+            AtomicInteger freed = new AtomicInteger();
+            StreamSubscription<Integer> subscription = StreamSubscription.batch(
+                9L,
+                (stream, maxCount) -> Arrays.asList(3, 5),
+                (stream, timeout) -> 2,
+                stream -> unsubscribed.incrementAndGet(),
+                stream -> freed.incrementAndGet()
+            );
+            require(subscription.popBatch(2).equals(Arrays.asList(3, 5)), "batch values");
+            require(subscription.waitForItems(10) == 2, "batch wait");
+            subscription.cancel();
+            subscription.unsubscribe();
+            require(unsubscribed.get() == 1, "batch unsubscribe");
+            require(freed.get() == 1, "batch free");
+            require(subscription.popBatch(2).isEmpty(), "closed batch values");
+            require(subscription.waitForItems(10) == -1, "closed batch wait");
+
+            AtomicInteger failureFree = new AtomicInteger();
+            StreamSubscription<Integer> failing = StreamSubscription.batch(
+                10L,
+                (stream, maxCount) -> Collections.emptyList(),
+                (stream, timeout) -> 0,
+                stream -> { throw new IllegalStateException("unsubscribe"); },
+                stream -> {
+                    failureFree.incrementAndGet();
+                    throw new IllegalStateException("free");
+                }
+            );
+            try {
+                failing.close();
+                fail("batch lifecycle failure");
+            } catch (IllegalStateException failure) {
+                require(failure.getMessage().equals("unsubscribe"), "batch failure value");
+                require(failure.getSuppressed().length == 1, "batch suppressed free");
+            }
+            require(failureFree.get() == 1, "batch failure free");
+        }
+
+        private static void directBatches() {
+            require(BoltFfiStreamBatches.booleans(new byte[] { 0, 1 }).equals(
+                Arrays.asList(false, true)
+            ), "boolean batch");
+            require(BoltFfiStreamBatches.bytes(new byte[] { 2, 4 }).equals(
+                Arrays.asList((byte) 2, (byte) 4)
+            ), "byte batch");
+            require(BoltFfiStreamBatches.ints(
+                DirectVectorCodec.writeIntArray(new int[] { 1, 2 })
+            ).equals(Arrays.asList(1, 2)), "integer batch");
+            List<String> mapped = BoltFfiStreamBatches.map(
+                Arrays.asList(1, 2),
+                value -> "value-" + value
+            );
+            require(mapped.equals(Arrays.asList("value-1", "value-2")), "mapped batch");
+        }
+
+        private static void require(boolean condition, String message) {
+            if (!condition) fail(message);
+        }
+
+        private static void fail(String message) {
+            throw new AssertionError(message);
+        }
+    }
+"#;
+
+const STREAM_FLOW_RUNTIME_PROBE: &str = r#"
+    package com.boltffi.demo;
+
+    import java.util.Arrays;
+    import java.util.Collections;
+    import java.util.concurrent.CountDownLatch;
+    import java.util.concurrent.Flow;
+    import java.util.concurrent.TimeUnit;
+    import java.util.concurrent.atomic.AtomicInteger;
+
+    public final class StreamFlowRuntimeProbe {
+        private StreamFlowRuntimeProbe() {}
+
+        public static void main(String[] arguments) throws Exception {
+            deliversDemandAndCompletes();
+            externalCloseWakesPublisher();
+        }
+
+        private static void deliversDemandAndCompletes() throws Exception {
+            AtomicInteger reads = new AtomicInteger();
+            AtomicInteger unsubscribed = new AtomicInteger();
+            AtomicInteger freed = new AtomicInteger();
+            CountDownLatch completed = new CountDownLatch(1);
+            java.util.concurrent.CopyOnWriteArrayList<Integer> received =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+            StreamSubscription<Integer> stream = StreamSubscription.batch(
+                21L,
+                (handle, maxCount) -> reads.getAndIncrement() == 0
+                    ? Arrays.asList(17, 19)
+                    : Collections.emptyList(),
+                (handle, timeout) -> -1,
+                handle -> unsubscribed.incrementAndGet(),
+                handle -> freed.incrementAndGet()
+            );
+            stream.toPublisher().subscribe(new Flow.Subscriber<Integer>() {
+                public void onSubscribe(Flow.Subscription subscription) {
+                    subscription.request(3);
+                }
+
+                public void onNext(Integer item) {
+                    received.add(item);
+                }
+
+                public void onError(Throwable failure) {
+                    throw new AssertionError(failure);
+                }
+
+                public void onComplete() {
+                    completed.countDown();
+                }
+            });
+            require(completed.await(5, TimeUnit.SECONDS), "publisher completion");
+            require(received.equals(Arrays.asList(17, 19)), "publisher values");
+            require(unsubscribed.get() == 1, "publisher unsubscribe");
+            require(freed.get() == 1, "publisher free");
+        }
+
+        private static void externalCloseWakesPublisher() throws Exception {
+            AtomicInteger unsubscribed = new AtomicInteger();
+            AtomicInteger freed = new AtomicInteger();
+            CountDownLatch subscribed = new CountDownLatch(1);
+            CountDownLatch completed = new CountDownLatch(1);
+            StreamSubscription<Integer> stream = StreamSubscription.batch(
+                22L,
+                (handle, maxCount) -> Collections.emptyList(),
+                (handle, timeout) -> 0,
+                handle -> unsubscribed.incrementAndGet(),
+                handle -> freed.incrementAndGet()
+            );
+            stream.toPublisher().subscribe(new Flow.Subscriber<Integer>() {
+                public void onSubscribe(Flow.Subscription subscription) {
+                    subscribed.countDown();
+                }
+
+                public void onNext(Integer item) {
+                    throw new AssertionError("unexpected item");
+                }
+
+                public void onError(Throwable failure) {
+                    throw new AssertionError(failure);
+                }
+
+                public void onComplete() {
+                    completed.countDown();
+                }
+            });
+            require(subscribed.await(5, TimeUnit.SECONDS), "publisher subscription");
+            stream.close();
+            require(completed.await(5, TimeUnit.SECONDS), "external close completion");
+            require(unsubscribed.get() == 1, "external close unsubscribe");
+            require(freed.get() == 1, "external close free");
+        }
+
+        private static void require(boolean condition, String message) {
+            if (!condition) throw new AssertionError(message);
+        }
+    }
+"#;
+
 const ASYNC_RUNTIME_PROBE: &str = r#"
     package com.boltffi.demo;
 
@@ -1175,6 +1470,106 @@ fn generated_closure_sources_compile_for_java_eight_when_available() {
             JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
         ),
         "boltffi-java-closures",
+    );
+}
+
+#[test]
+fn java_target_renders_streams_from_shared_protocols_and_item_plans() {
+    let output = render(STREAMS, CoverageMode::Complete);
+    let event_bus = java_source(&output, "com.boltffi.demo", "EventBus");
+    let module = java_source(&output, "com.boltffi.demo", "Demo");
+
+    assert!(event_bus.contains(
+        "public StreamSubscription<Integer> values(java.util.function.Consumer<Integer> callback)"
+    ));
+    assert!(event_bus.contains("public StreamSubscription<StreamPoint> points("));
+    assert!(event_bus.contains("public StreamSubscription<StreamMode> modes("));
+    assert!(event_bus.contains("public StreamSubscription<StreamMessage> messages("));
+    assert!(
+        event_bus.contains("public StreamSubscription<BoltFFIResult<Integer, String>> results(")
+    );
+    assert!(event_bus.contains("public StreamSubscription<Integer> valueBatches()"));
+    assert!(event_bus.contains("BoltFfiStreamBatches.ints(bytes)"));
+    assert!(event_bus.contains("DirectVectorCodec.readRecords(bytes, 16"));
+    assert!(event_bus.contains("BoltFfiStreamBatches.map("));
+    assert!(event_bus.contains("reader.readSequence(() -> StreamMessage.fromReader(reader))"));
+    assert!(module.contains(
+        "static native byte[] boltffi_stream_demo_event_bus_values_pop_batch(long subscription, long maxCount)"
+    ));
+    assert!(module.contains(
+        "static native void boltffi_stream_demo_event_bus_values_poll(long subscription, long callback_data)"
+    ));
+    assert!(module.contains("final class BoltFfiStream"));
+    assert!(module.contains("final class StreamSubscription<T> implements AutoCloseable"));
+    assert!(!module.contains("synchronized"));
+    assert!(output.coverage().unsupported().is_empty());
+}
+
+#[test]
+fn generated_stream_sources_compile_for_java_eight_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    compile_generated_java(
+        &compiler,
+        &render_with_host(
+            STREAMS,
+            CoverageMode::Complete,
+            JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
+        ),
+        "boltffi-java-streams",
+    );
+}
+
+#[test]
+fn generated_stream_runtime_obeys_delivery_and_ownership_contracts() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    compile_and_run_generated_java(
+        &compiler,
+        &render_with_host(
+            STREAMS,
+            CoverageMode::Complete,
+            JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
+        ),
+        "boltffi-java-stream-runtime",
+        &[(
+            "com/boltffi/demo/StreamRuntimeProbe.java",
+            STREAM_RUNTIME_PROBE,
+        )],
+        "com.boltffi.demo.StreamRuntimeProbe",
+    );
+}
+
+#[test]
+fn java_nine_stream_publisher_is_lock_free_and_compiles_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+    let output = render_with_host(
+        STREAMS,
+        CoverageMode::Complete,
+        JavaHost::for_version("com.boltffi.demo", "Demo", JavaVersion::JAVA_9)
+            .expect("Java 9 host"),
+    );
+    let module = java_source(&output, "com.boltffi.demo", "Demo");
+
+    assert!(module.contains("public java.util.concurrent.Flow.Publisher<T> toPublisher()"));
+    assert!(module.contains("java.util.concurrent.locks.LockSupport.park(this)"));
+    assert!(!module.contains("synchronized"));
+    compile_and_run_generated_java_for_release(
+        &compiler,
+        &output,
+        "boltffi-java-stream-flow",
+        &[(
+            "com/boltffi/demo/StreamFlowRuntimeProbe.java",
+            STREAM_FLOW_RUNTIME_PROBE,
+        )],
+        9,
+        "com.boltffi.demo.StreamFlowRuntimeProbe",
     );
 }
 
@@ -2114,6 +2509,24 @@ fn compile_and_run_generated_java(
         prefix,
         additional_sources,
         None,
+        Some(main_class),
+    );
+}
+
+fn compile_and_run_generated_java_for_release(
+    compiler: &JavaCompiler,
+    output: &boltffi_backend::GeneratedOutput,
+    prefix: &str,
+    additional_sources: &[(&str, &str)],
+    release: u16,
+    main_class: &str,
+) {
+    compile_generated_java_with_release_and_main(
+        compiler,
+        output,
+        prefix,
+        additional_sources,
+        Some(release),
         Some(main_class),
     );
 }

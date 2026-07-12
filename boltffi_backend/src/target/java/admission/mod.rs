@@ -3,6 +3,7 @@ mod class;
 mod enumeration;
 mod function;
 mod record;
+mod stream;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,6 +19,7 @@ use super::JavaHost;
 pub use callback::CallbackShape;
 pub use function::{FunctionShape, ReceiverSupport};
 pub use record::RecordShape;
+pub use stream::StreamShape;
 
 pub struct Selection {
     bindings: Bindings<Native>,
@@ -109,6 +111,9 @@ impl Decision {
                 .unsupported_reason()
                 .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
             DeclarationRef::Callback(callback) => CallbackShape::classify(callback)
+                .unsupported_reason()
+                .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
+            DeclarationRef::Stream(stream) => StreamShape::classify(stream)
                 .unsupported_reason()
                 .map_or(Self::Accepted, |reason| Self::Rejected(reason.to_owned())),
             _ => Self::Accepted,

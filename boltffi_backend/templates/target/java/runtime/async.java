@@ -73,6 +73,22 @@ final class BoltFfiAsync {
         return new RuntimeException(failure);
     }
 
+    static java.util.concurrent.CompletableFuture<Byte> poll(
+        long owner,
+        BoltFfiFuturePoll poll
+    ) {
+        PollSignal signal = new PollSignal(() -> {});
+        long handle = NEXT_CONTINUATION.getAndIncrement();
+        CONTINUATIONS.put(handle, signal);
+        try {
+            poll.poll(owner, handle);
+        } catch (Throwable failure) {
+            CONTINUATIONS.remove(handle, signal);
+            signal.future.completeExceptionally(failure);
+        }
+        return signal.future;
+    }
+
     private enum Phase {
         ACTIVE,
         POLLING,

@@ -35,4 +35,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 {% include "target/java/call/static_method.java" %}
 {% endfor %}{% for call in class.instance_methods() %}
 {% include "target/java/call/instance_method.java" %}
+{% endfor %}{% for stream in class.streams() %}
+{% include "target/java/stream.java" %}
 {% endfor %}}

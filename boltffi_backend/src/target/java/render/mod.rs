@@ -11,6 +11,7 @@ mod native;
 mod record;
 mod result;
 mod signature;
+mod stream;
 mod type_name;
 
 pub use call::Call;
@@ -24,3 +25,4 @@ pub use module::Module;
 pub use record::Record;
 pub use result::ResultClass;
 pub use signature::ErasedSignature;
+pub use stream::Stream;

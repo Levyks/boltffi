@@ -93,6 +93,19 @@ impl JavaType {
         .map(ApiType::into_value)
     }
 
+    pub fn boxed_type_ref(
+        ty: &TypeRef,
+        version: JavaVersion,
+        context: &RenderContext<Native>,
+    ) -> Result<TypeName> {
+        ty.render_with(&mut JavaTypeRef {
+            context,
+            version,
+            package: None,
+        })
+        .map(ApiType::into_boxed)
+    }
+
     pub fn qualified_field<'context>(
         ty: &TypeRef,
         version: JavaVersion,
@@ -144,6 +157,10 @@ impl ApiType {
 
     fn into_value(self) -> TypeName {
         self.value
+    }
+
+    fn into_boxed(self) -> TypeName {
+        self.boxed
     }
 }
 

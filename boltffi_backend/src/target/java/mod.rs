@@ -389,10 +389,7 @@ impl JavaHost {
             .stable(BindingCapability::Enums)
             .stable(BindingCapability::Classes)
             .stable(BindingCapability::Callbacks)
-            .unsupported(
-                BindingCapability::Streams,
-                "Java stream migration is pending",
-            )
+            .stable(BindingCapability::Streams)
             .unsupported(
                 BindingCapability::Constants,
                 "Java constant migration is pending",
@@ -482,11 +479,12 @@ impl host::HostBackend for JavaHost {
 
     fn stream(
         &self,
-        _: &StreamDecl<Self::Surface>,
+        declaration: &StreamDecl<Self::Surface>,
         _: &Self::Bridge,
         _: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("stream declaration"))
+        admission::StreamShape::classify(declaration).require_supported()?;
+        Ok(Emitted::primary(""))
     }
 
     fn constant(

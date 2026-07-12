@@ -1095,16 +1095,21 @@ pub(crate) fn clang_release_optimization_flags(
     }
 
     match host_target {
-        JavaHostTarget::DarwinArm64 | JavaHostTarget::DarwinX86_64 => vec!["-Wl,-x".to_string()],
-        JavaHostTarget::LinuxX86_64 | JavaHostTarget::LinuxAarch64 => {
-            vec!["-Wl,--strip-all".to_string()]
+        JavaHostTarget::DarwinArm64 | JavaHostTarget::DarwinX86_64 => {
+            vec!["-O3".to_string(), "-Wl,-x".to_string()]
         }
-        JavaHostTarget::Current | JavaHostTarget::WindowsX86_64 => Vec::new(),
+        JavaHostTarget::LinuxX86_64 | JavaHostTarget::LinuxAarch64 => {
+            vec!["-O3".to_string(), "-Wl,--strip-all".to_string()]
+        }
+        JavaHostTarget::Current | JavaHostTarget::WindowsX86_64 => vec!["-O3".to_string()],
     }
 }
 
 pub(crate) fn clang_cl_jni_linker_args(args: &JniLinkerArgs<'_>) -> Result<Vec<String>> {
     let mut resolved_args = vec!["/LD".to_string()];
+    if args.release {
+        resolved_args.push("/O2".to_string());
+    }
     if args.emit_debug_info {
         resolved_args.push("/Z7".to_string());
     }
@@ -1975,6 +1980,7 @@ mod tests {
             args,
             vec![
                 "/LD".to_string(),
+                "/O2".to_string(),
                 "/tmp/jni/jni_glue.c".to_string(),
                 "/I/tmp/jni".to_string(),
                 "/I/tmp/jdk/include".to_string(),
@@ -2113,14 +2119,17 @@ mod tests {
     fn adds_darwin_release_jni_strip_flags() {
         let flags = clang_release_optimization_flags(JavaHostTarget::DarwinArm64, true);
 
-        assert_eq!(flags, vec!["-Wl,-x".to_string()]);
+        assert_eq!(flags, vec!["-O3".to_string(), "-Wl,-x".to_string()]);
     }
 
     #[test]
     fn adds_linux_release_jni_strip_flags() {
         let flags = clang_release_optimization_flags(JavaHostTarget::LinuxX86_64, true);
 
-        assert_eq!(flags, vec!["-Wl,--strip-all".to_string()]);
+        assert_eq!(
+            flags,
+            vec!["-O3".to_string(), "-Wl,--strip-all".to_string()]
+        );
     }
 
     #[test]

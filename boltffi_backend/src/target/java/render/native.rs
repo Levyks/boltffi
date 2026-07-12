@@ -6,8 +6,9 @@ use boltffi_binding::NativeSymbol;
 use crate::{
     bridge::jni::{
         CallbackCompletionInvoker, CallbackCompletionPayload, CallbackCompletionPayloadValue,
-        CallbackHandleLifecycle, CallbackHandleMethod, JniBridgeContract, NativeMethod,
-        NativeParameter, NativeParameterKind, NativeReturn, SuccessOutValue, SuccessOutWriter,
+        CallbackHandleLifecycle, CallbackHandleMethod, DirectStreamBatchMethod, JniBridgeContract,
+        NativeMethod, NativeParameter, NativeParameterKind, NativeReturn, SuccessOutValue,
+        SuccessOutWriter,
     },
     core::{Error, Result},
     target::java::{
@@ -76,6 +77,26 @@ impl Method {
             name,
             parameters,
             MethodReturn::from_contract(method.returns())?,
+        )
+    }
+
+    pub fn from_direct_stream_batch(
+        method: &DirectStreamBatchMethod,
+        version: JavaVersion,
+    ) -> Result<Self> {
+        Self::new(
+            Identifier::parse_for(method.c_function().name(), version)?,
+            vec![
+                Parameter::new(
+                    Identifier::known("subscription"),
+                    Carrier::Primitive(Primitive::Long),
+                ),
+                Parameter::new(
+                    Identifier::known("maxCount"),
+                    Carrier::Primitive(Primitive::Long),
+                ),
+            ],
+            MethodReturn::Value(Carrier::ByteArray),
         )
     }
 

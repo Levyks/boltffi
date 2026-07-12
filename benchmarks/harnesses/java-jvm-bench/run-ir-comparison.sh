@@ -23,8 +23,11 @@ case "$SUITE" in
     async)
         BENCHMARK_CLASS="BoltffiJavaAsyncBench"
         ;;
+    stream)
+        BENCHMARK_CLASS="BoltffiJavaStreamBench"
+        ;;
     *)
-        printf 'Usage: %s [primitive|record|enum|class|callback|async]\n' "$0" >&2
+        printf 'Usage: %s [primitive|record|enum|class|callback|async|stream]\n' "$0" >&2
         exit 2
         ;;
 esac

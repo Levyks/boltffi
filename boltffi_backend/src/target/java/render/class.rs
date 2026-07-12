@@ -12,6 +12,7 @@ use crate::{
         name_style::Name,
         primitive::Primitive,
         render::{
+            Stream,
             call::{AssociatedCallContext, Call, Receiver},
             native::Method,
             signature::{ErasedSignature, ReturnType, ValueType},
@@ -32,6 +33,7 @@ struct ClassTemplate<'class> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Class {
     name: TypeIdentifier,
+    version: JavaVersion,
     handle: Primitive,
     release: Statement,
     release_native: Method,
@@ -39,6 +41,7 @@ pub struct Class {
     factories: Vec<Call>,
     static_methods: Vec<Call>,
     instance_methods: Vec<Call>,
+    streams: Vec<Stream>,
     doc: Option<Javadoc>,
 }
 
@@ -133,8 +136,10 @@ impl Class {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let streams = Stream::for_class(declaration.id(), bridge, native_owner, version, context)?;
         Ok(Self {
             name,
+            version,
             handle,
             release,
             release_native,
@@ -142,6 +147,7 @@ impl Class {
             factories,
             static_methods,
             instance_methods,
+            streams,
             doc: declaration.meta().doc().map(Javadoc::new),
         })
     }
@@ -167,8 +173,20 @@ impl Class {
             true => emitted.with_aux(crate::target::java::codec::Runtime::async_helper()?),
             false => emitted,
         };
-        self.calls().try_fold(emitted, |emitted, call| {
-            Ok(call
+        let emitted = self
+            .calls()
+            .try_fold(emitted, |emitted, call| -> Result<_> {
+                Ok(call
+                    .native_forwards()?
+                    .into_iter()
+                    .fold(emitted, Emitted::with_aux))
+            })?;
+        self.streams.iter().try_fold(emitted, |emitted, stream| {
+            let emitted = stream
+                .runtime_helpers(self.version)?
+                .into_iter()
+                .fold(emitted, Emitted::with_aux);
+            Ok(stream
                 .native_forwards()?
                 .into_iter()
                 .fold(emitted, Emitted::with_aux))
@@ -222,6 +240,10 @@ impl Class {
         &self.instance_methods
     }
 
+    pub fn streams(&self) -> &[Stream] {
+        &self.streams
+    }
+
     pub fn doc(&self) -> Option<&Javadoc> {
         self.doc.as_ref()
     }
@@ -243,6 +265,11 @@ impl Class {
                 self.calls()
                     .map(Call::signature)
                     .map(|signature| signature.erased()),
+            )
+            .chain(
+                self.streams
+                    .iter()
+                    .map(|stream| stream.signature(self.version)),
             )
             .collect()
     }
