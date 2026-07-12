@@ -51,9 +51,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::Swift => ir::run_ir_generation(config, &options),
         GenerateTarget::Kotlin => ir::run_ir_generation(config, &options),
         GenerateTarget::KotlinMultiplatform => ir::run_ir_generation(config, &options),
-        GenerateTarget::Java => {
-            run_generator::<JavaGenerator>(&legacy_request(), options.experimental)
-        }
+        GenerateTarget::Java => ir::run_ir_generation(config, &options),
         GenerateTarget::Header => {
             run_generator::<HeaderGenerator>(&legacy_request(), options.experimental)
         }
@@ -110,7 +108,16 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             }
 
             if config.should_process(Target::Java, options.experimental) {
-                run_generator::<JavaGenerator>(&request, options.experimental)?;
+                ir::run_ir_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::Java,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        ir: true,
+                        cargo_args: options.cargo_args.clone(),
+                    },
+                )?;
             }
 
             if config.should_process(Target::TypeScript, options.experimental) {

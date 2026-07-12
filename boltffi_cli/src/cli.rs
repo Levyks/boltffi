@@ -318,8 +318,8 @@ pub(crate) enum PackTargetArg {
         #[arg(long)]
         no_build: bool,
 
-        #[arg(long, help = "Generate and build the Java package through Binding IR")]
-        ir: bool,
+        #[arg(long, hide = true)]
+        legacy: bool,
     },
 
     #[command(
@@ -610,7 +610,7 @@ pub(crate) fn execute_command(
                     release,
                     regenerate,
                     no_build,
-                    ir,
+                    legacy,
                 } => PackCommand::Java(PackJavaOptions {
                     execution: pack_execution_options(
                         release,
@@ -619,9 +619,9 @@ pub(crate) fn execute_command(
                         cargo_args.clone(),
                     ),
                     experimental: false,
-                    bindings: match ir {
-                        true => JavaBindingMode::Ir(()),
-                        false => JavaBindingMode::Legacy,
+                    bindings: match legacy {
+                        true => JavaBindingMode::Legacy,
+                        false => JavaBindingMode::Ir(()),
                     },
                 }),
                 PackTargetArg::Python {
@@ -968,7 +968,7 @@ fn release_pack_commands(
                 commands.push(PackCommand::Java(PackJavaOptions {
                     execution: pack_execution_options(true, true, false, cargo_args.to_vec()),
                     experimental: false,
-                    bindings: JavaBindingMode::Legacy,
+                    bindings: JavaBindingMode::Ir(()),
                 }));
             }
 
@@ -1197,7 +1197,7 @@ enabled = true
                     && options.execution.release
                     && options.execution.regenerate
                     && !options.experimental
-                    && matches!(options.bindings, JavaBindingMode::Legacy)
+                    && matches!(options.bindings, JavaBindingMode::Ir(()))
         ));
     }
 
@@ -1453,22 +1453,22 @@ enabled = true
     }
 
     #[test]
-    fn cli_parses_java_ir_packaging_selection() {
-        let legacy =
+    fn cli_parses_java_legacy_packaging_selection() {
+        let binding_ir =
             Cli::try_parse_from(["boltffi", "pack", "java"]).expect("cli parse should succeed");
-        let binding_ir = Cli::try_parse_from(["boltffi", "pack", "java", "--ir"])
+        let legacy = Cli::try_parse_from(["boltffi", "pack", "java", "--legacy"])
             .expect("cli parse should succeed");
 
         assert!(matches!(
-            legacy.command,
+            binding_ir.command,
             Commands::Pack {
-                target: PackTargetArg::Java { ir: false, .. }
+                target: PackTargetArg::Java { legacy: false, .. }
             }
         ));
         assert!(matches!(
-            binding_ir.command,
+            legacy.command,
             Commands::Pack {
-                target: PackTargetArg::Java { ir: true, .. }
+                target: PackTargetArg::Java { legacy: true, .. }
             }
         ));
     }

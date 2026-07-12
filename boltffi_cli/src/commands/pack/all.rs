@@ -36,7 +36,7 @@ pub(super) fn pack_all(
                 PackJavaOptions {
                     execution: options.execution.clone(),
                     experimental: options.experimental,
-                    bindings: JavaBindingMode::Legacy,
+                    bindings: JavaBindingMode::Ir(()),
                 },
             )
         })

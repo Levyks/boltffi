@@ -144,8 +144,8 @@ pub(crate) fn prepare_java_pack(config: &Config, options: PackJavaOptions) -> Re
         }
     };
     let command_name = match &bindings {
-        JavaBindingMode::Legacy => "pack java",
-        JavaBindingMode::Ir(_) => "pack java --ir",
+        JavaBindingMode::Legacy => "pack java --legacy",
+        JavaBindingMode::Ir(_) => "pack java",
     };
     let packaging = prepare_java_packaging(
         config,
@@ -384,7 +384,7 @@ pub(crate) fn ensure_java_no_build_supported(
 fn ensure_java_ir_regeneration(bindings: JavaBindingMode, regenerate: bool) -> Result<()> {
     if matches!(bindings, JavaBindingMode::Ir(())) && !regenerate {
         return Err(CliError::CommandFailed {
-            command: "pack java --ir requires regenerated bindings until generated Binding IR provenance can be validated; remove '--regenerate false'"
+            command: "pack java requires regenerated bindings until generated Binding IR provenance can be validated; remove '--regenerate false'"
                 .to_string(),
             status: None,
         });
@@ -809,7 +809,7 @@ mod tests {
         assert!(matches!(
             error,
             CliError::CommandFailed { command, status: None }
-                if command.contains("pack java --ir requires regenerated bindings")
+                if command.contains("pack java requires regenerated bindings")
         ));
         ensure_java_ir_regeneration(JavaBindingMode::Ir(()), true)
             .expect("regenerated Binding IR packaging should proceed");

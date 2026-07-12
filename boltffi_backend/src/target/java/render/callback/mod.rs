@@ -59,7 +59,6 @@ pub struct Callback {
     native_methods: Vec<NativeMethod>,
     handle_name: TypeIdentifier,
     handle_methods: Vec<HandleMethod>,
-    handle_clone: Option<Identifier>,
     handle_release: Option<Identifier>,
 }
 
@@ -161,9 +160,6 @@ impl Callback {
             methods,
             handle_name: TypeIdentifier::parse(format!("{name}Handle"), version)?,
             handle_methods,
-            handle_clone: lifecycle
-                .map(|lifecycle| Identifier::parse_for(lifecycle.clone_method().as_str(), version))
-                .transpose()?,
             handle_release: lifecycle
                 .map(|lifecycle| {
                     Identifier::parse_for(lifecycle.release_method().as_str(), version)
@@ -257,10 +253,6 @@ impl Callback {
 
     pub fn handle_methods(&self) -> &[HandleMethod] {
         &self.handle_methods
-    }
-
-    pub fn handle_clone(&self) -> Option<&Identifier> {
-        self.handle_clone.as_ref()
     }
 
     pub fn handle_release(&self) -> Option<&Identifier> {

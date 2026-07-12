@@ -112,8 +112,8 @@ final class {{ callback.bridge_name() }} {
 
     static long create({{ callback.name() }} value) {
 {% if !callback.handle_methods().is_empty() %}        if (value instanceof {{ callback.handle_name() }}) {
-{% if let Some(clone) = callback.handle_clone() %}            return Native.{{ clone }}((({{ callback.handle_name() }}) value).rawHandle());
-{% endif %}        }
+            return (({{ callback.handle_name() }}) value).rawHandle();
+        }
 {% endif %}
         return {{ callback.callbacks_name() }}.insert(value);
     }

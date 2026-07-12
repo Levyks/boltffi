@@ -19,7 +19,8 @@ pub struct ValueExpression {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueMemberAccess {
     Accessor,
-    Field,
+    RecordField,
+    VariantField,
 }
 
 impl ValueExpression {
@@ -63,17 +64,34 @@ impl ValueExpression {
             .iter()
             .enumerate()
             .try_fold(root, |value, (depth, field)| {
-                let field = match field {
-                    FieldKey::Named(name) => Name::new(name).parameter(self.version)?,
-                    FieldKey::Position(position) => {
-                        Identifier::parse_for(format!("field{position}"), self.version)?
-                    }
-                    _ => return Err(JavaHost::unsupported("unknown codec value field")),
-                };
-                match self_value && depth == 0 && self.member_access == ValueMemberAccess::Field {
+                let field = self.member_access.field(field, self.version)?;
+                match self_value && depth == 0 && self.member_access.is_field() {
                     true => Ok(value.member(field)),
                     false => Ok(value.call(field, ArgumentList::default())),
                 }
             })
+    }
+}
+
+impl ValueMemberAccess {
+    pub fn field(self, field: &FieldKey, version: JavaVersion) -> Result<Identifier> {
+        match field {
+            FieldKey::Named(name) => Name::new(name).parameter(version),
+            FieldKey::Position(position) => Identifier::parse_for(
+                format!(
+                    "{}{position}",
+                    match self {
+                        Self::VariantField => "value",
+                        Self::Accessor | Self::RecordField => "field",
+                    }
+                ),
+                version,
+            ),
+            _ => Err(JavaHost::unsupported("unknown codec value field")),
+        }
+    }
+
+    fn is_field(self) -> bool {
+        matches!(self, Self::RecordField | Self::VariantField)
     }
 }

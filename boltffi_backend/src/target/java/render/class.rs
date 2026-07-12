@@ -93,7 +93,7 @@ impl Class {
                 )?;
                 match signatures.insert(ConstructorSignature::from_call(&call)) {
                     true => constructors.push(Constructor::new(call)),
-                    false => factories.push(Call::from_initializer(
+                    false => factories.push(Call::from_class_factory(
                         initializer,
                         bridge,
                         native_owner,

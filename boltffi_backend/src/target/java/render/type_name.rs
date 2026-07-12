@@ -124,10 +124,15 @@ impl JavaType {
     }
 
     pub fn optional_primitive(primitive: Primitive, version: JavaVersion) -> TypeName {
-        TypeName::parameterized(
-            Self::qualified(version, &["java", "util"], "Optional"),
-            [TypeName::boxed_primitive(primitive, version)],
-        )
+        Self::optional(TypeName::boxed_primitive(primitive, version), version)
+    }
+
+    pub fn optional(ty: TypeName, version: JavaVersion) -> TypeName {
+        TypeName::parameterized(Self::optional_type(version), [ty])
+    }
+
+    pub fn optional_type(version: JavaVersion) -> TypeName {
+        Self::qualified(version, &["java", "util"], "Optional")
     }
 
     fn qualified(version: JavaVersion, package: &[&'static str], name: &'static str) -> TypeName {
@@ -455,14 +460,8 @@ impl TypeRefRender for JavaTypeRef<'_> {
     fn optional(&mut self, inner: Self::Output) -> Self::Output {
         let inner = inner?;
         Ok(ApiType {
-            value: TypeName::parameterized(
-                JavaType::qualified(self.version, &["java", "util"], "Optional"),
-                [inner.boxed.clone()],
-            ),
-            boxed: TypeName::parameterized(
-                JavaType::qualified(self.version, &["java", "util"], "Optional"),
-                [inner.boxed],
-            ),
+            value: JavaType::optional(inner.boxed.clone(), self.version),
+            boxed: JavaType::optional(inner.boxed, self.version),
             semantics: ValueSemantics::Optional(Box::new(inner.semantics)),
         })
     }

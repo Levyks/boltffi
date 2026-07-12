@@ -29,7 +29,8 @@ use crate::{
             type_name::JavaType,
         },
         syntax::{
-            ArgumentList, Expression, Identifier, Javadoc, Statement, TypeIdentifier, TypeName,
+            ArgumentList, Expression, Identifier, Javadoc, Statement, StringLiteral,
+            TypeIdentifier, TypeName,
         },
     },
 };
@@ -142,6 +143,7 @@ enum ReturnConversion {
 #[derive(Clone, Copy)]
 enum ReturnContext {
     Api,
+    ClassFactory,
     ClassInitializer(ClassId),
 }
 
@@ -202,17 +204,10 @@ impl Call {
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        if declaration.callable().execution().uses_async_execution() {
-            return Err(JavaHost::unsupported("asynchronous initializer"));
-        }
-        FunctionShape::classify_callable(declaration.callable(), ReceiverSupport::Direct)
-            .require_supported()?;
-        Self::build(
+        Self::build_initializer(
+            declaration,
             Name::new(declaration.name()).function(version)?,
-            declaration.symbol(),
-            declaration.callable(),
-            declaration.meta().doc().map(Javadoc::new),
-            None,
+            ReceiverSupport::Direct,
             CallScope::api(bridge, native_owner, version, context, package),
         )
     }
@@ -223,17 +218,10 @@ impl Call {
         name: Identifier,
         scope: AssociatedCallContext<'_, '_>,
     ) -> Result<Self> {
-        if declaration.callable().execution().uses_async_execution() {
-            return Err(JavaHost::unsupported("asynchronous initializer"));
-        }
-        FunctionShape::classify_callable(declaration.callable(), ReceiverSupport::Forbidden)
-            .require_supported()?;
-        Self::build(
+        Self::build_initializer(
+            declaration,
             name,
-            declaration.symbol(),
-            declaration.callable(),
-            declaration.meta().doc().map(Javadoc::new),
-            None,
+            ReceiverSupport::Forbidden,
             CallScope::class_initializer(
                 scope.bridge,
                 scope.native_owner,
@@ -242,6 +230,22 @@ impl Call {
                 scope.context,
                 class,
             ),
+        )
+    }
+
+    pub fn from_class_factory(
+        declaration: &InitializerDecl<Native>,
+        bridge: &JniBridgeContract,
+        native_owner: &TypeIdentifier,
+        package: Option<&JavaPackage>,
+        version: JavaVersion,
+        context: &RenderContext<Native>,
+    ) -> Result<Self> {
+        Self::build_initializer(
+            declaration,
+            Name::new(declaration.name()).function(version)?,
+            ReceiverSupport::Direct,
+            CallScope::class_factory(bridge, native_owner, version, context, package),
         )
     }
 
@@ -338,6 +342,27 @@ impl Call {
 
     pub fn requires_async_runtime(&self) -> bool {
         matches!(self.execution, CallExecution::Asynchronous(_))
+    }
+
+    fn build_initializer(
+        declaration: &InitializerDecl<Native>,
+        name: Identifier,
+        receiver_support: ReceiverSupport,
+        scope: CallScope<'_, '_>,
+    ) -> Result<Self> {
+        if declaration.callable().execution().uses_async_execution() {
+            return Err(JavaHost::unsupported("asynchronous initializer"));
+        }
+        FunctionShape::classify_callable(declaration.callable(), receiver_support)
+            .require_supported()?;
+        Self::build(
+            name,
+            declaration.symbol(),
+            declaration.callable(),
+            declaration.meta().doc().map(Javadoc::new),
+            None,
+            scope,
+        )
     }
 
     fn build(
@@ -468,7 +493,13 @@ impl Call {
             ),
         };
         native.validate_return(&native_returns)?;
-        let success = error.wrap(success, scope.version, scope.context, scope.package)?;
+        let success = error.wrap(
+            success,
+            scope.version,
+            scope.context,
+            scope.package,
+            scope.return_context,
+        )?;
         let protected = receiver
             .iter()
             .flat_map(|receiver| receiver.native.prepare.iter().cloned())
@@ -529,6 +560,16 @@ impl CallExecution {
             .map(|method| method.render().map(Into::into).map(AuxChunk::ForwardDecl))
             .chain(matches!(self, Self::Asynchronous(_)).then(Runtime::async_callback))
             .collect()
+    }
+}
+
+impl ReturnContext {
+    fn initializer_failure(self) -> Option<&'static str> {
+        match self {
+            Self::Api => None,
+            Self::ClassFactory => Some("Factory constructor failed"),
+            Self::ClassInitializer(_) => Some("Constructor failed"),
+        }
     }
 }
 
@@ -709,6 +750,23 @@ impl<'scope, 'bindings> CallScope<'scope, 'bindings> {
             context,
             package,
             return_context: ReturnContext::ClassInitializer(class),
+        }
+    }
+
+    fn class_factory(
+        bridge: &'scope JniBridgeContract,
+        native_owner: &'scope TypeIdentifier,
+        version: JavaVersion,
+        context: &'scope RenderContext<'bindings, Native>,
+        package: Option<&'scope JavaPackage>,
+    ) -> Self {
+        Self {
+            bridge,
+            native_owner,
+            version,
+            context,
+            package,
+            return_context: ReturnContext::ClassFactory,
         }
     }
 }
@@ -999,7 +1057,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
                 )?;
                 let carrier = ReturnType::Value(ValueType::Primitive(handle.carrier()));
                 match self.return_context {
-                    ReturnContext::Api => Ok(CallReturn {
+                    ReturnContext::Api | ReturnContext::ClassFactory => Ok(CallReturn {
                         ty: ReturnType::Value(ValueType::Reference(handle.ty().clone())),
                         native: carrier,
                         conversion: ReturnConversion::ClassHandle(handle),
@@ -1028,7 +1086,7 @@ impl<'plan> ReturnPlanRender<'plan, Native, OutOfRust> for CallReturnRender<'_> 
                     self.package,
                 )?;
                 match self.return_context {
-                    ReturnContext::Api => Ok(CallReturn {
+                    ReturnContext::Api | ReturnContext::ClassFactory => Ok(CallReturn {
                         ty: ReturnType::Value(ValueType::Reference(handle.ty().clone())),
                         native: ReturnType::Value(ValueType::Primitive(handle.carrier())),
                         conversion: ReturnConversion::CallbackHandle(handle),
@@ -1229,10 +1287,25 @@ impl ErrorConversion {
         version: JavaVersion,
         context: &RenderContext<Native>,
         package: Option<&JavaPackage>,
+        return_context: ReturnContext,
     ) -> Result<Vec<Statement>> {
-        match self {
-            Self::None | Self::Status => Ok(success),
-            Self::Encoded { ty, codec } => {
+        match (self, return_context.initializer_failure()) {
+            (Self::None | Self::Status, _) => Ok(success),
+            (Self::Encoded { .. }, Some(message)) => Ok(vec![Statement::try_catch(
+                success,
+                TypeName::named(TypeIdentifier::known(
+                    "BoltFfiErrorBufferException",
+                    version,
+                )),
+                Identifier::known("__boltffi_error"),
+                vec![Statement::throw_value(Expression::construct(
+                    TypeName::named(TypeIdentifier::known("RuntimeException", version)),
+                    [Expression::string(StringLiteral::new(message))]
+                        .into_iter()
+                        .collect(),
+                ))],
+            )]),
+            (Self::Encoded { ty, codec }, None) => {
                 let error = Identifier::known("__boltffi_error");
                 let reader = Identifier::known("__boltffi_error_reader");
                 let mut codec_reader = Reader::new(reader.clone(), version, context);

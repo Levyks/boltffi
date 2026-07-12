@@ -1,7 +1,7 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, FieldKey, Native,
-    RecordDecl, RecordId,
+    DirectFieldDecl, DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, Native, RecordDecl,
+    RecordId,
 };
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     target::java::{
         JavaFile, JavaHost, JavaPackage, JavaVersion,
         admission::RecordShape,
-        codec::{Reader, Runtime, Sizer, Writer},
+        codec::{Reader, Runtime, Sizer, ValueMemberAccess, Writer},
         name_style::Name,
         primitive::Primitive,
         render::{
@@ -453,7 +453,7 @@ impl Field {
         record: &DirectRecordDecl<Native>,
         version: JavaVersion,
     ) -> Result<Self> {
-        let name = Self::name_from_key(field.key(), version)?;
+        let name = ValueMemberAccess::RecordField.field(field.key(), version)?;
         let offset = record
             .layout()
             .field(field.key())
@@ -506,7 +506,13 @@ impl Field {
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<Self> {
-        Self::from_encoded_with_package(field, version, context, None)
+        Self::from_encoded_with_package(
+            field,
+            version,
+            context,
+            None,
+            ValueMemberAccess::RecordField,
+        )
     }
 
     pub fn from_enum_payload<'context>(
@@ -515,7 +521,28 @@ impl Field {
         context: &'context RenderContext<'context, Native>,
         package: &'context JavaPackage,
     ) -> Result<Self> {
-        Self::from_encoded_with_package(field, version, context, Some(package))
+        Self::from_encoded_with_package(
+            field,
+            version,
+            context,
+            Some(package),
+            ValueMemberAccess::RecordField,
+        )
+    }
+
+    pub fn from_enum_tuple_payload<'context>(
+        field: &EncodedFieldDecl,
+        version: JavaVersion,
+        context: &'context RenderContext<'context, Native>,
+        package: &'context JavaPackage,
+    ) -> Result<Self> {
+        Self::from_encoded_with_package(
+            field,
+            version,
+            context,
+            Some(package),
+            ValueMemberAccess::VariantField,
+        )
     }
 
     fn from_encoded_with_package<'context>(
@@ -523,8 +550,9 @@ impl Field {
         version: JavaVersion,
         context: &'context RenderContext<'context, Native>,
         package: Option<&'context JavaPackage>,
+        member_access: ValueMemberAccess,
     ) -> Result<Self> {
-        let name = Self::name_from_key(field.key(), version)?;
+        let name = member_access.field(field.key(), version)?;
         let ty = match package {
             Some(package) => JavaType::qualified_field(field.ty(), version, context, package)?,
             None => JavaType::field(field.ty(), version, context)?,
@@ -540,26 +568,21 @@ impl Field {
             .read()
             .render_with(&mut codec_reader)?
             .into_expression();
+        let mut writer = Writer::new(writer, version, context)
+            .current(current.clone())
+            .members(member_access);
         let wire_write = field
             .write()
-            .render_with(
-                &mut Writer::new(writer, version, context)
-                    .current(current.clone())
-                    .field_members(),
-            )
+            .render_with(&mut writer)
             .into_iter()
             .map(|statement| {
                 statement.map(crate::target::java::codec::WriteStatement::into_statement)
             })
             .collect::<Result<Vec<_>>>()?;
-        let wire_size = field
-            .write()
-            .size_with(
-                &mut Sizer::new(version, context)
-                    .current(current)
-                    .field_members(),
-            )?
-            .into_expression();
+        let mut sizer = Sizer::new(version, context)
+            .current(current)
+            .members(member_access);
+        let wire_size = field.write().size_with(&mut sizer)?.into_expression();
         let left = Expression::this().member(name.clone());
         let right = Expression::identifier(Identifier::known("other")).member(name.clone());
         let default = field
@@ -581,16 +604,6 @@ impl Field {
             native_record_safe: ty.native_record_safe(),
             requires_identity: ty.requires_identity(),
         })
-    }
-
-    fn name_from_key(key: &FieldKey, version: JavaVersion) -> Result<Identifier> {
-        match key {
-            FieldKey::Named(name) => Name::new(name).parameter(version),
-            FieldKey::Position(position) => {
-                Identifier::parse_for(format!("field{position}"), version)
-            }
-            _ => Err(JavaHost::unsupported("unknown record field key")),
-        }
     }
 }
 

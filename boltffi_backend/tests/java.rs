@@ -405,6 +405,14 @@ const CALLBACKS: &str = r#"
     pub fn invoke_callback(callback: Box<dyn ValueCallback>, value: i32) -> i32 {
         callback.apply(value)
     }
+
+    #[export]
+    pub fn invoke_optional_callback(
+        callback: Option<Box<dyn ValueCallback>>,
+        value: i32,
+    ) -> i32 {
+        callback.map(|callback| callback.apply(value)).unwrap_or(value)
+    }
 "#;
 
 const ENCODED_CALLBACKS: &str = r#"
@@ -1365,6 +1373,8 @@ fn java_target_renders_c_style_and_data_enums_from_binding_ir() {
     assert!(shape.contains("public abstract class Shape"));
     assert!(shape.contains("public static final class Empty extends Shape"));
     assert!(shape.contains("public static final class Circle extends Shape"));
+    assert!(shape.contains("public final String value0;"));
+    assert!(shape.contains("writer.writeString(this.value0);"));
     assert!(shape.contains("writer.writeDouble(this.radius);"));
     assert!(shape.contains("reader.readString()"));
     assert!(shape.contains("public boolean isEmpty()"));
@@ -1421,6 +1431,7 @@ fn java_target_renders_class_ownership_and_handle_calls_from_binding_ir() {
         counter
             .contains("return new Counter(Native.boltffi_init_class_demo_counter_try_new(value));")
     );
+    assert!(counter.contains("throw new RuntimeException(\"Factory constructor failed\")"));
     assert!(counter.contains("if (!closed.compareAndSet(false, true)) return;"));
     assert!(counter.contains("Native.boltffi_release_class_demo_counter(this.handle);"));
     assert!(counter.contains("public int get()"));
@@ -1432,6 +1443,7 @@ fn java_target_renders_class_ownership_and_handle_calls_from_binding_ir() {
     assert!(fallible.contains("public FallibleOnly(String name)"));
     assert!(fallible.contains("private static long __boltffiCreateHandle0(String name)"));
     assert!(fallible.contains("catch (BoltFfiErrorBufferException __boltffi_error)"));
+    assert!(fallible.contains("throw new RuntimeException(\"Constructor failed\")"));
     assert!(!fallible.contains("this(new FallibleOnly"));
 
     assert!(factory.contains("public static Counter make(int value)"));
@@ -1471,12 +1483,18 @@ fn java_target_renders_jvm_owned_callbacks_from_binding_ir() {
     assert!(callback.contains("implementation.getItem(index).toByteArray()"));
     assert!(module.contains("public static int consume(DataProvider provider)"));
     assert!(module.contains("DataProviderBridge.create(provider)"));
+    assert!(module.contains(
+        "public static int invokeOptionalCallback(java.util.Optional<ValueCallback> callback, int value)"
+    ));
+    assert!(
+        module.contains("callback.isPresent() ? ValueCallbackBridge.create(callback.get()) : 0L")
+    );
     assert!(module.contains("static native int"));
     assert!(
         returned
             .contains("final class ValueCallbackHandle implements ValueCallback, AutoCloseable")
     );
-    assert!(returned.contains("return Native.boltffi_callback_handle_clone"));
+    assert!(returned.contains("return ((ValueCallbackHandle) value).rawHandle();"));
     assert!(returned.contains("Native.boltffi_callback_handle_release(handle)"));
     assert!(returned.contains(
         "return Native.boltffi_callback_handle_demo_value_callback_apply(this.handle, value)"

@@ -66,6 +66,7 @@ pub struct CallbackHandle {
     bridge: TypeName,
     carrier: Primitive,
     presence: HandlePresence,
+    version: JavaVersion,
 }
 
 impl HandleMethod {
@@ -941,9 +942,14 @@ impl CallbackHandle {
         package: Option<&JavaPackage>,
     ) -> Result<Self> {
         let name = Callback::type_name_for(id, context, version)?;
-        let ty = match package {
+        let callback = match package {
             Some(package) => package.type_name(name.clone()),
             None => TypeName::named(name.clone()),
+        };
+        let ty = match presence {
+            HandlePresence::Required => callback,
+            HandlePresence::Nullable => JavaType::optional(callback, version),
+            _ => return Err(JavaHost::unsupported("callback handle presence")),
         };
         let bridge_name = TypeIdentifier::parse(format!("{name}Bridge"), version)?;
         let bridge = match package {
@@ -955,6 +961,7 @@ impl CallbackHandle {
             bridge,
             carrier: Primitive::from_handle_carrier(carrier)?,
             presence,
+            version,
         })
     }
 
@@ -975,10 +982,19 @@ impl CallbackHandle {
         );
         match self.presence {
             HandlePresence::Required => Ok(required),
-            HandlePresence::Nullable => Ok(value.clone().equal(Expression::null()).conditional(
-                Expression::long(0),
-                Expression::static_call(self.bridge.clone(), create, [value].into_iter().collect()),
-            )),
+            HandlePresence::Nullable => Ok(value
+                .clone()
+                .call(Identifier::known("isPresent"), ArgumentList::default())
+                .conditional(
+                    Expression::static_call(
+                        self.bridge.clone(),
+                        create,
+                        [value.call(Identifier::known("get"), ArgumentList::default())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    Expression::long(0),
+                )),
             _ => Err(JavaHost::unsupported("callback handle presence")),
         }
     }
@@ -1000,7 +1016,10 @@ impl CallbackHandle {
                     Statement::return_value(
                         Expression::identifier(handle.clone())
                             .equal(Expression::long(0))
-                            .conditional(Expression::null(), wrap(Expression::identifier(handle))),
+                            .conditional(
+                                self.empty(),
+                                self.present(wrap(Expression::identifier(handle))),
+                            ),
                     ),
                 ])
             }
@@ -1018,8 +1037,24 @@ impl CallbackHandle {
             HandlePresence::Required => Ok(wrapped),
             HandlePresence::Nullable => Ok(value
                 .equal(Expression::long(0))
-                .conditional(Expression::null(), wrapped)),
+                .conditional(self.empty(), self.present(wrapped))),
             _ => Err(JavaHost::unsupported("callback handle presence")),
         }
+    }
+
+    fn empty(&self) -> Expression {
+        Expression::static_call(
+            JavaType::optional_type(self.version),
+            Identifier::known("empty"),
+            ArgumentList::default(),
+        )
+    }
+
+    fn present(&self, value: Expression) -> Expression {
+        Expression::static_call(
+            JavaType::optional_type(self.version),
+            Identifier::known("of"),
+            [value].into_iter().collect(),
+        )
     }
 }

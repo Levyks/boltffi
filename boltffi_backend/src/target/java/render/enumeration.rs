@@ -422,7 +422,11 @@ impl DataVariant {
     ) -> Result<Self> {
         let fields = match variant.payload() {
             DataVariantPayload::Unit => Vec::new(),
-            DataVariantPayload::Tuple(fields) | DataVariantPayload::Struct(fields) => fields
+            DataVariantPayload::Tuple(fields) => fields
+                .iter()
+                .map(|field| Field::from_enum_tuple_payload(field, version, context, package))
+                .collect::<Result<Vec<_>>>()?,
+            DataVariantPayload::Struct(fields) => fields
                 .iter()
                 .map(|field| Field::from_enum_payload(field, version, context, package))
                 .collect::<Result<Vec<_>>>()?,

@@ -146,7 +146,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1install(JNIEnv *env, jclass cls, jlong listener) {
     (void)cls;
 
-    FfiStatus __boltffi_status = boltffi_function_demo_install(boltffi_create_callback_demo_listener((uint64_t)listener));
+    FfiStatus __boltffi_status = boltffi_function_demo_install(boltffi_jni_callback_parameter((uint64_t)listener, boltffi_create_callback_demo_listener));
 
     if (__boltffi_status.code != 0) {
         boltffi_jni_throw_status(env, __boltffi_status);

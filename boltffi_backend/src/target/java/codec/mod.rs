@@ -17,4 +17,5 @@ enum SequenceElement {
 pub use read::Reader;
 pub use runtime::Runtime;
 pub use size::Sizer;
+pub use value::ValueMemberAccess;
 pub use write::{EncodedWrite, WireBuffer, WriteStatement, Writer};

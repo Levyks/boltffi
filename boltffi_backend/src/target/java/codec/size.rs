@@ -46,8 +46,8 @@ impl<'context> Sizer<'context> {
         self
     }
 
-    pub fn field_members(mut self) -> Self {
-        self.member_access = ValueMemberAccess::Field;
+    pub fn members(mut self, access: ValueMemberAccess) -> Self {
+        self.member_access = access;
         self
     }
 

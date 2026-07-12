@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR/../../.."
 DEMO_DIR="$ROOT_DIR/examples/demo"
 BENCH_OVERLAY="$DEMO_DIR/boltffi.benchmark.toml"
-GENERATOR="legacy"
+GENERATOR="ir"
 ARTIFACT_BUNDLE="$SCRIPT_DIR/dist/.boltffi-java-artifacts"
 
 while [[ $# -gt 0 ]]; do
@@ -75,14 +75,14 @@ if [[ "$GENERATOR" == "legacy" ]]; then
         --overlay "$BENCH_OVERLAY" \
         pack java \
         --release \
-        --regenerate
+        --regenerate \
+        --legacy
 else
     "$SCRIPT_DIR/target/release/boltffi" \
         --overlay "$BENCH_OVERLAY" \
         pack java \
         --release \
-        --regenerate \
-        --ir
+        --regenerate
 fi
 
 OUTPUT_DIR="$SCRIPT_DIR/dist/java"

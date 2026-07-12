@@ -125,7 +125,7 @@ fn ensure_java_cargo_target_unset(cargo_args: &[String], platform: JavaPlatform)
     };
     Err(CliError::CommandFailed {
         command: format!(
-            "generate java --ir resolves {targets} from {source}; remove cargo --target '{target}'"
+            "generate java resolves {targets} from {source}; remove cargo --target '{target}'"
         ),
         status: None,
     })
@@ -877,7 +877,7 @@ host_targets = ["current"]
         assert!(matches!(
             error,
             CliError::CommandFailed { command, status: None }
-                if command == "generate java --ir resolves desktop targets from targets.java.jvm.host_targets; remove cargo --target 'x86_64-unknown-linux-gnu'"
+                if command == "generate java resolves desktop targets from targets.java.jvm.host_targets; remove cargo --target 'x86_64-unknown-linux-gnu'"
         ));
     }
 
@@ -910,7 +910,7 @@ enabled = true
         assert!(matches!(
             error,
             CliError::CommandFailed { command, status: None }
-                if command == "generate java --ir resolves Android targets from targets.android.architectures; remove cargo --target 'aarch64-linux-android'"
+                if command == "generate java resolves Android targets from targets.android.architectures; remove cargo --target 'aarch64-linux-android'"
         ));
     }
 
