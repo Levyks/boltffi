@@ -10,56 +10,9 @@ version = "1.0-SNAPSHOT"
 
 val uniffiDir = "${projectDir}/../../adapters/uniffi/target/release"
 val boltffiJvmDir = "${projectDir}/../../generated/boltffi/dist/java"
-val boltffiJavaGenerator = providers.gradleProperty("boltffiJavaGenerator").orElse("legacy")
-val boltffiJavaComparisonSuite = providers.gradleProperty("boltffiJavaComparisonSuite").orNull
-val boltffiJavaPreparedDir = providers.gradleProperty("boltffiJavaPreparedDir")
-    .orNull
-    ?.let(::file)
-val boltffiJavaComparisonBuildDir = providers.gradleProperty("boltffiJavaComparisonBuildDir")
-    .orNull
-    ?.let(::file)
-val comparisonBenchmarks = mapOf(
-    "primitive" to "BoltffiJavaPrimitiveBench.java",
-    "string" to "BoltffiJavaStringBench.java",
-    "record" to "BoltffiJavaRecordBench.java",
-    "enum" to "BoltffiJavaEnumBench.java",
-    "class" to "BoltffiJavaClassBench.java",
-    "callback" to "BoltffiJavaCallbackBench.java",
-    "async" to "BoltffiJavaAsyncBench.java",
-    "stream" to "BoltffiJavaStreamBench.java",
-    "custom" to "BoltffiJavaCustomBench.java",
-    "mutation" to "BoltffiJavaMutationBench.java",
-)
-if (boltffiJavaComparisonBuildDir != null) {
-    layout.buildDirectory.set(boltffiJavaComparisonBuildDir)
-}
-val boltffiJavaSourceDir = boltffiJavaPreparedDir ?: file(boltffiJvmDir)
-val nativePath = if (boltffiJavaComparisonSuite != null && boltffiJavaPreparedDir != null) {
-    boltffiJavaSourceDir.absolutePath
-} else {
-    listOf(uniffiDir, boltffiJavaSourceDir.absolutePath).joinToString(File.pathSeparator)
-}
-
-if (boltffiJavaGenerator.get() !in setOf("legacy", "ir")) {
-    throw GradleException("boltffiJavaGenerator must be 'legacy' or 'ir'")
-}
-if (boltffiJavaComparisonSuite != null && boltffiJavaComparisonSuite !in comparisonBenchmarks) {
-    throw GradleException(
-        "boltffiJavaComparisonSuite must be one of ${comparisonBenchmarks.keys.joinToString()}",
-    )
-}
-if (boltffiJavaPreparedDir != null) {
-    val actualGenerator = boltffiJavaPreparedDir
-        .resolve(".boltffi-java-generator")
-        .takeIf(File::isFile)
-        ?.readText()
-        ?.trim()
-    if (actualGenerator != boltffiJavaGenerator.get()) {
-        throw GradleException(
-            "expected prepared ${boltffiJavaGenerator.get()} Java sources, found '$actualGenerator'",
-        )
-    }
-}
+val boltffiJavaSourceDir = file(boltffiJvmDir)
+val nativePath = listOf(uniffiDir, boltffiJavaSourceDir.absolutePath)
+    .joinToString(File.pathSeparator)
 
 repositories {
     mavenCentral()
@@ -72,39 +25,16 @@ val buildUniffiJava by tasks.registering(Exec::class) {
 
 val buildBoltffiJava by tasks.registering(Exec::class) {
     workingDir = projectDir
-    commandLine(
-        "../../generated/boltffi/build-java.sh",
-        "--generator",
-        boltffiJavaGenerator.get(),
-    )
+    commandLine("../../generated/boltffi/build-java.sh")
     outputs.upToDateWhen { false }
-    doLast {
-        val marker = file("$boltffiJvmDir/.boltffi-java-generator")
-        val actualGenerator = marker.takeIf(File::isFile)?.readText()?.trim()
-        if (actualGenerator != boltffiJavaGenerator.get()) {
-            throw GradleException(
-                "expected freshly generated ${boltffiJavaGenerator.get()} Java sources, found '$actualGenerator'",
-            )
-        }
-    }
 }
 
 tasks.named("compileJava") {
-    if (boltffiJavaPreparedDir == null && boltffiJavaComparisonSuite == null) {
-        dependsOn(buildUniffiJava)
-    }
-    if (boltffiJavaPreparedDir == null) {
-        dependsOn(buildBoltffiJava)
-    }
+    dependsOn(buildUniffiJava, buildBoltffiJava)
 }
 
 tasks.matching { it.name.startsWith("jmh") }.configureEach {
-    if (boltffiJavaPreparedDir == null && boltffiJavaComparisonSuite == null) {
-        dependsOn(buildUniffiJava)
-    }
-    if (boltffiJavaPreparedDir == null) {
-        dependsOn(buildBoltffiJava)
-    }
+    dependsOn(buildUniffiJava, buildBoltffiJava)
 }
 
 val benchmarkJavaLauncher = javaToolchains.launcherFor {
@@ -157,20 +87,8 @@ java {
     }
     sourceSets {
         named("main") {
-            if (boltffiJavaComparisonSuite == null) {
-                java.srcDir("${projectDir}/../../adapters/uniffi/dist/java")
-            }
+            java.srcDir("${projectDir}/../../adapters/uniffi/dist/java")
             java.srcDir(boltffiJavaSourceDir)
-        }
-        named("jmh") {
-            if (boltffiJavaComparisonSuite != null) {
-                java.exclude("com/example/bench_compare/UniffiJavaBench.java")
-                java.exclude("com/example/bench_compare/BoltffiJavaBench.java")
-            }
-            comparisonBenchmarks
-                .filterKeys { it != boltffiJavaComparisonSuite }
-                .values
-                .forEach { java.exclude("com/example/bench_compare/$it") }
         }
     }
 }

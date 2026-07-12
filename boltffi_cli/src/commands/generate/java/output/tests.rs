@@ -132,28 +132,6 @@ fn refuses_unclaimed_sources_after_manifest_creation() {
 }
 
 #[test]
-fn refuses_legacy_generation_in_a_manifest_owned_root() {
-    let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path().join("java");
-    output(&root)
-        .write(generated(&[("com/example/Demo.java", "owned")]))
-        .unwrap();
-
-    let result = Output::lock_legacy(&root);
-
-    assert!(matches!(
-        result,
-        Err(crate::cli::CliError::CommandFailed { command, status: None })
-            if command.contains("refusing legacy Java generation")
-                && command.contains("Binding IR managed output")
-    ));
-    assert_eq!(
-        fs::read_to_string(root.join("com/example/Demo.java")).unwrap(),
-        "owned"
-    );
-}
-
-#[test]
 fn removes_stale_owned_sources_and_preserves_unowned_files() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("java");

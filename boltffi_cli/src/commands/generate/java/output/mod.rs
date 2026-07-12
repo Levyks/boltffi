@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use boltffi_backend::GeneratedOutput;
 
-use crate::cli::{CliError, Result};
+use crate::cli::Result;
 
 use self::{
     ownership::Manifest,
@@ -24,10 +24,6 @@ const TOMBSTONE: &str = ".boltffi-java-cleanup";
 pub struct Output {
     root: PathBuf,
     roots: ManagedRoots,
-}
-
-pub struct LegacyLease {
-    output_lock: Option<OutputLock>,
 }
 
 impl Output {
@@ -59,30 +55,6 @@ impl Output {
             .try_for_each(|path| root.remove_empty_directory(&path));
         drop(output_lock);
         result
-    }
-
-    pub fn lock_legacy(root: &Path) -> Result<LegacyLease> {
-        let directory = Directory::open_root(root)?;
-        let output_lock = OutputLock::acquire(&directory)?;
-        Transaction::recover(&directory)?;
-        if directory.regular_exists(MANIFEST)? {
-            return Err(CliError::CommandFailed {
-                command: format!(
-                    "refusing legacy Java generation into Binding IR managed output '{}'",
-                    directory.path().display()
-                ),
-                status: None,
-            });
-        }
-        Ok(LegacyLease {
-            output_lock: Some(output_lock),
-        })
-    }
-}
-
-impl Drop for LegacyLease {
-    fn drop(&mut self) {
-        drop(self.output_lock.take());
     }
 }
 

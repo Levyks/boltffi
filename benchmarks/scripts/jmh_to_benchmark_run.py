@@ -89,7 +89,7 @@ SUITES = {
     "java-jvm": {
         "suite_name": "java-jvm-jmh",
         "language": "java",
-        "subject_order": ["boltffi_java_ir", "boltffi_java", "uniffi_java"],
+        "subject_order": ["boltffi_java", "uniffi_java"],
         "toolchains": lambda entry, rust_details: {
             "rust": rust_details,
             "swift": None,
@@ -117,28 +117,6 @@ SUITES = {
                 },
                 "attributes": {
                     "subject_key": "boltffi_java",
-                    "binding_package": "com.example.bench_boltffi",
-                    "generator": "legacy",
-                },
-            },
-            "boltffi_java_ir": {
-                "tool": {
-                    "name": "boltffi",
-                    "version": BOLTFFI_VERSION,
-                    "git_sha": "repository_head",
-                    "crate_version": BOLTFFI_VERSION,
-                },
-                "ffi": {
-                    "bridge": "boltffi",
-                    "transport": "jni",
-                    "ownership_model": None,
-                    "attributes": {
-                        "host_language": "java",
-                        "binding_runtime": "jni",
-                    },
-                },
-                "attributes": {
-                    "subject_key": "boltffi_java_ir",
                     "binding_package": "com.example.bench_boltffi",
                     "generator": "binding_ir",
                 },

@@ -9,9 +9,9 @@ use crate::commands::doctor::{ConfigSummary, DoctorOptions};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use crate::commands::init::InitOptions;
 use crate::commands::pack::{
-    JavaBindingMode, PackAllOptions, PackAndroidOptions, PackAppleOptions, PackCSharpOptions,
-    PackCommand, PackDartOptions, PackExecutionOptions, PackJavaOptions, PackKmpOptions,
-    PackPythonOptions, PackWasmOptions, check_java_packaging_prereqs,
+    PackAllOptions, PackAndroidOptions, PackAppleOptions, PackCSharpOptions, PackCommand,
+    PackDartOptions, PackExecutionOptions, PackJavaOptions, PackKmpOptions, PackPythonOptions,
+    PackWasmOptions, check_java_packaging_prereqs,
 };
 use crate::commands::verify::VerifyOptions;
 use crate::commands::{run_build, run_check, run_doctor, run_init, run_pack, run_verify};
@@ -317,9 +317,6 @@ pub(crate) enum PackTargetArg {
 
         #[arg(long)]
         no_build: bool,
-
-        #[arg(long, hide = true)]
-        legacy: bool,
     },
 
     #[command(
@@ -610,7 +607,6 @@ pub(crate) fn execute_command(
                     release,
                     regenerate,
                     no_build,
-                    legacy,
                 } => PackCommand::Java(PackJavaOptions {
                     execution: pack_execution_options(
                         release,
@@ -619,10 +615,6 @@ pub(crate) fn execute_command(
                         cargo_args.clone(),
                     ),
                     experimental: false,
-                    bindings: match legacy {
-                        true => JavaBindingMode::Legacy,
-                        false => JavaBindingMode::Ir(()),
-                    },
                 }),
                 PackTargetArg::Python {
                     release,
@@ -968,7 +960,6 @@ fn release_pack_commands(
                 commands.push(PackCommand::Java(PackJavaOptions {
                     execution: pack_execution_options(true, true, false, cargo_args.to_vec()),
                     experimental: false,
-                    bindings: JavaBindingMode::Ir(()),
                 }));
             }
 
@@ -1008,7 +999,7 @@ mod tests {
         resolve_init_options,
     };
     use crate::commands::doctor::ConfigSummary;
-    use crate::commands::pack::{JavaBindingMode, PackCommand};
+    use crate::commands::pack::PackCommand;
     use crate::target::RustTarget;
     use crate::{cli::CliError, config::Config};
     use clap::Parser;
@@ -1197,7 +1188,6 @@ enabled = true
                     && options.execution.release
                     && options.execution.regenerate
                     && !options.experimental
-                    && matches!(options.bindings, JavaBindingMode::Ir(()))
         ));
     }
 
@@ -1453,24 +1443,8 @@ enabled = true
     }
 
     #[test]
-    fn cli_parses_java_legacy_packaging_selection() {
-        let binding_ir =
-            Cli::try_parse_from(["boltffi", "pack", "java"]).expect("cli parse should succeed");
-        let legacy = Cli::try_parse_from(["boltffi", "pack", "java", "--legacy"])
-            .expect("cli parse should succeed");
-
-        assert!(matches!(
-            binding_ir.command,
-            Commands::Pack {
-                target: PackTargetArg::Java { legacy: false, .. }
-            }
-        ));
-        assert!(matches!(
-            legacy.command,
-            Commands::Pack {
-                target: PackTargetArg::Java { legacy: true, .. }
-            }
-        ));
+    fn cli_rejects_removed_java_legacy_flag() {
+        assert!(Cli::try_parse_from(["boltffi", "pack", "java", "--legacy"]).is_err());
     }
 
     #[test]

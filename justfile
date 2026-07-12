@@ -178,11 +178,6 @@ bench-java:
     echo ""
     echo "Report: $(pwd)/build/results/jmh/results.json"
 
-bench-java-ir:
-    #!/usr/bin/env bash
-    set -e
-    benchmarks/harnesses/java-jvm-bench/run-ir-comparison.sh
-
 # C# benchmark (.NET via BenchmarkDotNet) - builds cdylib, generates bindings, runs benchmarks.
 # Pass extra args after --, e.g. `just bench-csharp -- --filter '*String*'`.
 bench-csharp *args:

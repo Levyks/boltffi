@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use boltffi_bindgen::cargo::LibraryCargoArgs;
 use boltffi_bindgen::target::Target;
@@ -6,11 +6,9 @@ use boltffi_bindgen::target::Target;
 use crate::build::{BindingExpansion, CargoBuildProfile};
 use crate::cargo::{Cargo, SelectedLibrary};
 use crate::cli::{CliError, Result};
-use crate::commands::generate::java::{Output as ManagedJavaOutput, TargetGeneration};
-use crate::commands::generate::{
-    run_generate_java_with_generations, run_generate_java_with_output_from_source_dir,
-};
-use crate::commands::pack::{JavaBindingMode, PackExecutionOptions, PackJavaOptions};
+use crate::commands::generate::java::TargetGeneration;
+use crate::commands::generate::run_generate_java_with_generations;
+use crate::commands::pack::{PackExecutionOptions, PackJavaOptions};
 use crate::config::{Config, DebugSymbolsBundle, DebugSymbolsFormat};
 use crate::pack::resolve_build_cargo_args;
 use crate::pack::symbols::{
@@ -56,16 +54,7 @@ pub(crate) struct PreparedJvmPackaging {
 pub(crate) struct JavaPackPlan {
     execution: PackExecutionOptions,
     packaging: PreparedJvmPackaging,
-    bindings: JavaBindingMode<BindingExpansion>,
-}
-
-impl JavaBindingMode<BindingExpansion> {
-    fn expansion(&self) -> Option<&BindingExpansion> {
-        match self {
-            Self::Legacy => None,
-            Self::Ir(expansion) => Some(expansion),
-        }
-    }
+    expansion: BindingExpansion,
 }
 
 impl JvmCargoContext {
@@ -129,35 +118,26 @@ pub(crate) fn prepare_java_pack(config: &Config, options: PackJavaOptions) -> Re
             status: None,
         });
     }
-    ensure_java_ir_regeneration(options.bindings, options.execution.regenerate)?;
+    ensure_java_ir_regeneration(options.execution.regenerate)?;
     ensure_java_no_build_supported(
         config,
         options.execution.no_build,
         options.experimental,
         "pack java",
     )?;
-    let bindings = match options.bindings {
-        JavaBindingMode::Legacy => JavaBindingMode::Legacy,
-        JavaBindingMode::Ir(()) => {
-            let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
-            JavaBindingMode::Ir(BindingExpansion::resolve(config, &build_cargo_args)?)
-        }
-    };
-    let command_name = match &bindings {
-        JavaBindingMode::Legacy => "pack java --legacy",
-        JavaBindingMode::Ir(_) => "pack java",
-    };
+    let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
+    let expansion = BindingExpansion::resolve(config, &build_cargo_args)?;
     let packaging = prepare_java_packaging(
         config,
         options.execution.release,
         &options.execution.cargo_args,
-        bindings.expansion(),
-        command_name,
+        Some(&expansion),
+        "pack java",
     )?;
     Ok(JavaPackPlan {
         execution: options.execution,
         packaging,
-        bindings,
+        expansion,
     })
 }
 
@@ -178,42 +158,20 @@ fn execute_java_pack(config: &Config, plan: JavaPackPlan, reporter: &Reporter) -
                 host_targets,
                 packaging_targets,
             },
-        bindings,
+        expansion,
     } = plan;
 
     if execution.regenerate {
-        match &bindings {
-            JavaBindingMode::Ir(expansion) => {
-                let step = reporter.step("Generating Java bindings through Binding IR");
-                run_generate_java_with_generations(
-                    config,
-                    Some(config.java_jvm_output()),
-                    expansion.artifact_name(),
-                    packaging_targets
-                        .iter()
-                        .map(|target| target.binding_generation(expansion)),
-                )?;
-                step.finish_success();
-            }
-            JavaBindingMode::Legacy => {
-                let source_directory = selected_jvm_package_source_directory(&packaging_targets)?;
-                let artifact_name = selected_jvm_package_artifact_name(&packaging_targets)?;
-                let legacy_lease = ManagedJavaOutput::lock_legacy(&config.java_jvm_output())?;
-                let step = reporter.step("Generating C header");
-                generate_java_header(config, &source_directory, artifact_name)?;
-                step.finish_success();
-                drop(legacy_lease);
-
-                let step = reporter.step("Generating Java bindings");
-                run_generate_java_with_output_from_source_dir(
-                    config,
-                    Some(config.java_jvm_output()),
-                    &source_directory,
-                    artifact_name,
-                )?;
-                step.finish_success();
-            }
-        }
+        let step = reporter.step("Generating Java bindings through Binding IR");
+        run_generate_java_with_generations(
+            config,
+            Some(config.java_jvm_output()),
+            expansion.artifact_name(),
+            packaging_targets
+                .iter()
+                .map(|target| target.binding_generation(&expansion)),
+        )?;
+        step.finish_success();
     }
 
     let packaged_outputs = packaging_targets
@@ -227,7 +185,7 @@ fn execute_java_pack(config: &Config, plan: JavaPackPlan, reporter: &Reporter) -
             let build_artifacts = build_jvm_native_library(
                 packaging_target,
                 execution.release,
-                bindings.expansion(),
+                Some(&expansion),
                 &step,
             )?;
             step.finish_success();
@@ -381,8 +339,8 @@ pub(crate) fn ensure_java_no_build_supported(
     Ok(())
 }
 
-fn ensure_java_ir_regeneration(bindings: JavaBindingMode, regenerate: bool) -> Result<()> {
-    if matches!(bindings, JavaBindingMode::Ir(())) && !regenerate {
+fn ensure_java_ir_regeneration(regenerate: bool) -> Result<()> {
+    if !regenerate {
         return Err(CliError::CommandFailed {
             command: "pack java requires regenerated bindings until generated Binding IR provenance can be validated; remove '--regenerate false'"
                 .to_string(),
@@ -407,20 +365,6 @@ fn ensure_jvm_pack_cargo_args_supported(cargo_args: &[String], command_name: &st
     Ok(())
 }
 
-pub(crate) fn selected_jvm_package_source_directory(
-    packaging_targets: &[JvmPackagingTarget],
-) -> Result<PathBuf> {
-    packaging_targets
-        .first()
-        .and_then(|target| target.cargo_context.library.manifest_path().parent())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| CliError::CommandFailed {
-            command: "could not resolve selected Cargo package source directory for JVM generation"
-                .to_string(),
-            status: None,
-        })
-}
-
 pub(crate) fn selected_jvm_package_artifact_name(
     packaging_targets: &[JvmPackagingTarget],
 ) -> Result<&str> {
@@ -432,64 +376,6 @@ pub(crate) fn selected_jvm_package_artifact_name(
                 .to_string(),
             status: None,
         })
-}
-
-pub(crate) fn generate_java_header(
-    config: &Config,
-    source_directory: &Path,
-    crate_name: &str,
-) -> Result<()> {
-    generate_jvm_header(
-        source_directory,
-        crate_name,
-        &config.java_jvm_output().join("jni"),
-        crate_name,
-    )
-}
-
-pub(crate) fn generate_jvm_header(
-    source_directory: &Path,
-    crate_name: &str,
-    output_directory: &Path,
-    header_name: &str,
-) -> Result<()> {
-    use boltffi_bindgen::{CHeaderLowerer, ir, scan_crate_with_pointer_width};
-
-    let output_path = output_directory.join(format!("{header_name}.h"));
-
-    std::fs::create_dir_all(output_directory).map_err(|source| {
-        CliError::CreateDirectoryFailed {
-            path: output_directory.to_path_buf(),
-            source,
-        }
-    })?;
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| CliError::CreateDirectoryFailed {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let host_pointer_width_bits = match usize::BITS {
-        32 => Some(32),
-        64 => Some(64),
-        _ => None,
-    };
-    let mut module =
-        scan_crate_with_pointer_width(source_directory, crate_name, host_pointer_width_bits)
-            .map_err(|error| CliError::CommandFailed {
-                command: format!("scan_crate: {}", error),
-                status: None,
-            })?;
-
-    let contract = ir::build_contract(&mut module);
-    let abi = ir::Lowerer::new(&contract).to_abi_contract();
-    let header_code = CHeaderLowerer::new(&contract, &abi).generate();
-    std::fs::write(&output_path, header_code).map_err(|source| CliError::WriteFailed {
-        path: output_path,
-        source,
-    })?;
-
-    Ok(())
 }
 
 fn write_jvm_debug_symbols(
@@ -650,24 +536,20 @@ fn resolve_jvm_packaging_targets(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        JvmCargoContext, JvmPackagingTarget, ensure_java_ir_regeneration,
-        ensure_java_no_build_supported, ensure_jvm_pack_cargo_args_supported, generate_jvm_header,
-        resolve_jvm_packaging_targets, selected_jvm_package_source_directory,
+        ensure_java_ir_regeneration, ensure_java_no_build_supported,
+        ensure_jvm_pack_cargo_args_supported, resolve_jvm_packaging_targets,
         write_jvm_debug_symbols,
     };
     use crate::build::CargoBuildProfile;
-    use crate::cargo::SelectedLibrary;
     use crate::cli::CliError;
-    use crate::commands::pack::JavaBindingMode;
     use crate::config::{CargoConfig, Config, PackageConfig, TargetsConfig};
     use crate::pack::java::link::JvmPackagedNativeOutput;
     use crate::target::JavaHostTarget;
-    use crate::toolchain::NativeHostToolchain;
-    use boltffi_bindgen::cargo::{LibraryCargoArgs, LibraryCargoArgsError};
+    use boltffi_bindgen::cargo::LibraryCargoArgsError;
 
     fn temporary_directory(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -675,10 +557,6 @@ mod tests {
             .expect("time went backwards")
             .as_nanos();
         std::env::temp_dir().join(format!("{prefix}-{unique}"))
-    }
-
-    fn demo_source_directory() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/demo")
     }
 
     fn config(java_enabled: bool) -> Config {
@@ -803,7 +681,7 @@ mod tests {
 
     #[test]
     fn rejects_binding_ir_packaging_without_regeneration() {
-        let error = ensure_java_ir_regeneration(JavaBindingMode::Ir(()), false)
+        let error = ensure_java_ir_regeneration(false)
             .expect_err("Binding IR packaging must not consume unverified generated files");
 
         assert!(matches!(
@@ -811,10 +689,7 @@ mod tests {
             CliError::CommandFailed { command, status: None }
                 if command.contains("pack java requires regenerated bindings")
         ));
-        ensure_java_ir_regeneration(JavaBindingMode::Ir(()), true)
-            .expect("regenerated Binding IR packaging should proceed");
-        ensure_java_ir_regeneration(JavaBindingMode::Legacy, false)
-            .expect("legacy packaging should retain its regeneration behavior");
+        ensure_java_ir_regeneration(true).expect("regenerated Binding IR packaging should proceed");
     }
 
     #[test]
@@ -836,60 +711,6 @@ mod tests {
             error,
             CliError::CommandFailed { status: None, .. }
         ));
-    }
-
-    #[test]
-    fn resolves_selected_jvm_package_source_directory_from_selected_package_manifest() {
-        let current_host = JavaHostTarget::current().expect("current host");
-        let packaging_targets = vec![JvmPackagingTarget {
-            cargo_context: JvmCargoContext {
-                host_target: current_host,
-                rust_target_triple: "x86_64-unknown-linux-gnu".to_string(),
-                release: false,
-                build_profile: CargoBuildProfile::Debug,
-                library: SelectedLibrary::fixture(
-                    "workspace-member",
-                    "/tmp/workspace/member/Cargo.toml",
-                    "workspace_member",
-                )
-                .fixture_cargo_manifest("/tmp/workspace/Cargo.toml"),
-                target_directory: PathBuf::from("/tmp/boltffi-target"),
-                cargo_command_args: LibraryCargoArgs::default(),
-                toolchain_selector: None,
-            },
-            toolchain: NativeHostToolchain::discover(
-                None,
-                &[],
-                Path::new("/tmp/workspace/Cargo.toml"),
-                current_host,
-                current_host,
-            )
-            .expect("native host toolchain"),
-        }];
-
-        let source_directory =
-            selected_jvm_package_source_directory(&packaging_targets).expect("source directory");
-
-        assert_eq!(source_directory, PathBuf::from("/tmp/workspace/member"));
-    }
-
-    #[test]
-    fn generate_jvm_header_creates_nested_header_parent_directory() {
-        let output_directory = temporary_directory("boltffi-jvm-nested-header-test");
-
-        generate_jvm_header(
-            &demo_source_directory(),
-            "demo",
-            &output_directory,
-            "boltffi_generated/demo",
-        )
-        .expect("nested header generation should succeed");
-
-        let header_path = output_directory.join("boltffi_generated/demo.h");
-        let header = fs::read_to_string(&header_path).expect("nested header should be readable");
-        assert!(header.contains("BoltFFICallbackHandle"));
-
-        fs::remove_dir_all(output_directory).expect("cleanup generated output");
     }
 
     #[test]

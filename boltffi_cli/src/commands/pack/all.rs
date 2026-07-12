@@ -5,10 +5,10 @@ use crate::config::Config;
 use crate::reporter::Reporter;
 
 use super::{
-    JavaBindingMode, PackAllOptions, PackAndroidOptions, PackAppleOptions, PackCSharpOptions,
-    PackDartOptions, PackJavaOptions, PackKmpOptions, PackPythonOptions, PackWasmOptions,
-    pack_android, pack_apple, pack_csharp, pack_dart, pack_kmp, pack_prepared_java, pack_python,
-    pack_wasm, prepare_java_pack,
+    PackAllOptions, PackAndroidOptions, PackAppleOptions, PackCSharpOptions, PackDartOptions,
+    PackJavaOptions, PackKmpOptions, PackPythonOptions, PackWasmOptions, pack_android, pack_apple,
+    pack_csharp, pack_dart, pack_kmp, pack_prepared_java, pack_python, pack_wasm,
+    prepare_java_pack,
 };
 
 pub(super) fn pack_all(
@@ -36,7 +36,6 @@ pub(super) fn pack_all(
                 PackJavaOptions {
                     execution: options.execution.clone(),
                     experimental: options.experimental,
-                    bindings: JavaBindingMode::Ir(()),
                 },
             )
         })

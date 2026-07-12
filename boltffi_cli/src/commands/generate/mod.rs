@@ -12,7 +12,7 @@ use boltffi_bindgen::CHeaderLowerer;
 use generator::ScanPointerWidth;
 use generator::{GenerateRequest, run_generator};
 use header::HeaderGenerator;
-use languages::{CSharpGenerator, DartGenerator, JavaGenerator, TypeScriptGenerator};
+use languages::{CSharpGenerator, DartGenerator, TypeScriptGenerator};
 
 use boltffi_bindgen::target::Target;
 
@@ -148,15 +148,6 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             Ok(())
         }
     }
-}
-
-pub fn run_generate_java_with_output_from_source_dir(
-    config: &Config,
-    output: Option<PathBuf>,
-    source_directory: &Path,
-    crate_name: &str,
-) -> Result<()> {
-    JavaGenerator::generate_from_source_directory(config, output, source_directory, crate_name)
 }
 
 pub fn run_generate_java_with_generations(
