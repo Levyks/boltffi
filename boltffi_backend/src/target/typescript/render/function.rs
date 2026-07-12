@@ -1,9 +1,10 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     ClassId, DirectValueType, DirectVectorElementType, EnumDecl, EnumId, ErrorChannel,
-    ExecutionDecl, ExportedCallable, ExportedMethodDecl, FunctionDecl, HandlePresence,
-    HandleTarget, InitializerDecl, IntoRust, NativeSymbol, ParamPlanRender, Primitive, Receive,
-    RecordDecl, RecordId, ReturnPlanRender, ReturnValueSlot, TypeRef, Wasm32, wasm32,
+    ErrorPlacement, ExecutionDecl, ExportedCallable, ExportedMethodDecl, FunctionDecl,
+    HandlePresence, HandleTarget, InitializerDecl, IntoRust, NativeSymbol, ParamPlanRender,
+    Primitive, Receive, RecordDecl, RecordId, ReturnPlanRender, ReturnValueSlot, TypeRef, Wasm32,
+    wasm32,
 };
 
 use crate::core::{CoverageMode, Diagnostic, Emitted, Error, RenderContext, Result};
@@ -11,6 +12,7 @@ use crate::core::{CoverageMode, Diagnostic, Emitted, Error, RenderContext, Resul
 use super::super::{
     codec::{ReadKind, Reader, SizeKind, Sizer, WriteKind, Writer},
     name_style::Name,
+    primitive::Scalar,
     render::{Type, direct_vector::DirectVector, scalar_option::ScalarOption},
     syntax::{
         ArgumentList, Expression, Identifier, MemberName, MethodDeclaration, Statement, TypeName,
@@ -44,6 +46,7 @@ struct Return {
     setup: Vec<Statement>,
     arguments: Vec<Expression>,
     cleanup: Vec<Statement>,
+    success: Vec<Statement>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -71,6 +74,28 @@ enum ReturnConversion {
         class: TypeName,
         nullable: bool,
     },
+    Out,
+}
+
+enum Failure {
+    None,
+    Encoded {
+        value: FailureValue,
+        exception: Exception,
+    },
+}
+
+enum FailureValue {
+    String,
+    Encoded {
+        reader: Identifier,
+        decode: Expression,
+    },
+}
+
+enum Exception {
+    String,
+    Typed(TypeName),
 }
 
 struct ParameterRenderer<'context> {
@@ -297,9 +322,7 @@ impl Function {
         receiver: Option<CallReceiver>,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
-        if !matches!(callable.error().channel(), ErrorChannel::None) {
-            return Err(Self::unsupported("fallible function"));
-        }
+        let failure = Failure::new(callable.error().channel(), context)?;
         let parameters = receiver
             .as_ref()
             .and_then(|receiver| receiver.parameter.clone())
@@ -341,7 +364,7 @@ impl Function {
                     .into_iter()
                     .chain(returns.arguments.iter().cloned())
                     .collect::<ArgumentList>();
-                let call = returns.render(Expression::native_call(symbol, arguments));
+                let call = failure.render(Expression::native_call(symbol, arguments), &returns)?;
                 let call = returns
                     .setup
                     .iter()
@@ -354,7 +377,11 @@ impl Function {
                 (call, false)
             }
             ExecutionDecl::Asynchronous(protocol) => (
-                returns.render_async(Expression::native_call(symbol, arguments), protocol)?,
+                returns.render_async(
+                    Expression::native_call(symbol, arguments),
+                    protocol,
+                    &failure,
+                )?,
                 true,
             ),
             _ => return Err(Self::unsupported("unknown execution protocol")),
@@ -404,6 +431,108 @@ impl CallReceiver {
                 Identifier::known("_borrowHandle"),
                 ArgumentList::default(),
             )],
+        }
+    }
+}
+
+impl Failure {
+    fn new(
+        channel: ErrorChannel<'_, Wasm32, boltffi_binding::OutOfRust>,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<Self> {
+        match channel {
+            ErrorChannel::None => Ok(Self::None),
+            ErrorChannel::Encoded {
+                placement: ErrorPlacement::ReturnSlot,
+                ty,
+                codec,
+                shape: wasm32::BufferShape::Packed,
+            } => {
+                let reader = Identifier::known("__boltffiErrorReader");
+                let decode = codec.render_with(&mut Reader::new(reader.clone(), context))?;
+                let value = match decode.kind() {
+                    Some(ReadKind::String) => FailureValue::String,
+                    Some(ReadKind::Bytes | ReadKind::Primitive(_)) | None => {
+                        FailureValue::Encoded {
+                            reader,
+                            decode: decode.into_expression(),
+                        }
+                    }
+                };
+                let exception = match ty {
+                    TypeRef::String => Exception::String,
+                    TypeRef::Record(id) => context
+                        .record(*id)
+                        .map(|record| {
+                            Exception::Typed(TypeName::named(format!(
+                                "{}Exception",
+                                Name::new(record.name()).type_name()
+                            )))
+                        })
+                        .ok_or_else(|| Function::unsupported("error record without declaration"))?,
+                    TypeRef::Enum(id) => context
+                        .enumeration(*id)
+                        .map(|enumeration| {
+                            Exception::Typed(TypeName::named(format!(
+                                "{}Exception",
+                                Name::new(enumeration.name()).type_name()
+                            )))
+                        })
+                        .ok_or_else(|| Function::unsupported("error enum without declaration"))?,
+                    _ => return Err(Function::unsupported("error payload type")),
+                };
+                Ok(Self::Encoded { value, exception })
+            }
+            ErrorChannel::Status => Err(Function::unsupported("status error channel")),
+            ErrorChannel::Encoded { .. } => Err(Function::unsupported("encoded error placement")),
+            _ => Err(Function::unsupported("unknown error channel")),
+        }
+    }
+
+    fn render(&self, call: Expression, returns: &Return) -> Result<Vec<Statement>> {
+        match self {
+            Self::None => Ok(returns.render(call)),
+            Self::Encoded { value, exception } => {
+                let error = Identifier::known("__boltffiError");
+                let error_value = Expression::identifier(error.clone());
+                let (mut failure, value) = match value {
+                    FailureValue::String => (
+                        Vec::new(),
+                        Expression::call(
+                            Expression::identifier(Identifier::known("_module")),
+                            Identifier::known("takePackedUtf8String"),
+                            [error_value.clone()].into_iter().collect::<ArgumentList>(),
+                        ),
+                    ),
+                    FailureValue::Encoded { reader, decode } => (
+                        vec![Statement::constant(
+                            reader.clone(),
+                            Expression::call(
+                                Expression::identifier(Identifier::known("_module")),
+                                Identifier::known("takePackedBuffer"),
+                                [error_value.clone()].into_iter().collect::<ArgumentList>(),
+                            ),
+                        )],
+                        decode.clone(),
+                    ),
+                };
+                failure.push(Statement::throwing(Expression::construct(
+                    match exception {
+                        Exception::String => TypeName::named("Error"),
+                        Exception::Typed(exception) => exception.clone(),
+                    },
+                    [value].into_iter().collect::<ArgumentList>(),
+                )));
+                Ok(
+                    std::iter::once(Statement::constant(error, call.cast(TypeName::bigint())))
+                        .chain(std::iter::once(Statement::when(
+                            error_value.strict_not_equal(Expression::bigint(0)),
+                            failure,
+                        )))
+                        .chain(returns.render_success()?)
+                        .collect(),
+                )
+            }
         }
     }
 }
@@ -715,6 +844,7 @@ impl Return {
             setup: Vec::new(),
             arguments: Vec::new(),
             cleanup: Vec::new(),
+            success: Vec::new(),
         }
     }
 
@@ -732,6 +862,17 @@ impl Return {
         let codec = Name::new(record.name()).codec_identifier()?;
         let writer = Identifier::known("__boltffiReturnWriter");
         let writer_value = Expression::identifier(writer.clone());
+        let success = vec![Statement::return_value(Expression::call(
+            Expression::identifier(codec.clone()),
+            Identifier::known("decode"),
+            [Expression::call(
+                Expression::identifier(Identifier::known("_module")),
+                Identifier::known("readerFromWriter"),
+                [writer_value.clone()].into_iter().collect::<ArgumentList>(),
+            )]
+            .into_iter()
+            .collect::<ArgumentList>(),
+        ))];
         Ok(Self {
             ty: Name::new(record.name()).type_name(),
             conversion: ReturnConversion::DirectRecord {
@@ -757,13 +898,49 @@ impl Return {
                 Identifier::known("freeWriter"),
                 [writer_value].into_iter().collect::<ArgumentList>(),
             ))],
+            success,
         })
+    }
+
+    fn out(ty: TypeName, size: u64, value: impl FnOnce(Expression) -> Vec<Statement>) -> Self {
+        let writer = Identifier::known("__boltffiReturnWriter");
+        let writer_value = Expression::identifier(writer.clone());
+        let reader = Expression::call(
+            Expression::identifier(Identifier::known("_module")),
+            Identifier::known("readerFromWriter"),
+            [writer_value.clone()].into_iter().collect::<ArgumentList>(),
+        );
+        Self {
+            ty,
+            conversion: ReturnConversion::Out,
+            setup: vec![Statement::constant(
+                writer.clone(),
+                Expression::call(
+                    Expression::identifier(Identifier::known("_module")),
+                    Identifier::known("allocWriter"),
+                    [Expression::integer(size)]
+                        .into_iter()
+                        .collect::<ArgumentList>(),
+                ),
+            )],
+            arguments: vec![Expression::property(
+                writer_value.clone(),
+                Identifier::known("ptr"),
+            )],
+            cleanup: vec![Statement::expression(Expression::call(
+                Expression::identifier(Identifier::known("_module")),
+                Identifier::known("freeWriter"),
+                [writer_value].into_iter().collect::<ArgumentList>(),
+            ))],
+            success: value(reader),
+        }
     }
 
     fn render_async(
         &self,
         start: Expression,
         protocol: &wasm32::AsyncProtocol,
+        failure: &Failure,
     ) -> Result<Vec<Statement>> {
         let wasm32::AsyncProtocol::PollHandle {
             handle,
@@ -809,8 +986,11 @@ impl Return {
         )
         .await_value();
         let complete = Identifier::parse(complete.name().as_str())?;
-        let completion =
-            self.render_async_completion(complete, Expression::identifier(awaited.clone()));
+        let completion = self.render_async_completion(
+            complete,
+            Expression::identifier(awaited.clone()),
+            failure,
+        )?;
         let release = Statement::expression(Expression::native_call(
             Identifier::parse(free.name().as_str())?,
             [Expression::identifier(awaited.clone())]
@@ -824,7 +1004,12 @@ impl Return {
         ])
     }
 
-    fn render_async_completion(&self, complete: Identifier, awaited: Expression) -> Vec<Statement> {
+    fn render_async_completion(
+        &self,
+        complete: Identifier,
+        awaited: Expression,
+        failure: &Failure,
+    ) -> Result<Vec<Statement>> {
         let status = Identifier::known("__boltffiStatus");
         let complete_call = Expression::native_call(
             complete,
@@ -840,17 +1025,18 @@ impl Return {
                 .into_iter()
                 .collect::<ArgumentList>(),
         );
-        self.setup
+        Ok(self
+            .setup
             .iter()
             .cloned()
             .chain(match self.cleanup.is_empty() {
-                true => self.render(complete_call),
+                true => failure.render(complete_call, self)?,
                 false => vec![Statement::try_finally(
-                    self.render(complete_call),
+                    failure.render(complete_call, self)?,
                     self.cleanup.clone(),
                 )],
             })
-            .collect()
+            .collect())
     }
 
     fn render(&self, call: Expression) -> Vec<Statement> {
@@ -943,6 +1129,19 @@ impl Return {
                     ]
                 }
             },
+            ReturnConversion::Out => std::iter::once(Statement::expression(call))
+                .chain(self.success.iter().cloned())
+                .collect(),
+        }
+    }
+
+    fn render_success(&self) -> Result<Vec<Statement>> {
+        match self.conversion {
+            ReturnConversion::Void => Ok(Vec::new()),
+            ReturnConversion::DirectRecord { .. } | ReturnConversion::Out => {
+                Ok(self.success.clone())
+            }
+            _ => Err(Function::unsupported("fallible success return placement")),
         }
     }
 }
@@ -1037,6 +1236,44 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
                     .ok_or_else(|| Function::unsupported("enum without declaration"))?,
                 ReturnConversion::Direct,
             )),
+            (ReturnValueSlot::OutPointer, DirectValueType::Primitive(primitive)) => {
+                let scalar = Scalar::new(*primitive)?;
+                let read = scalar.read_method();
+                Ok(Return::out(
+                    scalar.ty(),
+                    primitive.byte_size::<Wasm32>().get(),
+                    |reader| {
+                        vec![Statement::return_value(Expression::call(
+                            reader,
+                            read,
+                            ArgumentList::default(),
+                        ))]
+                    },
+                ))
+            }
+            (ReturnValueSlot::OutPointer, DirectValueType::Enum(id)) => {
+                let enumeration = self
+                    .context
+                    .enumeration(*id)
+                    .ok_or_else(|| Function::unsupported("enum without declaration"))?;
+                let EnumDecl::CStyle(enumeration) = enumeration else {
+                    return Err(Function::unsupported("direct data enum return"));
+                };
+                let primitive = enumeration.repr().primitive();
+                let scalar = Scalar::new(primitive)?;
+                let read = scalar.read_method();
+                Ok(Return::out(
+                    Name::new(enumeration.name()).type_name(),
+                    primitive.byte_size::<Wasm32>().get(),
+                    |reader| {
+                        vec![Statement::return_value(Expression::call(
+                            reader,
+                            read,
+                            ArgumentList::default(),
+                        ))]
+                    },
+                ))
+            }
             (ReturnValueSlot::OutPointer, DirectValueType::Record(id)) => {
                 Return::direct_record(*id, self.context)
             }
@@ -1057,28 +1294,60 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
         codec: &'plan boltffi_binding::ReadPlan,
         shape: wasm32::BufferShape,
     ) -> Self::Output {
-        if !matches!(slot, ReturnValueSlot::ReturnSlot)
-            || !matches!(shape, wasm32::BufferShape::Packed)
-        {
+        if !matches!(shape, wasm32::BufferShape::Packed) {
             return Err(Function::unsupported("encoded return placement"));
         }
         let reader = Identifier::known("__boltffiReader");
         let read = codec.render_with(&mut Reader::new(reader.clone(), self.context))?;
         let kind = read.kind();
         let decode = read.into_expression();
-        match kind {
-            Some(ReadKind::String) => Ok(Return::new(
+        match (slot, kind) {
+            (ReturnValueSlot::ReturnSlot, Some(ReadKind::String)) => Ok(Return::new(
                 Type::from_ref(ty, self.context)?,
                 ReturnConversion::String,
             )),
-            Some(ReadKind::Bytes) => Ok(Return::new(
+            (ReturnValueSlot::ReturnSlot, Some(ReadKind::Bytes)) => Ok(Return::new(
                 Type::from_ref(ty, self.context)?,
                 ReturnConversion::Bytes,
             )),
-            Some(ReadKind::Primitive(_)) | None => Ok(Return::new(
+            (ReturnValueSlot::ReturnSlot, Some(ReadKind::Primitive(_)) | None) => Ok(Return::new(
                 Type::from_ref(ty, self.context)?,
                 ReturnConversion::Encoded { reader, decode },
             )),
+            (ReturnValueSlot::OutPointer, kind) => {
+                let ty = Type::from_ref(ty, self.context)?;
+                Ok(Return::out(ty, 8, move |output| {
+                    let packed = Expression::call(
+                        output,
+                        Identifier::known("readU64"),
+                        ArgumentList::default(),
+                    );
+                    match kind {
+                        Some(ReadKind::String) => vec![Statement::return_value(Expression::call(
+                            Expression::identifier(Identifier::known("_module")),
+                            Identifier::known("takePackedUtf8String"),
+                            [packed].into_iter().collect::<ArgumentList>(),
+                        ))],
+                        Some(ReadKind::Bytes) => vec![Statement::return_value(Expression::call(
+                            Expression::identifier(Identifier::known("_module")),
+                            Identifier::known("takePackedU8Array"),
+                            [packed].into_iter().collect::<ArgumentList>(),
+                        ))],
+                        Some(ReadKind::Primitive(_)) | None => vec![
+                            Statement::constant(
+                                reader,
+                                Expression::call(
+                                    Expression::identifier(Identifier::known("_module")),
+                                    Identifier::known("takePackedBuffer"),
+                                    [packed].into_iter().collect::<ArgumentList>(),
+                                ),
+                            ),
+                            Statement::return_value(decode),
+                        ],
+                    }
+                }))
+            }
+            _ => Err(Function::unsupported("unknown encoded return placement")),
         }
     }
 
@@ -1089,9 +1358,7 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
         carrier: wasm32::HandleCarrier,
         presence: HandlePresence,
     ) -> Self::Output {
-        if !matches!(slot, ReturnValueSlot::ReturnSlot)
-            || !matches!(carrier, wasm32::HandleCarrier::U32)
-        {
+        if !matches!(carrier, wasm32::HandleCarrier::U32) {
             return Err(Function::unsupported("handle return placement"));
         }
         let HandleTarget::Class(id) = target else {
@@ -1107,13 +1374,42 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
             HandlePresence::Nullable => true,
             _ => return Err(Function::unsupported("unknown class handle presence")),
         };
-        Ok(Return::new(
-            match nullable {
-                true => class.clone().nullable(),
-                false => class.clone(),
-            },
-            ReturnConversion::ClassHandle { class, nullable },
-        ))
+        let ty = match nullable {
+            true => class.clone().nullable(),
+            false => class.clone(),
+        };
+        match slot {
+            ReturnValueSlot::ReturnSlot => Ok(Return::new(
+                ty,
+                ReturnConversion::ClassHandle { class, nullable },
+            )),
+            ReturnValueSlot::OutPointer => Ok(Return::out(ty, 4, move |reader| {
+                let handle = Identifier::known("__boltffiReturnHandle");
+                let handle_value = Expression::identifier(handle.clone());
+                let wrapped = Expression::static_call(
+                    class,
+                    Identifier::known("_fromHandle"),
+                    [handle_value.clone()].into_iter().collect::<ArgumentList>(),
+                );
+                vec![
+                    Statement::constant(
+                        handle,
+                        Expression::call(
+                            reader,
+                            Identifier::known("readU32"),
+                            ArgumentList::default(),
+                        ),
+                    ),
+                    Statement::return_value(match nullable {
+                        true => handle_value
+                            .strict_equal(Expression::integer(0))
+                            .conditional(Expression::null(), wrapped),
+                        false => wrapped,
+                    }),
+                ]
+            })),
+            _ => Err(Function::unsupported("unknown handle return placement")),
+        }
     }
 
     fn scalar_option(&mut self, primitive: Primitive) -> Self::Output {

@@ -69,6 +69,10 @@ impl Expression {
         Self(value.to_string())
     }
 
+    pub fn bigint(value: u64) -> Self {
+        Self(format!("{value}n"))
+    }
+
     pub fn signed_integer(value: i128) -> Self {
         Self(value.to_string())
     }
@@ -97,6 +101,14 @@ impl Expression {
         Self(format!("{self} === {other}"))
     }
 
+    pub fn strict_not_equal(self, other: Self) -> Self {
+        Self(format!("{self} !== {other}"))
+    }
+
+    pub fn construct(ty: impl fmt::Display, arguments: ArgumentList) -> Self {
+        Self(format!("new {ty}({arguments})"))
+    }
+
     pub fn conditional(self, then_value: Self, else_value: Self) -> Self {
         Self(format!("({self} ? {then_value} : {else_value})"))
     }
@@ -121,6 +133,14 @@ impl Statement {
 
     pub fn return_value(expression: Expression) -> Self {
         Self(format!("return {expression};"))
+    }
+
+    pub fn throwing(expression: Expression) -> Self {
+        Self(format!("throw {expression};"))
+    }
+
+    pub fn when(condition: Expression, body: Vec<Self>) -> Self {
+        Self(format!("if ({condition}) {{\n{}\n}}", Self::indent(body)))
     }
 
     pub fn try_finally(body: Vec<Self>, cleanup: Vec<Self>) -> Self {

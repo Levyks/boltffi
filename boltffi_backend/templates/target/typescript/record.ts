@@ -3,6 +3,14 @@
 export interface {{ name }} {
 {% for field in fields %}  readonly {{ field.key }}: {{ field.ty }};
 {% endfor %}}
+{% if error %}
+export class {{ name }}Exception extends Error {
+  constructor(public readonly value: {{ name }}) {
+    super("{{ name }}");
+    this.name = "{{ name }}Exception";
+  }
+}
+{% endif %}
 
 const {{ codec }}: WireCodec<{{ name }}> = {
   size: (value) => {{ size }},

@@ -414,6 +414,70 @@ mod tests {
         lower::<Wasm32>(&source).expect("source lowers")
     }
 
+    fn fallible_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                #[data]
+                pub enum ParseError {
+                    Empty,
+                    Invalid { value: String },
+                }
+
+                #[data]
+                #[repr(C)]
+                pub struct FalliblePoint {
+                    pub x: f64,
+                    pub y: f64,
+                }
+
+                #[data]
+                pub struct AppError {
+                    pub message: String,
+                    pub code: i32,
+                }
+
+                pub struct FallibleCounter(i32);
+
+                #[export]
+                impl FallibleCounter {
+                    pub fn new(value: i32) -> Self { Self(value) }
+
+                    pub fn try_new(value: i32) -> Result<Self, String> { Ok(Self(value)) }
+                }
+
+                #[export]
+                pub fn safe_divide(left: i32, right: i32) -> Result<i32, String> {
+                    Ok(left / right)
+                }
+
+                #[export]
+                pub fn parse_value(value: String) -> Result<i32, ParseError> { Ok(1) }
+
+                #[export]
+                pub fn fallible_name(value: String) -> Result<String, String> { Ok(value) }
+
+                #[export]
+                pub fn fallible_point(value: FalliblePoint) -> Result<FalliblePoint, AppError> {
+                    Ok(value)
+                }
+
+                #[export]
+                pub async fn async_parse_value(value: String) -> Result<i32, ParseError> { Ok(1) }
+
+                #[export]
+                pub async fn async_fallible_values(value: Vec<i32>) -> Result<Vec<i32>, String> {
+                    Ok(value)
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        lower::<Wasm32>(&source).expect("source lowers")
+    }
+
     #[test]
     fn renders_primitive_functions_through_the_wasm_surface() {
         let output = TypeScriptHost::new("demo")
@@ -772,5 +836,77 @@ mod tests {
                 .contains("async duplicate(): Promise<Worker>")
         );
         assert!(browser.contents().contains("Worker._fromHandle("));
+    }
+
+    #[test]
+    fn renders_fallible_calls_from_split_success_and_error_plans() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render_partial(&fallible_bindings())
+            .expect("target renders");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+
+        assert!(
+            browser
+                .contents()
+                .contains("export class ParseErrorException extends Error")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export class AppErrorException extends Error")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export function safeDivide(left: number, right: number): number")
+        );
+        assert!(browser.contents().contains("__boltffiError !== 0n"));
+        assert!(
+            browser
+                .contents()
+                .contains("throw new Error(_module.takePackedUtf8String(__boltffiError))")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("return _module.readerFromWriter(__boltffiReturnWriter).readI32()")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("throw new ParseErrorException(")
+        );
+        assert!(browser.contents().contains(
+            "FalliblePointCodec.decode(_module.readerFromWriter(__boltffiReturnWriter))"
+        ));
+        assert!(
+            browser
+                .contents()
+                .contains("static tryNew(value: number): FallibleCounter")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("FallibleCounter._fromHandle(__boltffiReturnHandle)")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export async function asyncParseValue")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("(__boltffiAwaitedFuture, __boltffiStatus, __boltffiReturnWriter.ptr)")
+        );
+        assert!(browser.contents().contains(
+            "_module.takePackedBuffer(_module.readerFromWriter(__boltffiReturnWriter).readU64())"
+        ));
     }
 }

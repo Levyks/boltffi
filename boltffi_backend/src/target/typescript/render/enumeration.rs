@@ -33,6 +33,7 @@ pub struct CStyle {
     read: Identifier,
     methods: Vec<MethodDeclaration>,
     diagnostics: Vec<Diagnostic>,
+    error: bool,
 }
 
 #[derive(AskamaTemplate)]
@@ -43,6 +44,7 @@ pub struct Data {
     variants: Vec<DataVariant>,
     methods: Vec<MethodDeclaration>,
     diagnostics: Vec<Diagnostic>,
+    error: bool,
 }
 
 struct CStyleVariant {
@@ -136,6 +138,7 @@ impl CStyle {
             read: scalar.read_method(),
             methods,
             diagnostics,
+            error: enumeration.is_error_payload(),
         })
     }
 
@@ -163,6 +166,7 @@ impl Data {
                 .collect::<Result<Vec<_>>>()?,
             methods,
             diagnostics,
+            error: enumeration.is_error_payload(),
         })
     }
 

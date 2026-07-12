@@ -8,6 +8,14 @@ export const {{ name }} = {
 {% for variant in variants %}  {{ variant.name }}: {{ variant.value }},
 {% endfor %}{% for method in methods %}  {{ method }}
 {% endfor %}} as const;
+{% if error %}
+export class {{ name }}Exception extends Error {
+  constructor(public readonly code: {{ name }}) {
+    super("{{ name }}");
+    this.name = "{{ name }}Exception";
+  }
+}
+{% endif %}
 
 const {{ codec }}: WireCodec<{{ name }}> = {
   size: () => {{ size }},

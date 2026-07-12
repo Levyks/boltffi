@@ -26,6 +26,7 @@ pub struct Record {
     reads: Vec<Statement>,
     methods: Vec<MethodDeclaration>,
     diagnostics: Vec<Diagnostic>,
+    error: bool,
 }
 
 struct Field {
@@ -132,6 +133,7 @@ impl Record {
             reads: parts.reads,
             methods,
             diagnostics,
+            error: record.is_error_payload(),
         })
     }
 
@@ -198,6 +200,7 @@ impl Record {
             reads,
             methods,
             diagnostics,
+            error: record.is_error_payload(),
         })
     }
 
