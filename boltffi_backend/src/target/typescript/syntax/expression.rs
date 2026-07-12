@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::core::syntax::sealed;
 
-use super::{Identifier, StringLiteral};
+use super::{Identifier, IntegerLiteral, StringLiteral};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Expression(String);
@@ -73,8 +73,22 @@ impl Expression {
         Self(format!("{value}n"))
     }
 
-    pub fn signed_integer(value: i128) -> Self {
+    pub fn integer_literal(literal: IntegerLiteral) -> Self {
+        Self(literal.to_string())
+    }
+
+    pub fn boolean(value: bool) -> Self {
         Self(value.to_string())
+    }
+
+    pub fn floating(value: f64) -> Self {
+        Self(match value {
+            value if value.is_nan() => "Number.NaN".to_owned(),
+            value if value == f64::INFINITY => "Number.POSITIVE_INFINITY".to_owned(),
+            value if value == f64::NEG_INFINITY => "Number.NEGATIVE_INFINITY".to_owned(),
+            value if value == 0.0 && value.is_sign_negative() => "-0.0".to_owned(),
+            value => format!("{value:?}"),
+        })
     }
 
     pub fn null() -> Self {

@@ -1,6 +1,7 @@
 mod callback;
 mod class;
 mod closure;
+mod constant;
 mod custom_type;
 mod direct_vector;
 mod enumeration;
@@ -15,6 +16,7 @@ mod type_name;
 pub use callback::Callback;
 pub use class::Class;
 pub use closure::ClosureAdapter;
+pub use constant::Constant;
 pub use custom_type::CustomType;
 pub use enumeration::Enumeration;
 pub use function::Function;

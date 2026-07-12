@@ -12,14 +12,16 @@ use boltffi_binding::{
 use crate::{
     bridge::wasm::{WasmBridge, WasmBridgeContract},
     core::{
-        BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, Error,
-        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
-        contract::sealed, host,
+        BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, GeneratedOutput,
+        HostCapabilities, RenderContext, RenderedDeclaration, Result, Target, contract::sealed,
+        host,
     },
 };
 
 use name_style::ModuleName;
-use render::{Callback, Class, CustomType, Enumeration, Function, Module, Record, Stream};
+use render::{
+    Callback, Class, Constant, CustomType, Enumeration, Function, Module, Record, Stream,
+};
 use syntax::{StringLiteral, Syntax};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -44,13 +46,6 @@ impl TypeScriptHost {
 
     pub fn into_target(self) -> Target<Self, WasmBridge> {
         Target::new(self, WasmBridge)
-    }
-
-    fn unsupported(shape: &'static str) -> Error {
-        Error::UnsupportedTarget {
-            target: "typescript",
-            shape,
-        }
     }
 }
 
@@ -80,10 +75,7 @@ impl host::HostBackend for TypeScriptHost {
             )
             .stable(BindingCapability::Callbacks)
             .stable(BindingCapability::Streams)
-            .in_progress(
-                BindingCapability::Constants,
-                "TypeScript constants are being migrated",
-            )
+            .stable(BindingCapability::Constants)
             .in_progress(
                 BindingCapability::CustomTypes,
                 "TypeScript custom types are being migrated",
@@ -150,11 +142,11 @@ impl host::HostBackend for TypeScriptHost {
 
     fn constant(
         &self,
-        _decl: &ConstantDecl<Self::Surface>,
+        decl: &ConstantDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("constant"))
+        Constant::from_declaration(decl, context)?.render()
     }
 
     fn custom_type(
@@ -243,6 +235,36 @@ mod tests {
 
                 #[export]
                 pub fn echo_vec_vec_i32(value: Vec<Vec<i32>>) -> Vec<Vec<i32>> { value }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        lower::<Wasm32>(&source).expect("source lowers")
+    }
+
+    fn constant_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub const ENABLED: bool = true;
+
+                #[export]
+                pub const ANSWER: u32 = 42;
+
+                #[export]
+                pub const LARGE: i64 = 9_007_199_254_740_993;
+
+                #[export]
+                pub const HALF: f64 = 0.5;
+
+                #[export]
+                pub const LABEL: &str = "boltffi";
+
+                #[export]
+                pub const BYTES: &'static [u8] = b"ffi";
                 "#,
             )
             .expect("valid source"),
@@ -629,6 +651,60 @@ mod tests {
         assert!(browser.contents().contains(
             "export function echoVecVecI32(value: Array<Array<number> | Int32Array>): Array<Array<number> | Int32Array>"
         ));
+    }
+
+    #[test]
+    fn renders_inline_and_accessor_constants_after_wasm_initialization() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host builds")
+            .into_target()
+            .render(&constant_bindings())
+            .expect("target renders");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+        let node = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo_node.ts"))
+            .expect("node module");
+
+        assert!(
+            browser
+                .contents()
+                .contains("export const enabled: boolean = true;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export const answer: number = 42;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export const large: bigint = 9007199254740993n;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export const half: number = 0.5;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export const label: string = \"boltffi\";")
+        );
+        assert!(browser.contents().contains("export let bytes: Uint8Array;"));
+        assert!(
+            browser
+                .contents()
+                .contains("const _readBytes = (): Uint8Array =>")
+        );
+        assert!(browser.contents().contains("  bytes = _readBytes();"));
+        assert!(node.contents().contains("const _exports: BoltFFIExports"));
+        assert!(node.contents().contains("  bytes = _readBytes();"));
     }
 
     #[test]

@@ -223,6 +223,36 @@ impl Function {
         .render_method()
     }
 
+    pub fn constant_accessor(
+        name: &boltffi_binding::CanonicalName,
+        symbol: &NativeSymbol,
+        callable: &ExportedCallable<Wasm32>,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<Self> {
+        Self::from_callable(name, symbol.name().as_str(), callable, None, context)
+    }
+
+    pub fn render_local(&self, name: &Identifier) -> Result<String> {
+        #[derive(AskamaTemplate)]
+        #[template(path = "target/typescript/local_function.ts", escape = "none")]
+        struct LocalFunction<'function> {
+            name: &'function Identifier,
+            returns: &'function TypeName,
+            body: &'function [Statement],
+        }
+
+        Ok(LocalFunction {
+            name,
+            returns: &self.returns,
+            body: &self.body,
+        }
+        .render()?)
+    }
+
+    pub fn return_type(&self) -> &TypeName {
+        &self.returns
+    }
+
     fn from_initializer(
         initializer: &InitializerDecl<Wasm32>,
         context: &RenderContext<Wasm32>,

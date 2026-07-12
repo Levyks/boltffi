@@ -6,7 +6,7 @@ use crate::core::{Error, Result};
 
 use super::super::{
     name_style::Name,
-    syntax::{ArgumentList, Expression, Identifier},
+    syntax::{ArgumentList, Expression, Identifier, IntegerLiteral},
 };
 use super::value::ValueExpression;
 
@@ -56,7 +56,7 @@ impl OpRender for Operation {
     }
 
     fn integer(&mut self, value: i128) -> Self::Expr {
-        Ok(Expression::signed_integer(value))
+        Ok(Expression::integer_literal(IntegerLiteral::number(value)))
     }
 
     fn add(&mut self, left: Self::Expr, right: Self::Expr) -> Self::Expr {
