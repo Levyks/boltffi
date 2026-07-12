@@ -1,6 +1,6 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    ClassId, DirectValueType, DirectVectorElementType, EnumDecl, EnumId, ErrorChannel,
+    CallbackId, ClassId, DirectValueType, DirectVectorElementType, EnumDecl, EnumId, ErrorChannel,
     ErrorPlacement, ExecutionDecl, ExportedCallable, ExportedMethodDecl, FunctionDecl,
     HandlePresence, HandleTarget, InitializerDecl, IntoRust, NativeSymbol, ParamPlanRender,
     Primitive, Receive, RecordDecl, RecordId, ReturnPlanRender, ReturnValueSlot, TypeRef, Wasm32,
@@ -75,6 +75,10 @@ enum ReturnConversion {
         class: TypeName,
         nullable: bool,
     },
+    CallbackHandle {
+        wrap: Identifier,
+        nullable: bool,
+    },
     Out,
 }
 
@@ -126,7 +130,7 @@ impl Function {
     ) -> Result<Self> {
         Self::from_callable(
             declaration.name(),
-            declaration.symbol(),
+            declaration.symbol().name().as_str(),
             declaration.callable(),
             None,
             context,
@@ -168,7 +172,7 @@ impl Function {
     ) -> Result<Self> {
         Self::from_callable(
             method.name(),
-            method.target(),
+            method.target().name().as_str(),
             method.callable(),
             method.callable().receiver().map(|_| CallReceiver::class()),
             context,
@@ -200,13 +204,32 @@ impl Function {
         ))
     }
 
+    pub fn callback_method(
+        method: &boltffi_binding::CallbackLocalMethodDecl<Wasm32>,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<MethodDeclaration> {
+        let symbol = method
+            .target()
+            .segments()
+            .last()
+            .ok_or_else(|| Self::unsupported("callback local method target"))?;
+        Self::from_callable(
+            method.name(),
+            symbol.as_str(),
+            method.callable(),
+            Some(CallReceiver::class()),
+            context,
+        )?
+        .render_method()
+    }
+
     fn from_initializer(
         initializer: &InitializerDecl<Wasm32>,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
         Self::from_callable(
             initializer.name(),
-            initializer.symbol(),
+            initializer.symbol().name().as_str(),
             initializer.callable(),
             None,
             context,
@@ -220,7 +243,7 @@ impl Function {
     ) -> Result<Self> {
         Self::from_callable(
             method.name(),
-            method.target(),
+            method.target().name().as_str(),
             method.callable(),
             method
                 .callable()
@@ -238,7 +261,7 @@ impl Function {
     ) -> Result<Self> {
         Self::from_callable(
             method.name(),
-            method.target(),
+            method.target().name().as_str(),
             method.callable(),
             method
                 .callable()
@@ -318,7 +341,7 @@ impl Function {
 
     fn from_callable(
         name: &boltffi_binding::CanonicalName,
-        symbol: &NativeSymbol,
+        symbol: &str,
         callable: &ExportedCallable<Wasm32>,
         receiver: Option<CallReceiver>,
         context: &RenderContext<Wasm32>,
@@ -354,7 +377,7 @@ impl Function {
                     .flat_map(|parameter| parameter.arguments.iter().cloned()),
             )
             .collect::<ArgumentList>();
-        let symbol = Identifier::parse(symbol.name().as_str())?;
+        let symbol = Identifier::parse(symbol)?;
         let parameter_setup = parameters
             .iter()
             .flat_map(|parameter| parameter.setup.iter().cloned());
@@ -864,6 +887,42 @@ impl Parameter {
             cleanup: Vec::new(),
         })
     }
+
+    fn callback_handle(
+        name: Identifier,
+        id: CallbackId,
+        presence: HandlePresence,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<Self> {
+        let callback = context
+            .callback(id)
+            .ok_or_else(|| Function::unsupported("callback without declaration"))?;
+        let callback_type = Name::new(callback.name()).type_name();
+        let register = Identifier::parse(format!("register{callback_type}"))?;
+        let value = Expression::identifier(name.clone());
+        let handle = Identifier::parse(format!("__boltffi_{name}_handle"))?;
+        let registered = Expression::invoke(
+            register,
+            [value.clone()].into_iter().collect::<ArgumentList>(),
+        );
+        let (ty, registered) = match presence {
+            HandlePresence::Required => (callback_type, registered),
+            HandlePresence::Nullable => (
+                callback_type.nullable(),
+                value
+                    .strict_equal(Expression::null())
+                    .conditional(Expression::integer(0), registered),
+            ),
+            _ => return Err(Function::unsupported("unknown callback handle presence")),
+        };
+        Ok(Self {
+            name,
+            ty,
+            setup: vec![Statement::constant(handle.clone(), registered)],
+            arguments: vec![Expression::identifier(handle)],
+            cleanup: Vec::new(),
+        })
+    }
 }
 
 impl Return {
@@ -1159,6 +1218,31 @@ impl Return {
                     ]
                 }
             },
+            ReturnConversion::CallbackHandle { wrap, nullable } => match nullable {
+                false => vec![Statement::return_value(Expression::invoke(
+                    wrap.clone(),
+                    [call].into_iter().collect::<ArgumentList>(),
+                ))],
+                true => {
+                    let handle = Identifier::known("__boltffiHandle");
+                    let value = Expression::identifier(handle.clone());
+                    vec![
+                        Statement::constant(handle, call),
+                        Statement::return_value(
+                            value
+                                .clone()
+                                .strict_equal(Expression::integer(0))
+                                .conditional(
+                                    Expression::null(),
+                                    Expression::invoke(
+                                        wrap.clone(),
+                                        [value].into_iter().collect::<ArgumentList>(),
+                                    ),
+                                ),
+                        ),
+                    ]
+                }
+            },
             ReturnConversion::Out => std::iter::once(Statement::expression(call))
                 .chain(self.success.iter().cloned())
                 .collect(),
@@ -1223,6 +1307,9 @@ impl<'plan> ParamPlanRender<'plan, Wasm32, IntoRust> for ParameterRenderer<'_> {
         match target {
             HandleTarget::Class(id) => {
                 Parameter::class_handle(self.name.clone(), *id, presence, self.context)
+            }
+            HandleTarget::Callback(id) => {
+                Parameter::callback_handle(self.name.clone(), *id, presence, self.context)
             }
             _ => Err(Function::unsupported("handle parameter")),
         }
@@ -1391,53 +1478,84 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
         if !matches!(carrier, wasm32::HandleCarrier::U32) {
             return Err(Function::unsupported("handle return placement"));
         }
-        let HandleTarget::Class(id) = target else {
-            return Err(Function::unsupported("handle return"));
-        };
-        let class = self
-            .context
-            .class(*id)
-            .map(|class| Name::new(class.name()).type_name())
-            .ok_or_else(|| Function::unsupported("class without declaration"))?;
         let nullable = match presence {
             HandlePresence::Required => false,
             HandlePresence::Nullable => true,
-            _ => return Err(Function::unsupported("unknown class handle presence")),
+            _ => return Err(Function::unsupported("unknown handle presence")),
         };
-        let ty = match nullable {
-            true => class.clone().nullable(),
-            false => class.clone(),
+        let (ty, conversion) = match target {
+            HandleTarget::Class(id) => {
+                let class = self
+                    .context
+                    .class(*id)
+                    .map(|class| Name::new(class.name()).type_name())
+                    .ok_or_else(|| Function::unsupported("class without declaration"))?;
+                let ty = match nullable {
+                    true => class.clone().nullable(),
+                    false => class.clone(),
+                };
+                (ty, ReturnConversion::ClassHandle { class, nullable })
+            }
+            HandleTarget::Callback(id) => {
+                let callback = self
+                    .context
+                    .callback(*id)
+                    .map(|callback| Name::new(callback.name()).type_name())
+                    .ok_or_else(|| Function::unsupported("callback without declaration"))?;
+                let ty = match nullable {
+                    true => callback.clone().nullable(),
+                    false => callback.clone(),
+                };
+                (
+                    ty,
+                    ReturnConversion::CallbackHandle {
+                        wrap: Identifier::parse(format!("wrap{callback}"))?,
+                        nullable,
+                    },
+                )
+            }
+            _ => return Err(Function::unsupported("handle return")),
         };
         match slot {
-            ReturnValueSlot::ReturnSlot => Ok(Return::new(
-                ty,
-                ReturnConversion::ClassHandle { class, nullable },
-            )),
-            ReturnValueSlot::OutPointer => Ok(Return::out(ty, 4, move |reader| {
-                let handle = Identifier::known("__boltffiReturnHandle");
-                let handle_value = Expression::identifier(handle.clone());
-                let wrapped = Expression::static_call(
-                    class,
-                    Identifier::known("_fromHandle"),
-                    [handle_value.clone()].into_iter().collect::<ArgumentList>(),
-                );
-                vec![
-                    Statement::constant(
-                        handle,
-                        Expression::call(
-                            reader,
-                            Identifier::known("readU32"),
-                            ArgumentList::default(),
+            ReturnValueSlot::ReturnSlot => Ok(Return::new(ty, conversion)),
+            ReturnValueSlot::OutPointer if matches!(target, HandleTarget::Class(_)) => {
+                let HandleTarget::Class(id) = target else {
+                    unreachable!()
+                };
+                let class = self
+                    .context
+                    .class(*id)
+                    .map(|class| Name::new(class.name()).type_name())
+                    .ok_or_else(|| Function::unsupported("class without declaration"))?;
+                Ok(Return::out(ty, 4, move |reader| {
+                    let handle = Identifier::known("__boltffiReturnHandle");
+                    let handle_value = Expression::identifier(handle.clone());
+                    let wrapped = Expression::static_call(
+                        class,
+                        Identifier::known("_fromHandle"),
+                        [handle_value.clone()].into_iter().collect::<ArgumentList>(),
+                    );
+                    vec![
+                        Statement::constant(
+                            handle,
+                            Expression::call(
+                                reader,
+                                Identifier::known("readU32"),
+                                ArgumentList::default(),
+                            ),
                         ),
-                    ),
-                    Statement::return_value(match nullable {
-                        true => handle_value
-                            .strict_equal(Expression::integer(0))
-                            .conditional(Expression::null(), wrapped),
-                        false => wrapped,
-                    }),
-                ]
-            })),
+                        Statement::return_value(match nullable {
+                            true => handle_value
+                                .strict_equal(Expression::integer(0))
+                                .conditional(Expression::null(), wrapped),
+                            false => wrapped,
+                        }),
+                    ]
+                }))
+            }
+            ReturnValueSlot::OutPointer => {
+                Err(Function::unsupported("callback handle out-pointer return"))
+            }
             _ => Err(Function::unsupported("unknown handle return placement")),
         }
     }

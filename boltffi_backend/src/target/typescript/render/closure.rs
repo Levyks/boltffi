@@ -7,11 +7,12 @@ use boltffi_binding::{
 use crate::core::{Error, RenderContext, Result};
 
 use super::super::{
-    codec::{Reader, Sizer, Writer},
+    codec::{Sizer, Writer},
     name_style::Name,
     primitive::Scalar,
     syntax::{ArgumentList, Expression, Identifier, Statement, StringLiteral, TypeName},
 };
+use super::imported::Parameter as ImportedParameter;
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/typescript/closure.ts", escape = "none")]
@@ -36,18 +37,8 @@ pub struct ClosureAdapter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Parameter {
-    name: Identifier,
     signature: String,
-    public_type: TypeName,
-    bindings: Vec<Binding>,
-    setup: Vec<Statement>,
-    argument: Expression,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Binding {
-    name: Identifier,
-    carrier_type: TypeName,
+    imported: ImportedParameter,
 }
 
 struct Fallible {
@@ -65,26 +56,43 @@ impl ClosureAdapter {
             .invoke()
             .params()
             .iter()
-            .map(|parameter| match parameter.payload() {
-                OutgoingParam::Value(ParamPlan::Direct {
-                    ty: DirectValueType::Primitive(primitive),
-                    ..
-                }) => Self::parameter(parameter.name(), *primitive).map(Some),
-                OutgoingParam::Value(ParamPlan::Direct {
-                    ty: DirectValueType::Record(id),
-                    ..
-                }) => Self::record_parameter(parameter.name(), *id, context).map(Some),
-                OutgoingParam::Value(ParamPlan::Direct {
-                    ty: DirectValueType::Enum(id),
-                    ..
-                }) => Self::enum_parameter(parameter.name(), *id, context).map(Some),
-                OutgoingParam::Value(ParamPlan::Encoded {
-                    ty,
-                    codec,
-                    shape: wasm32::BufferShape::Slice,
-                    ..
-                }) => Self::encoded_parameter(parameter.name(), ty, codec, context).map(Some),
-                OutgoingParam::Value(_) | OutgoingParam::Closure(_) => Ok(None),
+            .map(|parameter| {
+                let signature = match parameter.payload() {
+                    OutgoingParam::Value(ParamPlan::Direct {
+                        ty: DirectValueType::Primitive(primitive),
+                        ..
+                    }) => Self::primitive_signature(*primitive).map(str::to_owned),
+                    OutgoingParam::Value(ParamPlan::Direct {
+                        ty: DirectValueType::Record(id),
+                        ..
+                    }) => context
+                        .record(*id)
+                        .map(|record| Name::new(record.name()).type_name().to_string())
+                        .ok_or(Error::UnsupportedTarget {
+                            target: "typescript",
+                            shape: "closure record without declaration",
+                        }),
+                    OutgoingParam::Value(ParamPlan::Direct {
+                        ty: DirectValueType::Enum(id),
+                        ..
+                    }) => context
+                        .enumeration(*id)
+                        .map(|enumeration| Name::new(enumeration.name()).type_name().to_string())
+                        .ok_or(Error::UnsupportedTarget {
+                            target: "typescript",
+                            shape: "closure enum without declaration",
+                        }),
+                    OutgoingParam::Value(ParamPlan::Encoded {
+                        ty,
+                        shape: wasm32::BufferShape::Slice,
+                        ..
+                    }) => Self::type_signature(ty, context),
+                    OutgoingParam::Value(_) | OutgoingParam::Closure(_) => return Ok(None),
+                }?;
+                Ok(Some(Parameter {
+                    signature,
+                    imported: ImportedParameter::from_declaration(parameter, context)?,
+                }))
             })
             .collect::<Result<Option<Vec<_>>>>()?
         else {
@@ -124,7 +132,7 @@ impl ClosureAdapter {
                 } => (
                     Scalar::new(*primitive)?.ty(),
                     Self::primitive_signature(*primitive)?.to_owned(),
-                    Self::carrier_type(*primitive)?,
+                    ImportedParameter::carrier_type(*primitive)?,
                     false,
                     false,
                     Some(*primitive),
@@ -275,7 +283,7 @@ impl ClosureAdapter {
         let callback = Identifier::known("callback");
         let arguments = parameters
             .iter()
-            .map(|parameter| parameter.argument.clone())
+            .map(|parameter| parameter.imported.argument.clone())
             .collect::<ArgumentList>();
         let invocation = Expression::invoke(callback, arguments);
         let invocation = match return_primitive {
@@ -326,173 +334,6 @@ impl ClosureAdapter {
 
     pub fn register(&self) -> Identifier {
         self.register.clone()
-    }
-
-    fn parameter(name: &boltffi_binding::CanonicalName, primitive: Primitive) -> Result<Parameter> {
-        let name = Name::new(name).identifier()?;
-        let value = Expression::identifier(name.clone());
-        Ok(Parameter {
-            name: name.clone(),
-            signature: Self::primitive_signature(primitive)?.to_owned(),
-            public_type: Scalar::new(primitive)?.ty(),
-            bindings: vec![Binding {
-                name,
-                carrier_type: Self::carrier_type(primitive)?,
-            }],
-            setup: Vec::new(),
-            argument: match primitive {
-                Primitive::Bool => value.not_zero(),
-                _ => value,
-            },
-        })
-    }
-
-    fn encoded_parameter(
-        name: &boltffi_binding::CanonicalName,
-        ty: &TypeRef,
-        codec: &boltffi_binding::ReadPlan,
-        context: &RenderContext<Wasm32>,
-    ) -> Result<Parameter> {
-        let name = Name::new(name).identifier()?;
-        let pointer = Identifier::parse(format!("{name}Pointer"))?;
-        let length = Identifier::parse(format!("{name}Length"))?;
-        let reader = Identifier::parse(format!("{name}Reader"))?;
-        let decoded = codec.render_with(&mut Reader::new(reader.clone(), context))?;
-        Ok(Parameter {
-            name: name.clone(),
-            signature: Self::type_signature(ty, context)?,
-            public_type: super::Type::from_ref(ty, context)?,
-            bindings: vec![
-                Binding {
-                    name: pointer.clone(),
-                    carrier_type: TypeName::number(),
-                },
-                Binding {
-                    name: length.clone(),
-                    carrier_type: TypeName::number(),
-                },
-            ],
-            setup: vec![
-                Statement::constant(
-                    reader,
-                    Expression::call(
-                        Expression::identifier(Identifier::known("_module")),
-                        Identifier::known("readerFromMemory"),
-                        [
-                            Expression::identifier(pointer),
-                            Expression::identifier(length),
-                        ]
-                        .into_iter()
-                        .collect::<ArgumentList>(),
-                    ),
-                ),
-                Statement::constant(name.clone(), decoded.into_expression()),
-            ],
-            argument: Expression::identifier(name),
-        })
-    }
-
-    fn record_parameter(
-        name: &boltffi_binding::CanonicalName,
-        id: boltffi_binding::RecordId,
-        context: &RenderContext<Wasm32>,
-    ) -> Result<Parameter> {
-        let record = context.record(id).ok_or(Error::UnsupportedTarget {
-            target: "typescript",
-            shape: "closure record without declaration",
-        })?;
-        let size = match record {
-            boltffi_binding::RecordDecl::Direct(record) => record.layout().size().get(),
-            _ => {
-                return Err(Error::UnsupportedTarget {
-                    target: "typescript",
-                    shape: "encoded closure record direct parameter",
-                });
-            }
-        };
-        let name = Name::new(name).identifier()?;
-        let pointer = Identifier::parse(format!("{name}Pointer"))?;
-        let reader = Identifier::parse(format!("{name}Reader"))?;
-        let codec = Name::new(record.name()).codec_identifier()?;
-        Ok(Parameter {
-            name: name.clone(),
-            signature: Name::new(record.name()).type_name().to_string(),
-            public_type: Name::new(record.name()).type_name(),
-            bindings: vec![Binding {
-                name: pointer.clone(),
-                carrier_type: TypeName::number(),
-            }],
-            setup: vec![
-                Statement::constant(
-                    reader.clone(),
-                    Expression::call(
-                        Expression::identifier(Identifier::known("_module")),
-                        Identifier::known("readerFromMemory"),
-                        [Expression::identifier(pointer), Expression::integer(size)]
-                            .into_iter()
-                            .collect::<ArgumentList>(),
-                    ),
-                ),
-                Statement::constant(
-                    name.clone(),
-                    Expression::call(
-                        Expression::identifier(codec),
-                        Identifier::known("decode"),
-                        [Expression::identifier(reader)]
-                            .into_iter()
-                            .collect::<ArgumentList>(),
-                    ),
-                ),
-            ],
-            argument: Expression::identifier(name),
-        })
-    }
-
-    fn enum_parameter(
-        name: &boltffi_binding::CanonicalName,
-        id: boltffi_binding::EnumId,
-        context: &RenderContext<Wasm32>,
-    ) -> Result<Parameter> {
-        let name = Name::new(name).identifier()?;
-        let ty = context
-            .enumeration(id)
-            .map(|enumeration| Name::new(enumeration.name()).type_name())
-            .ok_or(Error::UnsupportedTarget {
-                target: "typescript",
-                shape: "closure enum without declaration",
-            })?;
-        Ok(Parameter {
-            name: name.clone(),
-            signature: ty.to_string(),
-            public_type: ty,
-            bindings: vec![Binding {
-                name: name.clone(),
-                carrier_type: TypeName::number(),
-            }],
-            setup: Vec::new(),
-            argument: Expression::identifier(name),
-        })
-    }
-
-    fn carrier_type(primitive: Primitive) -> Result<TypeName> {
-        match primitive {
-            Primitive::Bool
-            | Primitive::I8
-            | Primitive::U8
-            | Primitive::I16
-            | Primitive::U16
-            | Primitive::I32
-            | Primitive::U32
-            | Primitive::ISize
-            | Primitive::USize
-            | Primitive::F32
-            | Primitive::F64 => Ok(TypeName::number()),
-            Primitive::I64 | Primitive::U64 => Ok(TypeName::bigint()),
-            _ => Err(Error::UnsupportedTarget {
-                target: "typescript",
-                shape: "closure primitive carrier",
-            }),
-        }
     }
 
     fn fallible(

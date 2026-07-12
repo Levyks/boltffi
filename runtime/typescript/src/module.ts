@@ -191,6 +191,15 @@ export class BoltFFIModule {
     return { ptr: view[idx], len: view[idx + 1], cap: view[idx + 2], align: view[idx + 3] };
   }
 
+  writeReturnSlot(allocation: PrimitiveBufferAlloc, alignment: number): void {
+    const view = this.getU32();
+    const index = this._returnSlotAddr >>> 2;
+    view[index] = allocation.ptr;
+    view[index + 1] = allocation.allocationSize;
+    view[index + 2] = allocation.allocationSize;
+    view[index + 3] = alignment;
+  }
+
   completeAsync<T>(complete: (statusPtr: number) => T): T {
     const statusPtr = this.allocStatus();
     try {
@@ -378,6 +387,46 @@ export class BoltFFIModule {
     const ptr = this.exports.boltffi_wasm_alloc(byteLen);
     new Int8Array(this._memory.buffer, ptr, len).set(value);
     return { ptr, len, allocationSize: byteLen };
+  }
+
+  borrowBoolArray(ptr: number, len: number): boolean[] {
+    return Array.from(this.getBytes().subarray(ptr, ptr + len), (value) => value !== 0);
+  }
+
+  borrowI8Array(ptr: number, len: number): Int8Array {
+    return this.getI8().subarray(ptr, ptr + len);
+  }
+
+  borrowI16Array(ptr: number, len: number): Int16Array {
+    return this.getI16().subarray(ptr >>> 1, (ptr >>> 1) + len);
+  }
+
+  borrowU16Array(ptr: number, len: number): Uint16Array {
+    return this.getU16().subarray(ptr >>> 1, (ptr >>> 1) + len);
+  }
+
+  borrowI32Array(ptr: number, len: number): Int32Array {
+    return this.getI32().subarray(ptr >>> 2, (ptr >>> 2) + len);
+  }
+
+  borrowU32Array(ptr: number, len: number): Uint32Array {
+    return this.getU32().subarray(ptr >>> 2, (ptr >>> 2) + len);
+  }
+
+  borrowI64Array(ptr: number, len: number): BigInt64Array {
+    return this.getI64().subarray(ptr >>> 3, (ptr >>> 3) + len);
+  }
+
+  borrowU64Array(ptr: number, len: number): BigUint64Array {
+    return this.getU64().subarray(ptr >>> 3, (ptr >>> 3) + len);
+  }
+
+  borrowF32Array(ptr: number, len: number): Float32Array {
+    return this.getF32().subarray(ptr >>> 2, (ptr >>> 2) + len);
+  }
+
+  borrowF64Array(ptr: number, len: number): Float64Array {
+    return this.getF64().subarray(ptr >>> 3, (ptr >>> 3) + len);
   }
 
   allocU8Array(value: Uint8Array | readonly number[]): PrimitiveBufferAlloc {
@@ -620,6 +669,13 @@ export class BoltFFIModule {
     view.setUint32(bufPtr + 12, dataAlign, true);
   }
 
+  writeCallbackBuffer(bufPtr: number, dataPtr: number, dataLen: number, dataCap: number): void {
+    const view = this.getView();
+    view.setUint32(bufPtr, dataPtr, true);
+    view.setUint32(bufPtr + 4, dataLen, true);
+    view.setUint32(bufPtr + 8, dataCap, true);
+  }
+
   private readBufDescriptor(bufPtr: number): { ptr: number; len: number; cap: number; align: number } {
     const view = this.getView();
     return {
@@ -720,6 +776,10 @@ export class BoltFFIModule {
 
   writeI32(ptr: number, value: number): void {
     this.getView().setInt32(ptr, value, true);
+  }
+
+  writeU64(ptr: number, value: bigint): void {
+    this.getView().setBigUint64(ptr, value, true);
   }
 
   readFromMemory(ptr: number, len: number): Uint8Array {

@@ -373,6 +373,56 @@ describe("BoltFFIModule memory operations", () => {
     expect(Array.from(target)).toEqual([9n, 10n]);
   });
 
+  it("borrows callback vectors directly from Wasm memory", () => {
+    const { module } = createHarness();
+    const allocation = module.allocI32Array([3, 5, 8]);
+    const borrowed = module.borrowI32Array(allocation.ptr, allocation.len);
+
+    borrowed[1] = 13;
+
+    expect(Array.from(module.borrowI32Array(allocation.ptr, allocation.len))).toEqual([3, 13, 8]);
+  });
+
+  it("publishes callback vector ownership through the Wasm return slot", () => {
+    const { module } = createHarness();
+    const allocation = module.allocI32Array([2, 4, 6]);
+
+    module.writeReturnSlot(allocation, 4);
+
+    expect(module.readReturnSlot()).toEqual({
+      ptr: allocation.ptr,
+      len: 12,
+      cap: 12,
+      align: 4,
+    });
+  });
+
+  it("writes the three-word callback buffer descriptor without touching adjacent memory", () => {
+    const { module } = createHarness();
+    const descriptorPointer = 64;
+    module.writeToMemory(descriptorPointer + 12, Uint8Array.from([0xaa, 0xbb, 0xcc, 0xdd]));
+
+    module.writeCallbackBuffer(descriptorPointer, 1024, 24, 32);
+
+    const bytes = module.readFromMemory(descriptorPointer, 16);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    expect(view.getUint32(0, true)).toBe(1024);
+    expect(view.getUint32(4, true)).toBe(24);
+    expect(view.getUint32(8, true)).toBe(32);
+    expect(Array.from(bytes.subarray(12))).toEqual([0xaa, 0xbb, 0xcc, 0xdd]);
+  });
+
+  it("writes packed callback success values to unaligned Wasm stack slots", () => {
+    const { module } = createHarness();
+    const pointer = 20;
+    const value = 0x0102_0304_0506_0708n;
+
+    module.writeU64(pointer, value);
+
+    const bytes = module.readFromMemory(pointer, 8);
+    expect(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0, true)).toBe(value);
+  });
+
   it("reuses pooled writers when capacity matches", () => {
     const { module } = createHarness();
     const writer = module.allocWriter(8);

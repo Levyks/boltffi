@@ -1,4 +1,4 @@
-export type {{ name }} = ({% for parameter in parameters %}{{ parameter.name }}: {{ parameter.public_type }}{% if !loop.last %}, {% endif %}{% endfor %}) => {{ public_return }};
+export type {{ name }} = ({% for parameter in parameters %}{{ parameter.imported.name }}: {{ parameter.imported.public_type }}{% if !loop.last %}, {% endif %}{% endfor %}) => {{ public_return }};
 
 const {{ registry }} = new CallbackRegistry<{{ name }}>({{ registry_name }});
 
@@ -14,9 +14,9 @@ _callbackImports[{{ free_import }}] = (handle: number): void => {
   {{ registry }}.release(handle);
 };
 
-_callbackImports[{{ call_import }}] = (handle: number{% for parameter in parameters %}{% for binding in parameter.bindings %}, {{ binding.name }}: {{ binding.carrier_type }}{% endfor %}{% endfor %}{% match fallible %}{% when Some with (fallible) %}, {{ fallible.success_pointer }}: number{% when None %}{% endmatch %}): {{ carrier_return }} => {
+_callbackImports[{{ call_import }}] = (handle: number{% for parameter in parameters %}{% for binding in parameter.imported.bindings %}, {{ binding.name }}: {{ binding.carrier_type }}{% endfor %}{% endfor %}{% match fallible %}{% when Some with (fallible) %}, {{ fallible.success_pointer }}: number{% when None %}{% endmatch %}): {{ carrier_return }} => {
   const callback = {{ registry }}.get(handle);
-{% for parameter in parameters %}{% for statement in parameter.setup %}  {{ statement }}
+{% for parameter in parameters %}{% for statement in parameter.imported.setup %}  {{ statement }}
 {% endfor %}{% endfor %}{% match fallible %}{% when Some with (fallible) %}  const result = {{ invocation }};
   return matchWireResult(result, (success) => {
     _module.{{ fallible.success_write }}({{ fallible.success_pointer }}, success);

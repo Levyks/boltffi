@@ -7,7 +7,7 @@ use super::Type;
 
 pub struct DirectVector {
     kind: PrimitiveVector,
-    receive: Receive,
+    receive: Option<Receive>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -29,7 +29,18 @@ impl DirectVector {
         match element {
             DirectVectorElementType::Primitive(primitive) => Ok(Self {
                 kind: PrimitiveVector::new(primitive.primitive())?,
-                receive,
+                receive: Some(receive),
+            }),
+            DirectVectorElementType::Record(_) => Self::unsupported("direct record vector"),
+            _ => Self::unsupported("unknown direct vector"),
+        }
+    }
+
+    pub fn outgoing(element: &DirectVectorElementType) -> Result<Self> {
+        match element {
+            DirectVectorElementType::Primitive(primitive) => Ok(Self {
+                kind: PrimitiveVector::new(primitive.primitive())?,
+                receive: None,
             }),
             DirectVectorElementType::Record(_) => Self::unsupported("direct record vector"),
             _ => Self::unsupported("unknown direct vector"),
@@ -39,17 +50,20 @@ impl DirectVector {
     pub fn parameter_type(&self) -> Result<TypeName> {
         let scalar = Type::primitive(self.kind.primitive())?;
         match self.receive {
-            Receive::ByValue | Receive::ByRef if matches!(self.kind, PrimitiveVector::Bool) => {
+            Some(Receive::ByValue | Receive::ByRef)
+                if matches!(self.kind, PrimitiveVector::Bool) =>
+            {
                 Ok(TypeName::readonly_array(scalar))
             }
-            Receive::ByValue | Receive::ByRef => Ok(TypeName::union(
+            Some(Receive::ByValue | Receive::ByRef) => Ok(TypeName::union(
                 TypeName::readonly_array(scalar),
                 self.kind.typed_array(),
             )),
-            Receive::ByMutRef if !matches!(self.kind, PrimitiveVector::Bool) => {
+            Some(Receive::ByMutRef) if !matches!(self.kind, PrimitiveVector::Bool) => {
                 Ok(self.kind.typed_array())
             }
-            Receive::ByMutRef => Self::unsupported("mutable boolean slice"),
+            Some(Receive::ByMutRef) => Self::unsupported("mutable boolean slice"),
+            None => Ok(self.return_type()),
             _ => Self::unsupported("unknown direct vector receive mode"),
         }
     }
@@ -70,7 +84,15 @@ impl DirectVector {
     }
 
     pub fn writeback(&self) -> bool {
-        matches!(self.receive, Receive::ByMutRef)
+        matches!(self.receive, Some(Receive::ByMutRef))
+    }
+
+    pub fn borrow_method(&self) -> Identifier {
+        Identifier::known(self.kind.borrow_method())
+    }
+
+    pub const fn alignment(&self) -> usize {
+        self.kind.alignment()
     }
 
     pub fn element_literal(&self) -> StringLiteral {
@@ -160,6 +182,30 @@ impl PrimitiveVector {
             Self::U64 => "takeSlotU64Array",
             Self::F32 => "takeSlotF32Array",
             Self::F64 => "takeSlotF64Array",
+        }
+    }
+
+    fn borrow_method(self) -> &'static str {
+        match self {
+            Self::Bool => "borrowBoolArray",
+            Self::I8 => "borrowI8Array",
+            Self::I16 => "borrowI16Array",
+            Self::U16 => "borrowU16Array",
+            Self::I32 => "borrowI32Array",
+            Self::U32 => "borrowU32Array",
+            Self::I64 => "borrowI64Array",
+            Self::U64 => "borrowU64Array",
+            Self::F32 => "borrowF32Array",
+            Self::F64 => "borrowF64Array",
+        }
+    }
+
+    const fn alignment(self) -> usize {
+        match self {
+            Self::Bool | Self::I8 => 1,
+            Self::I16 | Self::U16 => 2,
+            Self::I32 | Self::U32 | Self::F32 => 4,
+            Self::I64 | Self::U64 | Self::F64 => 8,
         }
     }
 

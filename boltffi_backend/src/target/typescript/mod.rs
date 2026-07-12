@@ -19,7 +19,7 @@ use crate::{
 };
 
 use name_style::ModuleName;
-use render::{Class, CustomType, Enumeration, Function, Module, Record};
+use render::{Callback, Class, CustomType, Enumeration, Function, Module, Record};
 use syntax::{StringLiteral, Syntax};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -78,10 +78,7 @@ impl host::HostBackend for TypeScriptHost {
                 BindingCapability::Classes,
                 "TypeScript classes are being migrated",
             )
-            .in_progress(
-                BindingCapability::Callbacks,
-                "TypeScript callbacks are being migrated",
-            )
+            .stable(BindingCapability::Callbacks)
             .in_progress(
                 BindingCapability::Streams,
                 "TypeScript streams are being migrated",
@@ -138,11 +135,11 @@ impl host::HostBackend for TypeScriptHost {
 
     fn callback(
         &self,
-        _decl: &CallbackDecl<Self::Surface>,
+        decl: &CallbackDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Self::unsupported("callback"))
+        Callback::from_declaration(decl, context)?.render()
     }
 
     fn stream(
