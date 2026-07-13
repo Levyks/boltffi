@@ -230,7 +230,7 @@ export class BoltFFIModule {
     }
   }
 
-  private checkStatus(status: number): void {
+  checkStatus(status: number): void {
     if (status === 0) {
       return;
     }
@@ -647,6 +647,7 @@ export class BoltFFIModule {
     if (ptr === 0) {
       throw new Error("Failed to allocate memory for buffer descriptor");
     }
+    new Uint8Array(this._memory.buffer, ptr, FFI_BUF_DESCRIPTOR_SIZE).fill(0);
     return ptr;
   }
 

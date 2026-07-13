@@ -1,7 +1,7 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
     CStyleEnumDecl, DataEnumDecl, DataVariantDecl, DataVariantPayload, EncodedFieldDecl, EnumDecl,
-    FieldKey, IntegerRepr, Wasm32,
+    IntegerRepr, Wasm32,
 };
 
 use crate::core::{Diagnostic, Emitted, Error, RenderContext, Result};
@@ -90,14 +90,6 @@ impl Enumeration {
         }
     }
 
-    fn field_key(key: &FieldKey) -> Result<PropertyKey> {
-        match key {
-            FieldKey::Named(name) => Ok(PropertyKey::named(Name::new(name).identifier()?)),
-            FieldKey::Position(position) => Ok(PropertyKey::position(*position)),
-            _ => Err(Self::error("unknown enum field key")),
-        }
-    }
-
     fn error(shape: &'static str) -> Error {
         Error::UnsupportedTarget {
             target: "typescript",
@@ -111,7 +103,7 @@ impl CStyle {
         let primitive = enumeration.repr().primitive();
         let scalar = Scalar::new(primitive)?;
         let bigint = matches!(enumeration.repr(), IntegerRepr::I64 | IntegerRepr::U64);
-        let (methods, diagnostics) = Function::enum_methods(
+        let (methods, diagnostics) = Function::c_style_enum_methods(
             enumeration.id(),
             enumeration.initializers(),
             enumeration.methods(),
@@ -150,7 +142,7 @@ impl CStyle {
 
 impl Data {
     fn new(enumeration: &DataEnumDecl<Wasm32>, context: &RenderContext<Wasm32>) -> Result<Self> {
-        let (methods, diagnostics) = Function::enum_methods(
+        let (methods, diagnostics) = Function::data_enum_methods(
             enumeration.id(),
             enumeration.initializers(),
             enumeration.methods(),
@@ -228,7 +220,7 @@ impl DataVariant {
 impl DataField {
     fn new(field: &EncodedFieldDecl, context: &RenderContext<Wasm32>) -> Result<Self> {
         Ok(Self {
-            key: Enumeration::field_key(field.key())?,
+            key: PropertyKey::from_field(field.key())?,
             ty: Type::from_ref(field.ty(), context)?,
         })
     }
@@ -241,7 +233,7 @@ impl DataRead {
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
         Ok(Self {
-            key: Enumeration::field_key(field.key())?,
+            key: PropertyKey::from_field(field.key())?,
             value: field
                 .read()
                 .render_with(&mut Reader::new(reader.clone(), context))?

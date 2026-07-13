@@ -1,10 +1,10 @@
-use boltffi_binding::{BinderId, FieldKey, ValueRef, ValueRoot};
+use boltffi_binding::{BinderId, ValueRef, ValueRoot};
 
 use crate::core::{Error, Result};
 
 use super::super::{
     name_style::Name,
-    syntax::{Expression, Identifier},
+    syntax::{Expression, Identifier, PropertyKey},
 };
 
 pub struct ValueExpression {
@@ -33,16 +33,9 @@ impl ValueExpression {
             ValueRoot::Binder(binder) => Expression::identifier(Self::binder(*binder)?),
             _ => return Self::unsupported("unknown codec value root"),
         };
-        self.value
-            .path()
-            .iter()
-            .try_fold(root, |value, field| match field {
-                FieldKey::Named(name) => {
-                    Ok(Expression::property(value, Name::new(name).identifier()?))
-                }
-                FieldKey::Position(position) => Ok(Expression::index(value, *position)),
-                _ => Self::unsupported("unknown codec value field"),
-            })
+        self.value.path().iter().try_fold(root, |value, field| {
+            PropertyKey::from_field(field)?.access(value)
+        })
     }
 
     fn unsupported<T>(shape: &'static str) -> Result<T> {

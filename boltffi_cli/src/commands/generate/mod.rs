@@ -12,7 +12,7 @@ use boltffi_bindgen::CHeaderLowerer;
 use generator::ScanPointerWidth;
 use generator::{GenerateRequest, run_generator};
 use header::HeaderGenerator;
-use languages::{CSharpGenerator, DartGenerator, TypeScriptGenerator};
+use languages::{CSharpGenerator, DartGenerator};
 
 use boltffi_bindgen::target::Target;
 
@@ -55,9 +55,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::Header => {
             run_generator::<HeaderGenerator>(&legacy_request(), options.experimental)
         }
-        GenerateTarget::Typescript => {
-            run_generator::<TypeScriptGenerator>(&legacy_request(), options.experimental)
-        }
+        GenerateTarget::Typescript => ir::run_ir_generation(config, &options),
         GenerateTarget::Dart => {
             run_generator::<DartGenerator>(&legacy_request(), options.experimental)
         }
@@ -121,7 +119,16 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             }
 
             if config.should_process(Target::TypeScript, options.experimental) {
-                run_generator::<TypeScriptGenerator>(&request, options.experimental)?;
+                ir::run_ir_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::Typescript,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        ir: true,
+                        cargo_args: options.cargo_args.clone(),
+                    },
+                )?;
             }
 
             if config.should_process(Target::Dart, options.experimental) {
@@ -314,6 +321,36 @@ enabled = true
         assert!(
             matches!(error, crate::cli::CliError::CommandFailed { command, .. }
                 if command.contains("cargo metadata --format-version 1 --no-deps"))
+        );
+    }
+
+    #[test]
+    fn typescript_generate_uses_ir_route_without_ir_flag() {
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+
+[targets.wasm]
+enabled = false
+"#,
+        );
+
+        let error = super::run_generate_with_output(
+            &config,
+            super::GenerateOptions {
+                target: super::GenerateTarget::Typescript,
+                output: None,
+                experimental: false,
+                ir: false,
+                cargo_args: Vec::new(),
+            },
+        )
+        .expect_err("production TypeScript generation should use the IR route");
+
+        assert!(
+            matches!(error, crate::cli::CliError::CommandFailed { command, status: None }
+                if command == "targets.wasm.enabled = false")
         );
     }
 

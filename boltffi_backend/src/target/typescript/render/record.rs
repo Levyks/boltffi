@@ -1,7 +1,5 @@
 use askama::Template as AskamaTemplate;
-use boltffi_binding::{
-    DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, FieldKey, RecordDecl, Wasm32,
-};
+use boltffi_binding::{DirectRecordDecl, EncodedFieldDecl, EncodedRecordDecl, RecordDecl, Wasm32};
 
 use crate::core::{Diagnostic, Emitted, Error, RenderContext, Result};
 
@@ -78,7 +76,7 @@ impl Record {
                     if field.key() != layout.key() {
                         return Err(Self::error("direct record field layout mismatch"));
                     }
-                    let key = Self::field_key(field.key())?;
+                    let key = PropertyKey::from_field(field.key())?;
                     let local = key.local()?;
                     let padding = layout
                         .offset()
@@ -90,7 +88,7 @@ impl Record {
                     parts.writes.push(Statement::expression(Expression::call(
                         Expression::identifier(writer.clone()),
                         scalar.write_method(),
-                        [key.access(value.clone())]
+                        [key.access(value.clone())?]
                             .into_iter()
                             .collect::<ArgumentList>(),
                     )));
@@ -205,20 +203,12 @@ impl Record {
     }
 
     fn encoded_field(field: &EncodedFieldDecl, context: &RenderContext<Wasm32>) -> Result<Field> {
-        let key = Self::field_key(field.key())?;
+        let key = PropertyKey::from_field(field.key())?;
         Ok(Field {
             local: key.local()?,
             key,
             ty: Type::from_ref(field.ty(), context)?,
         })
-    }
-
-    fn field_key(key: &FieldKey) -> Result<PropertyKey> {
-        match key {
-            FieldKey::Named(name) => Ok(PropertyKey::named(Name::new(name).identifier()?)),
-            FieldKey::Position(position) => Ok(PropertyKey::position(*position)),
-            _ => Err(Self::error("unknown record field key")),
-        }
     }
 
     fn error(shape: &'static str) -> Error {

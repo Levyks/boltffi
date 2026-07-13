@@ -4,10 +4,7 @@ use boltffi_binding::{
 
 use crate::core::{Error, Result};
 
-use super::super::{
-    name_style::Name,
-    syntax::{ArgumentList, Expression, Identifier, IntegerLiteral},
-};
+use super::super::syntax::{ArgumentList, Expression, Identifier, IntegerLiteral, PropertyKey};
 use super::value::ValueExpression;
 
 pub struct Operation {
@@ -72,11 +69,7 @@ impl OpRender for Operation {
     }
 
     fn field(&mut self, base: Self::Expr, field: &FieldKey) -> Self::Expr {
-        match field {
-            FieldKey::Named(name) => Ok(Expression::property(base?, Name::new(name).identifier()?)),
-            FieldKey::Position(position) => Ok(Expression::index(base?, *position)),
-            _ => Err(Self::error("unknown operation field")),
-        }
+        PropertyKey::from_field(field)?.access(base?)
     }
 
     fn intrinsic(&mut self, intrinsic: IntrinsicOp, arguments: Vec<Self::Expr>) -> Self::Expr {

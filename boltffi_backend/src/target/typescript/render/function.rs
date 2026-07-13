@@ -1,10 +1,10 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    CallbackId, ClassId, DirectValueType, DirectVectorElementType, EnumDecl, EnumId, ErrorChannel,
-    ErrorPlacement, ExecutionDecl, ExportedCallable, ExportedMethodDecl, FunctionDecl,
-    HandlePresence, HandleTarget, InitializerDecl, IntoRust, NativeSymbol, ParamPlanRender,
-    Primitive, Receive, RecordDecl, RecordId, ReturnPlanRender, ReturnValueSlot, TypeRef, Wasm32,
-    WasmIncomingClosure, wasm32,
+    CallbackId, CanonicalName, ClassId, DirectValueType, DirectVectorElementType, EnumDecl, EnumId,
+    ErrorChannel, ErrorPlacement, ExecutionDecl, ExportedCallable, ExportedMethodDecl,
+    FunctionDecl, HandlePresence, HandleTarget, InitializerDecl, IntoRust, NativeSymbol,
+    ParamPlanRender, Primitive, Receive, RecordDecl, RecordId, ReturnPlanRender, ReturnValueSlot,
+    TypeRef, Wasm32, WasmIncomingClosure, wasm32,
 };
 
 use crate::core::{CoverageMode, Diagnostic, Emitted, Error, RenderContext, Result};
@@ -54,6 +54,7 @@ struct Return {
 enum ReturnConversion {
     Void,
     Direct,
+    BigInt,
     Boolean,
     String,
     Bytes,
@@ -86,8 +87,19 @@ enum Failure {
     None,
     Encoded {
         value: FailureValue,
-        exception: Exception,
+        action: FailureAction,
     },
+}
+
+#[derive(Clone, Copy)]
+enum FailurePolicy {
+    Throw,
+    ReturnNull,
+}
+
+enum FailureAction {
+    Throw(Exception),
+    ReturnNull,
 }
 
 enum FailureValue {
@@ -110,17 +122,27 @@ struct ParameterRenderer<'context> {
 
 struct ReturnRenderer<'context> {
     context: &'context RenderContext<'context, Wasm32>,
+    asynchronous: bool,
 }
 
 struct CallReceiver {
     parameter: Option<Parameter>,
     arguments: Vec<Expression>,
+    mutation: Option<ReceiverMutation>,
+}
+
+struct ReceiverMutation {
+    ty: TypeName,
+    descriptor: Identifier,
+    reader: Identifier,
+    decode: Expression,
 }
 
 #[derive(Clone, Copy)]
 enum ReceiverOwner {
     Record(RecordId),
-    Enum(EnumId),
+    CStyleEnum(EnumId),
+    DataEnum(EnumId),
 }
 
 impl Function {
@@ -150,20 +172,46 @@ impl Function {
         Self::owned_methods(ReceiverOwner::Record(owner), initializers, methods, context)
     }
 
-    pub fn enum_methods(
+    pub fn c_style_enum_methods(
         owner: EnumId,
         initializers: &[InitializerDecl<Wasm32>],
         methods: &[ExportedMethodDecl<Wasm32, NativeSymbol>],
         context: &RenderContext<Wasm32>,
     ) -> Result<(Vec<MethodDeclaration>, Vec<Diagnostic>)> {
-        Self::owned_methods(ReceiverOwner::Enum(owner), initializers, methods, context)
+        Self::owned_methods(
+            ReceiverOwner::CStyleEnum(owner),
+            initializers,
+            methods,
+            context,
+        )
+    }
+
+    pub fn data_enum_methods(
+        owner: EnumId,
+        initializers: &[InitializerDecl<Wasm32>],
+        methods: &[ExportedMethodDecl<Wasm32, NativeSymbol>],
+        context: &RenderContext<Wasm32>,
+    ) -> Result<(Vec<MethodDeclaration>, Vec<Diagnostic>)> {
+        Self::owned_methods(
+            ReceiverOwner::DataEnum(owner),
+            initializers,
+            methods,
+            context,
+        )
     }
 
     pub fn from_class_initializer(
         initializer: &InitializerDecl<Wasm32>,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
-        Self::from_initializer(initializer, context)
+        Self::from_callable_with_failure(
+            initializer.name(),
+            initializer.symbol().name().as_str(),
+            initializer.callable(),
+            None,
+            FailurePolicy::ReturnNull,
+            context,
+        )
     }
 
     pub fn from_class_method(
@@ -286,7 +334,7 @@ impl Function {
 
     fn from_enum_method(
         method: &ExportedMethodDecl<Wasm32, NativeSymbol>,
-        owner: EnumId,
+        owner: ReceiverOwner,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
         Self::from_callable(
@@ -296,10 +344,24 @@ impl Function {
             method
                 .callable()
                 .receiver()
-                .map(|receive| CallReceiver::value(ReceiverOwner::Enum(owner), receive, context))
+                .map(|receive| CallReceiver::value(owner, receive, context))
                 .transpose()?,
             context,
         )
+    }
+
+    fn from_owned_initializer(
+        initializer: &InitializerDecl<Wasm32>,
+        owner: ReceiverOwner,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<Self> {
+        let mut function = Self::from_initializer(initializer, context)?;
+        if matches!(owner, ReceiverOwner::CStyleEnum(_))
+            && initializer.name() == &CanonicalName::single("new")
+        {
+            function.member = MemberName::parse("fromRaw")?;
+        }
+        Ok(function)
     }
 
     fn render_method(&self) -> Result<MethodDeclaration> {
@@ -336,7 +398,7 @@ impl Function {
             .map(|initializer| {
                 (
                     initializer.name(),
-                    Self::from_initializer(initializer, context),
+                    Self::from_owned_initializer(initializer, owner, context),
                 )
             })
             .chain(methods.iter().map(|method| {
@@ -344,7 +406,9 @@ impl Function {
                     ReceiverOwner::Record(owner) => {
                         Self::from_record_method(method, owner, context)
                     }
-                    ReceiverOwner::Enum(owner) => Self::from_enum_method(method, owner, context),
+                    ReceiverOwner::CStyleEnum(_) | ReceiverOwner::DataEnum(_) => {
+                        Self::from_enum_method(method, owner, context)
+                    }
                 };
                 (method.name(), function)
             }))
@@ -376,7 +440,25 @@ impl Function {
         receiver: Option<CallReceiver>,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
-        let failure = Failure::new(callable.error().channel(), context)?;
+        Self::from_callable_with_failure(
+            name,
+            symbol,
+            callable,
+            receiver,
+            FailurePolicy::Throw,
+            context,
+        )
+    }
+
+    fn from_callable_with_failure(
+        name: &boltffi_binding::CanonicalName,
+        symbol: &str,
+        callable: &ExportedCallable<Wasm32>,
+        receiver: Option<CallReceiver>,
+        failure_policy: FailurePolicy,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<Self> {
+        let failure = Failure::new(callable.error().channel(), failure_policy, context)?;
         let parameters = receiver
             .as_ref()
             .and_then(|receiver| receiver.parameter.clone())
@@ -394,10 +476,10 @@ impl Function {
                 }
             }))
             .collect::<Result<Vec<_>>>()?;
-        let returns = callable
-            .returns()
-            .plan()
-            .render_with(&mut ReturnRenderer { context })?;
+        let returns = callable.returns().plan().render_with(&mut ReturnRenderer {
+            context,
+            asynchronous: matches!(callable.execution(), ExecutionDecl::Asynchronous(_)),
+        })?;
         let arguments = receiver
             .iter()
             .flat_map(|receiver| receiver.arguments.iter().cloned())
@@ -421,7 +503,14 @@ impl Function {
                     .into_iter()
                     .chain(returns.arguments.iter().cloned())
                     .collect::<ArgumentList>();
-                let call = failure.render(Expression::native_call(symbol, arguments), &returns)?;
+                let native_call = Expression::native_call(symbol, arguments);
+                let call = match receiver
+                    .as_ref()
+                    .and_then(|receiver| receiver.mutation.as_ref())
+                {
+                    Some(mutation) => mutation.render(native_call, &returns, &failure)?,
+                    None => failure.render(native_call, &returns)?,
+                };
                 let call = returns
                     .setup
                     .iter()
@@ -433,14 +522,22 @@ impl Function {
                     .collect();
                 (call, false)
             }
-            ExecutionDecl::Asynchronous(protocol) => (
-                returns.render_async(
-                    Expression::native_call(symbol, arguments),
-                    protocol,
-                    &failure,
-                )?,
-                true,
-            ),
+            ExecutionDecl::Asynchronous(protocol) => {
+                if receiver
+                    .as_ref()
+                    .is_some_and(|receiver| receiver.mutation.is_some())
+                {
+                    return Err(Self::unsupported("asynchronous mutable receiver"));
+                }
+                (
+                    returns.render_async(
+                        Expression::native_call(symbol, arguments),
+                        protocol,
+                        &failure,
+                    )?,
+                    true,
+                )
+            }
             _ => return Err(Self::unsupported("unknown execution protocol")),
         };
         let body = parameter_setup
@@ -449,12 +546,17 @@ impl Function {
                 false => vec![Statement::try_finally(call, parameter_cleanup)],
             })
             .collect();
+        let return_type = match receiver.and_then(|receiver| receiver.mutation) {
+            Some(mutation) => mutation.ty,
+            None if failure.returns_null() => returns.ty.clone().nullable(),
+            None => returns.ty,
+        };
         let name = Name::new(name);
         Ok(Self {
             name: name.identifier()?,
             member: name.member()?,
             parameters,
-            returns: returns.ty,
+            returns: return_type,
             body,
             asynchronous,
         })
@@ -474,9 +576,10 @@ impl CallReceiver {
         receive: Receive,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
-        Parameter::receiver(owner, receive, context).map(|parameter| Self {
+        Parameter::receiver(owner, receive, context).map(|(parameter, mutation)| Self {
             parameter: Some(parameter),
             arguments: Vec::new(),
+            mutation,
         })
     }
 
@@ -488,13 +591,84 @@ impl CallReceiver {
                 Identifier::known("_borrowHandle"),
                 ArgumentList::default(),
             )],
+            mutation: None,
         }
+    }
+}
+
+impl ReceiverMutation {
+    fn new(
+        ty: TypeName,
+        read: &boltffi_binding::ReadPlan,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<Self> {
+        let descriptor = Identifier::known("__boltffiReceiverOut");
+        let reader = Identifier::known("__boltffiReceiverReader");
+        Ok(Self {
+            ty,
+            descriptor,
+            decode: read
+                .render_with(&mut Reader::new(reader.clone(), context))?
+                .into_expression(),
+            reader,
+        })
+    }
+
+    fn prepare(&self, parameter: &mut Parameter) {
+        let descriptor = Expression::identifier(self.descriptor.clone());
+        parameter.setup.push(Statement::constant(
+            self.descriptor.clone(),
+            Expression::call(
+                Expression::identifier(Identifier::known("_module")),
+                Identifier::known("allocBufDescriptor"),
+                ArgumentList::default(),
+            ),
+        ));
+        parameter.arguments.push(descriptor.clone());
+        parameter
+            .cleanup
+            .push(Statement::expression(Expression::call(
+                Expression::identifier(Identifier::known("_module")),
+                Identifier::known("freeBuf"),
+                [descriptor].into_iter().collect::<ArgumentList>(),
+            )));
+    }
+
+    fn render(
+        &self,
+        call: Expression,
+        returns: &Return,
+        failure: &Failure,
+    ) -> Result<Vec<Statement>> {
+        if !matches!(returns.conversion, ReturnConversion::Void)
+            || !matches!(failure, Failure::None)
+        {
+            return Err(Function::unsupported("mutable receiver with return value"));
+        }
+        let descriptor = Expression::identifier(self.descriptor.clone());
+        Ok(vec![
+            Statement::expression(Expression::call(
+                Expression::identifier(Identifier::known("_module")),
+                Identifier::known("checkStatus"),
+                [call].into_iter().collect::<ArgumentList>(),
+            )),
+            Statement::constant(
+                self.reader.clone(),
+                Expression::call(
+                    Expression::identifier(Identifier::known("_module")),
+                    Identifier::known("readerFromBuf"),
+                    [descriptor].into_iter().collect::<ArgumentList>(),
+                ),
+            ),
+            Statement::return_value(self.decode.clone()),
+        ])
     }
 }
 
 impl Failure {
     fn new(
         channel: ErrorChannel<'_, Wasm32, boltffi_binding::OutOfRust>,
+        policy: FailurePolicy,
         context: &RenderContext<Wasm32>,
     ) -> Result<Self> {
         match channel {
@@ -509,36 +683,48 @@ impl Failure {
                 let decode = codec.render_with(&mut Reader::new(reader.clone(), context))?;
                 let value = match decode.kind() {
                     Some(ReadKind::String) => FailureValue::String,
-                    Some(ReadKind::Bytes | ReadKind::Primitive(_)) | None => {
-                        FailureValue::Encoded {
-                            reader,
-                            decode: decode.into_expression(),
-                        }
-                    }
+                    Some(
+                        ReadKind::Bytes
+                        | ReadKind::Primitive(_)
+                        | ReadKind::CustomPrimitive(_)
+                        | ReadKind::ErrorRecord(_)
+                        | ReadKind::ErrorEnum(_),
+                    )
+                    | None => FailureValue::Encoded {
+                        reader,
+                        decode: decode.into_expression(),
+                    },
                 };
-                let exception = match ty {
-                    TypeRef::String => Exception::String,
-                    TypeRef::Record(id) => context
-                        .record(*id)
-                        .map(|record| {
-                            Exception::Typed(TypeName::named(format!(
-                                "{}Exception",
-                                Name::new(record.name()).type_name()
-                            )))
-                        })
-                        .ok_or_else(|| Function::unsupported("error record without declaration"))?,
-                    TypeRef::Enum(id) => context
-                        .enumeration(*id)
-                        .map(|enumeration| {
-                            Exception::Typed(TypeName::named(format!(
-                                "{}Exception",
-                                Name::new(enumeration.name()).type_name()
-                            )))
-                        })
-                        .ok_or_else(|| Function::unsupported("error enum without declaration"))?,
-                    _ => return Err(Function::unsupported("error payload type")),
+                let action = match policy {
+                    FailurePolicy::ReturnNull => FailureAction::ReturnNull,
+                    FailurePolicy::Throw => FailureAction::Throw(match ty {
+                        TypeRef::String => Exception::String,
+                        TypeRef::Record(id) => context
+                            .record(*id)
+                            .map(|record| {
+                                Exception::Typed(TypeName::named(format!(
+                                    "{}Exception",
+                                    Name::new(record.name()).type_name()
+                                )))
+                            })
+                            .ok_or_else(|| {
+                                Function::unsupported("error record without declaration")
+                            })?,
+                        TypeRef::Enum(id) => context
+                            .enumeration(*id)
+                            .map(|enumeration| {
+                                Exception::Typed(TypeName::named(format!(
+                                    "{}Exception",
+                                    Name::new(enumeration.name()).type_name()
+                                )))
+                            })
+                            .ok_or_else(|| {
+                                Function::unsupported("error enum without declaration")
+                            })?,
+                        _ => return Err(Function::unsupported("error payload type")),
+                    }),
                 };
-                Ok(Self::Encoded { value, exception })
+                Ok(Self::Encoded { value, action })
             }
             ErrorChannel::Status => Err(Function::unsupported("status error channel")),
             ErrorChannel::Encoded { .. } => Err(Function::unsupported("encoded error placement")),
@@ -549,37 +735,25 @@ impl Failure {
     fn render(&self, call: Expression, returns: &Return) -> Result<Vec<Statement>> {
         match self {
             Self::None => Ok(returns.render(call)),
-            Self::Encoded { value, exception } => {
+            Self::Encoded { value, action } => {
                 let error = Identifier::known("__boltffiError");
                 let error_value = Expression::identifier(error.clone());
-                let (mut failure, value) = match value {
-                    FailureValue::String => (
-                        Vec::new(),
-                        Expression::call(
-                            Expression::identifier(Identifier::known("_module")),
-                            Identifier::known("takePackedWireString"),
-                            [error_value.clone()].into_iter().collect::<ArgumentList>(),
-                        ),
-                    ),
-                    FailureValue::Encoded { reader, decode } => (
-                        vec![Statement::constant(
-                            reader.clone(),
-                            Expression::call(
-                                Expression::identifier(Identifier::known("_module")),
-                                Identifier::known("takePackedBuffer"),
-                                [error_value.clone()].into_iter().collect::<ArgumentList>(),
-                            ),
-                        )],
-                        decode.clone(),
-                    ),
-                };
-                failure.push(Statement::throwing(Expression::construct(
-                    match exception {
-                        Exception::String => TypeName::named("Error"),
-                        Exception::Typed(exception) => exception.clone(),
-                    },
-                    [value].into_iter().collect::<ArgumentList>(),
-                )));
+                let (mut failure, value) = value.render(error_value.clone());
+                match action {
+                    FailureAction::Throw(exception) => {
+                        failure.push(Statement::throwing(Expression::construct(
+                            match exception {
+                                Exception::String => TypeName::named("Error"),
+                                Exception::Typed(exception) => exception.clone(),
+                            },
+                            [value].into_iter().collect::<ArgumentList>(),
+                        )));
+                    }
+                    FailureAction::ReturnNull => {
+                        failure.push(Statement::expression(value));
+                        failure.push(Statement::return_value(Expression::null()));
+                    }
+                }
                 Ok(
                     std::iter::once(Statement::constant(error, call.cast(TypeName::bigint())))
                         .chain(std::iter::once(Statement::when(
@@ -590,6 +764,42 @@ impl Failure {
                         .collect(),
                 )
             }
+        }
+    }
+
+    fn returns_null(&self) -> bool {
+        matches!(
+            self,
+            Self::Encoded {
+                action: FailureAction::ReturnNull,
+                ..
+            }
+        )
+    }
+}
+
+impl FailureValue {
+    fn render(&self, error: Expression) -> (Vec<Statement>, Expression) {
+        match self {
+            Self::String => (
+                Vec::new(),
+                Expression::call(
+                    Expression::identifier(Identifier::known("_module")),
+                    Identifier::known("takePackedWireString"),
+                    [error].into_iter().collect::<ArgumentList>(),
+                ),
+            ),
+            Self::Encoded { reader, decode } => (
+                vec![Statement::constant(
+                    reader.clone(),
+                    Expression::call(
+                        Expression::identifier(Identifier::known("_module")),
+                        Identifier::known("takePackedBuffer"),
+                        [error].into_iter().collect::<ArgumentList>(),
+                    ),
+                )],
+                decode.clone(),
+            ),
         }
     }
 }
@@ -625,30 +835,62 @@ impl Parameter {
         owner: ReceiverOwner,
         receive: Receive,
         context: &RenderContext<Wasm32>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, Option<ReceiverMutation>)> {
         let name = Identifier::known("self");
         match owner {
             ReceiverOwner::Record(id) => match context.record(id) {
-                Some(RecordDecl::Direct(_)) => Self::direct_record(name, id, receive, context),
-                Some(RecordDecl::Encoded(record)) => Self::encoded_type(
+                Some(RecordDecl::Direct(_)) => Self::direct_record(name, id, receive, context)
+                    .map(|parameter| (parameter, None)),
+                Some(RecordDecl::Encoded(record)) => Self::encoded_receiver(
                     name,
                     Name::new(record.name()).type_name(),
+                    record.read(),
                     record.write(),
+                    receive,
                     context,
                 ),
                 _ => Err(Function::unsupported("record without declaration")),
             },
-            ReceiverOwner::Enum(id) => match context.enumeration(id) {
-                Some(EnumDecl::CStyle(_)) => Self::direct_enum(name, id, context),
-                Some(EnumDecl::Data(enumeration)) => Self::encoded_type(
-                    name,
-                    Name::new(enumeration.name()).type_name(),
-                    enumeration.write(),
-                    context,
-                ),
-                _ => Err(Function::unsupported("enum without declaration")),
-            },
+            ReceiverOwner::CStyleEnum(id) | ReceiverOwner::DataEnum(id) => {
+                match context.enumeration(id) {
+                    Some(EnumDecl::CStyle(_)) if matches!(receive, Receive::ByMutRef) => {
+                        Err(Function::unsupported("mutable direct enum receiver"))
+                    }
+                    Some(EnumDecl::CStyle(_)) => {
+                        Self::direct_enum(name, id, context).map(|parameter| (parameter, None))
+                    }
+                    Some(EnumDecl::Data(enumeration)) => Self::encoded_receiver(
+                        name,
+                        Name::new(enumeration.name()).type_name(),
+                        enumeration.read(),
+                        enumeration.write(),
+                        receive,
+                        context,
+                    ),
+                    _ => Err(Function::unsupported("enum without declaration")),
+                }
+            }
         }
+    }
+
+    fn encoded_receiver(
+        name: Identifier,
+        ty: TypeName,
+        read: &boltffi_binding::ReadPlan,
+        write: &boltffi_binding::WritePlan,
+        receive: Receive,
+        context: &RenderContext<Wasm32>,
+    ) -> Result<(Self, Option<ReceiverMutation>)> {
+        let mut parameter = Self::encoded_type(name, ty.clone(), write, context)?;
+        let mutation = match receive {
+            Receive::ByMutRef => {
+                let mutation = ReceiverMutation::new(ty, read, context)?;
+                mutation.prepare(&mut parameter);
+                Some(mutation)
+            }
+            _ => None,
+        };
+        Ok((parameter, mutation))
     }
 
     fn direct(name: Identifier, primitive: Primitive) -> Result<Self> {
@@ -1162,6 +1404,10 @@ impl Return {
         match &self.conversion {
             ReturnConversion::Void => vec![Statement::expression(call)],
             ReturnConversion::Direct => vec![Statement::return_value(call)],
+            ReturnConversion::BigInt => vec![Statement::return_value(Expression::invoke(
+                Identifier::known("BigInt"),
+                [call].into_iter().collect::<ArgumentList>(),
+            ))],
             ReturnConversion::Boolean => vec![Statement::return_value(call.not_zero())],
             ReturnConversion::String => vec![Statement::return_value(Expression::call(
                 Expression::identifier(Identifier::known("_module")),
@@ -1368,11 +1614,17 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         match (slot, ty) {
             (ReturnValueSlot::ReturnSlot, DirectValueType::Primitive(primitive)) => {
+                let asynchronous_pointer =
+                    self.asynchronous && matches!(primitive, Primitive::ISize | Primitive::USize);
                 Ok(Return::new(
-                    Type::primitive(*primitive)?,
-                    match primitive {
-                        Primitive::Bool => ReturnConversion::Boolean,
-                        _ => ReturnConversion::Direct,
+                    match asynchronous_pointer {
+                        true => TypeName::bigint(),
+                        false => Type::primitive(*primitive)?,
+                    },
+                    match (asynchronous_pointer, primitive) {
+                        (true, _) => ReturnConversion::BigInt,
+                        (false, Primitive::Bool) => ReturnConversion::Boolean,
+                        (false, _) => ReturnConversion::Direct,
                     },
                 ))
             }
@@ -1386,15 +1638,23 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
             (ReturnValueSlot::OutPointer, DirectValueType::Primitive(primitive)) => {
                 let scalar = Scalar::new(*primitive)?;
                 let read = scalar.read_method();
+                let asynchronous_pointer =
+                    self.asynchronous && matches!(primitive, Primitive::ISize | Primitive::USize);
                 Ok(Return::out(
-                    scalar.ty(),
+                    match asynchronous_pointer {
+                        true => TypeName::bigint(),
+                        false => scalar.ty(),
+                    },
                     primitive.byte_size::<Wasm32>().get(),
-                    |reader| {
-                        vec![Statement::return_value(Expression::call(
-                            reader,
-                            read,
-                            ArgumentList::default(),
-                        ))]
+                    move |reader| {
+                        let value = Expression::call(reader, read, ArgumentList::default());
+                        vec![Statement::return_value(match asynchronous_pointer {
+                            true => Expression::invoke(
+                                Identifier::known("BigInt"),
+                                [value].into_iter().collect::<ArgumentList>(),
+                            ),
+                            false => value,
+                        })]
                     },
                 ))
             }
@@ -1457,7 +1717,10 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
                 Type::from_ref(ty, self.context)?,
                 ReturnConversion::Bytes,
             )),
-            (ReturnValueSlot::ReturnSlot, Some(ReadKind::Primitive(_)) | None) => Ok(Return::new(
+            (
+                ReturnValueSlot::ReturnSlot,
+                Some(ReadKind::Primitive(_) | ReadKind::CustomPrimitive(_)) | None,
+            ) => Ok(Return::new(
                 Type::from_ref(ty, self.context)?,
                 ReturnConversion::Encoded { reader, decode },
             )),
@@ -1480,7 +1743,13 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
                             Identifier::known("takePackedWireBytes"),
                             [packed].into_iter().collect::<ArgumentList>(),
                         ))],
-                        Some(ReadKind::Primitive(_)) | None => vec![
+                        Some(
+                            ReadKind::Primitive(_)
+                            | ReadKind::CustomPrimitive(_)
+                            | ReadKind::ErrorRecord(_)
+                            | ReadKind::ErrorEnum(_),
+                        )
+                        | None => vec![
                             Statement::constant(
                                 reader,
                                 Expression::call(

@@ -60,26 +60,14 @@ impl host::HostBackend for TypeScriptHost {
 
     fn binding_capabilities(&self) -> HostCapabilities {
         HostCapabilities::new()
-            .in_progress(
-                BindingCapability::Records,
-                "TypeScript records are being migrated",
-            )
-            .in_progress(
-                BindingCapability::Enums,
-                "TypeScript enums are being migrated",
-            )
+            .stable(BindingCapability::Records)
+            .stable(BindingCapability::Enums)
             .stable(BindingCapability::Functions)
-            .in_progress(
-                BindingCapability::Classes,
-                "TypeScript classes are being migrated",
-            )
+            .stable(BindingCapability::Classes)
             .stable(BindingCapability::Callbacks)
             .stable(BindingCapability::Streams)
             .stable(BindingCapability::Constants)
-            .in_progress(
-                BindingCapability::CustomTypes,
-                "TypeScript custom types are being migrated",
-            )
+            .stable(BindingCapability::CustomTypes)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -293,6 +281,21 @@ mod tests {
                     }
 
                     pub fn x_value(&self) -> f64 { self.x }
+
+                }
+
+                #[data]
+                pub struct MutablePoint {
+                    pub x: f64,
+                    pub y: f64,
+                }
+
+                #[data(impl)]
+                impl MutablePoint {
+                    pub fn scale(&mut self, factor: f64) {
+                        self.x *= factor;
+                        self.y *= factor;
+                    }
                 }
 
                 #[data]
@@ -310,6 +313,10 @@ mod tests {
 
                 #[data(impl)]
                 impl Status {
+                    pub fn new(value: i8) -> Self {
+                        if value == 1 { Self::Active } else { Self::Inactive }
+                    }
+
                     pub fn inactive() -> Self { Self::Inactive }
 
                     pub fn is_active(&self) -> bool { matches!(self, Self::Active) }
@@ -393,6 +400,29 @@ mod tests {
         lower::<Wasm32>(&source).expect("source lowers")
     }
 
+    fn custom_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                custom_type!(
+                    pub Timestamp,
+                    remote = TimestampRust,
+                    repr = i64,
+                    into_ffi = timestamp_into_ffi,
+                    try_from_ffi = timestamp_from_ffi
+                );
+
+                #[export]
+                pub fn keep_timestamp(value: TimestampRust) -> TimestampRust { value }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        lower::<Wasm32>(&source).expect("source lowers")
+    }
+
     fn async_bindings() -> Bindings<Wasm32> {
         let source = boltffi_scan::scan_file(
             syn::parse_str(
@@ -405,6 +435,9 @@ mod tests {
 
                 #[export]
                 pub async fn async_values(value: Vec<i32>) -> Vec<i32> { value }
+
+                #[export]
+                pub async fn async_size() -> usize { 2 }
 
                 #[data]
                 #[repr(C)]
@@ -712,7 +745,7 @@ mod tests {
         let output = TypeScriptHost::new("demo")
             .expect("host constructs")
             .into_target()
-            .render_partial(&record_bindings())
+            .render(&record_bindings())
             .expect("target renders");
         let browser = output
             .files()
@@ -750,6 +783,12 @@ mod tests {
         );
         assert!(browser.contents().contains("export const Status ="));
         assert!(browser.contents().contains("Inactive: -1"));
+        assert!(
+            browser
+                .contents()
+                .contains("fromRaw(value: number): Status")
+        );
+        assert!(!browser.contents().contains("new(value: number): Status"));
         assert!(browser.contents().contains("inactive(): Status"));
         assert!(
             browser
@@ -783,11 +822,9 @@ mod tests {
                 .contents()
                 .contains("| { readonly tag: \"ByName\"; readonly name: string }")
         );
-        assert!(
-            browser.contents().contains(
-                "| { readonly tag: \"ByRange\"; readonly 0: number; readonly 1: number };"
-            )
-        );
+        assert!(browser.contents().contains(
+            "| { readonly tag: \"ByRange\"; readonly value0: number; readonly value1: number };"
+        ));
         assert!(browser.contents().contains("case \"ByName\": return"));
         assert!(
             browser
@@ -825,6 +862,24 @@ mod tests {
         assert!(browser.contents().contains("export const Point ="));
         assert!(browser.contents().contains("origin(): Point"));
         assert!(browser.contents().contains("xValue(self: Point): number"));
+        assert!(
+            browser
+                .contents()
+                .contains("scale(self: MutablePoint, factor: number): MutablePoint")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("const __boltffiReceiverOut = _module.allocBufDescriptor();")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("_module.checkStatus((_exports.")
+        );
+        assert!(browser.contents().contains(
+            "const __boltffiReceiverReader = _module.readerFromBuf(__boltffiReceiverOut);"
+        ));
     }
 
     #[test]
@@ -832,7 +887,7 @@ mod tests {
         let output = TypeScriptHost::new("demo")
             .expect("host constructs")
             .into_target()
-            .render_partial(&class_bindings())
+            .render(&class_bindings())
             .expect("target renders");
         let browser = output
             .files()
@@ -878,7 +933,7 @@ mod tests {
         let output = TypeScriptHost::new("demo")
             .expect("host constructs")
             .into_target()
-            .render_partial(&async_bindings())
+            .render(&async_bindings())
             .expect("target renders");
         let browser = output
             .files()
@@ -908,6 +963,16 @@ mod tests {
         assert!(
             browser
                 .contents()
+                .contains("export async function asyncSize(): Promise<bigint>")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("return BigInt(_module.completeAsync(")
+        );
+        assert!(
+            browser
+                .contents()
                 .contains("(__boltffiAwaitedFuture, __boltffiStatus, __boltffiReturnWriter.ptr)")
         );
         assert!(
@@ -929,7 +994,7 @@ mod tests {
         let output = TypeScriptHost::new("demo")
             .expect("host constructs")
             .into_target()
-            .render_partial(&fallible_bindings())
+            .render(&fallible_bindings())
             .expect("target renders");
         let browser = output
             .files()
@@ -974,8 +1039,14 @@ mod tests {
         assert!(
             browser
                 .contents()
-                .contains("static tryNew(value: number): FallibleCounter")
+                .contains("static tryNew(value: number): FallibleCounter | null")
         );
+        assert!(
+            browser
+                .contents()
+                .contains("_module.takePackedWireString(__boltffiError);")
+        );
+        assert!(browser.contents().contains("return null;"));
         assert!(
             browser
                 .contents()
@@ -994,5 +1065,30 @@ mod tests {
         assert!(browser.contents().contains(
             "_module.takePackedBuffer(_module.readerFromWriter(__boltffiReturnWriter).readU64())"
         ));
+    }
+
+    #[test]
+    fn renders_custom_types_from_their_shared_representation_codec() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render(&custom_bindings())
+            .expect("target renders");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+
+        assert!(
+            browser
+                .contents()
+                .contains("export type Timestamp = bigint;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("export function keepTimestamp(value: Timestamp): Timestamp")
+        );
     }
 }

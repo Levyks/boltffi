@@ -102,7 +102,10 @@ function generatedTypeMemberName(item, generatedSurface) {
   if (generatedSurface.classes[item.typeName]) {
     return item.rustName === "new" ? "new" : escapeTsName(item.generatedName);
   }
-  if (generatedSurface.namespaces[item.typeName] && item.rustName === "new") {
+  if (
+    item.rustName === "new" &&
+    (generatedSurface.namespaces[item.typeName] || generatedSurface.companions[item.typeName]?.has("fromRaw"))
+  ) {
     return "fromRaw";
   }
   if (generatedSurface.companions[item.typeName]) {
@@ -230,7 +233,7 @@ function parseGeneratedSurface(source) {
     [...source.matchAll(/^export declare const (\w+): \{([\s\S]*?)^\};/gm)].map((match) => [
       match[1],
       new Set(
-        [...match[2].matchAll(/^\s+"?(\w+)"?(?:\(|: \()/gm)].map((methodMatch) => methodMatch[1]),
+        [...match[2].matchAll(/^\s+(?:readonly\s+)?"?(\w+)"?(?:\(|: \()/gm)].map((methodMatch) => methodMatch[1]),
       ),
     ]),
   );

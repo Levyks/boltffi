@@ -113,10 +113,7 @@ impl TypeRefRender for TypeRefRenderer<'_> {
         declaration
             .representation()
             .render_with(self)
-            .map(|representation| RenderedType {
-                name: Name::new(declaration.name()).type_name(),
-                scalar: representation.scalar,
-            })
+            .map(|_| RenderedType::new(Name::new(declaration.name()).type_name()))
     }
 
     fn builtin(&mut self, kind: BuiltinType) -> Self::Output {

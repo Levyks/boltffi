@@ -168,7 +168,14 @@ impl<'plan> StreamItemPlanRender<'plan, Wasm32> for ItemRenderer<'_> {
             Some(ReadKind::Primitive(primitive)) => {
                 Some(Scalar::new(primitive)?.read_array_method())
             }
-            Some(ReadKind::String | ReadKind::Bytes) | None => None,
+            Some(
+                ReadKind::String
+                | ReadKind::Bytes
+                | ReadKind::CustomPrimitive(_)
+                | ReadKind::ErrorRecord(_)
+                | ReadKind::ErrorEnum(_),
+            )
+            | None => None,
         };
         Ok(Item {
             ty: Type::from_ref(ty, self.context)?,

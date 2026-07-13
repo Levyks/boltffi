@@ -891,6 +891,7 @@ mod tests {
             generation.metadata_build(),
             BindingMetadataBuild::new("selected/Cargo.toml")
                 .target("x86_64-unknown-linux-gnu")
+                .surface(BindingMetadataSurface::Native)
                 .cargo_args(["--features".to_string(), "ffi".to_string()])
                 .cargo_environment([(
                     OsString::from("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"),

@@ -14,8 +14,11 @@ use super::super::{
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ReadKind {
     Primitive(Primitive),
+    CustomPrimitive(Primitive),
     String,
     Bytes,
+    ErrorRecord(RecordId),
+    ErrorEnum(EnumId),
 }
 
 pub struct ReadExpression {
@@ -41,39 +44,42 @@ impl<'context> Reader<'context> {
     }
 
     fn record(&self, id: RecordId) -> Result<ReadExpression> {
-        let codec = self
-            .context
-            .record(id)
-            .map(|record| Name::new(record.name()).codec_identifier())
-            .ok_or(Error::UnsupportedTarget {
-                target: "typescript",
-                shape: "record without declaration",
-            })??;
-        Ok(ReadExpression::dynamic(Expression::call(
-            Expression::identifier(codec),
+        let record = self.context.record(id).ok_or(Error::UnsupportedTarget {
+            target: "typescript",
+            shape: "record without declaration",
+        })?;
+        let expression = Expression::call(
+            Expression::identifier(Name::new(record.name()).codec_identifier()?),
             Identifier::known("decode"),
             [Expression::identifier(self.reader.clone())]
                 .into_iter()
                 .collect::<ArgumentList>(),
-        )))
+        );
+        Ok(match record.is_error_payload() {
+            true => ReadExpression::error_record(id, expression),
+            false => ReadExpression::dynamic(expression),
+        })
     }
 
     fn enumeration(&self, id: EnumId) -> Result<ReadExpression> {
-        let codec = self
+        let enumeration = self
             .context
             .enumeration(id)
-            .map(|enumeration| Name::new(enumeration.name()).codec_identifier())
             .ok_or(Error::UnsupportedTarget {
                 target: "typescript",
                 shape: "enum without declaration",
-            })??;
-        Ok(ReadExpression::dynamic(Expression::call(
-            Expression::identifier(codec),
+            })?;
+        let expression = Expression::call(
+            Expression::identifier(Name::new(enumeration.name()).codec_identifier()?),
             Identifier::known("decode"),
             [Expression::identifier(self.reader.clone())]
                 .into_iter()
                 .collect::<ArgumentList>(),
-        )))
+        );
+        Ok(match enumeration.is_error_payload() {
+            true => ReadExpression::error_enum(id, expression),
+            false => ReadExpression::dynamic(expression),
+        })
     }
 }
 
@@ -111,6 +117,30 @@ impl ReadExpression {
         Self {
             expression,
             kind: None,
+        }
+    }
+
+    fn error_record(id: RecordId, expression: Expression) -> Self {
+        Self {
+            expression,
+            kind: Some(ReadKind::ErrorRecord(id)),
+        }
+    }
+
+    fn error_enum(id: EnumId, expression: Expression) -> Self {
+        Self {
+            expression,
+            kind: Some(ReadKind::ErrorEnum(id)),
+        }
+    }
+
+    fn custom(self) -> Self {
+        Self {
+            kind: self.kind.map(|kind| match kind {
+                ReadKind::Primitive(primitive) => ReadKind::CustomPrimitive(primitive),
+                other => other,
+            }),
+            expression: self.expression,
         }
     }
 }
@@ -176,7 +206,7 @@ impl CodecRead for Reader<'_> {
                 target: "typescript",
                 shape: "custom type without declaration",
             })?;
-        representation
+        representation.map(ReadExpression::custom)
     }
 
     fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
@@ -210,6 +240,17 @@ impl CodecRead for Reader<'_> {
                 Scalar::new(primitive)?.read_array_method(),
                 ArgumentList::default(),
             ),
+            Some(ReadKind::CustomPrimitive(primitive)) => Expression::static_call(
+                "Array",
+                Identifier::known("from"),
+                [Expression::call(
+                    Expression::identifier(self.reader.clone()),
+                    Scalar::new(primitive)?.read_array_method(),
+                    ArgumentList::default(),
+                )]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            ),
             _ => Expression::call(
                 Expression::identifier(self.reader.clone()),
                 Identifier::known("readArray"),
@@ -226,12 +267,64 @@ impl CodecRead for Reader<'_> {
     }
 
     fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
+        let err = err?;
+        let error = match err.kind() {
+            Some(ReadKind::String) => Expression::construct(
+                "Error",
+                [err.into_expression()]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+            ),
+            Some(ReadKind::ErrorRecord(id)) => {
+                let name = self
+                    .context
+                    .record(id)
+                    .map(|record| Name::new(record.name()).type_name())
+                    .ok_or(Error::UnsupportedTarget {
+                        target: "typescript",
+                        shape: "error record without declaration",
+                    })?;
+                Expression::construct(
+                    format!("{name}Exception"),
+                    [err.into_expression()]
+                        .into_iter()
+                        .collect::<ArgumentList>(),
+                )
+            }
+            Some(ReadKind::ErrorEnum(id)) => {
+                let name = self
+                    .context
+                    .enumeration(id)
+                    .map(|enumeration| Name::new(enumeration.name()).type_name())
+                    .ok_or(Error::UnsupportedTarget {
+                        target: "typescript",
+                        shape: "error enum without declaration",
+                    })?;
+                Expression::construct(
+                    format!("{name}Exception"),
+                    [err.into_expression()]
+                        .into_iter()
+                        .collect::<ArgumentList>(),
+                )
+            }
+            _ => Expression::construct(
+                "Error",
+                [Expression::invoke(
+                    Identifier::known("String"),
+                    [err.into_expression()]
+                        .into_iter()
+                        .collect::<ArgumentList>(),
+                )]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            ),
+        };
         Ok(ReadExpression::dynamic(Expression::call(
             Expression::identifier(self.reader.clone()),
             Identifier::known("readResult"),
             [
                 Expression::lambda(ok?.into_expression()),
-                Expression::lambda(err?.into_expression()),
+                Expression::lambda(error),
             ]
             .into_iter()
             .collect::<ArgumentList>(),

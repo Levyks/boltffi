@@ -22,7 +22,6 @@ pub mod dart;
 pub mod jni;
 pub mod kmp;
 pub mod kotlin;
-pub mod typescript;
 
 use std::collections::HashMap;
 
