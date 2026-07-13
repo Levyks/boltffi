@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AsyncFutureManager, BoltFFIModule } from "../src/module.js";
 import { CallbackRegistry } from "../src/callback.js";
-import { StreamSession } from "../src/stream.js";
+import { StreamPollManager, StreamPollResult, StreamSession } from "../src/stream.js";
 import {
   WireReader,
   WireWriter,
@@ -97,7 +97,8 @@ function createHarness(): RuntimeHarness {
 
   const instance = { exports } as unknown as WebAssembly.Instance;
   const asyncManager = new AsyncFutureManager();
-  return { module: new BoltFFIModule(instance, asyncManager), freedAllocations };
+  const streamManager = new StreamPollManager();
+  return { module: new BoltFFIModule(instance, asyncManager, streamManager), freedAllocations };
 }
 
 describe("WireReader and WireWriter", () => {
@@ -142,11 +143,22 @@ describe("WireReader and WireWriter", () => {
     writer.writeOptional<number>(null, (value) => writer.writeI32(value));
     writer.writeOptional<number>(33, (value) => writer.writeI32(value));
     writer.writeArray<number>([4, 5, 6], (value) => writer.writeU32(value));
+    writer.writeU32(2);
+    writer.writeString("first");
+    writer.writeI32(10);
+    writer.writeString("second");
+    writer.writeI32(20);
 
     const reader = new WireReader(writer.getBytes().buffer);
     expect(reader.readOptional(() => reader.readI32())).toBeNull();
     expect(reader.readOptional(() => reader.readI32())).toBe(33);
     expect(reader.readArray(() => reader.readU32())).toEqual([4, 5, 6]);
+    expect(reader.readMap(() => reader.readString(), () => reader.readI32())).toEqual(
+      new Map([
+        ["first", 10],
+        ["second", 20],
+      ])
+    );
     expect(wireOptionalSize(null, () => 8)).toBe(1);
     expect(wireOptionalSize(33n, () => 8)).toBe(9);
   });
@@ -533,6 +545,8 @@ describe("StreamSession", () => {
     const session = new StreamSession(
       7,
       (_handle, maxCount) => [1, 2, 3].slice(0, maxCount),
+      () => {},
+      new StreamPollManager(),
       unsubscribe,
       free
     );
@@ -549,17 +563,66 @@ describe("StreamSession", () => {
   });
 
   it("delivers asynchronously produced items through AsyncIterator", async () => {
-    const batches: number[][] = [[], [9]];
+    const batches: number[][] = [[]];
+    const polls = new StreamPollManager();
+    const poll = vi.fn();
+    const unsubscribe = vi.fn((handle: number) => polls.wake(handle, StreamPollResult.Closed));
+    const free = vi.fn();
     const session = new StreamSession(
       3,
       () => batches.shift() ?? [],
-      () => {},
-      () => {}
+      poll,
+      polls,
+      unsubscribe,
+      free
     );
     const iterator = session[Symbol.asyncIterator]();
+    const next = iterator.next();
 
-    expect(await iterator.next()).toEqual({ value: 9, done: false });
+    await Promise.resolve();
+    expect(poll).toHaveBeenCalledOnce();
+    expect(poll).toHaveBeenCalledWith(3);
+    batches.push([9]);
+    polls.wake(3, StreamPollResult.Ready);
+
+    expect(await next).toEqual({ value: 9, done: false });
     await iterator.return?.();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(free).toHaveBeenCalledOnce();
+  });
+
+  it("finishes an invalid subscription without polling or lifecycle calls", async () => {
+    const poll = vi.fn();
+    const unsubscribe = vi.fn();
+    const free = vi.fn();
+    const session = new StreamSession(
+      0,
+      () => [],
+      poll,
+      new StreamPollManager(),
+      unsubscribe,
+      free
+    );
+
+    expect(await session[Symbol.asyncIterator]().next()).toEqual({ value: undefined, done: true });
+    expect(poll).not.toHaveBeenCalled();
+    expect(unsubscribe).not.toHaveBeenCalled();
+    expect(free).not.toHaveBeenCalled();
+  });
+
+  it("wakes and frees a parked iterator when unsubscribed", async () => {
+    const polls = new StreamPollManager();
+    const unsubscribe = vi.fn((handle: number) => polls.wake(handle, StreamPollResult.Closed));
+    const free = vi.fn();
+    const session = new StreamSession(11, () => [], () => {}, polls, unsubscribe, free);
+    const next = session[Symbol.asyncIterator]().next();
+
+    await Promise.resolve();
+    session.unsubscribe();
+
+    expect(await next).toEqual({ value: undefined, done: true });
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(free).toHaveBeenCalledOnce();
   });
 });
 

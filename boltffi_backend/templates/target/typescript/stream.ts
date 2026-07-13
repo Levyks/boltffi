@@ -26,6 +26,10 @@ const {{ factory }} = ({% match owner %}{% when Some with (_) %}ownerHandle: num
 {% when None %}      return [];
 {% endmatch %}{% endmatch %}{% endif %}    },
     (subscription) => {
+      (_exports.{{ poll }} as Function)(subscription);
+    },
+    _module.streamManager,
+    (subscription) => {
       (_exports.{{ unsubscribe }} as Function)(subscription);
     },
     (subscription) => {

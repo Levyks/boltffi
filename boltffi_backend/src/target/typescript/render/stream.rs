@@ -26,6 +26,7 @@ pub struct Stream {
     callback: bool,
     subscribe: Identifier,
     pop_batch: Identifier,
+    poll: Identifier,
     unsubscribe: Identifier,
     free: Identifier,
 }
@@ -73,6 +74,7 @@ impl Stream {
             callback: matches!(mode, StreamMode::Callback),
             subscribe: Identifier::parse(protocol.subscribe().name().as_str())?,
             pop_batch: Identifier::parse(protocol.pop_batch().name().as_str())?,
+            poll: Identifier::parse(protocol.poll().name().as_str())?,
             unsubscribe: Identifier::parse(protocol.unsubscribe().name().as_str())?,
             free: Identifier::parse(protocol.free().name().as_str())?,
         })

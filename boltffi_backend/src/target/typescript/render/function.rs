@@ -285,7 +285,7 @@ impl Function {
             Some(CallReceiver::callback()),
             context,
         )?
-        .render_method()
+        .render_class_method(false)
     }
 
     pub fn constant_accessor(

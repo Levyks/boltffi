@@ -1,5 +1,6 @@
 import { WireReader, WireWriter } from "./wire.js";
 import type { WasmWireWriterAllocator } from "./wire.js";
+import { StreamPollManager } from "./stream.js";
 
 const FFI_BUF_DESCRIPTOR_SIZE = 16;
 const FFI_STATUS_SIZE = 4;
@@ -173,6 +174,7 @@ export type WriterAlloc = WireWriter;
 export class BoltFFIModule {
   readonly exports: BoltFFIExports;
   readonly asyncManager: AsyncFutureManager;
+  readonly streamManager: StreamPollManager;
   private _memory: WebAssembly.Memory;
   private _encoder: TextEncoder;
   private _decoder: TextDecoder;
@@ -193,13 +195,18 @@ export class BoltFFIModule {
   private _optionF64Values = new Float64Array(this._optionF64Storage);
   private _returnSlotAddr: number = 0;
 
-  constructor(instance: WebAssembly.Instance, asyncManager: AsyncFutureManager) {
+  constructor(
+    instance: WebAssembly.Instance,
+    asyncManager: AsyncFutureManager,
+    streamManager: StreamPollManager
+  ) {
     this.exports = instance.exports as BoltFFIExports;
     this._memory = this.exports.memory;
     this._encoder = new TextEncoder();
     this._decoder = new TextDecoder("utf-8");
     this._writerPool = new Map();
     this.asyncManager = asyncManager;
+    this.streamManager = streamManager;
     asyncManager.setModule(this);
     this._returnSlotAddr = this.exports.boltffi_wasm_return_slot_addr();
   }
@@ -1441,10 +1448,12 @@ export async function instantiateBoltFFI(
   }
 
   const asyncManager = new AsyncFutureManager();
+  const streamManager = new StreamPollManager();
 
   const importObject: WebAssembly.Imports = {
     env: {
       __boltffi_wake: (handle: number) => asyncManager.wake(handle),
+      __boltffi_stream_wake: (handle: number, result: number) => streamManager.wake(handle, result),
       ...(imports?.env ?? {}),
     },
     __wbindgen_placeholder__: createImportModuleProxy("__wbindgen_placeholder__"),
@@ -1452,7 +1461,7 @@ export async function instantiateBoltFFI(
   };
 
   const { instance } = await WebAssembly.instantiate(wasmSource, importObject);
-  const module = new BoltFFIModule(instance, asyncManager);
+  const module = new BoltFFIModule(instance, asyncManager, streamManager);
 
   const actualVersion = module.exports.boltffi_wasm_abi_version();
   if (actualVersion !== expectedVersion) {
@@ -1470,10 +1479,12 @@ export function instantiateBoltFFISync(
   imports?: BoltFFIImports
 ): BoltFFIModule {
   const asyncManager = new AsyncFutureManager();
+  const streamManager = new StreamPollManager();
 
   const importObject: WebAssembly.Imports = {
     env: {
       __boltffi_wake: (handle: number) => asyncManager.wake(handle),
+      __boltffi_stream_wake: (handle: number, result: number) => streamManager.wake(handle, result),
       ...(imports?.env ?? {}),
     },
     __wbindgen_placeholder__: createImportModuleProxy("__wbindgen_placeholder__"),
@@ -1482,7 +1493,7 @@ export function instantiateBoltFFISync(
 
   const wasmModule = new WebAssembly.Module(source);
   const instance = new WebAssembly.Instance(wasmModule, importObject);
-  const module = new BoltFFIModule(instance, asyncManager);
+  const module = new BoltFFIModule(instance, asyncManager, streamManager);
 
   const actualVersion = module.exports.boltffi_wasm_abi_version();
   if (actualVersion !== expectedVersion) {

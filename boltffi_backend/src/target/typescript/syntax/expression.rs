@@ -26,6 +26,17 @@ impl Expression {
         Self(literal.to_string())
     }
 
+    pub fn array(elements: impl IntoIterator<Item = Self>) -> Self {
+        Self(format!(
+            "[{}]",
+            elements
+                .into_iter()
+                .map(|element| element.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
     pub fn native_call(symbol: Identifier, arguments: ArgumentList) -> Self {
         Self(format!("(_exports.{symbol} as Function)({arguments})"))
     }

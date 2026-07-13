@@ -5541,6 +5541,10 @@ mod tests {
         );
         assert!(rendered.contains("subscription . pop_batch_into (__boltffi_stream_output_slots)"));
         assert!(rendered.contains("Passable < Out = StreamItem >"));
+        assert!(
+            rendered.contains("callback : :: boltffi :: __private :: StreamContinuationCallback")
+        );
+        assert!(rendered.contains("subscription . poll (callback_data , callback)"));
         assert!(!rendered.contains("< i32 as :: boltffi :: __private :: Passable > :: pack"));
         assert!(rendered.contains("Arc :: from_raw"));
     }
@@ -6014,6 +6018,13 @@ mod tests {
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
         assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_pop_batch"));
         assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_subscribe"));
+        assert!(
+            rendered.contains(
+                "fn boltffi_stream_demo_engine_profiles_poll (subscription_handle : u32)"
+            )
+        );
+        assert!(rendered.contains("subscription . poll_wasm (subscription_handle)"));
+        assert!(!rendered.contains("StreamContinuationCallback"));
         assert!(rendered.contains(") -> u32"));
         assert!(rendered.contains("subscription_handle : u32"));
         assert!(rendered.contains(") -> u64"));

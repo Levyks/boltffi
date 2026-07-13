@@ -41,6 +41,17 @@ impl TypeName {
         ))
     }
 
+    pub fn tuple(elements: impl IntoIterator<Item = Self>) -> Self {
+        Self(format!(
+            "[{}]",
+            elements
+                .into_iter()
+                .map(|element| element.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
     pub fn array(element: Self) -> Self {
         Self(format!("{element}[]"))
     }

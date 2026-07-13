@@ -208,6 +208,17 @@ export class WireReader {
     return result;
   }
 
+  readMap<K, V>(readKey: () => K, readValue: () => V): Map<K, V> {
+    const len = this.readU32();
+    const result = new Map<K, V>();
+    let index = 0;
+    while (index < len) {
+      result.set(readKey(), readValue());
+      index += 1;
+    }
+    return result;
+  }
+
   readResult<T, E>(readOk: () => T, readErr: () => E): T {
     const tag = this.readU8();
     if (tag === 0) {

@@ -289,8 +289,13 @@ impl CodecRead for Reader<'_> {
         Ok(ReadExpression::dynamic(expression))
     }
 
-    fn tuple(&mut self, _elements: Vec<Self::Expr>) -> Self::Expr {
-        Self::unsupported("tuple codec read")
+    fn tuple(&mut self, elements: Vec<Self::Expr>) -> Self::Expr {
+        elements
+            .into_iter()
+            .map(|element| element.map(ReadExpression::into_expression))
+            .collect::<Result<Vec<_>>>()
+            .map(Expression::array)
+            .map(ReadExpression::dynamic)
     }
 
     fn result(&mut self, ok: Self::Expr, err: Self::Expr) -> Self::Expr {
@@ -358,7 +363,16 @@ impl CodecRead for Reader<'_> {
         )))
     }
 
-    fn map(&mut self, _kind: MapKind, _key: Self::Expr, _value: Self::Expr) -> Self::Expr {
-        Self::unsupported("map codec read")
+    fn map(&mut self, _kind: MapKind, key: Self::Expr, value: Self::Expr) -> Self::Expr {
+        Ok(ReadExpression::dynamic(Expression::call(
+            Expression::identifier(self.reader.clone()),
+            Identifier::known("readMap"),
+            [
+                Expression::lambda(key?.into_expression()),
+                Expression::lambda(value?.into_expression()),
+            ]
+            .into_iter()
+            .collect::<ArgumentList>(),
+        )))
     }
 }

@@ -95,13 +95,13 @@ impl Parameter {
                     .ok_or_else(|| Self::unsupported("imported enum without declaration"))?;
                 Ok(Self {
                     name: name.clone(),
-                    public_type,
+                    public_type: public_type.clone(),
                     bindings: vec![Binding {
                         name: name.clone(),
                         carrier_type: TypeName::number(),
                     }],
                     setup: Vec::new(),
-                    argument: Expression::identifier(name),
+                    argument: Expression::identifier(name).cast(public_type),
                 })
             }
             DirectValueType::Record(id) => {

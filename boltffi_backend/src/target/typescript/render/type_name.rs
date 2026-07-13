@@ -142,8 +142,13 @@ impl TypeRefRender for TypeRefRenderer<'_> {
         }
     }
 
-    fn tuple(&mut self, _elements: Vec<Self::Output>) -> Self::Output {
-        Type::unsupported("tuple type")
+    fn tuple(&mut self, elements: Vec<Self::Output>) -> Self::Output {
+        elements
+            .into_iter()
+            .map(|element| element.map(RenderedType::into_name))
+            .collect::<Result<Vec<_>>>()
+            .map(TypeName::tuple)
+            .map(RenderedType::new)
     }
 
     fn result(&mut self, ok: Self::Output, err: Self::Output) -> Self::Output {
@@ -151,7 +156,10 @@ impl TypeRefRender for TypeRefRenderer<'_> {
         ok.map(|ok| RenderedType::new(ok.name))
     }
 
-    fn map(&mut self, _key: Self::Output, _value: Self::Output) -> Self::Output {
-        Type::unsupported("map type")
+    fn map(&mut self, key: Self::Output, value: Self::Output) -> Self::Output {
+        Ok(RenderedType::new(TypeName::generic(
+            "Map",
+            [key?.into_name(), value?.into_name()],
+        )))
     }
 }

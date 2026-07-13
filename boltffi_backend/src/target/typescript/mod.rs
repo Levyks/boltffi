@@ -532,6 +532,56 @@ mod tests {
         lower::<Wasm32>(&source).expect("source lowers")
     }
 
+    fn stream_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                use std::sync::Arc;
+                use boltffi::EventSubscription;
+
+                #[data]
+                #[repr(C)]
+                pub struct Point {
+                    pub x: f64,
+                    pub y: f64,
+                }
+
+                #[data]
+                pub struct Message {
+                    pub text: String,
+                    pub values: Vec<i32>,
+                }
+
+                pub struct EventBus;
+
+                #[export]
+                impl EventBus {
+                    pub fn new() -> Self { Self }
+
+                    #[ffi_stream(item = i32)]
+                    pub fn values(&self) -> Arc<EventSubscription<i32>> { todo!() }
+
+                    #[ffi_stream(item = Point, mode = "batch")]
+                    pub fn points(&self) -> Arc<EventSubscription<Point>> { todo!() }
+
+                    #[ffi_stream(item = Message, mode = "callback")]
+                    pub fn messages(&self) -> Arc<EventSubscription<Message>> { todo!() }
+
+                    #[ffi_stream(item = (i32, String))]
+                    pub fn tuples(&self) -> Arc<EventSubscription<(i32, String)>> { todo!() }
+
+                    #[ffi_stream(item = std::collections::HashMap<String, i32>)]
+                    pub fn maps(&self) -> Arc<EventSubscription<std::collections::HashMap<String, i32>>> { todo!() }
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        lower::<Wasm32>(&source).expect("source lowers")
+    }
+
     #[test]
     fn renders_primitive_functions_through_the_wasm_surface() {
         let output = TypeScriptHost::new("demo")
@@ -686,6 +736,40 @@ mod tests {
         assert!(browser.contents().contains(
             "export function echoVecVecI32(value: Array<Array<number> | Int32Array>): Array<Array<number> | Int32Array>"
         ));
+    }
+
+    #[test]
+    fn renders_stream_modes_and_items_from_shared_plans() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render(&stream_bindings())
+            .expect("target renders");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+        let contents = browser.contents();
+
+        assert!(contents.contains("values(): AsyncIterable<number>;"));
+        assert!(contents.contains("points(): StreamSession<Point>;"));
+        assert!(
+            contents.contains(
+                "messages(callback: (item: Message) => void): StreamCancellable<Message>;"
+            )
+        );
+        assert!(contents.contains(
+            "(_exports.boltffi_stream_demo_event_bus_values_poll as Function)(subscription);"
+        ));
+        assert!(contents.contains("_module.streamManager,"));
+        assert!(contents.contains("tuples(): AsyncIterable<[number, string]>;"));
+        assert!(contents.contains("[reader.readI32(), reader.readString()]"));
+        assert!(contents.contains("maps(): AsyncIterable<Map<string, number>>;"));
+        assert!(
+            contents.contains("reader.readMap(() => reader.readString(), () => reader.readI32())")
+        );
+        assert!(!contents.contains("setTimeout"));
     }
 
     #[test]
