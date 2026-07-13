@@ -109,7 +109,8 @@ impl Stream {
         poll.validate_return(&ReturnType::Void)?;
         unsubscribe.validate_return(&ReturnType::Void)?;
         free.validate_return(&ReturnType::Void)?;
-        let receiver = Expression::this().member(Identifier::known("handle"));
+        let receiver =
+            Expression::this().call(Identifier::known("rawHandle"), ArgumentList::default());
         let subscription = Expression::identifier(Identifier::known("streamHandle"));
         let max_count = Expression::identifier(Identifier::known("maxCount"));
         let continuation = Expression::identifier(Identifier::known("continuation"));

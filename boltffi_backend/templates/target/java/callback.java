@@ -91,6 +91,7 @@ final class {{ callback.handle_name() }} implements {{ callback.name() }}, AutoC
     }
 
     long rawHandle() {
+        if (closed.get()) throw new IllegalStateException("callback handle is closed");
         return handle;
     }
 

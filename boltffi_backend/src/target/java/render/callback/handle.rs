@@ -120,17 +120,19 @@ impl HandleMethod {
             .transpose()?;
         let call = native.call(
             &TypeIdentifier::known("Native", version),
-            std::iter::once(Expression::this().member(Identifier::known("handle")))
-                .chain(
-                    parameters
-                        .iter()
-                        .flat_map(|parameter| parameter.arguments.iter().cloned()),
-                )
-                .chain(
-                    callback_data
-                        .as_ref()
-                        .map(|name| Expression::identifier(name.clone())),
-                ),
+            std::iter::once(
+                Expression::this().call(Identifier::known("rawHandle"), ArgumentList::default()),
+            )
+            .chain(
+                parameters
+                    .iter()
+                    .flat_map(|parameter| parameter.arguments.iter().cloned()),
+            )
+            .chain(
+                callback_data
+                    .as_ref()
+                    .map(|name| Expression::identifier(name.clone())),
+            ),
         )?;
         let protected = parameters
             .iter()

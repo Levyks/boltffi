@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 {% endfor %}    }
 {% endfor %}
     {{ class.handle() }} rawHandle() {
+        if (closed.get()) throw new IllegalStateException("{{ class.name() }} is closed");
         return handle;
     }
 

@@ -1434,6 +1434,10 @@ fn java_target_renders_class_ownership_and_handle_calls_from_binding_ir() {
     assert!(counter.contains("throw new RuntimeException(\"Factory constructor failed\")"));
     assert!(counter.contains("if (!closed.compareAndSet(false, true)) return;"));
     assert!(counter.contains("Native.boltffi_release_class_demo_counter(this.handle);"));
+    assert!(
+        counter
+            .contains("if (closed.get()) throw new IllegalStateException(\"Counter is closed\");")
+    );
     assert!(counter.contains("public int get()"));
     assert!(counter.contains("public void set(int value)"));
     assert!(
@@ -1497,7 +1501,10 @@ fn java_target_renders_jvm_owned_callbacks_from_binding_ir() {
     assert!(returned.contains("return ((ValueCallbackHandle) value).rawHandle();"));
     assert!(returned.contains("Native.boltffi_callback_handle_release(handle)"));
     assert!(returned.contains(
-        "return Native.boltffi_callback_handle_demo_value_callback_apply(this.handle, value)"
+        "return Native.boltffi_callback_handle_demo_value_callback_apply(this.rawHandle(), value)"
+    ));
+    assert!(returned.contains(
+        "if (closed.get()) throw new IllegalStateException(\"callback handle is closed\");"
     ));
     assert!(module.contains("public static ValueCallback makeCallback(int delta)"));
     assert!(module.contains("return ValueCallbackBridge.wrap"));
@@ -1601,6 +1608,11 @@ fn java_target_renders_streams_from_shared_protocols_and_item_plans() {
         event_bus.contains("public StreamSubscription<BoltFFIResult<Integer, String>> results(")
     );
     assert!(event_bus.contains("public StreamSubscription<Integer> valueBatches()"));
+    assert!(
+        event_bus
+            .contains("Native.boltffi_stream_demo_event_bus_values_subscribe(this.rawHandle())")
+    );
+    assert!(!event_bus.contains("subscribe(this.handle)"));
     assert!(event_bus.contains("BoltFfiStreamBatches.ints(bytes)"));
     assert!(event_bus.contains("DirectVectorCodec.readRecords(bytes, 16"));
     assert!(event_bus.contains("BoltFfiStreamBatches.map("));
