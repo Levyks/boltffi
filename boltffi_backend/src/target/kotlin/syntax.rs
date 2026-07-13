@@ -338,6 +338,14 @@ impl Expression {
         Self(format!("{receiver}?.{property}"))
     }
 
+    pub fn safe_call(
+        receiver: impl fmt::Display,
+        method: Identifier,
+        arguments: ArgumentList,
+    ) -> Self {
+        Self(format!("{receiver}?.{method}({arguments})"))
+    }
+
     pub fn add(self, other: Self) -> Self {
         Self(format!("{self} + {other}"))
     }

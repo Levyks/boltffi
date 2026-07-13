@@ -119,14 +119,21 @@ fn kotlin_target_encodes_nullable_primitives_as_compact_wire() {
 fn kotlin_target_renders_class_handles_and_associated_callables() {
     let rendered = rendered_fixture("exports/kotlin_class_handles");
 
-    // Instance methods must reach the native handle through the closed-flag
-    // guard so use-after-close raises instead of dereferencing freed memory.
+    // Every handle crossing the boundary must reach the native call through the
+    // closed-flag guard so use-after-close raises instead of dereferencing freed
+    // memory -- in argument position (`swap(closedOther)`) as much as receiver
+    // position. `boltffiHandle` is not matched by the raw `.handle` assertions
+    // below, so they stay honest about unguarded reads.
     assert!(rendered.contains("internal fun boltffiHandle(): Long {"));
     assert!(rendered.contains("check(!__boltffi_closed.get()) { \"Engine is closed\" }"));
     assert!(
         rendered.contains("Native.boltffi_method_class_demo_engine_value(this.boltffiHandle())")
     );
-    assert!(!rendered.contains("(this.handle)"));
+    assert!(!rendered.contains("this.handle"));
+    assert!(rendered.contains("other.boltffiHandle()"));
+    assert!(rendered.contains("other?.boltffiHandle() ?: 0L"));
+    assert!(!rendered.contains("other.handle"));
+    assert!(!rendered.contains("other?.handle"));
 
     insta::assert_snapshot!(rendered);
 }
