@@ -565,6 +565,18 @@ export class WireWriter {
     }
   }
 
+  writeMap<K, V>(
+    values: ReadonlyMap<K, V>,
+    writeKey: (key: K) => void,
+    writeValue: (value: V) => void
+  ): void {
+    this.writeU32(values.size);
+    values.forEach((value, key) => {
+      writeKey(key);
+      writeValue(value);
+    });
+  }
+
   writeResult<T, E = never>(
     value: T | WireResult<T, E> | Error,
     writeOk: (v: T) => void,
@@ -624,6 +636,18 @@ export function wireOptionalSize<T>(value: T | null, size: (value: T) => number)
 
 export function wireArraySize<T>(values: readonly T[], size: (value: T) => number): number {
   return values.reduce((bytes, value) => bytes + size(value), 4);
+}
+
+export function wireMapSize<K, V>(
+  values: ReadonlyMap<K, V>,
+  keySize: (key: K) => number,
+  valueSize: (value: V) => number
+): number {
+  let bytes = 4;
+  values.forEach((value, key) => {
+    bytes += keySize(key) + valueSize(value);
+  });
+  return bytes;
 }
 
 export function wireResultSize<T, E = never>(

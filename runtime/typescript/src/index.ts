@@ -3,6 +3,7 @@ export {
   WireWriter,
   utf8ByteCount,
   wireArraySize,
+  wireMapSize,
   matchWireResult,
   wireOk,
   wireErr,

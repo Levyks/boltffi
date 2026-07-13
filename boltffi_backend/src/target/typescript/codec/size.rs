@@ -274,13 +274,31 @@ impl CodecSize for Sizer<'_> {
 
     fn map(
         &mut self,
-        _kind: MapKind,
-        _value: &ValueRef,
-        _key_binder: BinderId,
-        _key: Self::Expr,
-        _value_binder: BinderId,
-        _map_value: Self::Expr,
+        kind: MapKind,
+        value: &ValueRef,
+        key_binder: BinderId,
+        key: Self::Expr,
+        value_binder: BinderId,
+        map_value: Self::Expr,
     ) -> Self::Expr {
-        Self::unsupported("map codec size")
+        match kind {
+            MapKind::Hash => Ok(SizeExpression::dynamic(Expression::invoke(
+                Identifier::known("wireMapSize"),
+                [
+                    self.value(value)?,
+                    Expression::parameter_lambda(
+                        ValueExpression::binder(key_binder)?,
+                        key?.into_expression(),
+                    ),
+                    Expression::parameter_lambda(
+                        ValueExpression::binder(value_binder)?,
+                        map_value?.into_expression(),
+                    ),
+                ]
+                .into_iter()
+                .collect::<ArgumentList>(),
+            ))),
+            MapKind::BTree => Self::unsupported("BTreeMap codec size"),
+        }
     }
 }

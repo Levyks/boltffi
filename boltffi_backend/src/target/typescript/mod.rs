@@ -223,6 +223,11 @@ mod tests {
 
                 #[export]
                 pub fn echo_vec_vec_i32(value: Vec<Vec<i32>>) -> Vec<Vec<i32>> { value }
+
+                #[export]
+                pub fn echo_hash_map(
+                    value: std::collections::HashMap<String, Vec<i32>>,
+                ) -> std::collections::HashMap<String, Vec<i32>> { value }
                 "#,
             )
             .expect("valid source"),
@@ -735,6 +740,18 @@ mod tests {
         );
         assert!(browser.contents().contains(
             "export function echoVecVecI32(value: Array<Array<number> | Int32Array>): Array<Array<number> | Int32Array>"
+        ));
+        assert!(browser.contents().contains(
+            "export function echoHashMap(value: Map<string, Array<number> | Int32Array>): Map<string, Array<number> | Int32Array>"
+        ));
+        assert!(browser.contents().contains("wireMapSize(value,"));
+        assert!(
+            browser
+                .contents()
+                .contains("__boltffi_value_writer.writeMap(value,")
+        );
+        assert!(browser.contents().contains(
+            "__boltffiReader.readMap(() => __boltffiReader.readString(), () => __boltffiReader.readI32Array())"
         ));
     }
 

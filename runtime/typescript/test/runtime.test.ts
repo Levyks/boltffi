@@ -7,6 +7,7 @@ import {
   WireWriter,
   utf8ByteCount,
   wireArraySize,
+  wireMapSize,
   wireErr,
   wireOk,
   wireOptionalSize,
@@ -161,6 +162,31 @@ describe("WireReader and WireWriter", () => {
     );
     expect(wireOptionalSize(null, () => 8)).toBe(1);
     expect(wireOptionalSize(33n, () => 8)).toBe(9);
+  });
+
+  it("encodes and decodes maps without intermediate entry arrays", () => {
+    const values = new Map([
+      ["first", [1, 2]],
+      ["second", [3]],
+    ]);
+    const writer = new WireWriter();
+    writer.writeMap(
+      values,
+      (key) => writer.writeString(key),
+      (value) => writer.writeArray(value, (item) => writer.writeI32(item))
+    );
+
+    expect(writer.len).toBe(
+      wireMapSize(values, (key) => 4 + utf8ByteCount(key), (value) => 4 + value.length * 4)
+    );
+
+    const reader = new WireReader(writer.getBytes().buffer);
+    expect(
+      reader.readMap(
+        () => reader.readString(),
+        () => reader.readArray(() => reader.readI32())
+      )
+    ).toEqual(values);
   });
 
   it("decodes primitive sequences through bulk array readers", () => {
