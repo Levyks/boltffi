@@ -1561,8 +1561,6 @@ fn java_target_rejects_callback_methods_shadowing_handle_members() {
         "{error:?}"
     );
 
-    // A callback that never crosses out of Rust has no handle class, so the
-    // reserved names stay available.
     render(
         r#"
         #[export]

@@ -67,9 +67,6 @@ fn kotlin_target_renders_callback_encoded_result_returns() {
 fn kotlin_target_renders_callback_handle_returns() {
     let rendered = rendered_fixture("callback/callback_handle_return");
 
-    // The closed flag must be an AtomicBoolean so a racing close() cannot
-    // double-release the native handle and the flag write is visible to
-    // requireOpen() on other threads.
     assert!(rendered.contains("if (__boltffi_closed.compareAndSet(false, true)) {"));
     assert!(rendered.contains("check(!__boltffi_closed.get()) { \"callback handle is closed\" }"));
     assert!(!rendered.contains("private var closed"));

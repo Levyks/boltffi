@@ -3,11 +3,8 @@ use crate::{
     target::kotlin::syntax::{Identifier, TypeName},
 };
 
-/// Rejects exported members that would duplicate a declaration emitted by the
-/// class or callback-handle template (`close()`, `boltffiHandle()`, ...),
-/// since the generated Kotlin would not compile. Only zero-parameter members
-/// collide -- overloads that take parameters are legal Kotlin, so callers pass
-/// the names of their zero-parameter members only.
+/// Rejects members that would duplicate a generated declaration such as
+/// `close()`. Only zero-parameter members collide; overloads are legal Kotlin.
 pub fn validate_reserved_members<'a>(
     scope: &TypeName,
     reserved: &[&str],

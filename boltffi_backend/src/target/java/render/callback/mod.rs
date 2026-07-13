@@ -260,9 +260,7 @@ impl Callback {
     }
 
     pub fn signatures(&self) -> Vec<ErasedSignature> {
-        // The handle class implements every interface method next to its own
-        // `close()` and `rawHandle()`, so those names are reserved whenever the
-        // handle class is emitted.
+        // `close()` and `rawHandle()` are reserved only when the handle class is emitted.
         let reserved = match self.handle_methods.is_empty() {
             true => &[][..],
             false => &["close", "rawHandle"][..],

@@ -120,11 +120,6 @@ fn kotlin_target_encodes_nullable_primitives_as_compact_wire() {
 fn kotlin_target_renders_class_handles_and_associated_callables() {
     let rendered = rendered_fixture("exports/kotlin_class_handles");
 
-    // Every handle crossing the boundary must reach the native call through the
-    // closed-flag guard so use-after-close raises instead of dereferencing freed
-    // memory -- in argument position (`swap(closedOther)`) as much as receiver
-    // position. `boltffiHandle` is not matched by the raw `.handle` assertions
-    // below, so they stay honest about unguarded reads.
     assert!(rendered.contains("internal fun boltffiHandle(): Long {"));
     assert!(rendered.contains("check(!__boltffi_closed.get()) { \"Engine is closed\" }"));
     assert!(
@@ -203,7 +198,6 @@ fn kotlin_target_rejects_methods_shadowing_generated_class_members() {
         "{error:?}"
     );
 
-    // Overloads with parameters are legal Kotlin and must keep rendering.
     render(
         r#"
         pub struct Engine {
