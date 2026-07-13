@@ -115,7 +115,7 @@ impl Inline {
         Ok(Self {
             name: Name::new(declaration.name()).function()?,
             ty: KotlinType::type_ref(ty, context)?,
-            value: DefaultExpression::render(ty, value)?,
+            value: DefaultExpression::render(ty, value, context)?,
         })
     }
 

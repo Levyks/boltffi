@@ -5,6 +5,7 @@ mod name_style;
 mod primitive;
 mod render;
 mod syntax;
+mod tuple;
 
 use std::path::PathBuf;
 

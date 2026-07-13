@@ -2,6 +2,12 @@ private object Utf8Codec {
     fun maxBytes(value: String): Int = value.length * 3
 }
 
+private val <First, Second> Pair<First, Second>.field0: First get() = first
+private val <First, Second> Pair<First, Second>.field1: Second get() = second
+private val <First, Second, Third> Triple<First, Second, Third>.field0: First get() = first
+private val <First, Second, Third> Triple<First, Second, Third>.field1: Second get() = second
+private val <First, Second, Third> Triple<First, Second, Third>.field2: Third get() = third
+
 class FfiException(message: String) : RuntimeException(message)
 
 internal class BoltFfiErrorBufferException(val bytes: ByteArray) : RuntimeException("BoltFFI call failed")

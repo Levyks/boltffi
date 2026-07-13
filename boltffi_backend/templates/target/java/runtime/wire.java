@@ -90,6 +90,21 @@ final class WireReader {
         return values;
     }
 
+    <K, V> java.util.Map<K, V> readMap(WireRead<K> readKey, WireRead<V> readValue) {
+        int length = readCount();
+        java.util.HashMap<K, V> values = new java.util.HashMap<>(mapCapacity(length));
+        int index = 0;
+        while (index < length) {
+            K key = readKey.read();
+            if (values.containsKey(key)) {
+                throw new IllegalArgumentException("duplicate wire map key");
+            }
+            values.put(key, readValue.read());
+            index += 1;
+        }
+        return values;
+    }
+
     java.util.List<String> readStringSequence() {
         int length = readCount();
         java.util.ArrayList<String> values = new java.util.ArrayList<>(length);
@@ -182,6 +197,10 @@ final class WireReader {
         }
         return length;
     }
+
+    private int mapCapacity(int count) {
+        return count < 3 ? count + 1 : Math.min(1 << 30, (int) Math.ceil(count / 0.75d));
+    }
 }
 
 final class BoltFfiErrorBufferException extends RuntimeException {
@@ -253,6 +272,20 @@ final class WireWriter {
         while (index < values.size()) {
             write.write(values.get(index));
             index += 1;
+        }
+    }
+
+    <K, V> void writeMap(
+        java.util.Map<K, V> values,
+        WireWrite<K> writeKey,
+        WireWrite<V> writeValue
+    ) {
+        writeInt(values.size());
+        java.util.Iterator<java.util.Map.Entry<K, V>> entries = values.entrySet().iterator();
+        while (entries.hasNext()) {
+            java.util.Map.Entry<K, V> entry = entries.next();
+            writeKey.write(entry.getKey());
+            writeValue.write(entry.getValue());
         }
     }
 
@@ -329,6 +362,21 @@ final class WireSizes {
         while (index < values.size()) {
             total = Math.addExact(total, size.size(values.get(index)));
             index += 1;
+        }
+        return total;
+    }
+
+    static <K, V> int map(
+        java.util.Map<K, V> values,
+        WireSize<K> keySize,
+        WireSize<V> valueSize
+    ) {
+        int total = 4;
+        java.util.Iterator<java.util.Map.Entry<K, V>> entries = values.entrySet().iterator();
+        while (entries.hasNext()) {
+            java.util.Map.Entry<K, V> entry = entries.next();
+            total = Math.addExact(total, keySize.size(entry.getKey()));
+            total = Math.addExact(total, valueSize.size(entry.getValue()));
         }
         return total;
     }

@@ -230,6 +230,15 @@ impl TypeName {
         })
     }
 
+    pub fn parameterized(base: impl fmt::Display, arguments: Vec<Self>) -> Self {
+        let arguments = arguments
+            .into_iter()
+            .map(|argument| argument.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Self::new(format!("{base}<{arguments}>"))
+    }
+
     pub fn list(element: Self) -> Self {
         Self::new(format!("List<{element}>"))
     }

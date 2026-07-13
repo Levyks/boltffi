@@ -12,6 +12,7 @@ use crate::{
         primitive::KotlinPrimitive,
         render::Enumeration,
         syntax::{ArgumentList, Expression, Identifier, Statement},
+        tuple::Arity,
     },
 };
 
@@ -430,8 +431,11 @@ impl CodecWrite for Writer<'_> {
         })]
     }
 
-    fn tuple(&mut self, _value: &ValueRef, _elements: Vec<Vec<Self::Stmt>>) -> Vec<Self::Stmt> {
-        Self::unsupported("tuple wire write")
+    fn tuple(&mut self, _value: &ValueRef, elements: Vec<Vec<Self::Stmt>>) -> Vec<Self::Stmt> {
+        match Arity::from_count(elements.len()) {
+            Ok(_) => elements.into_iter().flatten().collect(),
+            Err(error) => vec![Err(error)],
+        }
     }
 
     fn result(
