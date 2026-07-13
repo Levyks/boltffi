@@ -13,7 +13,7 @@ use crate::{
         KotlinFactoryStyle, KotlinHost,
         name_style::Name,
         render::function::{ExportedCall, ExportedCallRenderer, ReceiverCarrier},
-        syntax::{Expression, Identifier, Statement, TypeName},
+        syntax::{ArgumentList, Expression, Identifier, Statement, TypeName},
     },
 };
 
@@ -61,7 +61,11 @@ impl Class {
             static_methods: Self::methods(decl.methods(), None, host, bridge, context)?,
             instance_methods: Self::methods(
                 decl.methods(),
-                Some(Expression::property("this", Identifier::parse("handle")?)),
+                Some(Expression::call(
+                    "this",
+                    Identifier::parse("boltffiHandle")?,
+                    ArgumentList::from_iter([]),
+                )),
                 host,
                 bridge,
                 context,
