@@ -47,7 +47,7 @@ export class StreamPollManager {
   }
 }
 
-export class StreamSession<T> implements AsyncIterable<T>, Disposable {
+export class StreamSession<T> implements AsyncIterable<T> {
   private closed: boolean;
   private unsubscribed = false;
 
@@ -75,10 +75,6 @@ export class StreamSession<T> implements AsyncIterable<T>, Disposable {
 
   consume(callback: (item: T) => void): StreamCancellable<T> {
     return new StreamCancellable(this, callback);
-  }
-
-  [Symbol.dispose](): void {
-    this.dispose();
   }
 
   dispose(): void {
@@ -119,7 +115,7 @@ export class StreamSession<T> implements AsyncIterable<T>, Disposable {
   }
 }
 
-export class StreamCancellable<T> implements Disposable {
+export class StreamCancellable<T> {
   readonly done: Promise<void>;
 
   constructor(
@@ -131,10 +127,6 @@ export class StreamCancellable<T> implements Disposable {
 
   cancel(): void {
     this.session.dispose();
-  }
-
-  [Symbol.dispose](): void {
-    this.cancel();
   }
 
   private async consume(callback: (item: T) => void): Promise<void> {

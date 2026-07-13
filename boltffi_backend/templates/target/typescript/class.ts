@@ -25,10 +25,6 @@ export class {{ name }} {
     return value === null ? 0 : value._borrowHandle();
   }
 
-  [Symbol.dispose](): void {
-    this.dispose();
-  }
-
   dispose(): void {
     if (this._disposed) {
       return;

@@ -110,10 +110,6 @@ class {{ local.proxy }} implements {{ name }} {
     {{ local.finalizer }}?.register(this, handle, this);
   }
 
-  [Symbol.dispose](): void {
-    this.dispose();
-  }
-
   dispose(): void {
     if (this._disposed) {
       return;

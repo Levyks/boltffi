@@ -6020,7 +6020,7 @@ mod tests {
         assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_subscribe"));
         assert!(
             rendered.contains(
-                "fn boltffi_stream_demo_engine_profiles_poll (subscription_handle : u32)"
+                "fn boltffi_stream_demo_engine_profiles_poll (subscription_handle : u32 ,)"
             )
         );
         assert!(rendered.contains("subscription . poll_wasm (subscription_handle)"));
