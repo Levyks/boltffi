@@ -184,6 +184,14 @@ impl CodecRead for Reader<'_> {
         )))
     }
 
+    fn interned_string(&mut self, _static_values: &[String]) -> Self::Expr {
+        // TypeScript does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString codec read reached TypeScript renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self) -> Self::Expr {
         Ok(ReadExpression::bytes(Expression::call(
             Expression::identifier(self.reader.clone()),

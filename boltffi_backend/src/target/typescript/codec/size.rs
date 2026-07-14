@@ -147,6 +147,14 @@ impl CodecSize for Sizer<'_> {
         Ok(SizeExpression::utf8_string())
     }
 
+    fn interned_string(&mut self, _static_values: &[String], _value: &ValueRef) -> Self::Expr {
+        // TypeScript does not advertise InternedString capability; the capability gate
+        // ensures this branch is never reached for valid bindings.
+        unreachable!(
+            "InternedString codec size reached TypeScript renderer: host does not advertise InternedString capability"
+        )
+    }
+
     fn bytes(&mut self, value: &ValueRef) -> Self::Expr {
         Ok(SizeExpression::bytes(Expression::integer(4).add(
             Expression::property(self.value(value)?, Identifier::known("length")),
