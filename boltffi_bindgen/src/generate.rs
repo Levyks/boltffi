@@ -11,9 +11,10 @@ use boltffi_backend::target::{
     kotlin::{KotlinApiStyle, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost},
     python::PythonCExtHost,
     swift::SwiftHost,
+    typescript::TypeScriptHost,
 };
 use boltffi_backend::{CustomTypeMapping, GeneratedOutput, Target as BackendTarget};
-use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface};
+use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface, Wasm32};
 use thiserror::Error;
 
 use crate::metadata::{BindingMetadataBuild, BindingMetadataBuildError};
@@ -33,6 +34,7 @@ use crate::target::Target;
 pub struct Generation {
     manifest_path: PathBuf,
     triple: Option<String>,
+    binding_surface: Option<BindingMetadataSurface>,
     coverage: CoverageMode,
     cargo_args: Vec<String>,
     cargo_environment: Vec<(OsString, OsString)>,
@@ -68,6 +70,8 @@ pub struct Generation {
     kmp_min_sdk: Option<u32>,
     kmp_kotlin_options: KotlinOptions,
     kmp_support_mode: KmpSupportMode,
+    typescript_module: Option<String>,
+    typescript_runtime_package: Option<String>,
 }
 
 impl Generation {
@@ -76,6 +80,7 @@ impl Generation {
         Self {
             manifest_path: manifest_path.into(),
             triple: None,
+            binding_surface: None,
             coverage: CoverageMode::Complete,
             cargo_args: Vec::new(),
             cargo_environment: Vec::new(),
@@ -111,12 +116,20 @@ impl Generation {
             kmp_min_sdk: None,
             kmp_kotlin_options: KotlinOptions::default(),
             kmp_support_mode: KmpSupportMode::Strict,
+            typescript_module: None,
+            typescript_runtime_package: None,
         }
     }
 
     /// Builds for a Cargo target triple.
     pub fn triple(mut self, triple: impl Into<String>) -> Self {
         self.triple = Some(triple.into());
+        self
+    }
+
+    #[allow(missing_docs)]
+    pub fn binding_surface(mut self, surface: BindingMetadataSurface) -> Self {
+        self.binding_surface = Some(surface);
         self
     }
 
@@ -343,6 +356,18 @@ impl Generation {
         self
     }
 
+    #[allow(missing_docs)]
+    pub fn typescript_module(mut self, module: impl Into<String>) -> Self {
+        self.typescript_module = Some(module.into());
+        self
+    }
+
+    #[allow(missing_docs)]
+    pub fn typescript_runtime_package(mut self, package: impl Into<String>) -> Self {
+        self.typescript_runtime_package = Some(package.into());
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
@@ -351,7 +376,8 @@ impl Generation {
                 self.render_native_bindings(target, &bindings)
             }
             Target::Swift => self.render_swift(),
-            Target::TypeScript | Target::Header | Target::Dart | Target::CSharp => {
+            Target::TypeScript => self.render_typescript(),
+            Target::Header | Target::Dart | Target::CSharp => {
                 Err(GenerationError::UnsupportedTarget { target })
             }
         }
@@ -516,6 +542,26 @@ impl Generation {
         self.render_backend(&target, &bindings)
     }
 
+    fn render_typescript(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Wasm32>()?;
+        self.render_typescript_bindings(&bindings)
+    }
+
+    fn render_typescript_bindings(
+        &self,
+        bindings: &Bindings<Wasm32>,
+    ) -> Result<GeneratedOutput, GenerationError> {
+        let module = self.typescript_module.as_deref().unwrap_or("boltffi");
+        let host = TypeScriptHost::new(module)
+            .map_err(GenerationError::Render)?
+            .runtime_package(
+                self.typescript_runtime_package
+                    .as_deref()
+                    .unwrap_or("@boltffi/runtime"),
+            );
+        self.render_backend(&host.into_target(), bindings)
+    }
+
     fn render_c_header_bindings(
         &self,
         bindings: &Bindings<Native>,
@@ -633,7 +679,9 @@ impl Generation {
     }
 
     fn bindings<S: Surface>(&self) -> Result<Bindings<S>, GenerationError> {
-        let surface = BindingMetadataSurface::from_target_triple(self.triple.as_deref());
+        let surface = self
+            .binding_surface
+            .unwrap_or_else(|| BindingMetadataSurface::from_target_triple(self.triple.as_deref()));
         self.metadata_build()
             .read()?
             .into_iter()
@@ -643,7 +691,11 @@ impl Generation {
     }
 
     fn metadata_build(&self) -> BindingMetadataBuild {
+        let surface = self
+            .binding_surface
+            .unwrap_or_else(|| BindingMetadataSurface::from_target_triple(self.triple.as_deref()));
         let mut build = BindingMetadataBuild::new(&self.manifest_path)
+            .surface(surface)
             .cargo_environment(self.cargo_environment.clone());
         if !self.cargo_args.is_empty() {
             build = build.cargo_args(self.cargo_args.clone());
@@ -738,10 +790,28 @@ mod tests {
         )])
     }
 
+    fn primitive_function_bindings_wasm32() -> Bindings<Wasm32> {
+        bindings_for_functions_wasm32(vec![primitive_function(
+            "demo::add",
+            "add",
+            vec![
+                ("left", SourcePrimitive::I32),
+                ("right", SourcePrimitive::I32),
+            ],
+            SourcePrimitive::I32,
+        )])
+    }
+
     fn bindings_for_functions(functions: Vec<SourceFunctionDef>) -> Bindings<Native> {
         let mut source = SourceContract::new(SourcePackageInfo::new("demo", None));
         source.functions = functions;
         boltffi_binding::lower::<Native>(&source).expect("primitive function should lower")
+    }
+
+    fn bindings_for_functions_wasm32(functions: Vec<SourceFunctionDef>) -> Bindings<Wasm32> {
+        let mut source = SourceContract::new(SourcePackageInfo::new("demo", None));
+        source.functions = functions;
+        boltffi_binding::lower::<Wasm32>(&source).expect("primitive function should lower")
     }
 
     fn primitive_function(
@@ -821,6 +891,7 @@ mod tests {
             generation.metadata_build(),
             BindingMetadataBuild::new("selected/Cargo.toml")
                 .target("x86_64-unknown-linux-gnu")
+                .surface(BindingMetadataSurface::Native)
                 .cargo_args(["--features".to_string(), "ffi".to_string()])
                 .cargo_environment([(
                     OsString::from("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"),
@@ -883,6 +954,28 @@ mod tests {
         assert!(file(&output, "jni/jni_glue.c").contains(
             "JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1add"
         ));
+    }
+
+    #[test]
+    fn typescript_generation_wires_primitive_bindings_through_wasm32() {
+        let bindings = primitive_function_bindings_wasm32();
+        let output = Generation::new("Cargo.toml")
+            .typescript_module("demo")
+            .typescript_runtime_package("@example/runtime")
+            .render_typescript_bindings(&bindings)
+            .expect(
+                "primitive TypeScript bindings should render through the production target route",
+            );
+
+        assert_eq!(output_paths(&output), vec!["demo.ts", "demo_node.ts"]);
+        assert!(file(&output, "demo.ts").contains("from \"@example/runtime\""));
+        assert!(
+            file(&output, "demo.ts")
+                .contains("export function add(left: number, right: number): number")
+        );
+        assert!(
+            file(&output, "demo.ts").contains("_exports.boltffi_function_demo_add as Function")
+        );
     }
 
     #[test]

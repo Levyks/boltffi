@@ -17,6 +17,7 @@ use crate::{
             enumeration::Enumeration, record::Record,
         },
         syntax::TypeName,
+        tuple::Arity,
     },
 };
 
@@ -201,8 +202,14 @@ impl TypeRefRender for KotlinTypeRef<'_> {
         }
     }
 
-    fn tuple(&mut self, _elements: Vec<Self::Output>) -> Self::Output {
-        Err(KotlinHost::unsupported("tuple type"))
+    fn tuple(&mut self, elements: Vec<Self::Output>) -> Self::Output {
+        let arity = Arity::from_count(elements.len())?;
+        elements
+            .into_iter()
+            .map(|element| element.map(ApiType::into_type))
+            .collect::<Result<Vec<_>>>()
+            .and_then(|elements| arity.type_name(elements))
+            .map(ApiType::new)
     }
 
     fn result(&mut self, ok: Self::Output, err: Self::Output) -> Self::Output {

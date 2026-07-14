@@ -18,6 +18,7 @@ use boltffi_bindgen::render::kotlin::{
     KotlinDesktopLoader as BindgenKotlinDesktopLoader, KotlinOptions,
 };
 use boltffi_bindgen::target::Target;
+use boltffi_binding::BindingMetadataSurface;
 
 use crate::build::BindingExpansion;
 use crate::cargo::Cargo;
@@ -91,14 +92,48 @@ pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<(
         GenerateTarget::Java => generate_java(config, options),
         GenerateTarget::Kotlin => generate_kotlin(config, options),
         GenerateTarget::KotlinMultiplatform => generate_kmp(config, options),
+        GenerateTarget::Typescript => generate_typescript(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
-                "--ir is only available for swift, python, java, kotlin, and kmp, not {}",
+                "--ir is only available for swift, python, java, kotlin, kmp, and typescript, not {}",
                 target_label(other)
             ),
             status: None,
         }),
     }
+}
+
+fn generate_typescript(config: &Config, options: &GenerateOptions) -> Result<()> {
+    if !config.is_wasm_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.wasm.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
+    let expansion = BindingExpansion::resolve_for_commands(
+        config,
+        &["build", "generate"],
+        &options.cargo_args,
+    )?;
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.wasm_typescript_output());
+
+    expansion
+        .generation()
+        .binding_surface(BindingMetadataSurface::Wasm32)
+        .coverage_mode(CoverageMode::Partial)
+        .typescript_module(config.wasm_typescript_module_name())
+        .typescript_runtime_package(config.wasm_runtime_package())
+        .render(Target::TypeScript)
+        .and_then(|output| {
+            print_coverage("typescript", &output);
+            Generation::write_output(output, &output_directory)
+        })
+        .map(drop)
+        .map_err(|error| generation_error("typescript", error))
 }
 
 fn generate_java(config: &Config, options: &GenerateOptions) -> Result<()> {
@@ -844,6 +879,36 @@ version = "0.1.0"
             error,
             CliError::CommandFailed { command, status: None }
                 if command == "both targets.java.jvm.enabled and targets.java.android.enabled are false"
+        ));
+    }
+
+    #[test]
+    fn ir_generation_accepts_typescript_target_before_cargo_probe() {
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+
+[targets.wasm]
+enabled = false
+"#,
+        );
+        let error = run_ir_generation(
+            &config,
+            &GenerateOptions {
+                target: GenerateTarget::Typescript,
+                output: None,
+                experimental: false,
+                ir: true,
+                cargo_args: Vec::new(),
+            },
+        )
+        .expect_err("disabled TypeScript IR generation should fail before cargo probing");
+
+        assert!(matches!(
+            error,
+            CliError::CommandFailed { command, status: None }
+                if command == "targets.wasm.enabled = false"
         ));
     }
 

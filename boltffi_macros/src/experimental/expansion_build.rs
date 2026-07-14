@@ -20,6 +20,7 @@ use crate::experimental::{
 
 pub enum Item {
     Inactive,
+    Dependency,
     Preserve,
     Tokens(TokenStream),
     Error(TokenStream),
@@ -38,7 +39,7 @@ pub fn item() -> Item {
             .render()
             .map(Item::Tokens)
             .unwrap_or_else(|error| Item::Error(error.into_compile_error())),
-        Ok(None) => Item::Inactive,
+        Ok(None) => Item::Dependency,
         Err(error) => Item::Error(error.into_compile_error()),
     }
 }

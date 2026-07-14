@@ -349,7 +349,6 @@ mod tests {
         type Surface = Native;
         type Input = Bindings<Native>;
         type Contract = NativeContract;
-        type Syntax = TestSyntax;
 
         fn build_contract(&self, _input: &Self::Input) -> Result<Self::Contract> {
             Ok(NativeContract {

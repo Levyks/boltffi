@@ -67,7 +67,7 @@ use crate::{
 };
 
 use super::{
-    LowerError, error::UnsupportedType, ids::DeclarationIds, index::Index, records,
+    LowerError, codecs, error::UnsupportedType, ids::DeclarationIds, index::Index, records,
     surface::SurfaceLower, symbol::SymbolAllocator,
 };
 
@@ -141,24 +141,24 @@ enum ValueSpecialization {
 }
 
 impl ValueSpecialization {
-    fn from_type_expr(
+    fn from_type_expr<S: SurfaceLower>(
         index: &Index,
         ids: &DeclarationIds,
         type_expr: &TypeExpr,
     ) -> Result<Option<Self>, LowerError> {
-        Self::from_parameter(index, ids, type_expr, Receive::ByValue)
+        Self::from_parameter::<S>(index, ids, type_expr, Receive::ByValue)
     }
 
-    fn from_parameter(
+    fn from_parameter<S: SurfaceLower>(
         index: &Index,
         ids: &DeclarationIds,
         type_expr: &TypeExpr,
         receive: Receive,
     ) -> Result<Option<Self>, LowerError> {
         match (type_expr, receive) {
-            (TypeExpr::Option(inner), Receive::ByValue) => {
-                Ok(Self::primitive(inner).map(Self::ScalarOption))
-            }
+            (TypeExpr::Option(inner), Receive::ByValue) => Ok(Self::primitive(inner)
+                .and_then(S::scalar_option)
+                .map(Self::ScalarOption)),
             (TypeExpr::Vec(inner), Receive::ByValue) => {
                 Self::direct_vector_element(index, ids, inner)
                     .map(|element| element.map(Self::DirectVector))
@@ -217,9 +217,22 @@ pub fn lower_exported_method<S: SurfaceLower>(
     start_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters =
-        params::lower::<S, IntoRust>(index, ids, allocator, owner, &method.parameters)?;
-    let (returns, error) = returns::lower::<S, _>(index, ids, allocator, owner, &method.returns)?;
+    let parameters = params::lower::<S, IntoRust>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Surface,
+        &method.parameters,
+    )?;
+    let (returns, error) = returns::lower::<S, _>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Surface,
+        &method.returns,
+    )?;
     let execution = lower_execution::<S>(allocator, method.execution, start_symbol_name)?;
 
     Ok(ExportedCallable::<S>::new(
@@ -243,10 +256,22 @@ pub fn lower_imported_method<S: SurfaceLower>(
     execution: ExecutionDecl<S>,
 ) -> Result<ImportedCallable<S>, LowerError> {
     let receiver = lower_receiver(method.receiver);
-    let parameters =
-        params::lower::<S, OutOfRust>(index, ids, allocator, owner, &method.parameters)?;
-    let (returns, error) =
-        returns::lower::<S, IntoRust>(index, ids, allocator, owner, &method.returns)?;
+    let parameters = params::lower::<S, OutOfRust>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Framed,
+        &method.parameters,
+    )?;
+    let (returns, error) = returns::lower::<S, IntoRust>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Framed,
+        &method.returns,
+    )?;
 
     Ok(ImportedCallable::<S>::new(
         receiver, parameters, returns, error, execution,
@@ -260,10 +285,22 @@ pub fn lower_local_callback_method<S: SurfaceLower>(
     owner: CallableOwner,
     method: &MethodDef,
 ) -> Result<ExportedCallable<S>, LowerError> {
-    let parameters =
-        params::lower::<S, IntoRust>(index, ids, allocator, owner, &method.parameters)?;
-    let (returns, error) =
-        returns::lower::<S, OutOfRust>(index, ids, allocator, owner, &method.returns)?;
+    let parameters = params::lower::<S, IntoRust>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Framed,
+        &method.parameters,
+    )?;
+    let (returns, error) = returns::lower::<S, OutOfRust>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Framed,
+        &method.returns,
+    )?;
 
     Ok(ExportedCallable::<S>::new(
         None,
@@ -462,10 +499,22 @@ where
             )
         })
         .collect::<Vec<_>>();
-    let lowered_params =
-        params::lower::<S, K::ParamDirection>(index, ids, allocator, owner, &parameters)?;
-    let (returns, error) =
-        returns::lower::<S, K::ReturnDirection>(index, ids, allocator, owner, &closure.returns)?;
+    let lowered_params = params::lower::<S, K::ParamDirection>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Framed,
+        &parameters,
+    )?;
+    let (returns, error) = returns::lower::<S, K::ReturnDirection>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Framed,
+        &closure.returns,
+    )?;
     Ok((lowered_params, returns, error))
 }
 
@@ -486,9 +535,22 @@ pub fn lower_function<S: SurfaceLower>(
     start_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
     let owner = CallableOwner::Function;
-    let parameters =
-        params::lower::<S, IntoRust>(index, ids, allocator, owner, &function.parameters)?;
-    let (returns, error) = returns::lower::<S, _>(index, ids, allocator, owner, &function.returns)?;
+    let parameters = params::lower::<S, IntoRust>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Surface,
+        &function.parameters,
+    )?;
+    let (returns, error) = returns::lower::<S, _>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Surface,
+        &function.returns,
+    )?;
     let execution = lower_execution::<S>(allocator, function.execution, start_symbol_name)?;
 
     Ok(ExportedCallable::<S>::new(
@@ -513,7 +575,14 @@ pub fn lower_constant_accessor<S: SurfaceLower>(
 ) -> Result<ExportedCallable<S>, LowerError> {
     let owner = CallableOwner::Function;
     let return_def = boltffi_ast::ReturnDef::value(type_expr.clone());
-    let (returns, error) = returns::lower::<S, _>(index, ids, allocator, owner, &return_def)?;
+    let (returns, error) = returns::lower::<S, _>(
+        index,
+        ids,
+        allocator,
+        owner,
+        codecs::RootEncoding::Surface,
+        &return_def,
+    )?;
 
     Ok(ExportedCallable::<S>::new(
         None,

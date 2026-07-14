@@ -6,3 +6,5 @@ pub mod kmp;
 pub mod kotlin;
 pub mod python;
 pub mod swift;
+#[allow(missing_docs)]
+pub mod typescript;

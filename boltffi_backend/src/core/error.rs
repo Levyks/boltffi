@@ -158,6 +158,9 @@ pub enum BackendError {
         /// Invalid identifier text.
         identifier: String,
     },
+    #[allow(missing_docs)]
+    #[error("invalid TypeScript identifier `{identifier}`")]
+    InvalidTypeScriptIdentifier { identifier: String },
     /// Two generated Python declarations require the same name in one scope.
     #[error("python name collision in {scope}: `{name}` is used by {existing} and {colliding}")]
     PythonNameCollision {

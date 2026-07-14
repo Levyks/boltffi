@@ -82,6 +82,7 @@ mod direction;
 mod error;
 mod error_payloads;
 mod ids;
+mod imports;
 mod layout;
 mod metadata;
 mod name;
@@ -100,7 +101,9 @@ pub use callable::{
     ReturnPlan, ReturnPlanRender, ReturnValueSlot,
 };
 pub use closure::ClosureSignature;
-pub use codec::{CodecNode, CodecPlan, CodecRead, CodecSize, CodecWrite, ReadPlan, WritePlan};
+pub use codec::{
+    CodecNode, CodecPlan, CodecRead, CodecSize, CodecWrite, OwnedWireEncoding, ReadPlan, WritePlan,
+};
 pub use contract::{
     BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,
     BINDING_EXPANSION_SURFACE_ENV, BINDING_METADATA_BUILD_ENV, BINDING_METADATA_FEATURES_ENV,
@@ -129,6 +132,7 @@ pub use ids::{
     CallbackId, ClassId, ConstantId, CustomTypeId, DeclarationId, EnumId, FunctionId,
     InitializerId, MethodId, RecordId, StreamId, SymbolId,
 };
+pub use imports::{WasmImports, WasmIncomingClosure};
 pub use layout::{AlignmentError, ByteAlignment, ByteOffset, ByteSize, FieldLayout, RecordLayout};
 pub use metadata::{
     DeclMeta, DefaultValue, DeprecationInfo, DocComment, ElementMeta, FloatValue, IntegerValue,

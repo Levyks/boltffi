@@ -19,6 +19,7 @@ pub mod __private {
         AsyncCallbackCompletion, AsyncCallbackCompletionCode, AsyncCallbackCompletionResult,
         AsyncCallbackRegistry, AsyncCallbackRequestGuard, AsyncCallbackRequestId,
         WasmCallbackOutBuf, WasmCallbackOwner, rust_future_panic_message, rust_future_poll_sync,
-        take_packed_bytes, take_packed_utf8_string, take_return_slot_vec, write_return_slot,
+        take_packed_bytes, take_packed_utf8_string, take_return_slot_vec,
+        write_option_f64_presence, write_return_slot,
     };
 }

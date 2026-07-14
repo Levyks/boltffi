@@ -37,6 +37,26 @@ impl FfiBuf {
         Self::from_vec(WireBuffer::new(value).into_bytes())
     }
 
+    pub fn wire_encode_owned_string(value: impl Into<String>) -> Self {
+        Self::wire_encode_owned_bytes(value.into().into_bytes())
+    }
+
+    pub fn wire_encode_owned_bytes(value: impl Into<Vec<u8>>) -> Self {
+        let mut value = value.into();
+        let byte_count = value.len();
+        value.reserve_exact(core::mem::size_of::<u32>());
+        unsafe {
+            value.set_len(byte_count + core::mem::size_of::<u32>());
+            core::ptr::copy(
+                value.as_ptr(),
+                value.as_mut_ptr().add(core::mem::size_of::<u32>()),
+                byte_count,
+            );
+        }
+        value[..core::mem::size_of::<u32>()].copy_from_slice(&(byte_count as u32).to_le_bytes());
+        Self::from_vec(value)
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -184,5 +204,27 @@ mod tests {
         let buf = boltffi_buf_with_len(24);
         assert_eq!(buf.len(), 24);
         assert_eq!(unsafe { buf.as_byte_slice() }, &[0; 24]);
+    }
+
+    #[test]
+    fn owned_string_preserves_wire_encoding() {
+        let value = String::from("boltffi");
+        let expected = FfiBuf::wire_encode(&value);
+        let actual = FfiBuf::wire_encode_owned_string(value);
+
+        assert_eq!(unsafe { actual.as_byte_slice() }, unsafe {
+            expected.as_byte_slice()
+        });
+    }
+
+    #[test]
+    fn owned_bytes_preserve_wire_encoding() {
+        let value = vec![1_u8, 2, 3, 4];
+        let expected = FfiBuf::wire_encode(&value);
+        let actual = FfiBuf::wire_encode_owned_bytes(value);
+
+        assert_eq!(unsafe { actual.as_byte_slice() }, unsafe {
+            expected.as_byte_slice()
+        });
     }
 }

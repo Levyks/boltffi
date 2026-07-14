@@ -56,6 +56,8 @@ pub trait RenderSurface:
 
     const INFALLIBLE_VOID_RETURN: InfallibleVoidReturn;
 
+    const STREAM_POLL: StreamPollCrossing;
+
     /// Returns the `cfg` attribute applied to generated wrapper items for this surface.
     fn cfg_attr() -> TokenStream;
 }
@@ -84,11 +86,18 @@ pub enum InfallibleVoidReturn {
     Status,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum StreamPollCrossing {
+    Callback,
+    WakeImport,
+}
+
 impl RenderSurface for Native {
     const SCALAR_OPTION: ScalarOptionCrossing = ScalarOptionCrossing::WireEncoded;
     const DIRECT_RECORD_PARAMS: DirectRecordCrossing = DirectRecordCrossing::Value;
     const BORROWED_DIRECT_RECORD_PARAMS: bool = true;
     const INFALLIBLE_VOID_RETURN: InfallibleVoidReturn = InfallibleVoidReturn::Direct;
+    const STREAM_POLL: StreamPollCrossing = StreamPollCrossing::Callback;
 
     fn cfg_attr() -> TokenStream {
         quote! { #[cfg(not(target_arch = "wasm32"))] }
@@ -100,6 +109,7 @@ impl RenderSurface for Wasm32 {
     const DIRECT_RECORD_PARAMS: DirectRecordCrossing = DirectRecordCrossing::Pointer;
     const BORROWED_DIRECT_RECORD_PARAMS: bool = false;
     const INFALLIBLE_VOID_RETURN: InfallibleVoidReturn = InfallibleVoidReturn::Status;
+    const STREAM_POLL: StreamPollCrossing = StreamPollCrossing::WakeImport;
 
     fn cfg_attr() -> TokenStream {
         quote! { #[cfg(target_arch = "wasm32")] }

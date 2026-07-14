@@ -2,7 +2,30 @@ use boltffi_ast::{BaseTrait, TypeExpr};
 
 use crate::{CodecNode, CodecPlan, FieldKey, Op, Primitive, ReadPlan, ValueRef, WritePlan};
 
-use super::{LowerError, enums, ids::DeclarationIds, index::Index, records, types};
+use super::{
+    LowerError, enums, ids::DeclarationIds, index::Index, records, surface::SurfaceLower, types,
+};
+
+#[derive(Clone, Copy)]
+pub enum RootEncoding {
+    Surface,
+    Framed,
+}
+
+impl RootEncoding {
+    pub fn node<S: SurfaceLower>(
+        self,
+        index: &Index,
+        ids: &DeclarationIds,
+        type_expr: &TypeExpr,
+        value: ValueRef,
+    ) -> Result<CodecNode, LowerError> {
+        match (self, type_expr) {
+            (Self::Surface, TypeExpr::String) => Ok(S::root_string_codec()),
+            _ => node(index, ids, type_expr, value),
+        }
+    }
+}
 
 /// Lowers a source type expression into one [`CodecNode`] in the
 /// codec tree.

@@ -27,6 +27,7 @@ use crate::cargo::{LibraryCargoArgs, LibraryCargoArgsError};
 pub struct BindingMetadataBuild {
     manifest_path: PathBuf,
     target: Option<String>,
+    surface: Option<BindingMetadataSurface>,
     toolchain_selector: Option<String>,
     cargo_args: Result<MetadataCargoArgs, LibraryCargoArgsError>,
     cargo_environment: Vec<(OsString, OsString)>,
@@ -38,6 +39,7 @@ impl BindingMetadataBuild {
         Self {
             manifest_path: manifest_path.into(),
             target: None,
+            surface: None,
             toolchain_selector: None,
             cargo_args: Ok(MetadataCargoArgs::default()),
             cargo_environment: Vec::new(),
@@ -47,6 +49,12 @@ impl BindingMetadataBuild {
     /// Builds for a Cargo target triple.
     pub fn target(mut self, target: impl Into<String>) -> Self {
         self.target = Some(target.into());
+        self
+    }
+
+    #[allow(missing_docs)]
+    pub fn surface(mut self, surface: BindingMetadataSurface) -> Self {
+        self.surface = Some(surface);
         self
     }
 
@@ -379,7 +387,9 @@ impl<'build> CargoBuild<'build> {
     }
 
     fn command(self) -> Command {
-        let surface = BindingMetadataSurface::from_target_triple(self.build.target.as_deref());
+        let surface = self.build.surface.unwrap_or_else(|| {
+            BindingMetadataSurface::from_target_triple(self.build.target.as_deref())
+        });
         let mut command = Command::new(CargoProgram::from_env().into_os_string());
         command.envs(
             self.build
@@ -410,7 +420,12 @@ impl<'build> CargoBuild<'build> {
         if let Some(root) = self.manifest.path().parent() {
             command.env(BINDING_METADATA_ROOT_ENV, root);
         }
-        command.arg("--").arg("--cfg").arg("boltffi_metadata");
+        command
+            .arg("--")
+            .arg("--cfg")
+            .arg("boltffi_metadata")
+            .arg("--cfg")
+            .arg(format!("boltffi_binding_surface_{}", surface.as_str()));
         command
     }
 }
@@ -736,8 +751,8 @@ mod tests {
 
     use boltffi_ast::{PackageInfo, SourceContract};
     use boltffi_binding::{
-        BindingMetadataEnvelope, BindingMetadataSection, Decl, Native, SerializedBindings,
-        lower_with_declarations,
+        BINDING_METADATA_SURFACE_ENV, BindingMetadataEnvelope, BindingMetadataSection,
+        BindingMetadataSurface, Decl, Native, SerializedBindings, lower_with_declarations,
     };
 
     use super::{
@@ -811,6 +826,45 @@ mod tests {
         assert!(environment.iter().any(|(key, value)| {
             *key == OsStr::new("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER")
                 && *value == Some(OsStr::new("/opt/cross/bin/clang"))
+        }));
+    }
+
+    #[test]
+    fn cargo_build_selects_wasm_bindings_without_cross_compiling_the_metadata_artifact() {
+        let build = BindingMetadataBuild::new("/workspace/ffi/Cargo.toml")
+            .surface(BindingMetadataSurface::Wasm32);
+        let manifest = CargoManifest {
+            path: PathBuf::from("/workspace/ffi/Cargo.toml"),
+        };
+        let source_root = SourceRoot {
+            path: PathBuf::from("/workspace/ffi/src/lib.rs"),
+        };
+        let cargo_args = build.cargo_args.as_ref().unwrap();
+        let command = CargoBuild::new(
+            &build,
+            &manifest,
+            &source_root,
+            cargo_args,
+            MetadataFeatures {
+                names: BTreeSet::new(),
+            },
+        )
+        .command();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let environment = command.get_envs().collect::<Vec<_>>();
+
+        assert!(!arguments.iter().any(|argument| argument == "--target"));
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "boltffi_binding_surface_wasm32")
+        );
+        assert!(environment.iter().any(|(key, value)| {
+            *key == OsStr::new(BINDING_METADATA_SURFACE_ENV)
+                && *value == Some(OsStr::new(BindingMetadataSurface::Wasm32.as_str()))
         }));
     }
 

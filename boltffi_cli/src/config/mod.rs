@@ -804,17 +804,6 @@ impl Config {
         self.experimental.contains(&key)
     }
 
-    pub fn typescript_experimental(
-        &self,
-    ) -> boltffi_bindgen::render::typescript::TypeScriptExperimental {
-        boltffi_bindgen::render::typescript::TypeScriptExperimental {
-            async_streams: self.is_experimental_enabled(&Experimental::Feature {
-                target: Target::TypeScript,
-                name: "async_streams",
-            }),
-        }
-    }
-
     pub fn java_package(&self) -> String {
         self.targets
             .java

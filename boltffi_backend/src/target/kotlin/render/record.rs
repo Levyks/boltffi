@@ -205,7 +205,7 @@ impl Record {
             fields: record
                 .fields()
                 .iter()
-                .map(|field| Field::from_direct(field, record, &buffer))
+                .map(|field| Field::from_direct(field, record, &buffer, context))
                 .collect::<Result<Vec<_>>>()?,
             initializers: Self::initializer_calls(record.initializers(), host, bridge, context)?,
             static_methods: Self::methods(record.methods(), None, host, bridge, context)?,
@@ -402,6 +402,7 @@ impl Field {
         field: &DirectFieldDecl,
         record: &DirectRecordDecl<Native>,
         buffer: &Identifier,
+        context: &RenderContext<Native>,
     ) -> Result<Self> {
         let name = Self::identifier(field.key())?;
         let offset = record
@@ -421,7 +422,7 @@ impl Field {
         let default = field
             .meta()
             .default()
-            .map(|value| DefaultExpression::render(&TypeRef::Primitive(primitive), value))
+            .map(|value| DefaultExpression::render(&TypeRef::Primitive(primitive), value, context))
             .transpose()?;
         Ok(Self {
             ty: KotlinPrimitive::new(primitive).api_type()?,
@@ -457,7 +458,7 @@ impl Field {
         let default = field
             .meta()
             .default()
-            .map(|value| DefaultExpression::render(field.ty(), value))
+            .map(|value| DefaultExpression::render(field.ty(), value, context))
             .transpose()?;
         let field = EncodedField::from_declaration(field, host, context, reader, writer, current)?;
         Ok(Self {

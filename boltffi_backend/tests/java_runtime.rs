@@ -445,6 +445,7 @@ public final class RuntimeSmoke {
         verify(Integer.toUnsignedLong(Demo.observedVoidCalls()) == 2L, "void second");
 
         verifyWireArrays();
+        verifyWireMaps();
         System.out.print(42);
     }
 
@@ -479,6 +480,27 @@ public final class RuntimeSmoke {
         verify(java.util.Arrays.equals(reader.readLongArray(), longs), "long array");
         verify(java.util.Arrays.equals(reader.readFloatArray(), floats), "float array");
         verify(java.util.Arrays.equals(reader.readDoubleArray(), doubles), "double array");
+    }
+
+    private static void verifyWireMaps() {
+        java.util.LinkedHashMap<Integer, Long> values = new java.util.LinkedHashMap<>();
+        values.put(3, 5L);
+        values.put(8, 13L);
+        int size = WireSizes.map(values, value -> 4, value -> 8);
+        verify(size == 28, "wire map size");
+        WireLease lease = WireWriterPool.acquire(size);
+        byte[] bytes;
+        try {
+            WireWriter writer = lease.writer();
+            writer.writeMap(values, writer::writeInt, writer::writeLong);
+            verify(lease.size() == size, "wire map write size");
+            bytes = lease.bytes();
+        } finally {
+            lease.close();
+        }
+        WireReader reader = new WireReader(bytes);
+        java.util.Map<Integer, Long> decoded = reader.readMap(reader::readInt, reader::readLong);
+        verify(decoded.equals(values), "wire map round trip");
     }
 
     private static void verify(boolean condition, String carrier) {

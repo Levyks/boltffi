@@ -2040,6 +2040,18 @@ mod tests {
         source
     }
 
+    fn option_f64_return_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::maybe_ratio"),
+            CanonicalName::single("maybe_ratio"),
+        );
+        function.returns = ReturnDef::value(TypeExpr::option(TypeExpr::Primitive(Primitive::F64)));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.functions.push(function);
+        source
+    }
+
     fn vec_i32_return_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::numbers"),
@@ -3080,6 +3092,48 @@ mod tests {
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { __boltffi_receiver . compute () . await })"
         ));
         assert!(rendered.contains("fn boltffi_async_method_record_demo_point_compute_poll_sync"));
+    }
+
+    #[test]
+    fn wasm_direct_record_expansion_writes_async_return_out_pointer() {
+        let mut method = record_method(
+            "duplicate",
+            Receiver::Shared,
+            Vec::new(),
+            ReturnDef::value(TypeExpr::SelfType),
+        );
+        method.execution = ExecutionKind::Async;
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.records.push(direct_point_record_with_method(method));
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+
+        let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
+
+        syn::parse2::<syn::File>(quote! {
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Point {
+                pub x: f64,
+            }
+
+            impl Point {
+                pub async fn duplicate(&self) -> Self {
+                    *self
+                }
+            }
+
+            #tokens
+        })
+        .expect("wasm direct record async return expansion parses");
+        let rendered = tokens.to_string();
+        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_duplicate_complete"));
+        assert!(rendered.contains(
+            "__boltffi_return_out : * mut < Point as :: boltffi :: __private :: Passable > :: Out"
+        ));
+        assert!(rendered.contains(
+            "< Point as :: boltffi :: __private :: Passable > :: pack (__boltffi_result)"
+        ));
     }
 
     #[test]
@@ -4176,7 +4230,7 @@ mod tests {
                                     *out_status = ::boltffi::__private::FfiStatus::OK;
                                 }
                             }
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result)
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_result)
                         }
                         Err(status) => {
                             if !out_status.is_null() {
@@ -4294,7 +4348,7 @@ mod tests {
                                     *out_status = ::boltffi::__private::FfiStatus::OK;
                                 }
                             }
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error)
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_error)
                         }
                         Err(status) => {
                             if !out_status.is_null() {
@@ -5023,8 +5077,8 @@ mod tests {
                     unsafe {
                         ::core::ptr::write(
                             __boltffi_name_out,
-                            ::boltffi::__private::FfiBuf::wire_encode(
-                                &__boltffi_name_storage
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(
+                                __boltffi_name_storage
                             )
                         );
                     }
@@ -5487,6 +5541,10 @@ mod tests {
         );
         assert!(rendered.contains("subscription . pop_batch_into (__boltffi_stream_output_slots)"));
         assert!(rendered.contains("Passable < Out = StreamItem >"));
+        assert!(
+            rendered.contains("callback : :: boltffi :: __private :: StreamContinuationCallback")
+        );
+        assert!(rendered.contains("subscription . poll (callback_data , callback)"));
         assert!(!rendered.contains("< i32 as :: boltffi :: __private :: Passable > :: pack"));
         assert!(rendered.contains("Arc :: from_raw"));
     }
@@ -5960,6 +6018,13 @@ mod tests {
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
         assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_pop_batch"));
         assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_subscribe"));
+        assert!(
+            rendered.contains(
+                "fn boltffi_stream_demo_engine_profiles_poll (subscription_handle : u32 ,)"
+            )
+        );
+        assert!(rendered.contains("subscription . poll_wasm (subscription_handle)"));
+        assert!(!rendered.contains("StreamContinuationCallback"));
         assert!(rendered.contains(") -> u32"));
         assert!(rendered.contains("subscription_handle : u32"));
         assert!(rendered.contains(") -> u64"));
@@ -7511,7 +7576,7 @@ mod tests {
                             ::boltffi::__private::FfiBuf::default()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error)
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_error)
                         }
                     }
                 }
@@ -7641,10 +7706,9 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded closure param parses");
 
         assert!(rendered.contains("extern \"C\" fn (* mut :: core :: ffi :: c_void , * const u8 , usize) -> :: boltffi :: __private :: FfiBuf"));
-        assert!(
-            rendered
-                .contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_arg0)")
-        );
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_arg0)"
+        ));
         assert!(rendered.contains(
             ":: boltffi :: __private :: wire :: decode :: < String > (__boltffi_result_bytes)"
         ));
@@ -8247,10 +8311,9 @@ mod tests {
                 ":: boltffi :: __private :: wire :: decode :: < String > (__boltffi_bytes)"
             )
         );
-        assert!(
-            rendered
-                .contains(":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_result)")
-        );
+        assert!(rendered.contains(
+            ":: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_result)"
+        ));
     }
 
     #[test]
@@ -8305,7 +8368,7 @@ mod tests {
             )
         );
         assert!(rendered.contains(
-            ":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_result) . into_packed ()"
+            ":: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_result) . into_packed ()"
         ));
     }
 
@@ -8339,7 +8402,7 @@ mod tests {
                 .contains("release : Some (__boltffi_try_make_callback_success_closure_release)")
         );
         assert!(rendered.contains(
-            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_error) }"
+            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_error) }"
         ));
         assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: default ()"));
     }
@@ -8367,7 +8430,7 @@ mod tests {
         assert!(rendered.contains("* __boltffi_success_out = __boltffi_success"));
         assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: default ()"));
         assert!(rendered.contains(
-            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_error) }"
+            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_error) }"
         ));
     }
 
@@ -8392,10 +8455,10 @@ mod tests {
         ));
         assert!(rendered.contains("match __boltffi_closure ()"));
         assert!(rendered.contains(
-            "* __boltffi_success_out = :: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_success) . into_packed ()"
+            "* __boltffi_success_out = :: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_success) . into_packed ()"
         ));
         assert!(rendered.contains(
-            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_error) . into_packed () }"
+            "Err (__boltffi_error) => { :: boltffi :: __private :: FfiBuf :: wire_encode_owned_string (__boltffi_error) . into_packed () }"
         ));
     }
 
@@ -8479,7 +8542,7 @@ mod tests {
                             ::boltffi::__private::FfiBuf::default()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error)
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_error)
                         }
                     }
                 }
@@ -8652,6 +8715,46 @@ mod tests {
     }
 
     #[test]
+    fn wasm_direct_record_return_expansion_writes_explicit_out_pointer() {
+        let source = direct_record_return_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn origin() -> Point {
+                Point { x: 0.0 }
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert_eq!(
+            tokens.to_string(),
+            quote! {
+                pub fn origin() -> Point {
+                    Point { x: 0.0 }
+                }
+                #[cfg(target_arch = "wasm32")]
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn boltffi_function_demo_origin(
+                    __boltffi_return_out: *mut <Point as ::boltffi::__private::Passable>::Out
+                ) {
+                    let __boltffi_result: Point = origin();
+                    if !__boltffi_return_out.is_null() {
+                        unsafe {
+                            ::core::ptr::write(
+                                __boltffi_return_out,
+                                <Point as ::boltffi::__private::Passable>::pack(__boltffi_result),
+                            );
+                        }
+                    }
+                }
+            }
+            .to_string()
+        );
+    }
+
+    #[test]
     fn native_result_i32_string_expansion_writes_success_out_pointer() {
         let source = result_i32_string_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
@@ -8689,7 +8792,7 @@ mod tests {
                             ::boltffi::__private::FfiBuf::default()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error)
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_error)
                         }
                     }
                 }
@@ -8726,7 +8829,7 @@ mod tests {
                             ::boltffi::__private::FfiBuf::default().into_packed()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error).into_packed()
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_error).into_packed()
                         }
                     }
                 }
@@ -8766,8 +8869,8 @@ mod tests {
                                 unsafe {
                                     ::core::ptr::write(
                                         __boltffi_return_out,
-                                        ::boltffi::__private::FfiBuf::wire_encode(
-                                            &__boltffi_success
+                                        ::boltffi::__private::FfiBuf::from_vec(
+                                            __boltffi_success.into_bytes()
                                         ).into_packed()
                                     );
                                 }
@@ -8775,7 +8878,7 @@ mod tests {
                             ::boltffi::__private::FfiBuf::default().into_packed()
                         }
                         Err(__boltffi_error) => {
-                            ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_error).into_packed()
+                            ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_error).into_packed()
                         }
                     }
                 }
@@ -8847,6 +8950,27 @@ mod tests {
             }
             .to_string()
         );
+    }
+
+    #[test]
+    fn wasm_option_f64_return_expansion_tracks_nan_presence() {
+        let source = option_f64_return_contract();
+        let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub fn maybe_ratio() -> Option<f64> {
+                Some(7.0)
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+        let rendered = tokens.to_string();
+
+        assert!(rendered.contains("extern \"C\" fn boltffi_function_demo_maybe_ratio () -> f64"));
+        assert!(rendered.contains("if __boltffi_value . is_nan ()"));
+        assert!(rendered.contains("write_option_f64_presence (true)"));
+        assert!(rendered.contains("write_option_f64_presence (false)"));
     }
 
     #[test]
@@ -8943,7 +9067,7 @@ mod tests {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn boltffi_function_demo_greet() -> ::boltffi::__private::FfiBuf {
                     let __boltffi_result: String = greet();
-                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result)
+                    ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_result)
                 }
             }
             .to_string()
@@ -8974,7 +9098,7 @@ mod tests {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn boltffi_function_demo_greet() -> u64 {
                     let __boltffi_result: String = greet();
-                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result).into_packed()
+                    ::boltffi::__private::FfiBuf::from_vec(__boltffi_result.into_bytes()).into_packed()
                 }
             }
             .to_string()
@@ -9005,7 +9129,7 @@ mod tests {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn boltffi_function_demo_payload() -> u64 {
                     let __boltffi_result: Vec<u8> = payload();
-                    ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result).into_packed()
+                    ::boltffi::__private::FfiBuf::wire_encode_owned_bytes(__boltffi_result).into_packed()
                 }
             }
             .to_string()

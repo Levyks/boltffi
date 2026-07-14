@@ -21,6 +21,7 @@ pub struct BindingExpansion {
     target_directory: PathBuf,
     cargo_args: LibraryCargoArgs,
     toolchain_selector: Option<String>,
+    surface: BindingMetadataSurface,
 }
 
 impl BindingExpansion {
@@ -38,11 +39,26 @@ impl BindingExpansion {
     }
 
     pub fn resolve(config: &Config, build_cargo_args: &[String]) -> Result<Self> {
+        Self::resolve_for_surface(config, build_cargo_args, BindingMetadataSurface::Native)
+    }
+
+    pub fn resolve_for_surface(
+        config: &Config,
+        build_cargo_args: &[String],
+        surface: BindingMetadataSurface,
+    ) -> Result<Self> {
         let cargo = Cargo::current(build_cargo_args)?;
         let cargo_args = LibraryCargoArgs::parse(cargo.probe_command_arguments())?;
         let metadata = cargo.metadata()?;
         let cargo_manifest_path = cargo.manifest_path()?;
-        Self::from_metadata(config, &cargo, &metadata, &cargo_manifest_path, cargo_args)
+        Self::from_metadata(
+            config,
+            &cargo,
+            &metadata,
+            &cargo_manifest_path,
+            cargo_args,
+            surface,
+        )
     }
 
     pub fn package_id(&self) -> &str {
@@ -95,6 +111,7 @@ impl BindingExpansion {
         metadata: &CargoMetadata,
         cargo_manifest_path: &std::path::Path,
         cargo_args: LibraryCargoArgs,
+        surface: BindingMetadataSurface,
     ) -> Result<Self> {
         let preferred_artifact = config
             .package
@@ -114,6 +131,7 @@ impl BindingExpansion {
             target_directory: metadata.target_directory.clone(),
             cargo_args,
             toolchain_selector: cargo.toolchain_selector().map(str::to_owned),
+            surface,
         })
     }
 
@@ -142,7 +160,7 @@ impl BindingExpansion {
             ),
             (
                 BINDING_EXPANSION_SURFACE_ENV.into(),
-                BindingMetadataSurface::Native.as_str().into(),
+                self.surface.as_str().into(),
             ),
         ])
     }
@@ -161,6 +179,7 @@ impl BindingExpansion {
             target_directory: PathBuf::from("/external/workspace/target"),
             cargo_args: LibraryCargoArgs::parse(cargo_args).unwrap(),
             toolchain_selector: Some("+nightly".to_string()),
+            surface: BindingMetadataSurface::Native,
         }
     }
 }
@@ -173,7 +192,7 @@ mod tests {
     use boltffi_bindgen::cargo::{LibraryCargoArgs, LibraryCargoArgsError};
     use boltffi_binding::{
         BINDING_EXPANSION_BUILD_ENV, BINDING_EXPANSION_ROOT_ENV, BINDING_EXPANSION_SOURCE_ENV,
-        BINDING_EXPANSION_SURFACE_ENV,
+        BINDING_EXPANSION_SURFACE_ENV, BindingMetadataSurface,
     };
 
     use super::BindingExpansion;
@@ -194,6 +213,7 @@ mod tests {
             cargo_args: LibraryCargoArgs::parse(["--features".to_string(), "ffi".to_string()])
                 .unwrap(),
             toolchain_selector: Some("+nightly".to_string()),
+            surface: BindingMetadataSurface::Native,
         }
     }
 
@@ -283,6 +303,7 @@ mod tests {
             &metadata,
             cargo_manifest_path,
             LibraryCargoArgs::default(),
+            BindingMetadataSurface::Native,
         )
         .expect("hyphenated configured library should select its normalized Cargo artifact");
 

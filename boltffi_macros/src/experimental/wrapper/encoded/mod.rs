@@ -22,6 +22,7 @@ impl RuntimeWireCodec {
         match codec {
             CodecNode::Primitive(_)
             | CodecNode::String
+            | CodecNode::Utf8String
             | CodecNode::Bytes
             | CodecNode::DirectRecord(_)
             | CodecNode::EncodedRecord(_)

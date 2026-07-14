@@ -11,6 +11,7 @@ use crate::{
         primitive::KotlinPrimitive,
         render::Enumeration,
         syntax::{ArgumentList, Expression, Identifier},
+        tuple::Arity,
     },
 };
 
@@ -232,8 +233,14 @@ impl CodecSize for Sizer<'_> {
         }
     }
 
-    fn tuple(&mut self, _value: &ValueRef, _elements: Vec<Self::Expr>) -> Self::Expr {
-        Self::unsupported("tuple wire size")
+    fn tuple(&mut self, _value: &ValueRef, elements: Vec<Self::Expr>) -> Self::Expr {
+        Arity::from_count(elements.len())?;
+        elements
+            .into_iter()
+            .try_fold(Expression::integer(0), |total, element| {
+                element.map(|element| total.add(element.expression))
+            })
+            .map(SizeExpression::new)
     }
 
     fn result(

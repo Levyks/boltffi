@@ -118,11 +118,6 @@ impl ServiceConfig {
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for fallible non-blittable record constructors."
-        ),
-        exclude(
-            typescript,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for fallible non-blittable record constructors."
         )
     )]
     #[demo_bench_macros::demo_case(
@@ -138,11 +133,6 @@ impl ServiceConfig {
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for fallible non-blittable record constructors."
-        ),
-        exclude(
-            typescript,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for fallible non-blittable record constructors."
         )
     )]
     pub fn try_with_retries(retries: i32) -> Result<Self, String> {
@@ -172,11 +162,6 @@ impl ServiceConfig {
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for optional non-blittable record constructors."
-        ),
-        exclude(
-            typescript,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for optional non-blittable record constructors."
         )
     )]
     #[demo_bench_macros::demo_case(
@@ -192,11 +177,6 @@ impl ServiceConfig {
             java,
             reason = ExclusionReason::CoverageGap,
             details = "This C# regression case is not asserted by the Java demo suite yet. Add it when Java demo coverage expands for optional non-blittable record constructors."
-        ),
-        exclude(
-            typescript,
-            reason = ExclusionReason::CoverageGap,
-            details = "This C# regression case is not asserted by the TypeScript demo suite yet. Add it when TypeScript demo coverage expands for optional non-blittable record constructors."
         )
     )]
     pub fn maybe_with_retries(retries: i32) -> Option<Self> {
