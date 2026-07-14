@@ -56,7 +56,8 @@ impl<P> InternedString<P> {
     ///
     /// # Safety
     ///
-    /// The caller must ensure `id` names a value in `P`'s generated pool.
+    /// The caller must ensure `id` is the first (canonical) index of its value
+    /// in `P`'s generated pool.
     pub const unsafe fn from_id_unchecked(id: u32) -> Self {
         Self {
             repr: InternedStringRepr::Interned(id),
@@ -161,9 +162,14 @@ impl<P: InternedStringPool> WireDecode for InternedString<P> {
                         InvalidWireValue::InternedStringId,
                     ));
                 }
+                let canonical_id = P::VALUES
+                    .iter()
+                    .position(|value| *value == P::VALUES[id as usize])
+                    .expect("validated id has a pool value")
+                    as u32;
                 Ok((
                     Self {
-                        repr: InternedStringRepr::Interned(id),
+                        repr: InternedStringRepr::Interned(canonical_id),
                         _pool: PhantomData,
                     },
                     1 + used,

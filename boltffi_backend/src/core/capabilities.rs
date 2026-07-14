@@ -241,15 +241,20 @@ where
 impl CapabilityRequirements<BindingCapability> {
     /// Builds the full set of binding capabilities required by one declaration.
     ///
-    /// Returns the per-kind requirement (e.g. [`BindingCapability::Functions`])
-    /// plus [`BindingCapability::InternedString`] when the declaration references
-    /// a tagged interned-string type anywhere in its codec-plan or type tree.
-    pub fn from_decl<S: Surface>(decl: &Decl<S>) -> Self {
-        let mut requirements = Self::new().require(BindingCapability::from_decl(decl));
-        if DeclarationRef::from(decl).contains_interned_string() {
-            requirements = requirements.require(BindingCapability::InternedString);
-        }
-        requirements
+    /// The declaration is resolved within `bindings`, so the returned set includes
+    /// requirements propagated through named codec-plan and type references. For
+    /// example, a function returning an encoded record that contains an
+    /// [`InternedString`](BindingCapability::InternedString) requires both
+    /// [`BindingCapability::Functions`] and `InternedString`.
+    ///
+    /// Returns `None` when `declaration` is not part of `bindings`.
+    pub fn from_decl<S: Surface>(
+        bindings: &Bindings<S>,
+        declaration: DeclarationId,
+    ) -> Option<Self> {
+        BindingCapabilityAnalysis::new(bindings)
+            .declaration_requirements(declaration)
+            .cloned()
     }
 
     /// Builds binding requirements from all declarations in a contract.
@@ -508,9 +513,10 @@ mod tests {
         )
         .expect("source scans");
         let bindings = lower::<Native>(&source).expect("source lowers");
-        let decl = bindings.decls().iter().next().expect("one declaration");
+        let declaration = bindings.decls().first().expect("one declaration").id();
 
-        let requirements = CapabilityRequirements::from_decl(decl);
+        let requirements =
+            CapabilityRequirements::from_decl(&bindings, declaration).expect("known declaration");
         let capabilities: Vec<_> = requirements.iter().collect();
         assert!(
             capabilities.contains(&BindingCapability::Functions),
@@ -519,6 +525,62 @@ mod tests {
         assert!(
             capabilities.contains(&BindingCapability::InternedString),
             "expected InternedString capability"
+        );
+    }
+
+    #[test]
+    fn from_decl_propagates_interned_string_through_named_codec_dependencies() {
+        use boltffi_ast::PackageInfo;
+        use boltffi_binding::{Native, lower};
+
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                use boltffi::InternedString;
+
+                boltffi::interned_string_pool! {
+                    pub BrowserName {
+                        Chrome = "Chrome",
+                    }
+                }
+
+                #[data]
+                pub struct Browser {
+                    name: InternedString<BrowserName>,
+                }
+
+                #[data]
+                pub enum BrowserResponse {
+                    Browser(Browser),
+                }
+
+                #[export]
+                pub fn browser() -> BrowserResponse {
+                    unimplemented!()
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        let bindings = lower::<Native>(&source).expect("source lowers");
+        let function = bindings
+            .decls()
+            .iter()
+            .find(|declaration| matches!(declaration, Decl::Function(_)))
+            .expect("function declaration");
+
+        let requirements =
+            CapabilityRequirements::from_decl(&bindings, function.id()).expect("known declaration");
+        let capabilities: Vec<_> = requirements.iter().collect();
+        assert!(
+            capabilities.contains(&BindingCapability::Functions),
+            "expected Functions capability"
+        );
+        assert!(
+            capabilities.contains(&BindingCapability::InternedString),
+            "expected InternedString propagated through BrowserResponse and Browser"
         );
     }
 }

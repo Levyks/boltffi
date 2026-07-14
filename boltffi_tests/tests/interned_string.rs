@@ -10,6 +10,13 @@ boltffi::interned_string_pool! {
     }
 }
 
+#[derive(Debug)]
+struct DuplicatePool;
+
+impl InternedStringPool for DuplicatePool {
+    const VALUES: &'static [&'static str] = &["same", "same"];
+}
+
 #[test]
 fn interned_string_pool_macro_generates_static_constants() {
     let value = BrowserName::CHROME;
@@ -63,6 +70,20 @@ fn interned_string_wire_decode_round_trips_static_and_dynamic_values() {
         .expect("dynamic interned string decodes");
     assert_eq!(used, dynamic.len());
     assert!(matches!(dynamic_value.repr(), InternedStringRepr::Dynamic(text) if text == "Unknown"));
+}
+
+#[test]
+fn interned_string_wire_decode_canonicalizes_duplicate_pool_ids() {
+    let (decoded, used) = InternedString::<DuplicatePool>::decode_from(&[0, 1, 0, 0, 0])
+        .expect("duplicate pool id decodes");
+    let canonical = InternedString::<DuplicatePool>::from_str("same");
+
+    assert_eq!(used, 5);
+    assert!(matches!(decoded.repr(), InternedStringRepr::Interned(0)));
+    assert_eq!(decoded, canonical);
+
+    let keys = HashMap::from([(canonical, "canonical")]);
+    assert_eq!(keys.get(&decoded), Some(&"canonical"));
 }
 
 #[test]
