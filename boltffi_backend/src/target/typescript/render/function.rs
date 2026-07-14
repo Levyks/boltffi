@@ -55,7 +55,6 @@ struct Return {
 enum ReturnConversion {
     Void,
     Direct,
-    BigInt,
     Boolean,
     String,
     Utf8String,
@@ -128,7 +127,6 @@ struct ParameterRenderer<'context> {
 
 struct ReturnRenderer<'context> {
     context: &'context RenderContext<'context, Wasm32>,
-    asynchronous: bool,
 }
 
 struct CallReceiver {
@@ -493,10 +491,10 @@ impl Function {
                 }
             }))
             .collect::<Result<Vec<_>>>()?;
-        let returns = callable.returns().plan().render_with(&mut ReturnRenderer {
-            context,
-            asynchronous: matches!(callable.execution(), ExecutionDecl::Asynchronous(_)),
-        })?;
+        let returns = callable
+            .returns()
+            .plan()
+            .render_with(&mut ReturnRenderer { context })?;
         let arguments = receiver
             .iter()
             .flat_map(|receiver| receiver.arguments.iter().cloned())
@@ -1534,10 +1532,6 @@ impl Return {
         match &self.conversion {
             ReturnConversion::Void => vec![Statement::expression(call)],
             ReturnConversion::Direct => vec![Statement::return_value(call)],
-            ReturnConversion::BigInt => vec![Statement::return_value(Expression::invoke(
-                Identifier::known("BigInt"),
-                [call].into_iter().collect::<ArgumentList>(),
-            ))],
             ReturnConversion::Boolean => vec![Statement::return_value(call.not_zero())],
             ReturnConversion::String => vec![Statement::return_value(Expression::call(
                 Expression::identifier(Identifier::known("_module")),
@@ -1756,17 +1750,11 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
     fn direct(&mut self, slot: ReturnValueSlot, ty: &'plan DirectValueType) -> Self::Output {
         match (slot, ty) {
             (ReturnValueSlot::ReturnSlot, DirectValueType::Primitive(primitive)) => {
-                let asynchronous_pointer =
-                    self.asynchronous && matches!(primitive, Primitive::ISize | Primitive::USize);
                 Ok(Return::new(
-                    match asynchronous_pointer {
-                        true => TypeName::bigint(),
-                        false => Type::primitive(*primitive)?,
-                    },
-                    match (asynchronous_pointer, primitive) {
-                        (true, _) => ReturnConversion::BigInt,
-                        (false, Primitive::Bool) => ReturnConversion::Boolean,
-                        (false, _) => ReturnConversion::Direct,
+                    Type::primitive(*primitive)?,
+                    match primitive {
+                        Primitive::Bool => ReturnConversion::Boolean,
+                        _ => ReturnConversion::Direct,
                     },
                 ))
             }
@@ -1780,23 +1768,12 @@ impl<'plan> ReturnPlanRender<'plan, Wasm32, boltffi_binding::OutOfRust> for Retu
             (ReturnValueSlot::OutPointer, DirectValueType::Primitive(primitive)) => {
                 let scalar = Scalar::new(*primitive)?;
                 let read = scalar.read_method();
-                let asynchronous_pointer =
-                    self.asynchronous && matches!(primitive, Primitive::ISize | Primitive::USize);
                 Ok(Return::out(
-                    match asynchronous_pointer {
-                        true => TypeName::bigint(),
-                        false => scalar.ty(),
-                    },
+                    scalar.ty(),
                     primitive.byte_size::<Wasm32>().get(),
                     move |reader| {
                         let value = Expression::call(reader, read, ArgumentList::default());
-                        vec![Statement::return_value(match asynchronous_pointer {
-                            true => Expression::invoke(
-                                Identifier::known("BigInt"),
-                                [value].into_iter().collect::<ArgumentList>(),
-                            ),
-                            false => value,
-                        })]
+                        vec![Statement::return_value(value)]
                     },
                 ))
             }

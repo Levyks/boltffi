@@ -1,4 +1,4 @@
-pub const WASM_ABI_VERSION: u32 = 1;
+pub const WASM_ABI_VERSION: u32 = 2;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 use std::alloc::{Layout, alloc, dealloc};
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn wasm_abi_version_is_stable() {
-        assert_eq!(WASM_ABI_VERSION, 1);
+        assert_eq!(WASM_ABI_VERSION, 2);
     }
 
     #[test]

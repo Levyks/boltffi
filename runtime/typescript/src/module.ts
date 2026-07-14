@@ -130,6 +130,8 @@ export class AsyncFutureManager {
   }
 }
 
+export const WASM_ABI_VERSION = 2;
+
 export interface BoltFFIExports {
   memory: WebAssembly.Memory;
   boltffi_wasm_abi_version: () => number;

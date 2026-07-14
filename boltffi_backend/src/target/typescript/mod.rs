@@ -219,6 +219,11 @@ mod tests {
                 pub fn echo_optional_vec_i32(value: Option<Vec<i32>>) -> Option<Vec<i32>> { value }
 
                 #[export]
+                pub fn result_to_string(value: Result<i32, String>) -> String {
+                    format!("{value:?}")
+                }
+
+                #[export]
                 pub fn echo_vec_string(value: Vec<String>) -> Vec<String> { value }
 
                 #[export]
@@ -289,6 +294,29 @@ mod tests {
 
                 #[export]
                 pub const BUSY: State = State::Busy { jobs: 3 };
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        lower::<Wasm32>(&source).expect("source lowers")
+    }
+
+    fn partially_supported_constant_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub trait Handler {
+                    fn invoke(&self, value: i32) -> i32;
+                }
+
+                #[export]
+                pub const ANSWER: u32 = 6 * 7;
+
+                #[export]
+                pub const HANDLERS: Vec<Box<dyn Handler>> = Vec::new();
                 "#,
             )
             .expect("valid source"),
@@ -632,6 +660,20 @@ mod tests {
             .iter()
             .find(|file| file.path().as_path().ends_with("demo.ts"))
             .expect("browser module");
+        let node = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo_node.ts"))
+            .expect("node module");
+        assert!(
+            browser
+                .contents()
+                .contains("instantiateBoltFFI(source, WASM_ABI_VERSION,")
+        );
+        assert!(
+            node.contents()
+                .contains("instantiateBoltFFISync(_wasmBytes, WASM_ABI_VERSION,")
+        );
         assert!(browser.contents().contains("export function noop(): void"));
         assert!(
             browser
@@ -718,6 +760,9 @@ mod tests {
         );
         assert!(browser.contents().contains(
             "(_exports.boltffi_function_demo_echo_optional_i32 as Function)((value === null ? Number.NaN : value))"
+        ));
+        assert!(browser.contents().contains(
+            "export function resultToString(value: number | WireResult<number, string> | Error): string"
         ));
         assert!(browser.contents().contains("_module.unpackOptionI32("));
         assert!(
@@ -894,6 +939,29 @@ mod tests {
         assert!(browser.contents().contains("  busy = _readBusy();"));
         assert!(node.contents().contains("const _exports: BoltFFIExports"));
         assert!(node.contents().contains("  bytes = _readBytes();"));
+    }
+
+    #[test]
+    fn partial_constants_initialize_only_rendered_declarations() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host builds")
+            .into_target()
+            .render_partial(&partially_supported_constant_bindings())
+            .expect("partial target renders supported constants");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+
+        assert!(browser.contents().contains("export let answer: number;"));
+        assert!(browser.contents().contains("  answer = _readAnswer();"));
+        assert!(!browser.contents().contains("handlers"));
+        assert_eq!(output.coverage().unsupported().len(), 1);
+        assert_eq!(
+            output.coverage().unsupported()[0].declaration().name(),
+            "handlers"
+        );
     }
 
     #[test]
@@ -1120,10 +1188,10 @@ mod tests {
         assert!(
             browser
                 .contents()
-                .contains("export async function asyncSize(): Promise<bigint>")
+                .contains("export async function asyncSize(): Promise<number>")
         );
         assert!(
-            browser
+            !browser
                 .contents()
                 .contains("return BigInt(_module.completeAsync(")
         );

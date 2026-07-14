@@ -650,6 +650,28 @@ describe("StreamSession", () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(free).toHaveBeenCalledOnce();
   });
+
+  it("releases a callback subscription when the consumer throws", async () => {
+    const unsubscribe = vi.fn();
+    const free = vi.fn();
+    const session = new StreamSession(
+      13,
+      () => [1],
+      () => {},
+      new StreamPollManager(),
+      unsubscribe,
+      free
+    );
+    const cancellable = session.consume(() => {
+      throw new Error("consumer failed");
+    });
+
+    await expect(cancellable.done).rejects.toThrow("consumer failed");
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledWith(13);
+    expect(free).toHaveBeenCalledOnce();
+    expect(free).toHaveBeenCalledWith(13);
+  });
 });
 
 describe("CallbackRegistry", () => {

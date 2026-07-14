@@ -1,4 +1,4 @@
-import { BoltFFIModule, CallbackRegistry, StreamCancellable, StreamSession, instantiateBoltFFI, matchWireResult, utf8ByteCount, wireArraySize, wireMapSize, wireOptionalSize, wireResultSize, wireStringSize } from {{ runtime_package }};
+import { BoltFFIModule, CallbackRegistry, StreamCancellable, StreamSession, WASM_ABI_VERSION, instantiateBoltFFI, matchWireResult, utf8ByteCount, wireArraySize, wireMapSize, wireOptionalSize, wireResultSize, wireStringSize } from {{ runtime_package }};
 import type { BoltFFIExports, Duration, WireCodec, WireResult } from {{ runtime_package }};
 
 let _module: BoltFFIModule;
@@ -11,7 +11,7 @@ const _callbackImports: Record<string, WebAssembly.ImportValue> = {};
 {{ closure_adapters }}
 
 export default async function init(source: BufferSource | Response): Promise<void> {
-  _module = await instantiateBoltFFI(source, 1, { env: _callbackImports });
+  _module = await instantiateBoltFFI(source, WASM_ABI_VERSION, { env: _callbackImports });
   _exports = _module.exports;
 {{ constant_initializers }}
 }

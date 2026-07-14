@@ -22,6 +22,7 @@ export {
   PrimitiveBufferAlloc,
   PrimitiveBufferElementType,
   StringAlloc,
+  WASM_ABI_VERSION,
   WriterAlloc,
   instantiateBoltFFI,
   instantiateBoltFFISync,

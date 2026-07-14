@@ -152,8 +152,15 @@ impl TypeRefRender for TypeRefRenderer<'_> {
     }
 
     fn result(&mut self, ok: Self::Output, err: Self::Output) -> Self::Output {
-        err?;
-        ok.map(|ok| RenderedType::new(ok.name))
+        let ok = ok?.into_name();
+        let err = err?.into_name();
+        Ok(RenderedType::new(TypeName::union(
+            ok.clone(),
+            TypeName::union(
+                TypeName::generic("WireResult", [ok, err]),
+                TypeName::named("Error"),
+            ),
+        )))
     }
 
     fn map(&mut self, key: Self::Output, value: Self::Output) -> Self::Output {

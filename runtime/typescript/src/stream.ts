@@ -131,10 +131,14 @@ export class StreamCancellable<T> {
 
   private async consume(callback: (item: T) => void): Promise<void> {
     const iterator = this.session[Symbol.asyncIterator]();
-    let next = await iterator.next();
-    while (!next.done) {
-      callback(next.value);
-      next = await iterator.next();
+    try {
+      let next = await iterator.next();
+      while (!next.done) {
+        callback(next.value);
+        next = await iterator.next();
+      }
+    } finally {
+      await iterator.return?.();
     }
   }
 }

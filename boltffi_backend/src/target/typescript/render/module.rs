@@ -59,7 +59,7 @@ impl<'module> Module<'module> {
             .map(|symbol| StringLiteral::new(symbol.name().as_str()))
             .collect::<Vec<_>>();
         let closure_adapters = ClosureAdapter::render_all(wasm_imports.closures(), context)?;
-        let constant_initializers = Constant::initializers(bindings, context)?;
+        let constant_initializers = Constant::initializers(&declarations, context)?;
         let browser = FileLayout::new()
             .with_file(
                 FilePlan::all(FilePath::new(self.name.browser_path())?).with_preamble(

@@ -1,10 +1,10 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    Bindings, ConstantDecl, ConstantValueDecl, Decl, DefaultValue, EnumDecl, Primitive, TypeRef,
+    ConstantDecl, ConstantValueDecl, DeclarationRef, DefaultValue, EnumDecl, Primitive, TypeRef,
     Wasm32,
 };
 
-use crate::core::{Emitted, Error, RenderContext, Result};
+use crate::core::{Emitted, Error, RenderContext, RenderedDeclaration, Result};
 
 use super::super::{
     name_style::Name,
@@ -76,14 +76,13 @@ impl Constant {
     }
 
     pub fn initializers(
-        bindings: &Bindings<Wasm32>,
+        declarations: &[RenderedDeclaration<'_, Wasm32>],
         context: &RenderContext<Wasm32>,
     ) -> Result<String> {
-        bindings
-            .decls()
+        declarations
             .iter()
-            .filter_map(|declaration| match declaration {
-                Decl::Constant(constant) => Some(constant.as_ref()),
+            .filter_map(|declaration| match declaration.declaration() {
+                DeclarationRef::Constant(constant) => Some(constant),
                 _ => None,
             })
             .map(|declaration| Self::from_declaration(declaration, context))
