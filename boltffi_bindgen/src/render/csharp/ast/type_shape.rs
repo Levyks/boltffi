@@ -224,7 +224,7 @@ impl CSharpType {
         match expr {
             TypeExpr::Void => Self::Void,
             TypeExpr::Primitive(p) => Self::from(*p),
-            TypeExpr::String => Self::String,
+            TypeExpr::String | TypeExpr::Str => Self::String,
             TypeExpr::Vec(inner) => Self::Array(Box::new(Self::from_type_expr(inner))),
             TypeExpr::Option(inner) => Self::Nullable(Box::new(Self::from_type_expr(inner))),
             TypeExpr::Record(id) => {

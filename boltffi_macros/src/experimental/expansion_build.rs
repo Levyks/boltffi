@@ -20,6 +20,7 @@ use crate::experimental::{
 
 pub enum Item {
     Inactive,
+    Dependency,
     Preserve,
     Tokens(TokenStream),
     Error(TokenStream),
@@ -38,7 +39,7 @@ pub fn item() -> Item {
             .render()
             .map(Item::Tokens)
             .unwrap_or_else(|error| Item::Error(error.into_compile_error())),
-        Ok(None) => Item::Inactive,
+        Ok(None) => Item::Dependency,
         Err(error) => Item::Error(error.into_compile_error()),
     }
 }
@@ -79,10 +80,9 @@ impl Request {
             .collect::<Vec<_>>();
         let root_types =
             RootModuleTypes::with_visible_paths(&complete.package, visible_paths.clone());
-        let root = root_types.contract(scan.root());
         let source = root_types.contract(&source);
-        let complete = root_types.contract(complete);
-        let expander = Expander::with_support(&root, &complete, visible_paths);
+        let root = root_types.contract(scan.root());
+        let expander = Expander::with_support(&root, &source, visible_paths);
 
         match requested_surface()? {
             BindingMetadataSurface::Native => {

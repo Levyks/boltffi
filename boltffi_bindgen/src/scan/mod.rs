@@ -2586,7 +2586,10 @@ fn rust_type_to_ffi_type(
             if let Type::Path(inner) = &*type_ref.elem {
                 let ident = inner.path.segments.last()?.ident.to_string();
                 if ident == "str" {
-                    return Some(MType::String);
+                    return match position {
+                        FfiTypePosition::Return => Some(MType::Str),
+                        FfiTypePosition::Value => Some(MType::String),
+                    };
                 }
             }
             if let Type::Slice(slice) = &*type_ref.elem {
@@ -4063,7 +4066,9 @@ mod tests {
         "#;
 
         let module = scan_temp_crate(source);
-        let record = module.find_record("TypedEvent").expect("TypedEvent not found");
+        let record = module
+            .find_record("TypedEvent")
+            .expect("TypedEvent not found");
         assert_eq!(record.fields.len(), 2);
         assert_eq!(record.fields[0].name, "id");
         assert_eq!(record.fields[1].name, "type");

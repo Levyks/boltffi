@@ -113,7 +113,7 @@ impl<'a> CSharpLowerer<'a> {
     /// - Anything else: generic `BoltException(value.ToString())`.
     fn result_err_exception(&self, err_ty: &TypeExpr) -> ResultErrException {
         match err_ty {
-            TypeExpr::String => ResultErrException::Generic { stringify: false },
+            TypeExpr::String | TypeExpr::Str => ResultErrException::Generic { stringify: false },
             TypeExpr::Enum(id)
                 if self
                     .ffi
