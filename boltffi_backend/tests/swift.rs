@@ -222,6 +222,13 @@ fn swift_target_renders_stream_protocols() {
 }
 
 #[test]
+fn swift_target_renders_stream_runtime() {
+    insta::assert_snapshot!(rendered_swift_runtime(SourceFixture::one(
+        "stream/protocol_functions"
+    )));
+}
+
+#[test]
 fn swift_target_renders_callback_handle_parameters() {
     insta::assert_snapshot!(rendered_partial_fixture(
         "callback/foreign_callback_parameter"
