@@ -173,7 +173,7 @@ impl<'a> CSharpLowerer<'a> {
             };
         }
         match &normalized {
-            TypeExpr::String => CSharpReturnKind::WireDecodeString,
+            TypeExpr::String | TypeExpr::Str => CSharpReturnKind::WireDecodeString,
             TypeExpr::Record(id) if !self.is_blittable_record(id) => {
                 CSharpReturnKind::WireDecodeObject {
                     class_name: id.into(),

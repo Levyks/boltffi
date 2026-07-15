@@ -105,7 +105,7 @@ fn is_field_type_supported(
     enums: &HashSet<EnumId>,
 ) -> bool {
     match ty {
-        TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Void => true,
+        TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Str | TypeExpr::Void => true,
         TypeExpr::Builtin(_) => true,
         TypeExpr::Record(id) => records.contains(id),
         TypeExpr::Enum(id) => enums.contains(id),

@@ -57,7 +57,7 @@ impl<'a> CSharpLowerer<'a> {
     /// it before emit.
     pub(super) fn is_supported_type(&self, ty: &TypeExpr) -> bool {
         match ty {
-            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Void => true,
+            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Str | TypeExpr::Void => true,
             TypeExpr::Builtin(_) => true,
             TypeExpr::Record(id) => self.supported_records.contains(id),
             TypeExpr::Enum(id) => self.supported_enums.contains(id),
@@ -98,7 +98,7 @@ impl<'a> CSharpLowerer<'a> {
     /// travel through the encoded wire form.
     pub(super) fn is_supported_vec_element(&self, ty: &TypeExpr) -> bool {
         match ty {
-            TypeExpr::Primitive(_) | TypeExpr::String => true,
+            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Str => true,
             TypeExpr::Builtin(_) => true,
             TypeExpr::Record(id) => self.supported_records.contains(id),
             TypeExpr::Enum(id) => self.supported_enums.contains(id),

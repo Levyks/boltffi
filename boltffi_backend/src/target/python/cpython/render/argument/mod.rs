@@ -268,6 +268,10 @@ impl Conversion {
         }
     }
 
+    pub fn has_mutation_buffer(&self) -> bool {
+        matches!(&self.kind, Kind::Buffered(buffered) if buffered.mutation.as_ref().and_then(MutationOutput::buffer).is_some())
+    }
+
     pub fn has_mutation(&self) -> bool {
         matches!(&self.kind, Kind::Buffered(buffered) if buffered.mutation.is_some())
     }
@@ -277,7 +281,7 @@ impl Conversion {
             Kind::Buffered(buffered) => buffered
                 .mutation
                 .as_ref()
-                .map(MutationOutput::buffer)
+                .and_then(MutationOutput::buffer)
                 .unwrap_or_else(|| unreachable!("buffered parameter has no mutation output")),
             Kind::Direct(_) | Kind::Closure(_) => {
                 unreachable!("non-buffered parameter has no mutation output")
@@ -490,7 +494,7 @@ impl Conversion {
         let pointer = Identifier::parse(format!("{name}_ptr"))?;
         let length = Identifier::parse(format!("{name}_len"))?;
         let mutation = match receive {
-            Receive::ByMutRef => encoded.mutation_output(&name)?,
+            Receive::ByMutRef => encoded.mutation_output(&name, &pointer, &length)?,
             Receive::ByValue | Receive::ByRef => None,
             _ => {
                 return Err(Error::UnsupportedTarget {
@@ -628,11 +632,15 @@ impl<'plan, 'render> ParamPlanRender<'plan, Native, IntoRust> for ParameterConve
         )
     }
 
-    fn direct_vector(&mut self, element: &DirectVectorElementType) -> Self::Output {
+    fn direct_vector(
+        &mut self,
+        element: &DirectVectorElementType,
+        receive: Receive,
+    ) -> Self::Output {
         Conversion::encoded(
             self.index,
             self.name.clone(),
-            Receive::ByValue,
+            receive,
             BufferedArgument::DirectVector(direct_vector::Element::from_element(
                 element,
                 self.bridge,
@@ -716,7 +724,12 @@ impl BufferedParam {
     }
 
     fn c_arity(&self) -> usize {
-        2 + usize::from(self.mutation.is_some())
+        2 + usize::from(
+            self.mutation
+                .as_ref()
+                .and_then(MutationOutput::buffer)
+                .is_some(),
+        )
     }
 
     fn is_raw_wire(&self) -> bool {

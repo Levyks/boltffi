@@ -15,6 +15,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::artifact::{BindingMetadataReadError, BindingMetadataReader};
+use crate::cargo::{LibraryCargoArgs, LibraryCargoArgsError};
 
 /// A Cargo library build that extracts embedded BoltFFI binding metadata.
 ///
@@ -26,7 +27,10 @@ use crate::artifact::{BindingMetadataReadError, BindingMetadataReader};
 pub struct BindingMetadataBuild {
     manifest_path: PathBuf,
     target: Option<String>,
-    cargo_args: MetadataCargoArgs,
+    surface: Option<BindingMetadataSurface>,
+    toolchain_selector: Option<String>,
+    cargo_args: Result<MetadataCargoArgs, LibraryCargoArgsError>,
+    cargo_environment: Vec<(OsString, OsString)>,
 }
 
 impl BindingMetadataBuild {
@@ -35,7 +39,10 @@ impl BindingMetadataBuild {
         Self {
             manifest_path: manifest_path.into(),
             target: None,
-            cargo_args: MetadataCargoArgs::default(),
+            surface: None,
+            toolchain_selector: None,
+            cargo_args: Ok(MetadataCargoArgs::default()),
+            cargo_environment: Vec::new(),
         }
     }
 
@@ -45,19 +52,60 @@ impl BindingMetadataBuild {
         self
     }
 
+    #[allow(missing_docs)]
+    pub fn surface(mut self, surface: BindingMetadataSurface) -> Self {
+        self.surface = Some(surface);
+        self
+    }
+
     /// Passes Cargo build arguments to the metadata build.
     pub fn cargo_args(mut self, cargo_args: impl IntoIterator<Item = String>) -> Self {
+        let cargo_args = cargo_args.into_iter().collect::<Vec<_>>();
+        if self.toolchain_selector.is_none() {
+            self.toolchain_selector = cargo_args
+                .iter()
+                .find(|argument| is_rustup_toolchain_selector(argument))
+                .cloned();
+        }
         self.cargo_args = MetadataCargoArgs::new(cargo_args);
+        self
+    }
+
+    /// Passes environment values to Cargo metadata and build commands.
+    pub fn cargo_environment<K, V>(mut self, environment: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.cargo_environment = environment
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
+        self
+    }
+
+    /// Selects a rustup Cargo toolchain for metadata and build commands.
+    pub fn rustup_toolchain(mut self, toolchain_selector: impl Into<String>) -> Self {
+        self.toolchain_selector = Some(toolchain_selector.into());
         self
     }
 
     /// Runs Cargo and returns the validated metadata envelopes.
     pub fn read(&self) -> Result<Vec<BindingMetadataEnvelope>, BindingMetadataBuildError> {
+        let cargo_args = self
+            .cargo_args
+            .as_ref()
+            .map_err(|source| BindingMetadataBuildError::CargoArguments(source.clone()))?;
         let manifest = CargoManifest::new(&self.manifest_path)?;
-        let metadata = CargoMetadata::load(&manifest)?;
+        let metadata = CargoMetadata::load(
+            &manifest,
+            self.toolchain_selector.as_deref(),
+            &self.cargo_environment,
+        )?;
         let source_root = SourceRoot::resolve(&metadata, &manifest)?;
-        let features = metadata.active_features(&manifest, &self.cargo_args)?;
-        let output = CargoBuild::new(self, &manifest, &source_root, features).output()?;
+        let features = metadata.active_features(&manifest, cargo_args)?;
+        let output =
+            CargoBuild::new(self, &manifest, &source_root, cargo_args, features).output()?;
         let artifacts = output.artifacts(&manifest)?;
         BindingMetadataReader::new(artifacts.into_paths())
             .read_required()
@@ -68,14 +116,16 @@ impl BindingMetadataBuild {
 /// Failure while building a crate for embedded binding metadata.
 #[derive(Debug, Error)]
 pub enum BindingMetadataBuildError {
+    #[error(transparent)]
+    CargoArguments(#[from] LibraryCargoArgsError),
     /// Cargo could not be started.
-    #[error("run cargo build for binding metadata: {source}")]
+    #[error("run cargo rustc for binding metadata: {source}")]
     CargoSpawn {
         /// Process spawn error.
         source: std::io::Error,
     },
     /// Cargo returned a non-zero exit status.
-    #[error("cargo build for binding metadata failed with status {status}: {stderr}")]
+    #[error("cargo rustc for binding metadata failed with status {status}: {stderr}")]
     CargoFailed {
         /// Process exit status.
         status: CargoStatus,
@@ -99,7 +149,7 @@ pub enum BindingMetadataBuildError {
         source: std::io::Error,
     },
     /// Cargo did not report a readable compiled artifact.
-    #[error("cargo build for `{manifest_path}` did not report compiled library artifacts")]
+    #[error("cargo rustc for `{manifest_path}` did not report compiled library artifacts")]
     NoArtifacts {
         /// Manifest path passed to Cargo.
         manifest_path: PathBuf,
@@ -196,8 +246,17 @@ struct CargoMetadata {
 }
 
 impl CargoMetadata {
-    fn load(manifest: &CargoManifest) -> Result<Self, BindingMetadataBuildError> {
-        let output = Command::new(CargoProgram::from_env().into_os_string())
+    fn load(
+        manifest: &CargoManifest,
+        toolchain_selector: Option<&str>,
+        cargo_environment: &[(OsString, OsString)],
+    ) -> Result<Self, BindingMetadataBuildError> {
+        let mut command = Command::new(CargoProgram::from_env().into_os_string());
+        command.envs(cargo_environment.iter().map(|(key, value)| (key, value)));
+        if let Some(toolchain_selector) = toolchain_selector {
+            command.arg(toolchain_selector);
+        }
+        let output = command
             .arg("metadata")
             .arg("--format-version=1")
             .arg("--no-deps")
@@ -299,6 +358,7 @@ struct CargoBuild<'build> {
     build: &'build BindingMetadataBuild,
     manifest: &'build CargoManifest,
     source_root: &'build SourceRoot,
+    cargo_args: &'build MetadataCargoArgs,
     features: MetadataFeatures,
 }
 
@@ -307,21 +367,41 @@ impl<'build> CargoBuild<'build> {
         build: &'build BindingMetadataBuild,
         manifest: &'build CargoManifest,
         source_root: &'build SourceRoot,
+        cargo_args: &'build MetadataCargoArgs,
         features: MetadataFeatures,
     ) -> Self {
         Self {
             build,
             manifest,
             source_root,
+            cargo_args,
             features,
         }
     }
 
     fn output(self) -> Result<CargoOutput, BindingMetadataBuildError> {
-        let surface = BindingMetadataSurface::from_target_triple(self.build.target.as_deref());
+        self.command()
+            .output()
+            .map_err(|source| BindingMetadataBuildError::CargoSpawn { source })
+            .and_then(CargoOutput::from_output)
+    }
+
+    fn command(self) -> Command {
+        let surface = self.build.surface.unwrap_or_else(|| {
+            BindingMetadataSurface::from_target_triple(self.build.target.as_deref())
+        });
         let mut command = Command::new(CargoProgram::from_env().into_os_string());
+        command.envs(
+            self.build
+                .cargo_environment
+                .iter()
+                .map(|(key, value)| (key, value)),
+        );
+        if let Some(toolchain_selector) = self.build.toolchain_selector.as_deref() {
+            command.arg(toolchain_selector);
+        }
         command
-            .arg("build")
+            .arg("rustc")
             .arg("--lib")
             .arg("--message-format=json-render-diagnostics")
             .arg("--manifest-path")
@@ -329,7 +409,7 @@ impl<'build> CargoBuild<'build> {
         if let Some(target) = &self.build.target {
             command.arg("--target").arg(target);
         }
-        command.args(self.build.cargo_args.iter());
+        command.args(self.cargo_args.iter());
         command.env(BINDING_METADATA_BUILD_ENV, "1");
         command.env(BINDING_METADATA_SOURCE_ENV, self.source_root.path());
         command.env(BINDING_METADATA_SURFACE_ENV, surface.as_str());
@@ -340,11 +420,13 @@ impl<'build> CargoBuild<'build> {
         if let Some(root) = self.manifest.path().parent() {
             command.env(BINDING_METADATA_ROOT_ENV, root);
         }
-        MetadataRustflags::from_env().apply(&mut command);
         command
-            .output()
-            .map_err(|source| BindingMetadataBuildError::CargoSpawn { source })
-            .and_then(CargoOutput::from_output)
+            .arg("--")
+            .arg("--cfg")
+            .arg("boltffi_metadata")
+            .arg("--cfg")
+            .arg(format!("boltffi_binding_surface_{}", surface.as_str()));
+        command
     }
 }
 
@@ -367,14 +449,15 @@ impl CargoProgram {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MetadataCargoArgs {
-    arguments: Vec<String>,
+    arguments: LibraryCargoArgs,
 }
 
 impl MetadataCargoArgs {
-    fn new(arguments: impl IntoIterator<Item = String>) -> Self {
-        Self {
-            arguments: Self::without_owned_selectors(arguments.into_iter().collect()),
-        }
+    fn new(arguments: impl IntoIterator<Item = String>) -> Result<Self, LibraryCargoArgsError> {
+        LibraryCargoArgs::parse(Self::without_owned_selectors(
+            arguments.into_iter().collect(),
+        ))
+        .map(|arguments| Self { arguments })
     }
 
     fn iter(&self) -> impl Iterator<Item = &String> {
@@ -383,7 +466,7 @@ impl MetadataCargoArgs {
 
     fn feature_flags(&self) -> CargoFeatureFlags {
         let mut skip_value = false;
-        self.arguments.iter().enumerate().fold(
+        self.arguments.as_slice().iter().enumerate().fold(
             CargoFeatureFlags::default(),
             |mut flags, (index, argument)| {
                 if skip_value {
@@ -397,6 +480,7 @@ impl MetadataCargoArgs {
                     "--features" | "-F" => {
                         skip_value = true;
                         self.arguments
+                            .as_slice()
                             .get(index + 1)
                             .into_iter()
                             .flat_map(|features| CargoFeatureFlags::split(features))
@@ -441,8 +525,10 @@ impl MetadataCargoArgs {
                     return None;
                 }
 
-                (!argument.starts_with("--manifest-path=") && !argument.starts_with("--target="))
-                    .then_some(argument)
+                (!argument.starts_with("--manifest-path=")
+                    && !argument.starts_with("--target=")
+                    && !is_rustup_toolchain_selector(&argument))
+                .then_some(argument)
             })
             .collect()
     }
@@ -527,6 +613,10 @@ impl CargoFeatureFlags {
             .map(str::to_owned)
             .collect()
     }
+}
+
+fn is_rustup_toolchain_selector(argument: &str) -> bool {
+    argument.starts_with('+') && argument.len() > 1
 }
 
 #[derive(Clone, Debug)]
@@ -650,58 +740,10 @@ impl CargoMessage {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum MetadataRustflags {
-    Encoded(OsString),
-    Plain(OsString),
-}
-
-impl MetadataRustflags {
-    fn from_env() -> Self {
-        std::env::var_os("CARGO_ENCODED_RUSTFLAGS")
-            .map(Self::encoded)
-            .unwrap_or_else(|| Self::plain(std::env::var_os("RUSTFLAGS")))
-    }
-
-    fn encoded(existing: OsString) -> Self {
-        Self::Encoded(Self::append_encoded(existing))
-    }
-
-    fn plain(existing: Option<OsString>) -> Self {
-        Self::Plain(match existing.filter(|value| !value.is_empty()) {
-            Some(mut value) => {
-                value.push(" --cfg boltffi_metadata");
-                value
-            }
-            None => OsString::from("--cfg boltffi_metadata"),
-        })
-    }
-
-    fn append_encoded(mut existing: OsString) -> OsString {
-        if !existing.is_empty() {
-            existing.push(OsStr::new("\u{1f}"));
-        }
-        existing.push(OsStr::new("--cfg"));
-        existing.push(OsStr::new("\u{1f}"));
-        existing.push(OsStr::new("boltffi_metadata"));
-        existing
-    }
-
-    fn apply(self, command: &mut Command) {
-        match self {
-            Self::Encoded(value) => {
-                command.env("CARGO_ENCODED_RUSTFLAGS", value);
-            }
-            Self::Plain(value) => {
-                command.env("RUSTFLAGS", value);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -709,14 +751,149 @@ mod tests {
 
     use boltffi_ast::{PackageInfo, SourceContract};
     use boltffi_binding::{
-        BindingMetadataEnvelope, BindingMetadataSection, Decl, Native, SerializedBindings,
-        lower_with_declarations,
+        BINDING_METADATA_SURFACE_ENV, BindingMetadataEnvelope, BindingMetadataSection,
+        BindingMetadataSurface, Decl, Native, SerializedBindings, lower_with_declarations,
     };
 
     use super::{
-        BindingMetadataBuild, BindingMetadataBuildError, MetadataCargoArgs, MetadataFeatures,
+        BindingMetadataBuild, BindingMetadataBuildError, CargoBuild, CargoManifest,
+        MetadataCargoArgs, MetadataFeatures, SourceRoot,
     };
     use crate::artifact::BindingMetadataReadError;
+    use crate::cargo::LibraryCargoArgsError;
+
+    #[test]
+    fn metadata_build_tracks_rustup_toolchain_selector_separately() {
+        let build = BindingMetadataBuild::new("Cargo.toml")
+            .rustup_toolchain("+nightly")
+            .cargo_args(vec![
+                "+nightly".to_string(),
+                "--features".to_string(),
+                "ffi".to_string(),
+            ]);
+
+        assert_eq!(build.toolchain_selector.as_deref(), Some("+nightly"));
+        assert_eq!(
+            build.cargo_args,
+            MetadataCargoArgs::new(vec!["--features".to_string(), "ffi".to_string()])
+        );
+    }
+
+    #[test]
+    fn cargo_build_applies_target_toolchain_arguments_and_cross_linker_environment() {
+        let build = BindingMetadataBuild::new("/workspace/ffi/Cargo.toml")
+            .target("x86_64-unknown-linux-gnu")
+            .cargo_args(["--features".to_string(), "ffi".to_string()])
+            .cargo_environment([(
+                OsString::from("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"),
+                OsString::from("/opt/cross/bin/clang"),
+            )])
+            .rustup_toolchain("+nightly");
+        let manifest = CargoManifest {
+            path: PathBuf::from("/workspace/ffi/Cargo.toml"),
+        };
+        let source_root = SourceRoot {
+            path: PathBuf::from("/workspace/ffi/src/lib.rs"),
+        };
+        let cargo_args = build.cargo_args.as_ref().unwrap();
+        let command = CargoBuild::new(
+            &build,
+            &manifest,
+            &source_root,
+            cargo_args,
+            MetadataFeatures {
+                names: BTreeSet::from(["ffi".to_string()]),
+            },
+        )
+        .command();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let environment = command.get_envs().collect::<Vec<_>>();
+
+        assert_eq!(arguments.first().map(String::as_str), Some("+nightly"));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["--target", "x86_64-unknown-linux-gnu"] })
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| { arguments == ["--features", "ffi"] })
+        );
+        assert!(environment.iter().any(|(key, value)| {
+            *key == OsStr::new("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER")
+                && *value == Some(OsStr::new("/opt/cross/bin/clang"))
+        }));
+    }
+
+    #[test]
+    fn cargo_build_selects_wasm_bindings_without_cross_compiling_the_metadata_artifact() {
+        let build = BindingMetadataBuild::new("/workspace/ffi/Cargo.toml")
+            .surface(BindingMetadataSurface::Wasm32);
+        let manifest = CargoManifest {
+            path: PathBuf::from("/workspace/ffi/Cargo.toml"),
+        };
+        let source_root = SourceRoot {
+            path: PathBuf::from("/workspace/ffi/src/lib.rs"),
+        };
+        let cargo_args = build.cargo_args.as_ref().unwrap();
+        let command = CargoBuild::new(
+            &build,
+            &manifest,
+            &source_root,
+            cargo_args,
+            MetadataFeatures {
+                names: BTreeSet::new(),
+            },
+        )
+        .command();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let environment = command.get_envs().collect::<Vec<_>>();
+
+        assert!(!arguments.iter().any(|argument| argument == "--target"));
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "boltffi_binding_surface_wasm32")
+        );
+        assert!(environment.iter().any(|(key, value)| {
+            *key == OsStr::new(BINDING_METADATA_SURFACE_ENV)
+                && *value == Some(OsStr::new(BindingMetadataSurface::Wasm32.as_str()))
+        }));
+    }
+
+    #[test]
+    fn metadata_cargo_args_strip_rustup_toolchain_selectors() {
+        assert_eq!(
+            MetadataCargoArgs::new(vec![
+                "+nightly".to_string(),
+                "--features".to_string(),
+                "ffi".to_string(),
+            ]),
+            MetadataCargoArgs::new(vec!["--features".to_string(), "ffi".to_string()])
+        );
+    }
+
+    #[test]
+    fn metadata_build_rejects_incompatible_library_arguments_before_manifest_access() {
+        let error = BindingMetadataBuild::new("/missing/Cargo.toml")
+            .cargo_args(["--workspace".to_string()])
+            .read()
+            .expect_err("workspace selection must fail before Cargo");
+
+        assert!(matches!(
+            error,
+            BindingMetadataBuildError::CargoArguments(
+                LibraryCargoArgsError::PackageSet { argument }
+            ) if argument == "--workspace"
+        ));
+    }
 
     #[test]
     fn cargo_build_reads_metadata_from_reported_artifacts() {
@@ -857,6 +1034,7 @@ mod tests {
             .into_iter()
             .map(str::to_owned),
         )
+        .unwrap()
         .iter()
         .cloned()
         .collect::<Vec<_>>();
@@ -874,7 +1052,7 @@ mod tests {
 
     #[test]
     fn metadata_features_include_default_dependencies() {
-        let args = MetadataCargoArgs::new(Vec::<String>::new());
+        let args = MetadataCargoArgs::new(Vec::<String>::new()).unwrap();
         let features = MetadataFeatures::resolve(
             &[
                 ("default".to_owned(), vec!["native-ffi".to_owned()]),
@@ -898,11 +1076,12 @@ mod tests {
         ]
         .into_iter()
         .collect::<BTreeMap<_, _>>();
-        let no_default = MetadataCargoArgs::new(["--no-default-features".to_owned()]);
+        let no_default = MetadataCargoArgs::new(["--no-default-features".to_owned()]).unwrap();
         let all = MetadataCargoArgs::new([
             "--no-default-features".to_owned(),
             "--all-features".to_owned(),
-        ]);
+        ])
+        .unwrap();
 
         assert_eq!(
             MetadataFeatures::resolve(&available, &no_default).into_env_value(),

@@ -572,6 +572,7 @@ private let rustToSwiftCoverageFile: [String: String] = [
     "classes/streams.rs": "classes/StreamsTests.swift",
     "classes/thread_safe.rs": "classes/ThreadSafeTests.swift",
     "classes/unsafe_single_threaded.rs": "classes/UnsafeSingleThreadedTests.swift",
+    "collections/mod.rs": "collections/CollectionsTests.swift",
     "custom_types/mod.rs": "custom_types/CustomTypesTests.swift",
     "enums/c_style.rs": "enums/CStyleEnumsTests.swift",
     "enums/complex_variants.rs": "enums/ComplexVariantsEnumsTests.swift",

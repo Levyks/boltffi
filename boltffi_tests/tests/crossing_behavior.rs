@@ -111,7 +111,7 @@ mod primitives {
             42
         );
         assert_ok(unsafe { boltffi_function_boltffi_tests_primitives_bump_in_place(9) });
-        assert_ok(boltffi_function_boltffi_tests_primitives_noop());
+        boltffi_function_boltffi_tests_primitives_noop();
     }
 }
 
