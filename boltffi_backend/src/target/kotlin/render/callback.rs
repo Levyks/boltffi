@@ -281,6 +281,13 @@ impl Callback {
         &self.methods
     }
 
+    /// Kotlin permits the `fun` modifier only on interfaces with exactly one
+    /// abstract method; a `fun interface` gains SAM conversion, so callers can
+    /// pass a lambda instead of an `object :` expression.
+    pub fn fun_interface(&self) -> bool {
+        self.methods.len() == 1
+    }
+
     pub fn handle_methods(&self) -> &[HandleMethod] {
         &self.handle_methods
     }

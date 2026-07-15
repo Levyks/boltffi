@@ -111,7 +111,21 @@ fn kotlin_target_renders_nullable_callback_handle_returns() {
 
 #[test]
 fn kotlin_target_renders_async_callback_return_shapes() {
-    insta::assert_snapshot!(rendered_fixture("callback/async_callback_return_shapes"));
+    let rendered = rendered_fixture("callback/async_callback_return_shapes");
+
+    assert!(rendered.contains("\ninterface Listener {"));
+    assert!(!rendered.contains("fun interface"));
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
+fn kotlin_target_renders_single_method_callbacks_as_fun_interfaces() {
+    let rendered = rendered_fixture("callback/async_callback_string_return");
+
+    assert!(rendered.contains("fun interface Listener {"));
+
+    insta::assert_snapshot!(rendered);
 }
 
 #[test]

@@ -52,7 +52,7 @@ data class Point(
     }
 }
 
-interface Listener {
+fun interface Listener {
     fun onPoint(point: Point)
 }
 

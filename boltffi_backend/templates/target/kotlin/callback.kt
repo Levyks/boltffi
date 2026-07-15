@@ -1,4 +1,4 @@
-interface {{ callback.name() }} {
+{% if callback.fun_interface() %}fun {% endif %}interface {{ callback.name() }} {
 {%- for method in callback.methods() %}
     {% if method.asynchronous() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.public_parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.public_return() %}: {{ return_type }}{% endif %}
 {%- endfor %}

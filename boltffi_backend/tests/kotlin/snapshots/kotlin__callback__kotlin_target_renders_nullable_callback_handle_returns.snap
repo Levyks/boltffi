@@ -15,7 +15,7 @@ private object Native {
     @JvmStatic external fun boltffi_callback_handle_release(handle: Long): Unit
 }
 
-interface Listener {
+fun interface Listener {
     fun onValue(value: UInt): UInt
 }
 

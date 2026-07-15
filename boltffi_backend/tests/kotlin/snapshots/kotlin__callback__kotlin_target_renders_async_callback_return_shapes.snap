@@ -1,6 +1,6 @@
 ---
 source: boltffi_backend/tests/kotlin/callback.rs
-expression: "rendered_fixture(\"callback/async_callback_return_shapes\")"
+expression: rendered
 ---
 ===== com/boltffi/demo/Demo.kt =====
 @file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
