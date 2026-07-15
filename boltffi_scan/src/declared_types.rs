@@ -587,10 +587,10 @@ fn substitute_generic_alias_target(alias: &TypeAlias, use_site: &syn::Path) -> s
 fn substitute_generics(ty: &syn::Type, substitutions: &HashMap<String, syn::Type>) -> syn::Type {
     match ty {
         syn::Type::Path(type_path) if type_path.qself.is_none() => {
-            if let Some(ident) = type_path.path.get_ident() {
-                if let Some(replacement) = substitutions.get(&ident.to_string()) {
-                    return replacement.clone();
-                }
+            if let Some(ident) = type_path.path.get_ident()
+                && let Some(replacement) = substitutions.get(&ident.to_string())
+            {
+                return replacement.clone();
             }
             let mut new_path = type_path.path.clone();
             for segment in &mut new_path.segments {
