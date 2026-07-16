@@ -131,7 +131,11 @@ impl CargoMetadata {
         for t in package_targets {
             for crate_type in &library_target.crate_types {
                 let prefix = if crate_type.is_staticlib() {
-                    "lib"
+                    if t.platform() == Platform::Windows {
+                        ""
+                    } else {
+                        "lib"
+                    }
                 } else {
                     match t.platform() {
                         Platform::Wasm => "",
@@ -140,16 +144,22 @@ impl CargoMetadata {
                         | Platform::IosSimulator
                         | Platform::Linux
                         | Platform::MacOs => "lib",
+                        Platform::Windows => "",
                     }
                 };
                 let suffix = if crate_type.is_cdylib() {
                     match t.platform() {
                         Platform::Wasm => "wasm",
                         Platform::Android | Platform::Linux => "so",
+                        Platform::Windows => "dll",
                         Platform::MacOs | Platform::Ios | Platform::IosSimulator => "dylib",
                     }
                 } else if crate_type.is_staticlib() {
-                    "a"
+                    if t.platform() == Platform::Windows {
+                        "lib"
+                    } else {
+                        "a"
+                    }
                 } else {
                     continue;
                 };

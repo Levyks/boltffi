@@ -38,9 +38,10 @@ impl CodecRead for Reader<'_, '_> {
         Ok(self.read("readString"))
     }
     fn interned_string(&mut self, values: &[String]) -> Self::Expr {
+        let values = dart_string_list(values);
         Ok(format!(
-            "{}.readInternedString(const {:?})",
-            self.name, values
+            "{}.readInternedString(const {values})",
+            self.name
         ))
     }
     fn bytes(&mut self) -> Self::Expr {
@@ -163,10 +164,11 @@ impl CodecWrite for Writer<'_, '_> {
         vec![self.write("writeString", value)]
     }
     fn interned_string(&mut self, values: &[String], value: &ValueRef) -> Vec<Self::Stmt> {
+        let values = dart_string_list(values);
         vec![self.value(value).map(|value| {
             format!(
-                "{}.writeInternedString({value}, const {:?});",
-                self.name, values
+                "{}.writeInternedString({value}, const {values});",
+                self.name
             )
         })]
     }
@@ -337,6 +339,25 @@ fn type_name_enum(id: EnumId, context: &RenderContext<Native>) -> Result<String>
 
 fn collect(values: Vec<Result<String>>) -> Result<Vec<String>> {
     values.into_iter().collect()
+}
+fn dart_string_list(values: &[String]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| format!(
+                "'{}'",
+                value
+                    .replace('\\', "\\\\")
+                    .replace('\'', "\\'")
+                    .replace('$', "\\$")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t")
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 fn join(values: Vec<Result<String>>) -> Result<String> {
     Ok(collect(values)?.join(" "))

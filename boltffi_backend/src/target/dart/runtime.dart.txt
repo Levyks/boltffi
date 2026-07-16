@@ -131,6 +131,105 @@ final class BoltFFIResult$Err<Ok, Err extends Object>
   const BoltFFIResult$Err(this.value);
 }
 
+final class BoltFFIStreamCancellation {
+  final void Function() _cancel;
+  bool _cancelled = false;
+
+  BoltFFIStreamCancellation(this._cancel);
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _cancel();
+  }
+}
+
+final class _$$BoltFFIStreamPump<T> {
+  final int subscription;
+  final List<T> Function(int subscription, int maxCount) readBatch;
+  final void Function(
+    int subscription,
+    int callbackData,
+    $$ffi.Pointer<
+      $$ffi.NativeFunction<$$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)>
+    > callback,
+  ) poll;
+  final void Function(int subscription) unsubscribe;
+  final void Function(int subscription) free;
+  final void Function(T item) onItem;
+  final void Function() onDone;
+  final int batchSize;
+
+  bool _active = true;
+  bool _pollPending = false;
+  bool _freed = false;
+
+  _$$BoltFFIStreamPump({
+    required this.subscription,
+    required this.readBatch,
+    required this.poll,
+    required this.unsubscribe,
+    required this.free,
+    required this.onItem,
+    required this.onDone,
+    this.batchSize = 16,
+  });
+
+  void start() {
+    if (subscription == 0) {
+      _finish();
+      return;
+    }
+    _schedulePoll();
+  }
+
+  void cancel() {
+    if (!_active) return;
+    _active = false;
+    if (subscription != 0) unsubscribe(subscription);
+    if (!_pollPending) _finish();
+  }
+
+  void _schedulePoll() {
+    if (!_active || _pollPending || _freed) return;
+    _pollPending = true;
+    late final $$ffi.NativeCallable<
+      $$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)
+    > callback;
+    callback = $$ffi.NativeCallable<
+      $$ffi.Void Function($$ffi.Uint64, $$ffi.Int8)
+    >.listener((int _, int result) {
+      callback.close();
+      _pollPending = false;
+      if (_active) {
+        while (true) {
+          final items = readBatch(subscription, batchSize);
+          if (items.isEmpty) break;
+          for (final item in items) {
+            if (!_active) break;
+            onItem(item);
+          }
+          if (!_active) break;
+        }
+      }
+      if (result == 1) _active = false;
+      if (!_active) {
+        _finish();
+      } else {
+        $$async.scheduleMicrotask(_schedulePoll);
+      }
+    });
+    poll(subscription, 0, callback.nativeFunction);
+  }
+
+  void _finish() {
+    if (_freed || _pollPending) return;
+    _freed = true;
+    if (subscription != 0) free(subscription);
+    onDone();
+  }
+}
+
 final class _$$WireWriter implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
     $$extffi.calloc.nativeFree,

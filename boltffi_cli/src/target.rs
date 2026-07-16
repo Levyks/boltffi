@@ -11,6 +11,7 @@ pub enum Platform {
     Android,
     Wasm,
     Linux,
+    Windows,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -404,6 +405,12 @@ impl RustTarget {
         architecture: Architecture::Arm64,
     };
 
+    pub const WINDOWS_X86_64: Self = Self {
+        triple: "x86_64-pc-windows-msvc",
+        platform: Platform::Windows,
+        architecture: Architecture::X86_64,
+    };
+
     pub const ALL_IOS: &'static [Self] =
         &[Self::IOS_ARM64, Self::IOS_SIM_ARM64, Self::IOS_SIM_X86_64];
 
@@ -427,6 +434,7 @@ impl RustTarget {
         Self::LINUX_X86_64,
         Self::MACOS_ARM64,
         Self::MACOS_X86_64,
+        Self::WINDOWS_X86_64,
     ];
 
     pub const fn from_axes(platform: Platform, architecture: Architecture) -> Option<Self> {
@@ -443,6 +451,7 @@ impl RustTarget {
             (Platform::Wasm, Architecture::Wasm32) => Some(Self::WASM32_UNKNOWN_UNKNOWN),
             (Platform::Linux, Architecture::Arm64) => Some(Self::LINUX_ARM64),
             (Platform::Linux, Architecture::X86_64) => Some(Self::LINUX_X86_64),
+            (Platform::Windows, Architecture::X86_64) => Some(Self::WINDOWS_X86_64),
             _ => None,
         }
     }
@@ -467,6 +476,7 @@ impl RustTarget {
             "linux:x86_64" => Some(Self::LINUX_X86_64),
             "macos:arm64" => Some(Self::MACOS_ARM64),
             "macos:x86_64" => Some(Self::MACOS_X86_64),
+            "windows:x86_64" => Some(Self::WINDOWS_X86_64),
             _ => None,
         }
     }
@@ -483,6 +493,7 @@ impl RustTarget {
             (Platform::Linux, Architecture::X86_64) => Some("linux:x86_64"),
             (Platform::MacOs, Architecture::Arm64) => Some("macos:arm64"),
             (Platform::MacOs, Architecture::X86_64) => Some("macos:x86_64"),
+            (Platform::Windows, Architecture::X86_64) => Some("windows:x86_64"),
             _ => None,
         }
     }
@@ -515,6 +526,7 @@ impl RustTarget {
             // entry on the build-machine path, which breaks on-device loading.
             Platform::Android => format!("lib{}.a", lib_name),
             Platform::Linux => format!("lib{}.so", lib_name),
+            Platform::Windows => format!("{}.dll", lib_name),
         };
 
         target_dir
@@ -533,6 +545,7 @@ impl Platform {
             Self::Android => "android",
             Self::Wasm => "wasm",
             Self::Linux => "linux",
+            Self::Windows => "windows",
         }
     }
 
@@ -543,6 +556,7 @@ impl Platform {
             Platform::Android => Architecture::ANDROID,
             Platform::Wasm => Architecture::WASM,
             Platform::Linux => Architecture::LINUX,
+            Platform::Windows => Architecture::WINDOWS,
         }
     }
 
@@ -560,6 +574,7 @@ impl Architecture {
     pub const ANDROID: &'static [Self] = &[Self::Arm64, Self::Armv7, Self::X86_64, Self::X86];
     pub const WASM: &'static [Self] = &[Self::Wasm32];
     pub const LINUX: &'static [Self] = &[Self::Arm64, Self::X86_64];
+    pub const WINDOWS: &'static [Self] = &[Self::X86_64];
 
     pub const fn canonical_name(self) -> &'static str {
         match self {
@@ -798,8 +813,18 @@ mod tests {
                 "aarch64-unknown-linux-gnu",
                 "x86_64-unknown-linux-gnu",
                 "aarch64-apple-darwin",
-                "x86_64-apple-darwin"
+                "x86_64-apple-darwin",
+                "x86_64-pc-windows-msvc"
             ]
+        );
+
+        assert_eq!(
+            RustTarget::from_dart_native_name("windows:x86_64"),
+            Some(RustTarget::WINDOWS_X86_64)
+        );
+        assert_eq!(
+            RustTarget::WINDOWS_X86_64.dart_native_name(),
+            Some("windows:x86_64")
         );
     }
 }

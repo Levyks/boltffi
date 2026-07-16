@@ -1,7 +1,8 @@
 use boltffi_binding::{
-    BuiltinType, CallbackDecl, ClassDecl, DataVariantPayload, DirectValueType, EnumDecl,
-    ErrorChannel, ExecutionDecl, FunctionDecl, HandlePresence, HandleTarget, ImportedCallable,
-    Native, OutgoingParam, ParamPlan, RecordDecl, ReturnPlan, TypeRef,
+    BuiltinType, CallbackDecl, ClassDecl, ConstantDecl, ConstantValueDecl, DataVariantPayload,
+    DefaultValue, DirectValueType, EnumDecl, ErrorChannel, ExecutionDecl, FunctionDecl,
+    HandlePresence, HandleTarget, ImportedCallable, Native, OutgoingParam, ParamPlan, RecordDecl,
+    ReturnPlan, StreamDecl, StreamItemPlan, StreamMode, TypeRef,
 };
 
 use crate::{
@@ -67,6 +68,125 @@ pub fn dart_type(ty: &TypeRef, context: &RenderContext<Native>) -> Result<String
         ),
         _ => return unsupported("unknown Dart type reference"),
     })
+}
+
+pub fn custom_type(
+    decl: &boltffi_binding::CustomTypeDecl,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    Ok(Emitted::primary(format!(
+        "typedef {} = {};\n\n",
+        name_style::upper_camel(decl.name()),
+        dart_type(decl.representation(), context)?
+    )))
+}
+
+pub fn stream(
+    decl: &StreamDecl<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let protocol = bridge
+        .source_stream(decl.id())
+        .ok_or(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "missing C stream protocol for Dart stream",
+        })?;
+    let (item_type, read_batch) = match decl.item() {
+        StreamItemPlan::Direct { ty, .. } => {
+            let public = call::direct_type(ty, context)?;
+            let batch = protocol.direct_batch().ok_or(Error::BrokenBridgeContract {
+                bridge: DartHost::TARGET,
+                invariant: "missing direct Dart stream batch",
+            })?;
+            let native = ffi::native_type(batch.item());
+            let decode = match ty {
+                DirectValueType::Primitive(_) => "raw.elementAt(i).value".to_owned(),
+                DirectValueType::Enum(_) => format!("{public}._fromValue(raw.elementAt(i).value)"),
+                DirectValueType::Record(_) => {
+                    format!("{public}._fromStruct(raw.elementAt(i).ref)")
+                }
+                _ => return unsupported("unknown direct Dart stream item"),
+            };
+            (
+                public,
+                format!(
+                    "if (maxCount == 0) return const [];\n  final raw = $$extffi.calloc<{native}>(maxCount);\n  try {{\n    final count = _f${}(subscription, raw, maxCount);\n    return List.generate(count, (i) => {decode}, growable: false);\n  }} finally {{\n    $$extffi.calloc.free(raw);\n  }}",
+                    protocol.pop_batch().name()
+                ),
+            )
+        }
+        StreamItemPlan::Encoded { ty, read, .. } => {
+            let public = dart_type(ty, context)?;
+            let decode = read.render_with(&mut Reader::new("reader", context))?;
+            (
+                public,
+                format!(
+                    "final buffer = _f${}(subscription, maxCount);\n  try {{\n    if (buffer.ptr == $$ffi.nullptr || buffer.len == 0) return const [];\n    final reader = _$$WireReader(buffer.ptr, buffer.len);\n    final count = reader.readU32();\n    return List.generate(count, (_) => {decode}, growable: false);\n  }} finally {{\n    if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer);\n  }}",
+                    protocol.pop_batch().name()
+                ),
+            )
+        }
+        _ => return unsupported("unknown Dart stream item plan"),
+    };
+    let name = name_style::lower_camel(decl.name());
+    let type_name = name_style::upper_camel(decl.name());
+    let subscribe_args = if decl.owner().is_some() {
+        "_rawHandle"
+    } else {
+        ""
+    };
+    let read_name = format!("_read{type_name}Batch");
+    let common = format!(
+        "List<{item_type}> {read_name}(int subscription, int maxCount) {{\n  {}\n}}",
+        indent(&read_batch, 2)
+    );
+    let body = match decl.mode() {
+        StreamMode::Async => format!(
+            "$$async.Stream<{item_type}> {name}() {{\n  late final _$$BoltFFIStreamPump<{item_type}> pump;\n  late final $$async.StreamController<{item_type}> controller;\n  controller = $$async.StreamController<{item_type}>(\n    onListen: () {{\n      final subscription = _f${}({subscribe_args});\n      pump = _$$BoltFFIStreamPump<{item_type}>(\n        subscription: subscription,\n        readBatch: {read_name},\n        poll: _f${},\n        unsubscribe: _f${},\n        free: _f${},\n        onItem: controller.add,\n        onDone: controller.close,\n      )..start();\n    }},\n    onCancel: () => pump.cancel(),\n  );\n  return controller.stream;\n}}",
+            protocol.subscribe().name(),
+            protocol.poll().name(),
+            protocol.unsubscribe().name(),
+            protocol.free().name(),
+        ),
+        StreamMode::Batch => {
+            let subscription = format!("{type_name}Subscription");
+            format!(
+                "{subscription} {name}() => {subscription}._(\n  _f${}({subscribe_args}),\n);\n\nfinal class {subscription} {{\n  int _handle;\n  bool _closed = false;\n  {subscription}._(this._handle);\n\n  List<{item_type}> popBatch({{int maxCount = 16}}) {{\n    if (_closed || _handle == 0) return const [];\n    return {read_name}(_handle, maxCount);\n  }}\n\n  int wait(int timeoutMilliseconds) =>\n      _closed || _handle == 0 ? -1 : _f${}(_handle, timeoutMilliseconds);\n\n  void unsubscribe() {{\n    if (_closed || _handle == 0) return;\n    _f${}(_handle);\n    _closed = true;\n  }}\n\n  void dispose() {{\n    if (_handle == 0) return;\n    if (!_closed) _f${}(_handle);\n    _f${}(_handle);\n    _closed = true;\n    _handle = 0;\n  }}\n}}",
+                protocol.subscribe().name(),
+                protocol.wait().name(),
+                protocol.unsubscribe().name(),
+                protocol.unsubscribe().name(),
+                protocol.free().name(),
+            )
+        }
+        StreamMode::Callback => format!(
+            "BoltFFIStreamCancellation {name}(void Function({item_type}) callback) {{\n  final subscription = _f${}({subscribe_args});\n  final pump = _$$BoltFFIStreamPump<{item_type}>(\n    subscription: subscription,\n    readBatch: {read_name},\n    poll: _f${},\n    unsubscribe: _f${},\n    free: _f${},\n    onItem: callback,\n    onDone: () {{}},\n  )..start();\n  return BoltFFIStreamCancellation(pump.cancel);\n}}",
+            protocol.subscribe().name(),
+            protocol.poll().name(),
+            protocol.unsubscribe().name(),
+            protocol.free().name(),
+        ),
+        _ => return unsupported("unknown Dart stream mode"),
+    };
+    let body = if let Some(owner) = decl.owner() {
+        let owner = context
+            .class(owner)
+            .map(|class| name_style::upper_camel(class.name()))
+            .ok_or(missing("Dart stream owner"))?;
+        if let Some((method, class)) = body.split_once("\n\nfinal class") {
+            format!(
+                "extension {type_name}Stream on {owner} {{\n{}\n}}\n\nfinal class{}",
+                indent(method, 2),
+                class
+            )
+        } else {
+            format!("extension {type_name}Stream on {owner} {{\n{}\n}}", indent(&body, 2))
+        }
+    } else {
+        body
+    };
+    Ok(Emitted::primary(format!("{common}\n\n{body}\n\n")))
 }
 
 pub fn record(
@@ -265,16 +385,13 @@ pub fn function(
     let params = exported_parameters(callable, context)?;
     let return_ty = call::exported_api_return(callable, context)?;
     let function = call::c_function(decl.symbol(), bridge)?;
-    let (setup, cleanup, args) = call::marshal_exported(callable, None, context)?;
-    let invocation = format!("_f${}({})", function.name(), args.join(", "));
+    let (setup, cleanup, args) = call::marshal_exported(callable, None, bridge, context)?;
     let body = match callable.execution() {
-        ExecutionDecl::Synchronous(_) => sync_exported_return(
-            callable.returns().plan(),
-            callable.error().channel(),
-            &invocation,
-            context,
-        )?,
+        ExecutionDecl::Synchronous(_) => {
+            sync_exported_call(callable, function, args.clone(), bridge, context)?
+        }
         ExecutionDecl::Asynchronous(protocol) => {
+            let invocation = format!("_f${}({})", function.name(), args.join(", "));
             async_exported_return(callable, protocol, invocation, bridge, context)?
         }
         _ => return unsupported("unknown free function execution"),
@@ -285,6 +402,89 @@ pub fn function(
         name_style::lower_camel(decl.name()),
         indent(&body, 2)
     )))
+}
+
+pub fn constant(
+    decl: &ConstantDecl<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let name = name_style::lower_camel(decl.name());
+    let source = match decl.value() {
+        ConstantValueDecl::Inline { ty, value, .. } => format!(
+            "const {} {name} = {};\n\n",
+            dart_type(ty, context)?,
+            default_value(ty, value, context)?
+        ),
+        ConstantValueDecl::Accessor { symbol, callable } => {
+            if callable.execution().uses_async_execution() || !callable.params().is_empty() {
+                return unsupported("Dart constant accessor shape");
+            }
+            let return_ty = call::return_type(callable.returns().plan(), context)?;
+            let function = call::c_function(symbol, bridge)?;
+            let invocation = format!("_f${}()", function.name());
+            let body = sync_exported_return(
+                callable.returns().plan(),
+                callable.error().channel(),
+                &invocation,
+                bridge,
+                context,
+            )?;
+            format!("{return_ty} get {name} {{\n  {}\n}}\n\n", indent(&body, 2))
+        }
+        _ => return unsupported("unknown Dart constant value"),
+    };
+    Ok(Emitted::primary(source))
+}
+
+fn default_value(
+    ty: &TypeRef,
+    value: &DefaultValue,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    Ok(match value {
+        DefaultValue::Bool(value) => value.to_string(),
+        DefaultValue::Integer(value) => value.get().to_string(),
+        DefaultValue::Float(value) => {
+            let value = value.to_f64();
+            if value.is_nan() {
+                "double.nan".to_owned()
+            } else if value == f64::INFINITY {
+                "double.infinity".to_owned()
+            } else if value == f64::NEG_INFINITY {
+                "double.negativeInfinity".to_owned()
+            } else if value == 0.0 && value.is_sign_negative() {
+                "-0.0".to_owned()
+            } else {
+                format!("{value:?}")
+            }
+        }
+        DefaultValue::String(value) => dart_string(value),
+        DefaultValue::EnumVariant { variant_name, .. } => match ty {
+            TypeRef::Enum(id) => {
+                let enumeration = context.enumeration(*id).ok_or(missing("constant enum"))?;
+                format!(
+                    "{}.{}",
+                    name_style::upper_camel(enumeration.name()),
+                    name_style::lower_camel(variant_name)
+                )
+            }
+            _ => return unsupported("Dart enum constant type"),
+        },
+        DefaultValue::Null => "null".to_owned(),
+        _ => return unsupported("unknown Dart constant literal"),
+    })
+}
+
+fn dart_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('$', "\\$")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("'{escaped}'")
 }
 
 pub fn class(
@@ -301,7 +501,7 @@ pub fn class(
             let callable = initializer.callable();
             let params = exported_parameters(callable, context)?;
             let function = call::c_function(initializer.symbol(), bridge)?;
-            let (setup, cleanup, args) = call::marshal_exported(callable, None, context)?;
+            let (setup, cleanup, args) = call::marshal_exported(callable, None, bridge, context)?;
             let body = initializer_body(callable, function, args, &name, context)?;
             let body = wrap_call(setup, cleanup, body);
             let initializer_name = name_style::lower_camel(initializer.name());
@@ -326,16 +526,13 @@ pub fn class(
             let return_ty = call::exported_api_return(callable, context)?;
             let function = call::c_function(method.target(), bridge)?;
             let (setup, cleanup, args) =
-                call::marshal_exported(callable, Some("_rawHandle"), context)?;
-            let invocation = format!("_f${}({})", function.name(), args.join(", "));
+                call::marshal_exported(callable, Some("_rawHandle"), bridge, context)?;
             let body = match callable.execution() {
-                ExecutionDecl::Synchronous(_) => sync_exported_return(
-                    callable.returns().plan(),
-                    callable.error().channel(),
-                    &invocation,
-                    context,
-                )?,
+                ExecutionDecl::Synchronous(_) => {
+                    sync_exported_call(callable, function, args.clone(), bridge, context)?
+                }
                 ExecutionDecl::Asynchronous(protocol) => {
+                    let invocation = format!("_f${}({})", function.name(), args.join(", "));
                     async_exported_return(callable, protocol, invocation, bridge, context)?
                 }
                 _ => return unsupported("unknown class method execution"),
@@ -671,6 +868,7 @@ fn sync_exported_return(
     plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
     error: ErrorChannel<Native, boltffi_binding::OutOfRust>,
     invocation: &str,
+    bridge: &CBridgeContract,
     context: &RenderContext<Native>,
 ) -> Result<String> {
     if !matches!(error, ErrorChannel::None) {
@@ -716,7 +914,137 @@ fn sync_exported_return(
                 format!("return {class}._({invocation});")
             }
         }
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "final buffer = {invocation};\ntry {{\n  final reader = _$$WireReader(buffer.ptr, buffer.len);\n  return reader.readOptional((reader) => reader.read{suffix}());\n}} finally {{\n  if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer);\n}}"
+            )
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } => {
+            direct_vector_decode("buffer", element, invocation, bridge, context)?
+        }
         _ => return unsupported("synchronous exported return"),
+    })
+}
+
+fn sync_exported_call(
+    callable: &boltffi_binding::ExportedCallable<Native>,
+    function: &crate::bridge::c::Function,
+    mut args: Vec<String>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    match callable.error().channel() {
+        ErrorChannel::None => {
+            let invocation = format!("_f${}({})", function.name(), args.join(", "));
+            sync_exported_return(
+                callable.returns().plan(),
+                ErrorChannel::None,
+                &invocation,
+                bridge,
+                context,
+            )
+        }
+        ErrorChannel::Encoded { ty, codec, .. } => {
+            let success_index = function
+                .parameter_groups()
+                .iter()
+                .find_map(|group| match group {
+                    crate::bridge::c::ParameterGroup::SuccessOut(index) => Some(*index),
+                    _ => None,
+                });
+            let (success_setup, success_cleanup, success_value) = if let Some(index) = success_index
+            {
+                let crate::bridge::c::Type::MutPointer(inner) = function.parameter(index).ty()
+                else {
+                    return Err(Error::BrokenBridgeContract {
+                        bridge: DartHost::TARGET,
+                        invariant: "fallible Dart call success output is not a pointer",
+                    });
+                };
+                args.push("success".to_owned());
+                (
+                    format!(
+                        "final success = $$extffi.calloc<{}>();\n",
+                        ffi::native_type(inner)
+                    ),
+                    "\n  $$extffi.calloc.free(success);",
+                    sync_out_pointer_success(callable.returns().plan(), bridge, context)?,
+                )
+            } else if matches!(callable.returns().plan(), ReturnPlan::Void) {
+                (String::new(), "", "return;".to_owned())
+            } else {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "fallible Dart call has no success output",
+                });
+            };
+            let error_decode = codec.render_with(&mut Reader::new("errorReader", context))?;
+            let thrown = if matches!(ty, TypeRef::String) {
+                format!("_$$FFIException(-1, {error_decode})")
+            } else {
+                error_decode
+            };
+            Ok(format!(
+                "{success_setup}try {{\n  final error = _f${}({});\n  if (error.ptr != $$ffi.nullptr) {{\n    try {{\n      final errorReader = _$$WireReader(error.ptr, error.len);\n      throw {thrown};\n    }} finally {{ _f$boltffi_free_buf(error); }}\n  }}\n  {success_value}\n}} finally {{{success_cleanup}\n}}",
+                function.name(),
+                args.join(", ")
+            ))
+        }
+        ErrorChannel::Status => unsupported("Dart synchronous status error"),
+        _ => unsupported("unknown Dart synchronous error channel"),
+    }
+}
+
+fn sync_out_pointer_success(
+    plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    Ok(match plan {
+        ReturnPlan::DirectViaOutPointer { ty } => match ty {
+            DirectValueType::Primitive(_) => "return success.value;".to_owned(),
+            DirectValueType::Enum(_) => format!(
+                "return {}._fromValue(success.value);",
+                call::direct_type(ty, context)?
+            ),
+            DirectValueType::Record(_) => format!(
+                "return {}._fromStruct(success.ref);",
+                call::direct_type(ty, context)?
+            ),
+            _ => return unsupported("Dart fallible direct success"),
+        },
+        ReturnPlan::EncodedViaOutPointer { codec, .. } => {
+            let decode = codec.render_with(&mut Reader::new("reader", context))?;
+            format!(
+                "final buffer = success.ref;\n  try {{\n    final reader = _$$WireReader(buffer.ptr, buffer.len);\n    return {decode};\n  }} finally {{\n    if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer);\n  }}"
+            )
+        }
+        ReturnPlan::HandleViaOutPointer {
+            target: HandleTarget::Class(id),
+            presence,
+            ..
+        } => {
+            let class = context
+                .class(*id)
+                .map(|decl| name_style::upper_camel(decl.name()))
+                .ok_or(missing("fallible class return"))?;
+            if *presence == HandlePresence::Nullable {
+                format!("return success.value == 0 ? null : {class}._(success.value);")
+            } else {
+                format!("return {class}._(success.value);")
+            }
+        }
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "final buffer = success.ref;\n  try {{\n    final reader = _$$WireReader(buffer.ptr, buffer.len);\n    return reader.readOptional((reader) => reader.read{suffix}());\n  }} finally {{\n    if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer);\n  }}"
+            )
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } => {
+            direct_vector_decode("buffer", element, "success.ref", bridge, context)?
+        }
+        _ => return unsupported("Dart fallible success return"),
     })
 }
 
@@ -790,7 +1118,12 @@ fn async_exported_return(
         ErrorChannel::Status => return unsupported("Dart async status error"),
         _ => return unsupported("unknown Dart async error"),
     };
-    let success = async_success(callable.returns().plan(), success_index.is_some(), context)?;
+    let success = async_success(
+        callable.returns().plan(),
+        success_index.is_some(),
+        bridge,
+        context,
+    )?;
     let success_cleanup = if success_index.is_some() {
         "\n    $$extffi.calloc.free(success);"
     } else {
@@ -812,6 +1145,7 @@ fn async_exported_return(
 fn async_success(
     plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
     out: bool,
+    bridge: &CBridgeContract,
     context: &RenderContext<Native>,
 ) -> Result<String> {
     Ok(match plan {
@@ -861,8 +1195,50 @@ fn async_success(
                 format!("return {name}._(success.value);")
             }
         }
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } if out => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "final buffer = success.ref;\ntry {{\n  final reader = _$$WireReader(buffer.ptr, buffer.len);\n  return reader.readOptional((reader) => reader.read{suffix}());\n}} finally {{ if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer); }}"
+            )
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } if out => {
+            direct_vector_decode("buffer", element, "success.ref", bridge, context)?
+        }
         _ => return unsupported("Dart async success shape"),
     })
+}
+
+fn direct_vector_decode(
+    buffer: &str,
+    element: &boltffi_binding::DirectVectorElementType,
+    value: &str,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let (native, decode) = match element {
+        boltffi_binding::DirectVectorElementType::Primitive(primitive) => {
+            let native = call::primitive_native_type(primitive.primitive())?;
+            (native.to_owned(), "raw.elementAt(i).value".to_owned())
+        }
+        boltffi_binding::DirectVectorElementType::Record(id) => {
+            let c_record = bridge.source_direct_record(*id).ok_or(
+                Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "missing returned direct vector record",
+                },
+            )?;
+            let native = ffi::record_name(c_record);
+            let public = context
+                .record(*id)
+                .map(|record| name_style::upper_camel(record.name()))
+                .ok_or(missing("returned direct vector record"))?;
+            (native, format!("{public}._fromStruct(raw.elementAt(i).ref)"))
+        }
+        _ => return unsupported("unknown returned direct vector"),
+    };
+    Ok(format!(
+        "final {buffer} = {value};\ntry {{\n  final count = {buffer}.len ~/ $$ffi.sizeOf<{native}>();\n  final raw = {buffer}.ptr.cast<{native}>();\n  return List.generate(count, (i) => {decode}, growable: false);\n}} finally {{\n  if ({buffer}.ptr != $$ffi.nullptr) _f$boltffi_free_buf({buffer});\n}}"
+    ))
 }
 
 fn wrap_call(setup: Vec<String>, cleanup: Vec<String>, body: String) -> String {

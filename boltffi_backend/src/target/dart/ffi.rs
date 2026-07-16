@@ -45,7 +45,7 @@ fn render_record(record: &Record) -> String {
             let annotation = annotation(field.ty());
             format!(
                 "  {annotation}external {} {};",
-                native_type(field.ty()),
+                dart_type(field.ty()),
                 field.name()
             )
         })

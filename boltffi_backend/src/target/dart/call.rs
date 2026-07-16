@@ -1,6 +1,6 @@
 use boltffi_binding::{
     DirectValueType, DirectVectorElementType, ErrorChannel, ExportedCallable, HandlePresence,
-    HandleTarget, IncomingParam, Native, NativeSymbol, ParamPlan, ReturnPlan,
+    HandleTarget, IncomingParam, Native, NativeSymbol, ParamPlan, Primitive, Receive, ReturnPlan,
 };
 
 use crate::{
@@ -151,6 +151,7 @@ pub fn callback_api_return(
 pub fn marshal_exported(
     callable: &ExportedCallable<Native>,
     receiver: Option<&str>,
+    bridge: &CBridgeContract,
     context: &RenderContext<Native>,
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
     let mut setup = Vec::new();
@@ -207,16 +208,97 @@ pub fn marshal_exported(
                 }
                 _ => return unsupported("stream handle parameter"),
             }),
-            ParamPlan::DirectVec { .. } => {
-                return unsupported("direct vector argument marshalling");
+            ParamPlan::DirectVec { element, receive } => {
+                let local = format!("_$vector{}", name_style::upper_camel(param.name()));
+                match element {
+                    DirectVectorElementType::Primitive(value) => {
+                        let native = primitive_native_type(value.primitive())?;
+                        setup.push(format!(
+                            "final {local} = $$extffi.calloc<{native}>({name}.length);\n    for (var i = 0; i < {name}.length; i++) {{ {local}.elementAt(i).value = {name}[i]; }}"
+                        ));
+                        if *receive == Receive::ByMutRef {
+                            cleanup.push(format!(
+                                "for (var i = 0; i < {name}.length; i++) {{ {name}[i] = {local}.elementAt(i).value; }}"
+                            ));
+                        }
+                        cleanup.push(format!("$$extffi.calloc.free({local});"));
+                        args.extend([local, format!("{name}.length")]);
+                    }
+                    DirectVectorElementType::Record(id) => {
+                        if *receive == Receive::ByMutRef {
+                            return unsupported("mutable direct-record vector parameter");
+                        }
+                        let record = context.record(*id).ok_or(Error::BrokenBridgeContract {
+                            bridge: DartHost::TARGET,
+                            invariant: "missing direct vector record",
+                        })?;
+                        let boltffi_binding::RecordDecl::Direct(record) = record else {
+                            return unsupported("encoded direct-vector record");
+                        };
+                        let c_record = bridge.source_direct_record(*id).ok_or(
+                            Error::BrokenBridgeContract {
+                                bridge: DartHost::TARGET,
+                                invariant: "missing C direct vector record",
+                            },
+                        )?;
+                        let c_name = super::ffi::record_name(c_record);
+                        let copies = record
+                            .fields()
+                            .iter()
+                            .zip(c_record.fields())
+                            .map(|(field, c_field)| {
+                                format!(
+                                    "target.{} = value.{};",
+                                    c_field.name(),
+                                    name_style::field(field.key())
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        setup.push(format!(
+                            "final {local} = $$extffi.calloc<{c_name}>({name}.length);\n    for (var i = 0; i < {name}.length; i++) {{ final value = {name}[i]; final target = {local}.elementAt(i).ref; {copies} }}"
+                        ));
+                        cleanup.push(format!("$$extffi.calloc.free({local});"));
+                        args.extend([
+                            format!("{local}.cast<$$ffi.Uint8>()"),
+                            format!("{name}.length * $$ffi.sizeOf<{c_name}>()"),
+                        ]);
+                    }
+                    _ => return unsupported("unknown direct vector argument"),
+                }
             }
-            ParamPlan::ScalarOption { .. } => {
-                return unsupported("scalar option argument marshalling");
+            ParamPlan::ScalarOption { primitive } => {
+                let writer = format!("_$writer{}", name_style::upper_camel(param.name()));
+                let suffix = primitive::wire_suffix(*primitive)?;
+                setup.push(format!(
+                    "final {writer} = _$$WireWriter();\n    {writer}.writeOptional({name}, (value, writer) => writer.write{suffix}(value));"
+                ));
+                cleanup.push(format!("{writer}.close();"));
+                args.extend([format!("{writer}.ptr"), format!("{writer}.len")]);
             }
             _ => return unsupported("unknown argument marshalling"),
         }
     }
     Ok((setup, cleanup, args))
+}
+
+pub fn primitive_native_type(primitive: Primitive) -> Result<&'static str> {
+    match primitive {
+        Primitive::Bool => Ok("$$ffi.Bool"),
+        Primitive::I8 => Ok("$$ffi.Int8"),
+        Primitive::U8 => Ok("$$ffi.Uint8"),
+        Primitive::I16 => Ok("$$ffi.Int16"),
+        Primitive::U16 => Ok("$$ffi.Uint16"),
+        Primitive::I32 => Ok("$$ffi.Int32"),
+        Primitive::U32 => Ok("$$ffi.Uint32"),
+        Primitive::I64 => Ok("$$ffi.Int64"),
+        Primitive::U64 => Ok("$$ffi.Uint64"),
+        Primitive::ISize => Ok("$$ffi.IntPtr"),
+        Primitive::USize => Ok("$$ffi.UintPtr"),
+        Primitive::F32 => Ok("$$ffi.Float"),
+        Primitive::F64 => Ok("$$ffi.Double"),
+        _ => unsupported("unknown direct vector primitive"),
+    }
 }
 
 pub fn direct_type(ty: &DirectValueType, context: &RenderContext<Native>) -> Result<String> {

@@ -65,12 +65,6 @@ impl DartHost {
         ))
     }
 
-    fn unsupported<T>(&self, shape: &'static str) -> Result<T> {
-        Err(Error::UnsupportedTarget {
-            target: Self::TARGET,
-            shape,
-        })
-    }
 }
 
 impl host::HostBackend for DartHost {
@@ -89,6 +83,10 @@ impl host::HostBackend for DartHost {
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Classes)
             .stable(BindingCapability::Callbacks)
+            .stable(BindingCapability::Streams)
+            .stable(BindingCapability::Constants)
+            .stable(BindingCapability::CustomTypes)
+            .stable(BindingCapability::InternedString)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -142,29 +140,29 @@ impl host::HostBackend for DartHost {
 
     fn stream(
         &self,
-        _decl: &StreamDecl<Native>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Native>,
+        decl: &StreamDecl<Native>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Native>,
     ) -> Result<Emitted> {
-        self.unsupported("Dart stream rendering")
+        render::stream(decl, bridge, context)
     }
 
     fn constant(
         &self,
-        _decl: &ConstantDecl<Native>,
-        _bridge: &Self::Bridge,
-        _context: &RenderContext<Native>,
+        decl: &ConstantDecl<Native>,
+        bridge: &Self::Bridge,
+        context: &RenderContext<Native>,
     ) -> Result<Emitted> {
-        self.unsupported("Dart constant rendering")
+        render::constant(decl, bridge, context)
     }
 
     fn custom_type(
         &self,
-        _decl: &CustomTypeDecl,
+        decl: &CustomTypeDecl,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Native>,
+        context: &RenderContext<Native>,
     ) -> Result<Emitted> {
-        self.unsupported("Dart custom type rendering")
+        render::custom_type(decl, context)
     }
 
     fn assemble<'decl>(
@@ -393,5 +391,183 @@ mod tests {
         assert!(library.contains("String echoUrl(String value)"));
         assert!(library.contains("final reader = _$$WireReader(buffer.ptr, buffer.len);"));
         assert!(library.contains("_f$boltffi_free_buf(buffer);"));
+
+        let hook = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("hook/build.dart"))
+            .expect("build hook")
+            .contents();
+        assert!(hook.contains("(OS.windows, Architecture.x64) => 'x86_64-pc-windows-msvc'"));
+    }
+
+    #[test]
+    fn renders_constants_and_fallible_sync_calls() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[data]
+                #[repr(i32)]
+                pub enum Mode { Fast = 1, Safe = 2 }
+
+                #[error]
+                pub struct ParseError { pub message: String }
+
+                #[export]
+                pub const ANSWER: u32 = 42;
+                #[export]
+                pub const DEFAULT_MODE: Mode = Mode::Safe;
+                #[export]
+                pub const GREETING: &str = "hello $dart";
+
+                #[export]
+                pub fn parse(value: String) -> Result<u32, ParseError> { unimplemented!() }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("const int answer = 42;"));
+        assert!(library.contains("const Mode defaultMode = Mode.safe;"));
+        assert!(library.contains("const String greeting = 'hello \\$dart';"));
+        assert!(library.contains("int parse(String value)"));
+        assert!(library.contains("final success = $$extffi.calloc<"));
+        assert!(library.contains("throw ParseError._decode(errorReader);"));
+    }
+
+    #[test]
+    fn renders_scalar_options() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub fn echo_optional(value: Option<u32>) -> Option<u32> { value }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("int? echoOptional(int? value)"));
+        assert!(library.contains("writeOptional(value, (value, writer) => writer.writeU32(value))"));
+        assert!(library.contains("return reader.readOptional((reader) => reader.readU32());"));
+    }
+
+    #[test]
+    fn renders_direct_vectors() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[data]
+                #[repr(C)]
+                pub struct Point { pub x: i32, pub y: i32 }
+
+                #[export]
+                pub fn echo_numbers(values: Vec<i32>) -> Vec<i32> { values }
+                #[export]
+                pub fn mutate_numbers(values: &mut [i32]) { values.reverse(); }
+                #[export]
+                pub fn echo_points(values: Vec<Point>) -> Vec<Point> { values }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("List<int> echoNumbers(List<int> values)"));
+        assert!(library.contains("calloc<$$ffi.Int32>(values.length)"));
+        assert!(library.contains("values[i] = _$vectorValues.elementAt(i).value"));
+        assert!(library.contains("values.length * $$ffi.sizeOf<_C$"));
+        assert!(library.contains("Point._fromStruct(raw.elementAt(i).ref)"));
+    }
+
+    #[test]
+    fn renders_all_stream_modes() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                use std::sync::Arc;
+                use boltffi::EventSubscription;
+                #[data]
+                pub struct Message { pub text: String }
+                pub struct EventBus;
+                #[export]
+                impl EventBus {
+                    pub fn new() -> Self { EventBus }
+                    #[ffi_stream(item = i32)]
+                    pub fn values(&self) -> Arc<EventSubscription<i32>> { unimplemented!() }
+                    #[ffi_stream(item = Message, mode = "batch")]
+                    pub fn messages(&self) -> Arc<EventSubscription<Message>> { unimplemented!() }
+                    #[ffi_stream(item = i32, mode = "callback")]
+                    pub fn callbacks(&self) -> Arc<EventSubscription<i32>> { unimplemented!() }
+                }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("$$async.Stream<int> values()"));
+        assert!(library.contains("final class MessagesSubscription"));
+        assert!(library.contains("BoltFFIStreamCancellation callbacks(void Function(int) callback)"));
+        assert!(library.contains("_$$BoltFFIStreamPump<int>"));
+        assert!(library.contains("final count = reader.readU32();"));
     }
 }

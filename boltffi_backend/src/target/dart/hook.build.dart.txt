@@ -24,9 +24,8 @@ String targetTripleFromCodeConfig(CodeConfig codeConfig) {
     ),
     (OS.iOS, Architecture.x64) => 'x86_64-apple-ios',
 
-    // // Windows
-    // (OS.windows, Architecture.arm64) => 'aarch64-pc-windows-msvc',
-    // (OS.windows, Architecture.x64) => 'x86_64-pc-windows-msvc',
+    // Windows
+    (OS.windows, Architecture.x64) => 'x86_64-pc-windows-msvc',
 
     // Linux
     (OS.linux, Architecture.arm64) => 'aarch64-unknown-linux-gnu',
