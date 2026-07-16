@@ -1,0 +1,1027 @@
+use boltffi_binding::{
+    BuiltinType, CallbackDecl, ClassDecl, DataVariantPayload, DirectValueType, EnumDecl,
+    ErrorChannel, ExecutionDecl, FunctionDecl, HandlePresence, HandleTarget, ImportedCallable,
+    Native, OutgoingParam, ParamPlan, RecordDecl, ReturnPlan, TypeRef,
+};
+
+use crate::{
+    bridge::c::CBridgeContract,
+    core::{Emitted, Error, RenderContext, Result},
+};
+
+use super::{
+    DartHost, call,
+    codec::{Reader, Writer},
+    ffi, name_style, primitive,
+};
+
+pub fn dart_type(ty: &TypeRef, context: &RenderContext<Native>) -> Result<String> {
+    Ok(match ty {
+        TypeRef::Primitive(value) => primitive::api_type(*value)?.to_owned(),
+        TypeRef::String | TypeRef::InternedString { .. } => "String".to_owned(),
+        TypeRef::Bytes => "$$typed_data.Uint8List".to_owned(),
+        TypeRef::Record(id) => context
+            .record(*id)
+            .map(|decl| name_style::upper_camel(decl.name()))
+            .ok_or(missing("record"))?,
+        TypeRef::Enum(id) => context
+            .enumeration(*id)
+            .map(|decl| name_style::upper_camel(decl.name()))
+            .ok_or(missing("enum"))?,
+        TypeRef::Class(id) => context
+            .class(*id)
+            .map(|decl| name_style::upper_camel(decl.name()))
+            .ok_or(missing("class"))?,
+        TypeRef::Callback(id) => context
+            .callback(*id)
+            .map(|decl| name_style::upper_camel(decl.name()))
+            .ok_or(missing("callback"))?,
+        TypeRef::Custom(id) => context
+            .custom_type(*id)
+            .map(|decl| name_style::upper_camel(decl.name()))
+            .ok_or(missing("custom type"))?,
+        TypeRef::Builtin(value) => match value {
+            BuiltinType::Duration => "Duration".to_owned(),
+            BuiltinType::SystemTime => "DateTime".to_owned(),
+            BuiltinType::Uuid | BuiltinType::Url => "String".to_owned(),
+        },
+        TypeRef::Optional(inner) => format!("{}?", dart_type(inner, context)?),
+        TypeRef::Sequence(inner) => format!("List<{}>", dart_type(inner, context)?),
+        TypeRef::Tuple(elements) => format!(
+            "({})",
+            elements
+                .iter()
+                .map(|element| dart_type(element, context))
+                .collect::<Result<Vec<_>>>()?
+                .join(", ")
+        ),
+        TypeRef::Result { ok, err } => format!(
+            "BoltFFIResult<{}, {}>",
+            dart_type(ok, context)?,
+            dart_type(err, context)?
+        ),
+        TypeRef::Map { key, value } => format!(
+            "Map<{}, {}>",
+            dart_type(key, context)?,
+            dart_type(value, context)?
+        ),
+        _ => return unsupported("unknown Dart type reference"),
+    })
+}
+
+pub fn record(
+    decl: &RecordDecl<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let name = name_style::upper_camel(decl.name());
+    let exception = if decl.is_error_payload() {
+        " implements Exception"
+    } else {
+        ""
+    };
+    let (fields, reads, writes, direct_bridge) = match decl {
+        RecordDecl::Direct(record) => {
+            let fields = record
+                .fields()
+                .iter()
+                .map(|field| {
+                    Ok((
+                        name_style::field(field.key()),
+                        primitive::direct_field(field.ty())?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let reads = record
+                .fields()
+                .iter()
+                .map(|field| {
+                    Ok(format!(
+                        "reader.read{}()",
+                        primitive::wire_suffix(field.ty().primitive())?
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let writes = record
+                .fields()
+                .iter()
+                .map(|field| {
+                    Ok(format!(
+                        "writer.write{}({});",
+                        primitive::wire_suffix(field.ty().primitive())?,
+                        name_style::field(field.key())
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let c_record =
+                bridge
+                    .source_direct_record(record.id())
+                    .ok_or(Error::BrokenBridgeContract {
+                        bridge: DartHost::TARGET,
+                        invariant: "missing C record for direct Dart record",
+                    })?;
+            let c_name = ffi::record_name(c_record);
+            let assignments = record
+                .fields()
+                .iter()
+                .zip(c_record.fields())
+                .map(|(field, c_field)| {
+                    format!(
+                        "      ..{} = {}",
+                        c_field.name(),
+                        name_style::field(field.key())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let from_fields = record
+                .fields()
+                .iter()
+                .zip(c_record.fields())
+                .map(|(field, c_field)| {
+                    format!(
+                        "      {}: value.{},",
+                        name_style::field(field.key()),
+                        c_field.name()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            (
+                fields,
+                reads,
+                writes,
+                format!(
+                    "\n  {c_name} _toStruct() => $$ffi.Struct.create<{c_name}>()\n{assignments};\n\n  factory {name}._fromStruct({c_name} value) => {name}(\n{from_fields}\n  );\n"
+                ),
+            )
+        }
+        RecordDecl::Encoded(record) => {
+            let fields = record
+                .fields()
+                .iter()
+                .map(|field| {
+                    Ok((
+                        name_style::field(field.key()),
+                        dart_type(field.ty(), context)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let reads = record
+                .fields()
+                .iter()
+                .map(|field| {
+                    field
+                        .read()
+                        .render_with(&mut Reader::new("reader", context))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let writes = record
+                .fields()
+                .iter()
+                .flat_map(|field| {
+                    field
+                        .write()
+                        .render_with(&mut Writer::new("writer", "this", context))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (fields, reads, writes, String::new())
+        }
+        _ => return unsupported("unknown record declaration"),
+    };
+    let declarations = fields
+        .iter()
+        .map(|(field, ty)| format!("  final {ty} {field};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parameters = fields
+        .iter()
+        .map(|(field, _)| format!("required this.{field}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let decode = fields
+        .iter()
+        .zip(reads)
+        .map(|((field, _), read)| format!("      {field}: {read},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let encode = writes
+        .into_iter()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Emitted::primary(format!(
+        "final class {name}{exception} {{\n{declarations}\n\n  const {name}({{{parameters}}});\n\n  factory {name}._decode(_$$WireReader reader) => {name}(\n{decode}\n  );\n\n  void _encode(_$$WireWriter writer) {{\n{encode}\n  }}\n{direct_bridge}}}\n\n"
+    )))
+}
+
+pub fn enumeration(
+    decl: &EnumDecl<Native>,
+    _: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    match decl {
+        EnumDecl::CStyle(value) => {
+            let name = name_style::upper_camel(value.name());
+            let variants = value
+                .variants()
+                .iter()
+                .map(|variant| {
+                    format!(
+                        "  static const {} = {name}._({}, '{}');",
+                        name_style::lower_camel(variant.name()),
+                        variant.discriminant().get(),
+                        name_style::lower_camel(variant.name())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let values = value
+                .variants()
+                .iter()
+                .map(|variant| name_style::lower_camel(variant.name()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Ok(Emitted::primary(format!(
+                "final class {name}{} {{\n  final int value;\n  final String name;\n  const {name}._(this.value, this.name);\n\n{variants}\n  static const values = <{name}>[{values}];\n  static {name} _fromValue(int value) => values.firstWhere((item) => item.value == value, orElse: () => throw StateError('Unknown {name} value: $value'));\n  void _encode(_$$WireWriter writer) => writer.writeI32(value);\n  static {name} _decode(_$$WireReader reader) => _fromValue(reader.readI32());\n  @override String toString() => name;\n}}\n\n",
+                if value.is_error_payload() {
+                    " implements Exception"
+                } else {
+                    ""
+                }
+            )))
+        }
+        EnumDecl::Data(value) => data_enum(value, context),
+        _ => unsupported("unknown enum declaration"),
+    }
+}
+
+pub fn function(
+    decl: &FunctionDecl<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let callable = decl.callable();
+    let params = exported_parameters(callable, context)?;
+    let return_ty = call::exported_api_return(callable, context)?;
+    let function = call::c_function(decl.symbol(), bridge)?;
+    let (setup, cleanup, args) = call::marshal_exported(callable, None, context)?;
+    let invocation = format!("_f${}({})", function.name(), args.join(", "));
+    let body = match callable.execution() {
+        ExecutionDecl::Synchronous(_) => sync_exported_return(
+            callable.returns().plan(),
+            callable.error().channel(),
+            &invocation,
+            context,
+        )?,
+        ExecutionDecl::Asynchronous(protocol) => {
+            async_exported_return(callable, protocol, invocation, bridge, context)?
+        }
+        _ => return unsupported("unknown free function execution"),
+    };
+    let body = wrap_call(setup, cleanup, body);
+    Ok(Emitted::primary(format!(
+        "{return_ty} {}({params}) {{\n  {}\n}}\n\n",
+        name_style::lower_camel(decl.name()),
+        indent(&body, 2)
+    )))
+}
+
+pub fn class(
+    decl: &ClassDecl<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let name = name_style::upper_camel(decl.name());
+    let release = call::c_function(decl.release(), bridge)?.name();
+    let initializers = decl
+        .initializers()
+        .iter()
+        .map(|initializer| {
+            let callable = initializer.callable();
+            let params = exported_parameters(callable, context)?;
+            let function = call::c_function(initializer.symbol(), bridge)?;
+            let (setup, cleanup, args) = call::marshal_exported(callable, None, context)?;
+            let body = initializer_body(callable, function, args, &name, context)?;
+            let body = wrap_call(setup, cleanup, body);
+            let initializer_name = name_style::lower_camel(initializer.name());
+            let constructor = if initializer_name == "new" || initializer_name == "new_" {
+                name.clone()
+            } else {
+                format!("{name}.{initializer_name}")
+            };
+            Ok(format!(
+                "  factory {constructor}({params}) {{\n    {}\n  }}",
+                indent(&body, 4)
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("\n\n");
+    let methods = decl
+        .methods()
+        .iter()
+        .map(|method| {
+            let callable = method.callable();
+            let params = exported_parameters(callable, context)?;
+            let return_ty = call::exported_api_return(callable, context)?;
+            let function = call::c_function(method.target(), bridge)?;
+            let (setup, cleanup, args) =
+                call::marshal_exported(callable, Some("_rawHandle"), context)?;
+            let invocation = format!("_f${}({})", function.name(), args.join(", "));
+            let body = match callable.execution() {
+                ExecutionDecl::Synchronous(_) => sync_exported_return(
+                    callable.returns().plan(),
+                    callable.error().channel(),
+                    &invocation,
+                    context,
+                )?,
+                ExecutionDecl::Asynchronous(protocol) => {
+                    async_exported_return(callable, protocol, invocation, bridge, context)?
+                }
+                _ => return unsupported("unknown class method execution"),
+            };
+            let body = wrap_call(setup, cleanup, body);
+            Ok(format!(
+                "  {return_ty} {}({params}) {{\n    {}\n  }}",
+                name_style::lower_camel(method.name()),
+                indent(&body, 4)
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("\n\n");
+    Ok(Emitted::primary(format!(
+        "final class {name} {{\n  static final _finalizer = Finalizer<int>((handle) => _f${release}(handle));\n  int _handle;\n  bool _closed = false;\n  {name}._(this._handle) {{ _finalizer.attach(this, _handle, detach: this); }}\n\n  int get _rawHandle {{\n    if (_closed) throw StateError('{name} has been disposed');\n    return _handle;\n  }}\n\n{initializers}\n\n{methods}\n\n  void dispose() {{\n    if (_closed) return;\n    _closed = true;\n    _finalizer.detach(this);\n    _f${release}(_handle);\n    _handle = 0;\n  }}\n}}\n\n"
+    )))
+}
+
+fn initializer_body(
+    callable: &boltffi_binding::ExportedCallable<Native>,
+    function: &crate::bridge::c::Function,
+    mut args: Vec<String>,
+    class_name: &str,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    match callable.error().channel() {
+        ErrorChannel::None => Ok(format!(
+            "final handle = _f${}({});\nreturn {class_name}._(handle);",
+            function.name(),
+            args.join(", ")
+        )),
+        ErrorChannel::Encoded { ty, codec, .. } => {
+            let success = function
+                .parameter_groups()
+                .iter()
+                .find_map(|group| match group {
+                    crate::bridge::c::ParameterGroup::SuccessOut(index) => Some(*index),
+                    _ => None,
+                })
+                .ok_or(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "fallible Dart initializer has no success output",
+                })?;
+            let crate::bridge::c::Type::MutPointer(inner) = function.parameter(success).ty() else {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "fallible Dart initializer success output is not a pointer",
+                });
+            };
+            args.push("success".to_owned());
+            let decode = codec.render_with(&mut Reader::new("errorReader", context))?;
+            let thrown = if matches!(ty, TypeRef::String) {
+                format!("_$$FFIException(-1, {decode})")
+            } else {
+                decode
+            };
+            Ok(format!(
+                "final success = $$extffi.calloc<{}>();\ntry {{\n  final error = _f${}({});\n  if (error.ptr != $$ffi.nullptr) {{\n    try {{\n      final errorReader = _$$WireReader(error.ptr, error.len);\n      throw {thrown};\n    }} finally {{ _f$boltffi_free_buf(error); }}\n  }}\n  return {class_name}._(success.value);\n}} finally {{\n  $$extffi.calloc.free(success);\n}}",
+                ffi::native_type(inner),
+                function.name(),
+                args.join(", ")
+            ))
+        }
+        _ => unsupported("Dart initializer error channel"),
+    }
+}
+
+pub fn callback(
+    decl: &CallbackDecl<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let protocol = bridge
+        .source_callback(decl.id())
+        .ok_or(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "missing Dart callback C protocol",
+        })?;
+    let name = name_style::upper_camel(decl.name());
+    let source_methods = decl.protocol().vtable().methods();
+    if source_methods.len() != protocol.methods().len() {
+        return Err(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "Dart callback method count mismatch",
+        });
+    }
+    let interface = source_methods
+        .iter()
+        .map(|method| {
+            let params = imported_parameters(method.callable(), context)?;
+            let returns = call::callback_api_return(method.callable(), context)?;
+            Ok(format!(
+                "  {returns} {}({params});",
+                name_style::lower_camel(method.name())
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("\n\n");
+    let implementations = source_methods
+        .iter()
+        .zip(protocol.methods())
+        .map(|(method, slot)| callback_method(&name, method, slot, context))
+        .collect::<Result<Vec<_>>>()?
+        .join("\n\n");
+    let vtable_name = ffi::record_name(protocol.vtable());
+    let assignments = protocol
+        .methods()
+        .iter()
+        .map(|slot| {
+            format!(
+                "    _vtable.ref.{} = $$ffi.Pointer.fromFunction(_I${name}.{}{});",
+                slot.name().as_str(),
+                slot.name().as_str(),
+                callback_exceptional_return(slot.returns())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Emitted::primary(format!(
+        "abstract interface class {name} {{\n{interface}\n}}\n\nfinal class _I${name} {{\n  static void free(int handle) => _I${name}HandleMap.remove(handle);\n  static int clone(int handle) => _I${name}HandleMap.clone(handle);\n\n{implementations}\n}}\n\nfinal class _I${name}HandleMapImpl {{\n  final Map<int, {name}> _map = {{}};\n  int _counter = 1;\n  late final $$ffi.Pointer<{vtable_name}> _vtable;\n\n  _I${name}HandleMapImpl() {{\n    _vtable = $$extffi.calloc<{vtable_name}>();\n    _vtable.ref.free = $$ffi.Pointer.fromFunction(_I${name}.free);\n    _vtable.ref.clone = $$ffi.Pointer.fromFunction(_I${name}.clone, 0);\n{assignments}\n    _f${}(_vtable);\n  }}\n\n  int insert({name} value) {{ final handle = _counter += 2; _map[handle] = value; return handle; }}\n  {name}? get(int handle) => _map[handle];\n  {name}? remove(int handle) => _map.remove(handle);\n  int clone(int handle) {{ final value = _map[handle]; return value == null ? 0 : insert(value); }}\n  _$$BoltFFICallbackHandle createHandle({name} value) => _f${}(insert(value));\n}}\n\nfinal _I${name}HandleMap = _I${name}HandleMapImpl();\n\n",
+        protocol.register().name(),
+        protocol.create_handle().name()
+    )))
+}
+
+fn callback_method(
+    callback_name: &str,
+    method: &boltffi_binding::ImportedMethodDecl<Native, boltffi_binding::VTableSlot>,
+    slot: &crate::bridge::c::CallbackSlot,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let callable = method.callable();
+    let signature = slot
+        .parameters()
+        .iter()
+        .map(|parameter| format!("{} {}", ffi::dart_type(parameter.ty()), parameter.name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut setup = vec![
+        format!("final impl = _I${callback_name}HandleMap.get(handle);"),
+        "if (impl == null) { throw StateError('released BoltFFI callback handle'); }".into(),
+    ];
+    let mut args = Vec::new();
+    for (param, group) in callable.params().iter().zip(slot.source_parameter_groups()) {
+        let OutgoingParam::Value(plan) = param.payload() else {
+            return unsupported("callback closure parameter");
+        };
+        let local = name_style::lower_camel(param.name());
+        let expression = match (plan, group) {
+            (ParamPlan::Direct { ty, .. }, crate::bridge::c::ParameterGroup::Value(index)) => {
+                let raw = slot.parameter(*index).name();
+                match ty {
+                    DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
+                        format!("{raw}")
+                    }
+                    DirectValueType::Enum(id) => format!(
+                        "{}._fromValue({raw})",
+                        call::direct_type(&DirectValueType::Enum(*id), context)?
+                    ),
+                    _ => raw.to_owned(),
+                }
+            }
+            (
+                ParamPlan::Encoded { codec, .. },
+                crate::bridge::c::ParameterGroup::ByteSlice(bytes),
+            ) => {
+                let ptr = slot.parameter(bytes.pointer()).name();
+                let len = slot.parameter(bytes.length()).name();
+                let reader = format!("{local}Reader");
+                setup.push(format!("final {reader} = _$$WireReader({ptr}, {len});"));
+                codec.render_with(&mut Reader::new(&reader, context))?
+            }
+            _ => return unsupported("callback parameter marshalling shape"),
+        };
+        setup.push(format!("final {local}Decoded = {expression};"));
+        args.push(format!("{local}Decoded"));
+    }
+    let call = format!(
+        "impl.{}({})",
+        name_style::lower_camel(method.name()),
+        args.join(", ")
+    );
+    let body = match callable.execution() {
+        ExecutionDecl::Synchronous(_) => callback_sync_return(callable, &call, context)?,
+        ExecutionDecl::Asynchronous(_) => callback_async_return(callable, slot, &call, context)?,
+        _ => return unsupported("unknown callback execution"),
+    };
+    setup.push(body);
+    Ok(format!(
+        "  static {} {}({signature}){} {{\n    {}\n  }}",
+        ffi::dart_type(slot.returns()),
+        slot.name().as_str(),
+        if callable.execution().uses_async_execution() {
+            " async"
+        } else {
+            ""
+        },
+        indent(&setup.join("\n"), 4)
+    ))
+}
+
+fn callback_sync_return(
+    callable: &ImportedCallable<Native>,
+    call_expr: &str,
+    _: &RenderContext<Native>,
+) -> Result<String> {
+    if !matches!(callable.error().channel(), ErrorChannel::None) {
+        return unsupported("fallible synchronous callback");
+    }
+    Ok(match callable.returns().plan() {
+        ReturnPlan::Void => format!("{call_expr};"),
+        ReturnPlan::DirectViaReturnSlot { ty } => match ty {
+            DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
+                format!("return {call_expr};")
+            }
+            DirectValueType::Enum(_) => format!("return {call_expr}.value;"),
+            _ => format!("return {call_expr};"),
+        },
+        _ => return unsupported("synchronous callback return shape"),
+    })
+}
+
+fn callback_async_return(
+    callable: &ImportedCallable<Native>,
+    slot: &crate::bridge::c::CallbackSlot,
+    call_expr: &str,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let completion = slot
+        .parameter_groups()
+        .iter()
+        .find_map(|group| match group {
+            crate::bridge::c::ParameterGroup::CallbackCompletion(value) => Some(value),
+            _ => None,
+        })
+        .ok_or(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "missing Dart callback completion",
+        })?;
+    let callback = slot.parameter(completion.callback()).name();
+    let callback_context = slot.parameter(completion.context()).name();
+    let success_writes = callback_success_write(callable.returns().plan(), context)?;
+    let writes = match callable.error().channel() {
+        ErrorChannel::None => format!(
+            "{}\nfinal completionCode = 0;",
+            success_writes.replace("value", "result")
+        ),
+        ErrorChannel::Encoded { codec, .. } => {
+            let error_writes = codec
+                .render_with(&mut Writer::new("writer", "value", context))
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?
+                .join(" ");
+            format!(
+                "late final int completionCode;\nswitch (result) {{\n  case BoltFFIResult$Ok(:final value):\n    {success_writes}\n    completionCode = 0;\n  case BoltFFIResult$Err(:final value):\n    {error_writes}\n    completionCode = 100;\n}}"
+            )
+        }
+        _ => return unsupported("async callback error encoding"),
+    };
+    Ok(format!(
+        "final completion = {callback}.asFunction<void Function($$ffi.Pointer<$$ffi.Void>, _$$FFIStatus, _$$FFIBuf)>();\n    try {{\n      final result = await {call_expr};\n      final writer = _$$WireWriter();\n      try {{\n        {writes}\n        final buffer = writer.toRustBuffer();\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = completionCode, buffer);\n      }} finally {{ writer.close(); }}\n    }} catch (_) {{\n      completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 100, $$ffi.Struct.create<_$$FFIBuf>()..ptr = $$ffi.nullptr..len = 0..cap = 0..align = 1);\n    }}"
+    ))
+}
+
+fn callback_success_write(
+    plan: &ReturnPlan<Native, boltffi_binding::IntoRust>,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    Ok(match plan {
+        ReturnPlan::Void => String::new(),
+        ReturnPlan::DirectViaReturnSlot { ty } | ReturnPlan::DirectViaOutPointer { ty } => match ty
+        {
+            DirectValueType::Primitive(value) => {
+                format!("writer.write{}(value);", primitive::wire_suffix(*value)?)
+            }
+            DirectValueType::Enum(_) => "writer.writeI32(value.value);".into(),
+            DirectValueType::Record(_) => "value._encode(writer);".into(),
+            _ => return unsupported("callback direct success encoding"),
+        },
+        ReturnPlan::EncodedViaReturnSlot { codec, .. }
+        | ReturnPlan::EncodedViaOutPointer { codec, .. } => codec
+            .render_with(&mut Writer::new("writer", "value", context))
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+            .join(" "),
+        _ => return unsupported("callback success encoding"),
+    })
+}
+
+fn exported_parameters(
+    callable: &boltffi_binding::ExportedCallable<Native>,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    callable
+        .params()
+        .iter()
+        .map(|param| {
+            let boltffi_binding::IncomingParam::Value(plan) = param.payload() else {
+                return unsupported("closure parameter");
+            };
+            Ok(format!(
+                "{} {}",
+                call::parameter_type(plan, context)?,
+                name_style::lower_camel(param.name())
+            ))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|params| params.join(", "))
+}
+
+fn imported_parameters(
+    callable: &ImportedCallable<Native>,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    callable
+        .params()
+        .iter()
+        .map(|param| {
+            let OutgoingParam::Value(plan) = param.payload() else {
+                return unsupported("callback closure parameter");
+            };
+            Ok(format!(
+                "{} {}",
+                call::outgoing_parameter_type(plan, context)?,
+                name_style::lower_camel(param.name())
+            ))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|params| params.join(", "))
+}
+
+fn sync_exported_return(
+    plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
+    error: ErrorChannel<Native, boltffi_binding::OutOfRust>,
+    invocation: &str,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    if !matches!(error, ErrorChannel::None) {
+        return unsupported("fallible synchronous exported call");
+    }
+    Ok(match plan {
+        ReturnPlan::Void => format!("{invocation};"),
+        ReturnPlan::DirectViaReturnSlot { ty } => match ty {
+            DirectValueType::Primitive(_) => format!("return {invocation};"),
+            DirectValueType::Enum(_) => format!(
+                "return {}._fromValue({invocation});",
+                call::direct_type(ty, context)?
+            ),
+            DirectValueType::Record(_) => format!(
+                "return {}._fromStruct({invocation});",
+                call::direct_type(ty, context)?
+            ),
+            _ => return unsupported("synchronous direct exported return"),
+        },
+        ReturnPlan::EncodedViaReturnSlot { codec, .. } => {
+            let decode = codec.render_with(&mut Reader::new("reader", context))?;
+            format!(
+                "final buffer = {invocation};\ntry {{\n  final reader = _$$WireReader(buffer.ptr, buffer.len);\n  return {decode};\n}} finally {{\n  if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer);\n}}"
+            )
+        }
+        ReturnPlan::HandleViaReturnSlot {
+            target: HandleTarget::Class(id),
+            presence,
+            ..
+        } => {
+            let class = context
+                .class(*id)
+                .map(|decl| name_style::upper_camel(decl.name()))
+                .ok_or(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "missing synchronous class return",
+                })?;
+            if *presence == HandlePresence::Nullable {
+                format!(
+                    "final handle = {invocation};\nreturn handle == 0 ? null : {class}._(handle);"
+                )
+            } else {
+                format!("return {class}._({invocation});")
+            }
+        }
+        _ => return unsupported("synchronous exported return"),
+    })
+}
+
+fn async_exported_return(
+    callable: &boltffi_binding::ExportedCallable<Native>,
+    protocol: &boltffi_binding::native::AsyncProtocol,
+    start: String,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let boltffi_binding::native::AsyncProtocol::PollHandle {
+        poll,
+        complete,
+        cancel,
+        free,
+        ..
+    } = protocol
+    else {
+        return unsupported("non-poll Dart async protocol");
+    };
+    let poll = call::c_function(poll, bridge)?;
+    let complete = call::c_function(complete, bridge)?;
+    let cancel = call::c_function(cancel, bridge)?;
+    let free = call::c_function(free, bridge)?;
+    let success_index = complete
+        .parameter_groups()
+        .iter()
+        .find_map(|group| match group {
+            crate::bridge::c::ParameterGroup::SuccessOut(index) => Some(*index),
+            _ => None,
+        });
+    let success_setup = success_index
+        .map(|index| {
+            let crate::bridge::c::Type::MutPointer(inner) = complete.parameter(index).ty() else {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "Dart async success output is not a pointer",
+                });
+            };
+            Ok(format!(
+                "final success = $$extffi.calloc<{}>();",
+                ffi::native_type(inner)
+            ))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let complete_args = complete
+        .parameter_groups()
+        .iter()
+        .map(|group| match group {
+            crate::bridge::c::ParameterGroup::Value(_) => Ok("future".to_owned()),
+            crate::bridge::c::ParameterGroup::CompletionStatusOut(_) => Ok("status".to_owned()),
+            crate::bridge::c::ParameterGroup::SuccessOut(_) => Ok("success".to_owned()),
+            _ => unsupported("Dart async completion parameter group"),
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join(", ");
+    let call_complete = format!("_f${}({complete_args})", complete.name());
+    let error = match callable.error().channel() {
+        ErrorChannel::None => format!("{call_complete};"),
+        ErrorChannel::Encoded { ty, codec, .. } => {
+            let decode = codec.render_with(&mut Reader::new("errorReader", context))?;
+            let thrown = match ty {
+                TypeRef::String => format!("_$$FFIException(-1, {decode})"),
+                _ => decode,
+            };
+            format!(
+                "final error = {call_complete};\nif (error.ptr != $$ffi.nullptr) {{\n  try {{\n    final errorReader = _$$WireReader(error.ptr, error.len);\n    throw {thrown};\n  }} finally {{ _f$boltffi_free_buf(error); }}\n}}"
+            )
+        }
+        ErrorChannel::Status => return unsupported("Dart async status error"),
+        _ => return unsupported("unknown Dart async error"),
+    };
+    let success = async_success(callable.returns().plan(), success_index.is_some(), context)?;
+    let success_cleanup = if success_index.is_some() {
+        "\n    $$extffi.calloc.free(success);"
+    } else {
+        ""
+    };
+    let complete_body = format!(
+        "final status = $$extffi.calloc<_$$FFIStatus>();\n{success_setup}\ntry {{\n  {error}\n  _$$throwIfStatus(status.ref);\n  {success}\n}} finally {{\n  $$extffi.calloc.free(status);{success_cleanup}\n}}"
+    );
+    let ty = call::return_type(callable.returns().plan(), context)?;
+    Ok(format!(
+        "return _$$BoltFFIAsync.create<{ty}>(\n  createFuture: () => {start},\n  pollFuture: _f${},\n  completeFuture: (future) {{\n    {}\n  }},\n  cancelFuture: _f${},\n  freeFuture: _f${},\n);",
+        poll.name(),
+        indent(&complete_body, 4),
+        cancel.name(),
+        free.name()
+    ))
+}
+
+fn async_success(
+    plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
+    out: bool,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    Ok(match plan {
+        ReturnPlan::Void => "return;".into(),
+        ReturnPlan::DirectViaOutPointer { ty } => match ty {
+            DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
+                "return success.value;".into()
+            }
+            DirectValueType::Enum(_) => format!(
+                "return {}._fromValue(success.value);",
+                call::direct_type(ty, context)?
+            ),
+            DirectValueType::Record(_) => format!(
+                "return {}._fromStruct(success.ref);",
+                call::direct_type(ty, context)?
+            ),
+            _ => "return success.value;".into(),
+        },
+        ReturnPlan::DirectViaReturnSlot { ty } if !out => match ty {
+            DirectValueType::Enum(_) => format!(
+                "return {}._fromValue(result);",
+                call::direct_type(ty, context)?
+            ),
+            _ => "return result;".into(),
+        },
+        ReturnPlan::EncodedViaOutPointer { codec, .. } => {
+            let decode = codec.render_with(&mut Reader::new("reader", context))?;
+            format!(
+                "final buffer = success.ref;\ntry {{\n  final reader = _$$WireReader(buffer.ptr, buffer.len);\n  return {decode};\n}} finally {{ if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer); }}"
+            )
+        }
+        ReturnPlan::HandleViaOutPointer {
+            target: HandleTarget::Class(id),
+            presence,
+            ..
+        } => {
+            let name = context
+                .class(*id)
+                .map(|decl| name_style::upper_camel(decl.name()))
+                .ok_or(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "missing async class return",
+                })?;
+            if *presence == HandlePresence::Nullable {
+                format!("return success.value == 0 ? null : {name}._(success.value);")
+            } else {
+                format!("return {name}._(success.value);")
+            }
+        }
+        _ => return unsupported("Dart async success shape"),
+    })
+}
+
+fn wrap_call(setup: Vec<String>, cleanup: Vec<String>, body: String) -> String {
+    if setup.is_empty() {
+        return body;
+    }
+    format!(
+        "{}\ntry {{\n  {}\n}} finally {{\n  {}\n}}",
+        setup.join("\n"),
+        body.replace('\n', "\n  "),
+        cleanup.join("\n  ")
+    )
+}
+
+fn callback_exceptional_return(ty: &crate::bridge::c::Type) -> String {
+    match ty {
+        crate::bridge::c::Type::Void => String::new(),
+        crate::bridge::c::Type::Bool => ", false".into(),
+        crate::bridge::c::Type::Float32 | crate::bridge::c::Type::Float64 => ", 0.0".into(),
+        _ => ", 0".into(),
+    }
+}
+
+fn indent(value: &str, spaces: usize) -> String {
+    value.replace('\n', &format!("\n{}", " ".repeat(spaces)))
+}
+
+fn data_enum(
+    value: &boltffi_binding::DataEnumDecl<Native>,
+    context: &RenderContext<Native>,
+) -> Result<Emitted> {
+    let name = name_style::upper_camel(value.name());
+    let mut classes = Vec::new();
+    let mut cases = Vec::new();
+    let mut factories = Vec::new();
+    for variant in value.variants() {
+        let variant_name = format!("{name}${}", name_style::upper_camel(variant.name()));
+        let factory_name = name_style::lower_camel(variant.name());
+        let fields = match variant.payload() {
+            DataVariantPayload::Unit => &[][..],
+            DataVariantPayload::Tuple(fields) | DataVariantPayload::Struct(fields) => {
+                fields.as_slice()
+            }
+            _ => return unsupported("unknown data enum payload"),
+        };
+        let declarations = fields
+            .iter()
+            .map(|field| {
+                Ok(format!(
+                    "  final {} {};",
+                    dart_type(field.ty(), context)?,
+                    name_style::field(field.key())
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .join("\n");
+        let reads = fields
+            .iter()
+            .map(|field| {
+                field
+                    .read()
+                    .render_with(&mut Reader::new("reader", context))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let writes = fields
+            .iter()
+            .flat_map(|field| {
+                field
+                    .write()
+                    .render_with(&mut Writer::new("writer", "this", context))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|line| format!("    {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (factory_params, ctor_params, decode_args) = match variant.payload() {
+            DataVariantPayload::Unit => (String::new(), String::new(), String::new()),
+            DataVariantPayload::Tuple(_) => (
+                fields
+                    .iter()
+                    .map(|field| {
+                        Ok(format!(
+                            "{} {}",
+                            dart_type(field.ty(), context)?,
+                            name_style::field(field.key())
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", "),
+                fields
+                    .iter()
+                    .map(|field| format!("this.{}", name_style::field(field.key())))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                reads.join(", "),
+            ),
+            DataVariantPayload::Struct(_) => (
+                format!(
+                    "{{{}}}",
+                    fields
+                        .iter()
+                        .map(|field| Ok(format!(
+                            "required {} {}",
+                            dart_type(field.ty(), context)?,
+                            name_style::field(field.key())
+                        )))
+                        .collect::<Result<Vec<_>>>()?
+                        .join(", ")
+                ),
+                format!(
+                    "{{{}}}",
+                    fields
+                        .iter()
+                        .map(|field| format!("required this.{}", name_style::field(field.key())))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                fields
+                    .iter()
+                    .zip(&reads)
+                    .map(|(field, read)| format!("{}: {read}", name_style::field(field.key())))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            _ => return unsupported("unknown data enum payload"),
+        };
+        factories.push(format!(
+            "  const factory {name}.{factory_name}({factory_params}) = {variant_name};"
+        ));
+        let ctor = format!("const {variant_name}({ctor_params})");
+        classes.push(format!("final class {variant_name} extends {name} {{\n{declarations}\n  {ctor};\n  @override\n  void _encode(_$$WireWriter writer) {{\n    writer.writeU32({});\n{writes}\n  }}\n}}", variant.tag().get()));
+        cases.push(format!(
+            "      {} => {variant_name}({decode_args}),",
+            variant.tag().get()
+        ));
+    }
+    Ok(Emitted::primary(format!(
+        "sealed class {name}{} {{\n  const {name}();\n{}\n  factory {name}._decode(_$$WireReader reader) {{\n    return switch (reader.readU32()) {{\n{}\n      final tag => throw StateError('Unknown {name} tag: $tag'),\n    }};\n  }}\n  void _encode(_$$WireWriter writer);\n}}\n\n{}\n\n",
+        if value.is_error_payload() {
+            " implements Exception"
+        } else {
+            ""
+        },
+        factories.join("\n"),
+        cases.join("\n"),
+        classes.join("\n\n")
+    )))
+}
+
+fn missing(kind: &'static str) -> Error {
+    Error::BrokenBridgeContract {
+        bridge: DartHost::TARGET,
+        invariant: kind,
+    }
+}
+fn unsupported<T>(shape: &'static str) -> Result<T> {
+    Err(Error::UnsupportedTarget {
+        target: DartHost::TARGET,
+        shape,
+    })
+}

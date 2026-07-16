@@ -546,7 +546,10 @@ impl TypeNamespace {
         match scope.expand(path) {
             PathExpansion::Relative(path) => self.resolve_relative(scope, path),
             PathExpansion::Imported { local, path } => self.resolve_imported(scope, &local, path),
-            PathExpansion::Qualified(path) => self.resolve_qualified(path),
+            // A fully qualified source spelling can still name a public
+            // re-export (for example `crate::Point` for `pub use model::*`).
+            // Resolve that public surface before treating it as unknown.
+            PathExpansion::Qualified(path) => self.resolve_public_path(path),
             PathExpansion::Ambiguous => TypeResolution::Ambiguous,
             PathExpansion::Unsupported => TypeResolution::Unknown,
         }

@@ -692,6 +692,24 @@ mod tests {
     }
 
     #[test]
+    fn qualified_crate_path_resolves_root_glob_reexport() {
+        let contract = scan(
+            "mod types { #[data] pub struct Request { pub id: u32 } } \
+             pub use types::*; \
+             #[export] pub fn echo(value: crate::Request) -> crate::Request { value }",
+        );
+
+        assert_eq!(
+            contract.functions[0].parameters[0].type_expr,
+            record("demo::types::Request", "crate::Request")
+        );
+        assert_eq!(
+            value_return(&contract.functions[0].returns),
+            &record("demo::types::Request", "crate::Request")
+        );
+    }
+
+    #[test]
     fn explicit_import_resolves_type_reexported_by_name() {
         let contract = scan(
             "pub mod model { #[data] pub enum ForeignKind { Guest, Member } } \

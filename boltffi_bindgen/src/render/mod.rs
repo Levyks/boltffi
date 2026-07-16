@@ -18,7 +18,6 @@
 
 pub mod c;
 pub mod csharp;
-pub mod dart;
 pub mod jni;
 pub mod kmp;
 pub mod kotlin;

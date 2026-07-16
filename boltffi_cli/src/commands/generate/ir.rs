@@ -93,14 +93,42 @@ pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<(
         GenerateTarget::Kotlin => generate_kotlin(config, options),
         GenerateTarget::KotlinMultiplatform => generate_kmp(config, options),
         GenerateTarget::Typescript => generate_typescript(config, options),
+        GenerateTarget::Dart => generate_dart(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
-                "--ir is only available for swift, python, java, kotlin, kmp, and typescript, not {}",
+                "--ir is only available for swift, python, java, kotlin, kmp, typescript, and dart, not {}",
                 target_label(other)
             ),
             status: None,
         }),
     }
+}
+
+fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
+    if !config.is_dart_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.dart.enabled = false".to_string(),
+            status: None,
+        });
+    }
+    let expansion = BindingExpansion::resolve_for_commands(
+        config,
+        &["build", "generate"],
+        &options.cargo_args,
+    )?;
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.dart_output())
+        .join(&config.package.name);
+    expansion
+        .generation()
+        .dart_package(config.package.name.clone())
+        .dart_artifact(expansion.artifact_name())
+        .render(Target::Dart)
+        .and_then(|output| Generation::write_output(output, &output_directory))
+        .map(drop)
+        .map_err(|error| generation_error("dart", error))
 }
 
 fn generate_typescript(config: &Config, options: &GenerateOptions) -> Result<()> {

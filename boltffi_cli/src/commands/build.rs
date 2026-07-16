@@ -67,7 +67,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
                 return Ok(Vec::new());
             }
             println!("Building for dart ({})...", profile);
-            plain_builder(config, release, cargo_args.clone())
+            expanded_builder(config, release, cargo_args.clone())?
                 .build_targets(&config.dart_targets())?
         }
         BuildPlatform::All => {
@@ -93,7 +93,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
             }
             if config.is_dart_enabled() {
                 all_results.extend(
-                    plain_builder(config, release, cargo_args.clone())
+                    expanded_builder(config, release, cargo_args.clone())?
                         .build_targets(&config.dart_targets())?,
                 );
             }
@@ -119,6 +119,14 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
 }
 
 fn apple_builder(config: &Config, release: bool, cargo_args: Vec<String>) -> Result<Builder<'_>> {
+    expanded_builder(config, release, cargo_args)
+}
+
+fn expanded_builder(
+    config: &Config,
+    release: bool,
+    cargo_args: Vec<String>,
+) -> Result<Builder<'_>> {
     let expansion = BindingExpansion::resolve(config, &cargo_args)?;
     Ok(Builder::new(
         config,

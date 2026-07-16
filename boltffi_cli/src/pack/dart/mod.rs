@@ -1,7 +1,7 @@
 use crate::{
     build::{
-        BuildOptions, BuildSelection, Builder, CargoBuildProfile, OutputCallback, all_successful,
-        failed_targets, resolve_build_profile,
+        BindingExpansion, BuildOptions, BuildSelection, Builder, CargoBuildProfile, OutputCallback,
+        all_successful, failed_targets, resolve_build_profile,
     },
     cargo::Cargo,
     cli::{CliError, Result},
@@ -26,12 +26,10 @@ fn build_dart_targets(
         None
     };
 
+    let expansion = BindingExpansion::resolve(config, build_cargo_args)?;
     let build_options = BuildOptions {
         release,
-        selection: BuildSelection::Package {
-            package: config.library_name().to_string(),
-            cargo_args: build_cargo_args.to_vec(),
-        },
+        selection: BuildSelection::Expanded(expansion),
         on_output,
     };
     let builder = Builder::new(config, build_options);

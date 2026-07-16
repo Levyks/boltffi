@@ -11,7 +11,7 @@ Java, C#, and Python bindings are generally available and no longer require expe
 
 | Feature | Key | Status |
 |---------|-----|--------|
-| Dart target | `dart` | In progress |
+| Dart target | `dart` | Functional, experimental API |
 | Kotlin Multiplatform target | `kotlin_multiplatform` | Initial JVM/Android actuals |
 | TS async streams | `typescript.async_streams` | Functional |
 
@@ -31,12 +31,25 @@ boltffi pack all --experimental
 Add the feature key to `experimental` in `boltffi.toml`:
 
 ```toml
-experimental = ["kotlin_multiplatform", "typescript.async_streams"]
+experimental = ["dart", "kotlin_multiplatform", "typescript.async_streams"]
 ```
 
 The CLI flag applies to a single command. The config array applies to every build.
 
 ## Feature Details
+
+### Dart
+
+**Key:** `dart`
+
+Generates a Dart package backed by BoltFFI's expanded C ABI and Dart Native Assets. The
+experimental surface supports records, enums, free functions, opaque classes, and sync or
+async Dart-implemented callbacks. Generated opaque classes provide deterministic `dispose()`
+and finalizer-backed cleanup.
+
+Streams, exported constants, and custom-type declarations are not supported by the Dart
+target yet. Generation reports those declarations as unsupported instead of emitting partial
+bindings.
 
 ### Kotlin Multiplatform
 

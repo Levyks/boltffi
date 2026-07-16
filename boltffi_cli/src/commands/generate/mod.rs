@@ -12,7 +12,7 @@ use boltffi_bindgen::CHeaderLowerer;
 use generator::ScanPointerWidth;
 use generator::{GenerateRequest, run_generator};
 use header::HeaderGenerator;
-use languages::{CSharpGenerator, DartGenerator};
+use languages::CSharpGenerator;
 
 use boltffi_bindgen::target::Target;
 
@@ -56,9 +56,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             run_generator::<HeaderGenerator>(&legacy_request(), options.experimental)
         }
         GenerateTarget::Typescript => ir::run_ir_generation(config, &options),
-        GenerateTarget::Dart => {
-            run_generator::<DartGenerator>(&legacy_request(), options.experimental)
-        }
+        GenerateTarget::Dart => ir::run_ir_generation(config, &options),
         GenerateTarget::Python => ir::run_ir_generation(config, &options),
         GenerateTarget::CSharp => {
             run_generator::<CSharpGenerator>(&legacy_request(), options.experimental)
@@ -132,7 +130,16 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             }
 
             if config.should_process(Target::Dart, options.experimental) {
-                run_generator::<DartGenerator>(&request, options.experimental)?;
+                ir::run_ir_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::Dart,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        ir: true,
+                        cargo_args: options.cargo_args.clone(),
+                    },
+                )?;
             }
 
             if config.should_process(Target::Python, options.experimental) {

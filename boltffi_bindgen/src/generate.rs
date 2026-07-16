@@ -43,6 +43,8 @@ pub struct Generation {
     python_distribution_name: Option<String>,
     python_package_version: Option<String>,
     python_native_library: Option<String>,
+    dart_package: Option<String>,
+    dart_artifact: Option<String>,
     java_package: Option<String>,
     java_file: Option<String>,
     java_android_library: Option<String>,
@@ -89,6 +91,8 @@ impl Generation {
             python_distribution_name: None,
             python_package_version: None,
             python_native_library: None,
+            dart_package: None,
+            dart_artifact: None,
             java_package: None,
             java_file: None,
             java_android_library: None,
@@ -185,6 +189,18 @@ impl Generation {
     /// Sets the native library artifact name loaded by the Python package.
     pub fn python_native_library(mut self, native_library: impl Into<String>) -> Self {
         self.python_native_library = Some(native_library.into());
+        self
+    }
+
+    /// Sets the generated Dart package and library name.
+    pub fn dart_package(mut self, package: impl Into<String>) -> Self {
+        self.dart_package = Some(package.into());
+        self
+    }
+
+    /// Sets the native artifact loaded by the generated Dart package hook.
+    pub fn dart_artifact(mut self, artifact: impl Into<String>) -> Self {
+        self.dart_artifact = Some(artifact.into());
         self
     }
 
@@ -371,15 +387,17 @@ impl Generation {
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
-            Target::Python | Target::Java | Target::Kotlin | Target::KotlinMultiplatform => {
+            Target::Python
+            | Target::Java
+            | Target::Kotlin
+            | Target::KotlinMultiplatform
+            | Target::Dart => {
                 let bindings = self.bindings::<Native>()?;
                 self.render_native_bindings(target, &bindings)
             }
             Target::Swift => self.render_swift(),
             Target::TypeScript => self.render_typescript(),
-            Target::Header | Target::Dart | Target::CSharp => {
-                Err(GenerationError::UnsupportedTarget { target })
-            }
+            Target::Header | Target::CSharp => Err(GenerationError::UnsupportedTarget { target }),
         }
     }
 
@@ -412,10 +430,33 @@ impl Generation {
             Target::Java => self.render_java_bindings(bindings),
             Target::Kotlin => self.render_kotlin_bindings(bindings),
             Target::KotlinMultiplatform => self.render_kmp_bindings(bindings),
-            Target::Swift | Target::TypeScript | Target::Header | Target::Dart | Target::CSharp => {
+            Target::Dart => self.render_dart_bindings(bindings),
+            Target::Swift | Target::TypeScript | Target::Header | Target::CSharp => {
                 Err(GenerationError::UnsupportedTarget { target })
             }
         }
+    }
+
+    fn render_dart_bindings(
+        &self,
+        bindings: &Bindings<Native>,
+    ) -> Result<GeneratedOutput, GenerationError> {
+        let package = self.dart_package.clone().unwrap_or_else(|| {
+            bindings
+                .package()
+                .name()
+                .as_path_string()
+                .replace("::", "_")
+        });
+        let artifact = self
+            .dart_artifact
+            .clone()
+            .unwrap_or_else(|| package.clone());
+        let target = boltffi_backend::target::dart::DartHost::new(package, artifact)
+            .map_err(GenerationError::Render)?
+            .into_target()
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, bindings)
     }
 
     fn render_java_bindings(
