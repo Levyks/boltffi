@@ -101,10 +101,10 @@ pub fn stream(
             })?;
             let native = ffi::native_type(batch.item());
             let decode = match ty {
-                DirectValueType::Primitive(_) => "raw.elementAt(i).value".to_owned(),
-                DirectValueType::Enum(_) => format!("{public}._fromValue(raw.elementAt(i).value)"),
+                DirectValueType::Primitive(_) => "(raw + i).value".to_owned(),
+                DirectValueType::Enum(_) => format!("{public}._fromValue((raw + i).value)"),
                 DirectValueType::Record(_) => {
-                    format!("{public}._fromStruct(raw.elementAt(i).ref)")
+                    format!("{public}._fromStruct((raw + i).ref)")
                 }
                 _ => return unsupported("unknown direct Dart stream item"),
             };
@@ -634,7 +634,7 @@ pub fn callback(
     let implementations = source_methods
         .iter()
         .zip(protocol.methods())
-        .map(|(method, slot)| callback_method(&name, method, slot, context))
+        .map(|(method, slot)| callback_method(&name, method, slot, bridge, context))
         .collect::<Result<Vec<_>>>()?
         .join("\n\n");
     let vtable_name = ffi::record_name(protocol.vtable());
@@ -662,6 +662,7 @@ fn callback_method(
     callback_name: &str,
     method: &boltffi_binding::ImportedMethodDecl<Native, boltffi_binding::VTableSlot>,
     slot: &crate::bridge::c::CallbackSlot,
+    bridge: &CBridgeContract,
     context: &RenderContext<Native>,
 ) -> Result<String> {
     let callable = method.callable();
@@ -692,6 +693,10 @@ fn callback_method(
                         "{}._fromValue({raw})",
                         call::direct_type(&DirectValueType::Enum(*id), context)?
                     ),
+                    DirectValueType::Record(_) => format!(
+                        "{}._fromStruct({raw})",
+                        call::direct_type(ty, context)?
+                    ),
                     _ => raw.to_owned(),
                 }
             }
@@ -705,6 +710,70 @@ fn callback_method(
                 setup.push(format!("final {reader} = _$$WireReader({ptr}, {len});"));
                 codec.render_with(&mut Reader::new(&reader, context))?
             }
+            (
+                ParamPlan::ScalarOption { primitive },
+                crate::bridge::c::ParameterGroup::ByteSlice(bytes),
+            ) => {
+                let ptr = slot.parameter(bytes.pointer()).name();
+                let len = slot.parameter(bytes.length()).name();
+                let reader = format!("{local}Reader");
+                let suffix = primitive::wire_suffix(*primitive)?;
+                setup.push(format!("final {reader} = _$$WireReader({ptr}, {len});"));
+                format!("{reader}.readOptional((reader) => reader.read{suffix}())")
+            }
+            (
+                ParamPlan::DirectVec { element, .. },
+                crate::bridge::c::ParameterGroup::DirectVector(vector),
+            ) => {
+                let ptr = slot.parameter(vector.pointer()).name();
+                let len = slot.parameter(vector.length()).name();
+                match element {
+                    boltffi_binding::DirectVectorElementType::Primitive(primitive) => {
+                        let native = call::primitive_native_type(primitive.primitive())?;
+                        format!(
+                            "List.generate({len}, (i) => (({ptr}.cast<{native}>()) + i).value, growable: false)"
+                        )
+                    }
+                    boltffi_binding::DirectVectorElementType::Record(id) => {
+                        let c_record = bridge.source_direct_record(*id).ok_or(
+                            Error::BrokenBridgeContract {
+                                bridge: DartHost::TARGET,
+                                invariant: "missing callback direct vector record",
+                            },
+                        )?;
+                        let c_name = ffi::record_name(c_record);
+                        let public = context
+                            .record(*id)
+                            .map(|record| name_style::upper_camel(record.name()))
+                            .ok_or(missing("callback direct vector record"))?;
+                        format!(
+                            "List.generate({len} ~/ $$ffi.sizeOf<{c_name}>(), (i) => {public}._fromStruct((({ptr}.cast<{c_name}>()) + i).ref), growable: false)"
+                        )
+                    }
+                    _ => return unsupported("unknown callback direct vector"),
+                }
+            }
+            (
+                ParamPlan::Handle { target, presence, .. },
+                crate::bridge::c::ParameterGroup::Value(index),
+            ) => {
+                let raw = slot.parameter(*index).name();
+                let decoded = match target {
+                    HandleTarget::Class(id) => {
+                        let name = context
+                            .class(*id)
+                            .map(|class| name_style::upper_camel(class.name()))
+                            .ok_or(missing("callback class parameter"))?;
+                        format!("{name}._({raw})")
+                    }
+                    _ => return unsupported("callback handle parameter target"),
+                };
+                if *presence == HandlePresence::Nullable {
+                    format!("{raw} == 0 ? null : {decoded}")
+                } else {
+                    decoded
+                }
+            }
             _ => return unsupported("callback parameter marshalling shape"),
         };
         setup.push(format!("final {local}Decoded = {expression};"));
@@ -716,7 +785,7 @@ fn callback_method(
         args.join(", ")
     );
     let body = match callable.execution() {
-        ExecutionDecl::Synchronous(_) => callback_sync_return(callable, &call, context)?,
+        ExecutionDecl::Synchronous(_) => callback_sync_return(callable, slot, &call, bridge, context)?,
         ExecutionDecl::Asynchronous(_) => callback_async_return(callable, slot, &call, context)?,
         _ => return unsupported("unknown callback execution"),
     };
@@ -736,23 +805,225 @@ fn callback_method(
 
 fn callback_sync_return(
     callable: &ImportedCallable<Native>,
+    slot: &crate::bridge::c::CallbackSlot,
     call_expr: &str,
-    _: &RenderContext<Native>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
 ) -> Result<String> {
-    if !matches!(callable.error().channel(), ErrorChannel::None) {
-        return unsupported("fallible synchronous callback");
+    match callable.error().channel() {
+        ErrorChannel::None => callback_infallible_sync_return(
+            callable.returns().plan(),
+            call_expr,
+            bridge,
+            context,
+        ),
+        ErrorChannel::Encoded { codec, .. } => {
+            let out = slot
+                .parameter_groups()
+                .iter()
+                .find_map(|group| match group {
+                    crate::bridge::c::ParameterGroup::SuccessOut(index) => {
+                        Some(slot.parameter(*index).name())
+                    }
+                    _ => None,
+                });
+            let success = callback_success_store(
+                callable.returns().plan(),
+                "value",
+                out,
+                bridge,
+                context,
+            )?;
+            let error = codec
+                .render_with(&mut Writer::new("writer", "value", context))
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?
+                .join(" ");
+            Ok(format!(
+                "final result = {call_expr};\nswitch (result) {{\n  case BoltFFIResult$Ok(:final value):\n    {success}\n    return _$$emptyBuf();\n  case BoltFFIResult$Err(:final value):\n    final writer = _$$WireWriter();\n    try {{\n      {error}\n      return writer.toRustBuffer();\n    }} finally {{ writer.close(); }}\n}}"
+            ))
+        }
+        ErrorChannel::Status => unsupported("Dart synchronous callback status error"),
+        _ => unsupported("unknown synchronous callback error"),
     }
-    Ok(match callable.returns().plan() {
+}
+
+fn callback_infallible_sync_return(
+    plan: &ReturnPlan<Native, boltffi_binding::IntoRust>,
+    call_expr: &str,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    Ok(match plan {
         ReturnPlan::Void => format!("{call_expr};"),
         ReturnPlan::DirectViaReturnSlot { ty } => match ty {
-            DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
-                format!("return {call_expr};")
-            }
+            DirectValueType::Primitive(_) => format!("return {call_expr};"),
             DirectValueType::Enum(_) => format!("return {call_expr}.value;"),
-            _ => format!("return {call_expr};"),
+            DirectValueType::Record(_) => format!("return {call_expr}._toStruct();"),
+            _ => return unsupported("callback direct return"),
+        },
+        ReturnPlan::EncodedViaReturnSlot { codec, .. } => {
+            callback_buffer_return(codec, call_expr, context)?
+        }
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "final value = {call_expr};\nfinal writer = _$$WireWriter();\ntry {{\n  writer.writeOptional(value, (value, writer) => writer.write{suffix}(value));\n  return writer.toRustBuffer();\n}} finally {{ writer.close(); }}"
+            )
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } => {
+            format!(
+                "{}\nreturn buffer;",
+                callback_vector_buffer(call_expr, element, bridge, context)?
+            )
+        }
+        ReturnPlan::HandleViaReturnSlot { target, presence, .. } => match target {
+            HandleTarget::Class(_) => {
+                if *presence == HandlePresence::Nullable {
+                    format!("return {call_expr}?._rawHandle ?? 0;")
+                } else {
+                    format!("return {call_expr}._rawHandle;")
+                }
+            }
+            HandleTarget::Callback(id) => {
+                let callback = context.callback(*id).ok_or(missing("callback return type"))?;
+                let map = format!("_I${}HandleMap", name_style::upper_camel(callback.name()));
+                if *presence == HandlePresence::Nullable {
+                    format!(
+                        "final value = {call_expr};\nreturn value == null ? _$$nullCallbackHandle() : {map}.createHandle(value);"
+                    )
+                } else {
+                    format!("return {map}.createHandle({call_expr});")
+                }
+            }
+            _ => return unsupported("callback handle return target"),
         },
         _ => return unsupported("synchronous callback return shape"),
     })
+}
+
+fn callback_buffer_return(
+    codec: &boltffi_binding::WritePlan,
+    call_expr: &str,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let writes = codec
+        .render_with(&mut Writer::new("writer", "value", context))
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?
+        .join(" ");
+    Ok(format!(
+        "final value = {call_expr};\nfinal writer = _$$WireWriter();\ntry {{\n  {writes}\n  return writer.toRustBuffer();\n}} finally {{ writer.close(); }}"
+    ))
+}
+
+fn callback_success_store(
+    plan: &ReturnPlan<Native, boltffi_binding::IntoRust>,
+    value: &str,
+    out: Option<&str>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    if matches!(plan, ReturnPlan::Void) {
+        return Ok(String::new());
+    }
+    let out = out.ok_or(Error::BrokenBridgeContract {
+        bridge: DartHost::TARGET,
+        invariant: "fallible callback success output missing",
+    })?;
+    Ok(match plan {
+        ReturnPlan::DirectViaOutPointer { ty } => match ty {
+            DirectValueType::Primitive(_) => format!("{out}.value = {value};"),
+            DirectValueType::Enum(_) => format!("{out}.value = {value}.value;"),
+            DirectValueType::Record(_) => format!("{out}.ref = {value}._toStruct();"),
+            _ => return unsupported("fallible callback direct success"),
+        },
+        ReturnPlan::EncodedViaOutPointer { codec, .. } => {
+            let writes = codec
+                .render_with(&mut Writer::new("writer", value, context))
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?
+                .join(" ");
+            format!(
+                "final writer = _$$WireWriter();\n    try {{ {writes} {out}.ref = writer.toRustBuffer(); }} finally {{ writer.close(); }}"
+            )
+        }
+        ReturnPlan::HandleViaOutPointer { target, presence, .. } => match target {
+            HandleTarget::Class(_) => {
+                if *presence == HandlePresence::Nullable {
+                    format!("{out}.value = {value}?._rawHandle ?? 0;")
+                } else {
+                    format!("{out}.value = {value}._rawHandle;")
+                }
+            }
+            HandleTarget::Callback(id) => {
+                let callback = context.callback(*id).ok_or(missing("callback success type"))?;
+                let map = format!("_I${}HandleMap", name_style::upper_camel(callback.name()));
+                if *presence == HandlePresence::Nullable {
+                    format!(
+                        "{out}.ref = {value} == null ? _$$nullCallbackHandle() : {map}.createHandle({value});"
+                    )
+                } else {
+                    format!("{out}.ref = {map}.createHandle({value});")
+                }
+            }
+            _ => return unsupported("fallible callback handle success"),
+        },
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "final writer = _$$WireWriter();\n    try {{ writer.writeOptional({value}, (value, writer) => writer.write{suffix}(value)); {out}.ref = writer.toRustBuffer(); }} finally {{ writer.close(); }}"
+            )
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } => {
+            let buffer = callback_vector_buffer(value, element, bridge, context)?;
+            format!("{buffer}\n    {out}.ref = buffer;")
+        }
+        _ => return unsupported("fallible callback success shape"),
+    })
+}
+
+fn callback_vector_buffer(
+    value: &str,
+    element: &boltffi_binding::DirectVectorElementType,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let (native, assign) = match element {
+        boltffi_binding::DirectVectorElementType::Primitive(primitive) => (
+            call::primitive_native_type(primitive.primitive())?.to_owned(),
+            "(raw + i).value = items[i];".to_owned(),
+        ),
+        boltffi_binding::DirectVectorElementType::Record(id) => {
+            let c_record = bridge.source_direct_record(*id).ok_or(missing("callback vector C record"))?;
+            let native = ffi::record_name(c_record);
+            let record = context.record(*id).ok_or(missing("callback vector record"))?;
+            let boltffi_binding::RecordDecl::Direct(record) = record else {
+                return unsupported("encoded callback direct vector record");
+            };
+            let assignments = record
+                .fields()
+                .iter()
+                .zip(c_record.fields())
+                .map(|(field, c_field)| {
+                    format!(
+                        "target.{} = item.{};",
+                        c_field.name(),
+                        name_style::field(field.key())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            (
+                native,
+                format!("final item = items[i]; final target = (raw + i).ref; {assignments}"),
+            )
+        }
+        _ => return unsupported("unknown callback vector return"),
+    };
+    Ok(format!(
+        "final items = {value};\nfinal buffer = _f$boltffi_buf_with_len(items.length * $$ffi.sizeOf<{native}>());\nfinal raw = buffer.ptr.cast<{native}>();\nfor (var i = 0; i < items.length; i++) {{ {assign} }}"
+    ))
 }
 
 fn callback_async_return(
@@ -1218,7 +1489,7 @@ fn direct_vector_decode(
     let (native, decode) = match element {
         boltffi_binding::DirectVectorElementType::Primitive(primitive) => {
             let native = call::primitive_native_type(primitive.primitive())?;
-            (native.to_owned(), "raw.elementAt(i).value".to_owned())
+            (native.to_owned(), "(raw + i).value".to_owned())
         }
         boltffi_binding::DirectVectorElementType::Record(id) => {
             let c_record = bridge.source_direct_record(*id).ok_or(
@@ -1232,7 +1503,7 @@ fn direct_vector_decode(
                 .record(*id)
                 .map(|record| name_style::upper_camel(record.name()))
                 .ok_or(missing("returned direct vector record"))?;
-            (native, format!("{public}._fromStruct(raw.elementAt(i).ref)"))
+            (native, format!("{public}._fromStruct((raw + i).ref)"))
         }
         _ => return unsupported("unknown returned direct vector"),
     };
@@ -1255,7 +1526,17 @@ fn wrap_call(setup: Vec<String>, cleanup: Vec<String>, body: String) -> String {
 
 fn callback_exceptional_return(ty: &crate::bridge::c::Type) -> String {
     match ty {
-        crate::bridge::c::Type::Void => String::new(),
+        crate::bridge::c::Type::Void
+        | crate::bridge::c::Type::Buffer
+        | crate::bridge::c::Type::String
+        | crate::bridge::c::Type::Span
+        | crate::bridge::c::Type::Status
+        | crate::bridge::c::Type::CallbackHandle(_)
+        | crate::bridge::c::Type::Named(_)
+        | crate::bridge::c::Type::DirectRecord(_)
+        | crate::bridge::c::Type::ConstPointer(_)
+        | crate::bridge::c::Type::MutPointer(_)
+        | crate::bridge::c::Type::FunctionPointer { .. } => String::new(),
         crate::bridge::c::Type::Bool => ", false".into(),
         crate::bridge::c::Type::Float32 | crate::bridge::c::Type::Float64 => ", 0.0".into(),
         _ => ", 0".into(),

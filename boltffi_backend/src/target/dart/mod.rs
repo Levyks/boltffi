@@ -519,9 +519,9 @@ mod tests {
 
         assert!(library.contains("List<int> echoNumbers(List<int> values)"));
         assert!(library.contains("calloc<$$ffi.Int32>(values.length)"));
-        assert!(library.contains("values[i] = _$vectorValues.elementAt(i).value"));
+        assert!(library.contains("values[i] = (_$vectorValues + i).value"));
         assert!(library.contains("values.length * $$ffi.sizeOf<_C$"));
-        assert!(library.contains("Point._fromStruct(raw.elementAt(i).ref)"));
+        assert!(library.contains("Point._fromStruct((raw + i).ref)"));
     }
 
     #[test]
@@ -569,5 +569,49 @@ mod tests {
         assert!(library.contains("BoltFFIStreamCancellation callbacks(void Function(int) callback)"));
         assert!(library.contains("_$$BoltFFIStreamPump<int>"));
         assert!(library.contains("final count = reader.readU32();"));
+    }
+
+    #[test]
+    fn renders_rich_synchronous_callbacks() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[data]
+                #[repr(C)]
+                pub struct Point { pub x: i32, pub y: i32 }
+                #[error]
+                pub struct CallbackError { pub message: String }
+                #[export]
+                pub trait RichCallback: Send + Sync {
+                    fn optional(&self, value: Option<u32>) -> Option<u32>;
+                    fn numbers(&self, values: Vec<i32>) -> Vec<i32>;
+                    fn points(&self, values: Vec<Point>) -> Vec<Point>;
+                    fn checked(&self, value: i32) -> Result<u32, CallbackError>;
+                }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("int? optional(int? value)"));
+        assert!(library.contains("List<int> numbers(List<int> values)"));
+        assert!(library.contains("BoltFFIResult<int, CallbackError> checked(int value)"));
+        assert!(library.contains("case BoltFFIResult$Err(:final value):"));
+        assert!(library.contains("return _$$emptyBuf();"));
     }
 }

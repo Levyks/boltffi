@@ -34,6 +34,12 @@ final class _$$FFIBuf extends $$ffi.Struct {
   external int align;
 }
 
+_$$FFIBuf _$$emptyBuf() => $$ffi.Struct.create<_$$FFIBuf>()
+  ..ptr = $$ffi.nullptr
+  ..len = 0
+  ..cap = 0
+  ..align = 1;
+
 final class _$$FFIError extends $$ffi.Struct {
   external _$$FFIString message;
 }

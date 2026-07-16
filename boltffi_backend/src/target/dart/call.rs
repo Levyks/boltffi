@@ -214,11 +214,11 @@ pub fn marshal_exported(
                     DirectVectorElementType::Primitive(value) => {
                         let native = primitive_native_type(value.primitive())?;
                         setup.push(format!(
-                            "final {local} = $$extffi.calloc<{native}>({name}.length);\n    for (var i = 0; i < {name}.length; i++) {{ {local}.elementAt(i).value = {name}[i]; }}"
+                            "final {local} = $$extffi.calloc<{native}>({name}.length);\n    for (var i = 0; i < {name}.length; i++) {{ ({local} + i).value = {name}[i]; }}"
                         ));
                         if *receive == Receive::ByMutRef {
                             cleanup.push(format!(
-                                "for (var i = 0; i < {name}.length; i++) {{ {name}[i] = {local}.elementAt(i).value; }}"
+                                "for (var i = 0; i < {name}.length; i++) {{ {name}[i] = ({local} + i).value; }}"
                             ));
                         }
                         cleanup.push(format!("$$extffi.calloc.free({local});"));
@@ -256,7 +256,7 @@ pub fn marshal_exported(
                             .collect::<Vec<_>>()
                             .join(" ");
                         setup.push(format!(
-                            "final {local} = $$extffi.calloc<{c_name}>({name}.length);\n    for (var i = 0; i < {name}.length; i++) {{ final value = {name}[i]; final target = {local}.elementAt(i).ref; {copies} }}"
+                            "final {local} = $$extffi.calloc<{c_name}>({name}.length);\n    for (var i = 0; i < {name}.length; i++) {{ final value = {name}[i]; final target = ({local} + i).ref; {copies} }}"
                         ));
                         cleanup.push(format!("$$extffi.calloc.free({local});"));
                         args.extend([
