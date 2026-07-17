@@ -476,7 +476,7 @@ mod tests {
             .find(|file| file.path().as_path().ends_with("demo.dart"))
             .expect("library")
             .contents();
-        assert!(library.contains("int add(int a, int b)"));
+        assert!(library.contains("static int add(int a, int b)"));
         assert!(
             !library.contains("add(_rawHandle"),
             "static methods must not pass a receiver handle"
@@ -875,5 +875,44 @@ mod tests {
         assert!(library.contains("storage.ref.release"));
         assert!(library.contains("$$extffi.calloc<_ClRet$"));
         assert!(library.contains("returned BoltFFI closure was released"));
+    }
+
+    #[test]
+    fn returned_foreign_callback_wrap_takes_ownership() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub trait ValueCallback: Send + Sync {
+                    fn on_value(&self, value: i32) -> i32;
+                }
+                #[export]
+                pub fn make_callback(delta: i32) -> Box<dyn ValueCallback> { unimplemented!() }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("final class _F$ValueCallback implements ValueCallback"));
+        assert!(library.contains("return _F$ValueCallback._(handle);"));
+        assert!(
+            !library.contains("clone(handle.handle)"),
+            "returned callback wrap must take ownership instead of cloning"
+        );
     }
 }

@@ -112,6 +112,16 @@ fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
             status: None,
         });
     }
+    if !config.should_process(Target::Dart, options.experimental) {
+        return Err(CliError::CommandFailed {
+            command: format!(
+                "{} is experimental, use --experimental flag or add \"{}\" to [experimental]",
+                Target::Dart.name(),
+                Target::Dart.name()
+            ),
+            status: None,
+        });
+    }
     let expansion = BindingExpansion::resolve_for_commands(
         config,
         &["build", "generate"],
@@ -1152,6 +1162,37 @@ enabled = true
             error,
             CliError::CommandFailed { command, status: None }
                 if command.contains("kotlin_multiplatform is experimental")
+        ));
+    }
+
+    #[test]
+    fn ir_generation_requires_dart_experimental_opt_in() {
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+
+[targets.dart]
+enabled = true
+"#,
+        );
+        let error = run_ir_generation(
+            &config,
+            &GenerateOptions {
+                target: GenerateTarget::Dart,
+                output: None,
+                experimental: false,
+                ir: true,
+                cargo_args: Vec::new(),
+            },
+        )
+        .expect_err("Dart IR generation should require experimental opt-in");
+
+        assert!(matches!(
+            error,
+            CliError::CommandFailed { command, status: None }
+                if command.contains("dart is experimental")
         ));
     }
 

@@ -569,8 +569,13 @@ pub fn class(
                 _ => return unsupported("unknown class method execution"),
             };
             let body = wrap_call(setup, cleanup, body);
+            let qualifier = if callable.receiver().is_none() {
+                "static "
+            } else {
+                ""
+            };
             Ok(format!(
-                "  {return_ty} {}({params}) {{\n    {}\n  }}",
+                "  {qualifier}{return_ty} {}({params}) {{\n    {}\n  }}",
                 name_style::lower_camel(method.name()),
                 indent(&body, 4)
             ))
