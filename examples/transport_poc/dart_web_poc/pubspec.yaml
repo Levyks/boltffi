@@ -4,3 +4,7 @@ version: 0.1.0
 
 environment:
   sdk: ^3.10.8
+
+dependencies:
+  transport_shared:
+    path: ../dart_shared_poc
