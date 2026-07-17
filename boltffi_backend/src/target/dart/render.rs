@@ -163,13 +163,12 @@ pub fn stream(
         ),
         StreamMode::Batch => {
             let subscription = format!("{type_name}Subscription");
+            let free = protocol.free().name();
+            let unsubscribe = protocol.unsubscribe().name();
             format!(
-                "{subscription} {name}() => {subscription}._(\n  _f${}({subscribe_args}),\n);\n\nfinal class {subscription} {{\n  int _handle;\n  bool _closed = false;\n  {subscription}._(this._handle);\n\n  List<{item_type}> popBatch({{int maxCount = 16}}) {{\n    if (_closed || _handle == 0) return const [];\n    return {read_name}(_handle, maxCount);\n  }}\n\n  int wait(int timeoutMilliseconds) =>\n      _closed || _handle == 0 ? -1 : _f${}(_handle, timeoutMilliseconds);\n\n  void unsubscribe() {{\n    if (_closed || _handle == 0) return;\n    _f${}(_handle);\n    _closed = true;\n  }}\n\n  void dispose() {{\n    if (_handle == 0) return;\n    if (!_closed) _f${}(_handle);\n    _f${}(_handle);\n    _closed = true;\n    _handle = 0;\n  }}\n}}",
+                "{subscription} {name}() => {subscription}._(\n  _f${}({subscribe_args}),\n);\n\nfinal class {subscription} {{\n  static final _finalizer = Finalizer<int>((handle) {{\n    if (handle != 0) _f${free}(handle);\n  }});\n  int _handle;\n  bool _closed = false;\n  {subscription}._(this._handle) {{\n    if (_handle != 0) _finalizer.attach(this, _handle, detach: this);\n  }}\n\n  List<{item_type}> popBatch({{int maxCount = 16}}) {{\n    if (_closed || _handle == 0) return const [];\n    return {read_name}(_handle, maxCount);\n  }}\n\n  int wait(int timeoutMilliseconds) =>\n      _closed || _handle == 0 ? -1 : _f${}(_handle, timeoutMilliseconds);\n\n  void unsubscribe() {{\n    if (_closed || _handle == 0) return;\n    _f${unsubscribe}(_handle);\n    _closed = true;\n  }}\n\n  void dispose() {{\n    if (_handle == 0) return;\n    _finalizer.detach(this);\n    if (!_closed) _f${unsubscribe}(_handle);\n    _f${free}(_handle);\n    _closed = true;\n    _handle = 0;\n  }}\n}}",
                 protocol.subscribe().name(),
                 protocol.wait().name(),
-                protocol.unsubscribe().name(),
-                protocol.unsubscribe().name(),
-                protocol.free().name(),
             )
         }
         StreamMode::Callback => format!(

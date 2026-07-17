@@ -782,6 +782,10 @@ mod tests {
         assert!(library.contains("$$async.Stream<int> values()"));
         assert!(library.contains("final class MessagesSubscription"));
         assert!(
+            library.contains("static final _finalizer = Finalizer<int>"),
+            "batch stream subscriptions must free on GC"
+        );
+        assert!(
             library.contains("BoltFFIStreamCancellation callbacks(void Function(int) callback)")
         );
         assert!(library.contains("_$$BoltFFIStreamPump<int>"));
