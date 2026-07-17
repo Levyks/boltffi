@@ -476,6 +476,19 @@ final class _$$WireWriter implements $$ffi.Finalizable {
   }
 
   @pragma('vm:prefer-inline')
+  void writeMap<K, V>(
+    Map<K, V> v,
+    void Function(K key, _$$WireWriter writer) onKey,
+    void Function(V value, _$$WireWriter writer) onValue,
+  ) {
+    writeU32(v.length);
+    for (final entry in v.entries) {
+      onKey(entry.key, this);
+      onValue(entry.value, this);
+    }
+  }
+
+  @pragma('vm:prefer-inline')
   void writeString(String v) {
     final bytes = $$convert.utf8.encode(v);
     writeU32(bytes.length);
@@ -781,6 +794,22 @@ class _$$WireReader {
     final len = readU32();
 
     return List.generate(len, (_) => readValue(this));
+  }
+
+  @pragma('vm:prefer-inline')
+  Map<K, V> readMap<K, V>(
+    K Function(_$$WireReader) readKey,
+    V Function(_$$WireReader) readValue,
+  ) {
+    final len = readU32();
+
+    final map = <K, V>{};
+    for (var i = 0; i < len; i++) {
+      final key = readKey(this);
+      final value = readValue(this);
+      map[key] = value;
+    }
+    return map;
   }
 
   @pragma('vm:prefer-inline')

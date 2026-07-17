@@ -344,14 +344,21 @@ fn render_value(value: &ValueRef, self_value: &str) -> Result<String> {
         _ => return unsupported("unknown codec value root"),
     };
     Ok(value.path().iter().fold(root, |base, field| {
+        // Bare field access (empty `base`) means we're referencing the
+        // enclosing class's own declared property inside its instance
+        // method (e.g. `field0`, set by `name_style::field`), not Dart's
+        // native record positional accessor (`.$1`), which only applies
+        // to actual `TypeRef::Tuple` values reached through a non-empty base.
+        let bare = base.is_empty();
         let segment = match field {
             FieldKey::Named(name) => name_style::lower_camel(name),
+            FieldKey::Position(position) if bare => format!("field{position}"),
             FieldKey::Position(position) => format!("${}", position + 1),
             _ => unreachable!("unknown field key"),
         };
         // Prefer bare field access inside instance methods (`message`) over
         // `this.message`, which triggers dart analyze's unnecessary_this lint.
-        if base.is_empty() {
+        if bare {
             segment
         } else {
             format!("{base}.{segment}")

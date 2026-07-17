@@ -484,8 +484,16 @@ fn default_value(
         DefaultValue::EnumVariant { variant_name, .. } => match ty {
             TypeRef::Enum(id) => {
                 let enumeration = context.enumeration(*id).ok_or(missing("constant enum"))?;
+                // C-style variants are static const fields (`DemoMode.fast`);
+                // data-enum unit variants are const factory constructors and
+                // must be invoked (`DemoState.idle()`).
+                let call = match enumeration {
+                    EnumDecl::CStyle(_) => "",
+                    EnumDecl::Data(_) => "()",
+                    _ => return unsupported("Dart enum constant kind"),
+                };
                 format!(
-                    "{}.{}",
+                    "{}.{}{call}",
                     name_style::upper_camel(enumeration.name()),
                     name_style::lower_camel(variant_name)
                 )
@@ -1095,6 +1103,88 @@ fn callback_async_return(
         })?;
     let callback = ffi::field_name(slot.parameter(completion.callback()).name());
     let callback_context = ffi::field_name(slot.parameter(completion.context()).name());
+
+    // The C ABI completion function pointer's payload parameter (see
+    // `Signature::async_callback_payload_type`) is the source of truth for
+    // whether the success value crosses as a raw scalar/struct (`Direct`) or
+    // as an encoded wire buffer. Fallible callbacks always encode as a
+    // buffer regardless of the success shape (`async_callback_payload_type`
+    // forces `Type::Buffer` for `ErrorDecl::EncodedViaReturnSlot`), so only
+    // infallible, non-void, non-buffer returns take the raw path.
+    match (callable.error().channel(), completion.payload()) {
+        (ErrorChannel::None, Some(payload))
+            if !matches!(payload, crate::bridge::c::Type::Buffer) =>
+        {
+            direct_callback_async_return(
+                callable.returns().plan(),
+                call_expr,
+                &callback,
+                &callback_context,
+                ffi::dart_type(payload),
+                ffi::native_type(payload),
+            )
+        }
+        (ErrorChannel::None, None) => Ok(format!(
+            "() async {{\n      final completion = {callback}.asFunction<void Function($$ffi.Pointer<$$ffi.Void>, _$$FFIStatus)>();\n      try {{\n        await {call_expr};\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 0);\n      }} catch (_) {{\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 100);\n      }}\n    }}();"
+        )),
+        (ErrorChannel::None, Some(_)) | (ErrorChannel::Encoded { .. }, _) => {
+            buffered_callback_async_return(
+                callable,
+                call_expr,
+                &callback,
+                &callback_context,
+                context,
+            )
+        }
+        _ => unsupported("async callback error encoding"),
+    }
+}
+
+fn direct_callback_async_return(
+    plan: &ReturnPlan<Native, boltffi_binding::IntoRust>,
+    call_expr: &str,
+    callback: &str,
+    callback_context: &str,
+    // Used in `.asFunction<...>()`, which — unlike the `NativeFunction<...>`
+    // declaration — takes Dart-side types (`int`, not `Int32`) for scalars.
+    // Struct payloads have no separate marshalled representation, so this
+    // already equals `native_type` for them (see `ffi::dart_type`).
+    dart_type: String,
+    native_type: String,
+) -> Result<String> {
+    let (ReturnPlan::DirectViaReturnSlot { ty } | ReturnPlan::DirectViaOutPointer { ty }) = plan
+    else {
+        return unsupported("async callback direct return shape");
+    };
+    let (success_expr, dummy_expr) = match ty {
+        DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
+            ("result".to_owned(), "false".to_owned())
+        }
+        DirectValueType::Primitive(
+            boltffi_binding::Primitive::F32 | boltffi_binding::Primitive::F64,
+        ) => ("result".to_owned(), "0.0".to_owned()),
+        DirectValueType::Primitive(_) => ("result".to_owned(), "0".to_owned()),
+        DirectValueType::Enum(_) => ("result.value".to_owned(), "0".to_owned()),
+        DirectValueType::Record(_) => (
+            "result._toStruct()".to_owned(),
+            format!("$$ffi.Struct.create<{native_type}>()"),
+        ),
+        _ => return unsupported("async callback direct return type"),
+    };
+    // Fire-and-forget from the synchronous trampoline: the C ABI completion
+    // callback is invoked after the Dart Future settles.
+    Ok(format!(
+        "() async {{\n      final completion = {callback}.asFunction<void Function($$ffi.Pointer<$$ffi.Void>, _$$FFIStatus, {dart_type})>();\n      try {{\n        final result = await {call_expr};\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 0, {success_expr});\n      }} catch (_) {{\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 100, {dummy_expr});\n      }}\n    }}();"
+    ))
+}
+
+fn buffered_callback_async_return(
+    callable: &ImportedCallable<Native>,
+    call_expr: &str,
+    callback: &str,
+    callback_context: &str,
+    context: &RenderContext<Native>,
+) -> Result<String> {
     let success_writes = callback_success_write(callable.returns().plan(), context)?;
     let writes = match callable.error().channel() {
         ErrorChannel::None => format!(
@@ -1486,7 +1576,12 @@ fn async_exported_return(
     let returns_buffer_by_value = matches!(complete.returns(), crate::bridge::c::Type::Buffer)
         && matches!(callable.error().channel(), ErrorChannel::None);
     let error = match callable.error().channel() {
-        ErrorChannel::None if returns_buffer_by_value => {
+        // Without a `SuccessOut` out-pointer, the completion call's own return
+        // value *is* the success payload (a wire buffer or a direct scalar/
+        // enum discriminant) and `async_success` below references it as
+        // `result`, so it must always be captured here, not just when it
+        // happens to be a buffer.
+        ErrorChannel::None if success_index.is_none() => {
             format!("final result = {call_complete};")
         }
         ErrorChannel::None => format!("{call_complete};"),
