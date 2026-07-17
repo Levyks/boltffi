@@ -6,6 +6,9 @@ expression: "rendered_fixture(\"exports/nested_closure_parameter\")"
 <c abi support declarations>
 FfiStatus boltffi_function_demo_install(uint32_t (*callback_call)(void *, uint32_t (*)(void *, uint32_t), void *, void (*)(void *)), void *callback_context, void (*callback_release)(void *));
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

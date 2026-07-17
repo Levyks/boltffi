@@ -15,6 +15,9 @@ FfiBuf_u8 boltffi_function_demo_parse_point(const uint8_t *text_ptr, uintptr_t t
 FfiBuf_u8 boltffi_function_demo_validate_name(const uint8_t *name_ptr, uintptr_t name_len, FfiBuf_u8 *return_out);
 FfiBuf_u8 boltffi_function_demo_store_name(const uint8_t *name_ptr, uintptr_t name_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

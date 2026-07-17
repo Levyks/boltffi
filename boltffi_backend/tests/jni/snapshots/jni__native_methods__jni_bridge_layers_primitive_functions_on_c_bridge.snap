@@ -9,6 +9,9 @@ bool boltffi_function_demo_enabled(bool flag);
 void boltffi_function_demo_refresh(void);
 FfiBuf_u8 boltffi_function_demo_echo_bytes(const uint8_t *bytes_ptr, uintptr_t bytes_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

@@ -6,6 +6,9 @@ expression: "rendered_fixture(\"direct_vector/mutable_primitive_slice_parameter\
 <c abi support declarations>
 FfiStatus boltffi_function_demo_increment(uint64_t *values_ptr, uintptr_t values_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

@@ -7,6 +7,9 @@ expression: "rendered_fixture(\"exports/string_functions\")"
 FfiBuf_u8 boltffi_function_demo_echo_string(const uint8_t *message_ptr, uintptr_t message_len);
 FfiBuf_u8 boltffi_function_demo_echo_str(const uint8_t *message_ptr, uintptr_t message_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

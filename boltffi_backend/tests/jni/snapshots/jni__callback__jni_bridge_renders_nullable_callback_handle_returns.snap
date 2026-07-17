@@ -14,6 +14,9 @@ BoltFFICallbackHandle boltffi_create_callback_demo_listener(uint64_t handle);
 BoltFFICallbackHandle boltffi_function_demo_optional_boxed_listener(void);
 BoltFFICallbackHandle boltffi_function_demo_optional_shared_listener(void);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

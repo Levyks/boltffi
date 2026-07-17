@@ -6,6 +6,9 @@ expression: "rendered_fixture(\"direct_vector/primitive_vector_parameter\")"
 <c abi support declarations>
 int32_t boltffi_function_demo_sum(const int32_t *values_ptr, uintptr_t values_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

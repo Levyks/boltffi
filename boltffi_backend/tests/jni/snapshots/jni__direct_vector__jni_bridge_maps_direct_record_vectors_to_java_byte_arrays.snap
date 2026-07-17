@@ -10,6 +10,9 @@ typedef struct {
 } ___Point;
 uint32_t boltffi_function_demo_count(const uint8_t *values_ptr, uintptr_t values_byte_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

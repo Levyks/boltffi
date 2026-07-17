@@ -6,6 +6,9 @@ expression: "rendered_fixture(\"exports/custom_type_functions\")"
 <c abi support declarations>
 FfiBuf_u8 boltffi_function_demo_keep_timestamp(const uint8_t *value_ptr, uintptr_t value_len);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

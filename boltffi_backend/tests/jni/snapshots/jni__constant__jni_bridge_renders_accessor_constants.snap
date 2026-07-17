@@ -6,6 +6,9 @@ expression: "rendered_fixture(\"constant/accessor_constants\")"
 <c abi support declarations>
 FfiBuf_u8 boltffi_const_demo_magic(void);
 
+#ifdef __cplusplus
+}
+#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>
