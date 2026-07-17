@@ -88,7 +88,8 @@ impl SourceFeatures {
             uses_byte_arrays,
             uses_record_arrays,
             uses_direct_buffers,
-            uses_exceptions: callbacks.uses_byte_arrays
+            uses_exceptions: callbacks.has_registrations
+                || callbacks.uses_byte_arrays
                 || callbacks.uses_direct_vectors
                 || callbacks.uses_record_arrays
                 || callbacks.uses_handles
@@ -110,7 +111,8 @@ impl SourceFeatures {
             uses_lifecycle: methods.uses_continuations
                 || callbacks.has_registrations
                 || closures.has_registrations,
-            uses_callback_handles: callbacks.uses_handles
+            uses_callback_handles: callbacks.has_registrations
+                || callbacks.uses_handles
                 || callbacks.has_handle_methods
                 || callbacks.returns_callback_handles
                 || closures.returns_callback_handles
