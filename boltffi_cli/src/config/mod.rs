@@ -1131,6 +1131,21 @@ impl Config {
         self.targets.dart.output.clone()
     }
 
+    /// Pub package name for generated Dart output (`pubspec.yaml` `name` and package dir).
+    ///
+    /// Uses `targets.dart.package_name` when set, otherwise `[package].name`. Either way the
+    /// value is normalized like TypeScript modules (non-alphanumeric → `_`, lowercased,
+    /// leading digit escaped) so hyphenated package names become valid pub identifiers.
+    pub fn dart_package_name(&self) -> String {
+        let raw = self
+            .targets
+            .dart
+            .package_name
+            .as_deref()
+            .unwrap_or(&self.package.name);
+        normalize_module_name(raw)
+    }
+
     pub fn dart_native_architectures(&self) -> &[RustTarget] {
         self.targets
             .dart
@@ -2368,6 +2383,32 @@ name = "my-lib"
         );
 
         assert_eq!(config.swift_bindings_file_stem(), "MyLibBoltFFI");
+    }
+
+    #[test]
+    fn dart_package_name_normalizes_hyphens_and_honors_override() {
+        let config = parse_config(
+            r#"
+[package]
+name = "my-lib"
+
+[targets.dart]
+enabled = true
+"#,
+        );
+        assert_eq!(config.dart_package_name(), "my_lib");
+
+        let config = parse_config(
+            r#"
+[package]
+name = "my-lib"
+
+[targets.dart]
+enabled = true
+package_name = "Custom-SDK"
+"#,
+        );
+        assert_eq!(config.dart_package_name(), "custom_sdk");
     }
 
     #[test]

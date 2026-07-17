@@ -116,14 +116,15 @@ fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
         &["build", "generate"],
         &options.cargo_args,
     )?;
+    let package_name = config.dart_package_name();
     let output_directory = options
         .output
         .clone()
         .unwrap_or_else(|| config.dart_output())
-        .join(&config.package.name);
+        .join(&package_name);
     expansion
         .generation()
-        .dart_package(config.package.name.clone())
+        .dart_package(package_name)
         .dart_artifact(expansion.artifact_name())
         .dart_custom_mappings(config.dart_custom_mappings())
         .render(Target::Dart)

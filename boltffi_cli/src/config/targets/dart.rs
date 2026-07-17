@@ -12,6 +12,11 @@ pub struct DartConfig {
     pub output: PathBuf,
     #[serde(default)]
     pub enabled: bool,
+    /// Override for the generated pub package name (`pubspec.yaml` `name` and package directory).
+    ///
+    /// When unset, BoltFFI normalizes `[package].name` to a Dart package identifier
+    /// (lowercase `[a-z0-9_]`, non-alphanumeric characters become `_`).
+    pub package_name: Option<String>,
     #[serde(
         default,
         serialize_with = "DartConfig::serialize_native_architectures",
@@ -27,6 +32,7 @@ impl Default for DartConfig {
         Self {
             output: default_dart_output(),
             enabled: false,
+            package_name: None,
             native_architectures: None,
             type_mappings: HashMap::new(),
         }

@@ -424,8 +424,12 @@ Requires `experimental = ["dart"]` (or the CLI `--experimental` flag).
   - Default: `false`
 - `output` (path): Dart artifact root directory.
   - Default: `dist/dart`
-  - `boltffi generate dart --experimental` writes the package under `{output}/{package.name}/` (library, `pubspec.yaml`, Native Assets `hook/build.dart`, and `dart_target.json`).
-  - `boltffi pack dart --experimental` regenerates that package when `--regenerate` is set and copies built `cdylib` artifacts into `{output}/{package.name}/native/<rust-triple>/`.
+  - `boltffi generate dart --experimental` writes the package under `{output}/{dart_package}/` (library, `pubspec.yaml`, Native Assets `hook/build.dart`, and `dart_target.json`).
+  - `boltffi pack dart --experimental` regenerates that package when `--regenerate` is set and copies built `cdylib` artifacts into `{output}/{dart_package}/native/<rust-triple>/`.
+  - `{dart_package}` is the resolved pub package name (see `package_name` below).
+- `package_name` (string, optional): Pub package name for the generated package directory, `pubspec.yaml` `name`, and library file stem.
+  - Default: `[package].name` after identifier normalization (lowercase; non-alphanumeric characters become `_`; leading digit gets a `_` prefix). Example: `my-lib` → `my_lib`.
+  - Explicit overrides are normalized the same way.
 - `native_architectures` (array of strings, optional): Host triples to build and package as Dart Native Assets.
   - Default: all architectures supported by the Dart Native Assets layout for the current host OS family.
   - Values use Dart OS/arch names, for example `windows:x86_64`, `macos:arm64`, `linux:x64`.

@@ -104,7 +104,7 @@ pub(crate) fn pack_dart(
         &config.dart_targets(),
     )?;
 
-    let package_dir = config.dart_output().join(&config.package.name);
+    let package_dir = config.dart_output().join(config.dart_package_name());
     let native_libs_dir = package_dir.join("native");
     std::fs::create_dir_all(&native_libs_dir).map_err(|source| {
         CliError::CreateDirectoryFailed {

@@ -62,9 +62,9 @@ Generates a Dart package backed by BoltFFI's expanded C ABI and Dart Native Asse
 | Custom types + `[targets.dart.type_mappings]` | Yes |
 | Options, vectors, fallible results, encoded builtins | Yes |
 
-**Not a gap vs Swift:** async methods on foreign callback proxies are not exposed; Swift does not offer that surface either.
+Foreign callback proxies currently expose sync methods only. Async methods on those proxies are not generated.
 
-Configure under `[targets.dart]` — see [Configuration](/docs/configuration#dart-configuration) for `output`, `native_architectures`, and `type_mappings`.
+Configure under `[targets.dart]` — see [Configuration](/docs/configuration#dart-configuration) for `output`, `package_name`, `native_architectures`, and `type_mappings`.
 
 ### Kotlin Multiplatform
 

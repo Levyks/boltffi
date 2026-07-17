@@ -43,8 +43,12 @@ impl DartHost {
     const TARGET: &'static str = "dart";
 
     /// Creates a Dart package renderer.
+    ///
+    /// `package` becomes the pub package name and `lib/{package}.dart` stem. Non-identifier
+    /// characters are normalized to underscores (hyphens, spaces, etc.) and the name is
+    /// lowercased so values like `my-lib` become `my_lib`.
     pub fn new(package: impl Into<String>, artifact: impl Into<String>) -> Result<Self> {
-        let package = package.into();
+        let package = normalize_dart_package_name(&package.into());
         let artifact = artifact.into();
         if package.is_empty() || artifact.is_empty() {
             return Err(Error::UnsupportedTarget {
@@ -241,13 +245,37 @@ impl host::HostBackend for DartHost {
 
 impl sealed::HostBackend for DartHost {}
 
+/// Normalize a string into a Dart pub package identifier (`[a-z0-9_]`).
+fn normalize_dart_package_name(input: &str) -> String {
+    let normalized = input
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if normalized
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+    {
+        format!("_{normalized}")
+    } else {
+        normalized
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use boltffi_ast::PackageInfo;
     use boltffi_binding::{Native, lower};
     use boltffi_scan::scan_file;
 
-    use super::DartHost;
+    use super::{DartHost, normalize_dart_package_name};
 
     #[test]
     fn creates_metadata_backed_target() {
@@ -255,6 +283,40 @@ mod tests {
             .expect("host")
             .into_target()
             .expect("target");
+    }
+
+    #[test]
+    fn normalizes_hyphenated_package_names() {
+        assert_eq!(normalize_dart_package_name("my-lib"), "my_lib");
+        assert_eq!(normalize_dart_package_name("2cool"), "_2cool");
+        assert_eq!(normalize_dart_package_name("My Package"), "my_package");
+
+        let source = scan_file(
+            syn::parse_str(r#"#[export] pub fn answer() -> i32 { 42 }"#).expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("my-lib", "my_lib")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        assert!(
+            output
+                .files()
+                .iter()
+                .any(|file| file.path().as_path().ends_with("my_lib.dart")),
+            "library file should use normalized package name"
+        );
+        let pubspec = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("pubspec.yaml"))
+            .expect("pubspec")
+            .contents();
+        assert!(pubspec.contains("name: my_lib"));
     }
 
     #[test]
