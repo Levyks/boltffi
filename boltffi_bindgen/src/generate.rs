@@ -486,18 +486,37 @@ impl Generation {
             .clone()
             .unwrap_or_else(|| package.clone());
         let host = self.dart_custom_mappings.iter().fold(
-            boltffi_backend::target::dart::DartHost::new(package, artifact)
+            boltffi_backend::target::dart::DartHost::new(package.clone(), artifact)
                 .map_err(GenerationError::Render)?,
             |host, (custom_type, mapping)| {
                 host.custom_type_mapping(custom_type.clone(), mapping.clone())
             },
         );
         let target = host.into_target().map_err(GenerationError::Render)?;
-        let output = target
+        let native_output = target
             .render_with_coverage(bindings, self.coverage)
             .map_err(GenerationError::Render)?;
-        // When partial coverage is requested, attach a machine-readable skip report.
-        Ok(attach_dart_coverage_report(output))
+        let native_output = attach_dart_coverage_report(native_output);
+
+        match self.bindings_for_surface::<Wasm32>(BindingMetadataSurface::Wasm32) {
+            Ok(wasm_bindings) => match self.render_dart_web_bindings(&wasm_bindings) {
+                Ok(web_output) => {
+                    return Ok(assemble_unified_dart_package(
+                        &package,
+                        native_output,
+                        web_output,
+                    ));
+                }
+                Err(err) => {
+                    eprintln!("[boltffi] Warning: failed to render dart_web bindings: {err}");
+                }
+            },
+            Err(err) => {
+                eprintln!("[boltffi] Warning: bindings_for_surface Wasm32 failed: {err}");
+            }
+        }
+
+        Ok(native_output)
     }
 
     fn render_java_bindings(
@@ -653,10 +672,14 @@ impl Generation {
         &self,
         bindings: &Bindings<Wasm32>,
     ) -> Result<GeneratedOutput, GenerationError> {
-        // Shares the same module name as the TS/wasm output it wraps, since
-        // the generated loader imports that compiled module by this name.
-        let module = self.typescript_module.as_deref().unwrap_or("boltffi");
-        let host = boltffi_backend::target::dart_web::DartWebHost::new(module)
+        let package = self.dart_package.clone().unwrap_or_else(|| {
+            bindings
+                .package()
+                .name()
+                .as_path_string()
+                .replace("::", "_")
+        });
+        let host = boltffi_backend::target::dart_web::DartWebHost::new(&package)
             .map_err(GenerationError::Render)?;
         self.render_backend(&host.into_target(), bindings)
     }
@@ -814,6 +837,34 @@ impl Generation {
             .ok_or(GenerationError::MissingSurface { surface })
     }
 
+    fn bindings_for_surface<S: Surface>(
+        &self,
+        surface: BindingMetadataSurface,
+    ) -> Result<Bindings<S>, GenerationError> {
+        self.metadata_build_for_surface(surface)
+            .read()?
+            .into_iter()
+            .find(|envelope| envelope.surface() == surface)
+            .and_then(|envelope| S::from_serialized(envelope.into_bindings()))
+            .ok_or(GenerationError::MissingSurface { surface })
+    }
+
+    fn metadata_build_for_surface(&self, surface: BindingMetadataSurface) -> BindingMetadataBuild {
+        let mut build = BindingMetadataBuild::new(&self.manifest_path)
+            .surface(surface)
+            .cargo_environment(self.cargo_environment.clone());
+        if !self.cargo_args.is_empty() {
+            build = build.cargo_args(self.cargo_args.clone());
+        }
+        if let Some(toolchain_selector) = &self.cargo_toolchain_selector {
+            build = build.rustup_toolchain(toolchain_selector.clone());
+        }
+        if let (BindingMetadataSurface::Native, Some(triple)) = (surface, &self.triple) {
+            build = build.target(triple);
+        }
+        build
+    }
+
     fn metadata_build(&self) -> BindingMetadataBuild {
         let surface = self
             .binding_surface
@@ -921,6 +972,70 @@ fn attach_dart_coverage_report(mut output: GeneratedOutput) -> GeneratedOutput {
         ));
     }
     output
+}
+
+#[allow(clippy::collapsible_if)]
+fn assemble_unified_dart_package(
+    package_name: &str,
+    native_output: GeneratedOutput,
+    web_output: GeneratedOutput,
+) -> GeneratedOutput {
+    let mut files = Vec::new();
+
+    // 1. Entrypoint with conditional export: lib/<package_name>.dart
+    let entrypoint_content = format!(
+        "library;\n\nexport 'src/native/{package_name}_ffi.dart'\n    if (dart.library.js_interop) 'src/web/{package_name}_wasm.dart';\n"
+    );
+    if let Ok(path) = FilePath::new(format!("lib/{package_name}.dart")) {
+        files.push(GeneratedFile::new(path, entrypoint_content));
+    }
+
+    // 2. FFI implementation: lib/src/native/<package_name>_ffi.dart
+    for file in native_output.files() {
+        let rel_path = file.path().as_path();
+        if rel_path == std::path::Path::new(&format!("lib/{package_name}.dart")) {
+            if let Ok(path) = FilePath::new(format!("lib/src/native/{package_name}_ffi.dart")) {
+                files.push(GeneratedFile::new(path, file.contents().to_owned()));
+            }
+        } else if rel_path == std::path::Path::new("pubspec.yaml") {
+            let unified_pubspec = format!(
+                "name: {package_name}\n\nenvironment:\n  sdk: ^3.10.8\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  web: ^1.0.0\n  hooks: ^2.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n  async: ^2.13.0\n"
+            );
+            if let Ok(path) = FilePath::new("pubspec.yaml") {
+                files.push(GeneratedFile::new(path, unified_pubspec));
+            }
+        } else if rel_path == std::path::Path::new("hook/build.dart") {
+            let hook_content = file.contents().replace(
+                &format!("const assetName = \"{package_name}.dart\";"),
+                &format!("const assetName = \"src/native/{package_name}_ffi.dart\";"),
+            );
+            if let Ok(path) = FilePath::new("hook/build.dart") {
+                files.push(GeneratedFile::new(path, hook_content));
+            }
+        } else {
+            files.push(file.clone());
+        }
+    }
+
+    // 3. Web implementation: lib/src/web/<package_name>_wasm.dart and loader
+    for file in web_output.files() {
+        let rel_path = file.path().as_path();
+        if rel_path == std::path::Path::new(&format!("lib/{package_name}.dart")) {
+            if let Ok(path) = FilePath::new(format!("lib/src/web/{package_name}_wasm.dart")) {
+                files.push(GeneratedFile::new(path, file.contents().to_owned()));
+            }
+        } else if rel_path == std::path::Path::new(&format!("{package_name}_web_loader.mjs"))
+            || rel_path == std::path::Path::new(&format!("lib/{package_name}_web_loader.mjs"))
+        {
+            if let Ok(path) = FilePath::new(format!("lib/src/web/{package_name}_web_loader.mjs")) {
+                files.push(GeneratedFile::new(path, file.contents().to_owned()));
+            }
+        }
+    }
+
+    let mut diagnostics = native_output.diagnostics().to_vec();
+    diagnostics.extend_from_slice(web_output.diagnostics());
+    GeneratedOutput::new(files, diagnostics)
 }
 
 #[cfg(test)]

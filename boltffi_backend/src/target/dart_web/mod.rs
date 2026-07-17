@@ -176,9 +176,42 @@ impl host::HostBackend for DartWebHost {
             self.package
         );
         let loader = format!(
-            "// Companion JS loader: import this module (as a plain <script type=\"module\">\n// on web, or via a preloaded import in a Node harness) BEFORE the compiled\n// Dart-web app runs, so its `@JS('{js_module}.*')` bindings resolve.\nimport * as bindings from './{package}.js';\nglobalThis.{js_module} = bindings;\n",
+            r#"// Self-contained ES module loader for Dart Web / Flutter WASM targets.
+// Call `initBoltFFI(wasmUrlOrBytes)` before or during Dart app initialization
+// so its `@JS('{js_module}.*')` bindings resolve.
+
+export async function initBoltFFI(wasmSource) {{
+  let bytes;
+  if (typeof wasmSource === 'string' || wasmSource instanceof URL) {{
+    const res = await fetch(wasmSource);
+    bytes = await res.arrayBuffer();
+  }} else if (wasmSource instanceof ArrayBuffer || ArrayBuffer.isView(wasmSource)) {{
+    bytes = wasmSource;
+  }} else {{
+    throw new Error('Invalid WASM source provided to initBoltFFI');
+  }}
+
+  const importObject = {{
+    env: {{
+      __boltffi_wake: (handle) => {{
+        if (globalThis.__boltffi_wake_handler) {{
+          globalThis.__boltffi_wake_handler(handle);
+        }}
+      }},
+    }},
+  }};
+
+  const {{ instance }} = await WebAssembly.instantiate(bytes, importObject);
+  globalThis.{js_module} = instance.exports;
+  return instance.exports;
+}}
+
+export function initBoltFFISync(wasmInstance) {{
+  globalThis.{js_module} = wasmInstance.exports || wasmInstance;
+  return globalThis.{js_module};
+}}
+"#,
             js_module = self.js_module,
-            package = self.package
         );
         Ok(GeneratedOutput::new(
             vec![
