@@ -42,14 +42,29 @@ The CLI flag applies to a single command. The config array applies to every buil
 
 **Key:** `dart`
 
-Generates a Dart package backed by BoltFFI's expanded C ABI and Dart Native Assets. The
-experimental surface supports records, enums, free functions, opaque classes, and sync or
-async Dart-implemented callbacks. Generated opaque classes provide deterministic `dispose()`
-and finalizer-backed cleanup.
+Generates a Dart package backed by BoltFFI's expanded C ABI and Dart Native Assets
+(`hook/build.dart`). Enable with `experimental = ["dart"]` or `boltffi generate dart --experimental` /
+`boltffi pack dart --experimental`.
 
-Streams, exported constants, and custom-type declarations are not supported by the Dart
-target yet. Generation reports those declarations as unsupported instead of emitting partial
-bindings.
+**Supported export surface (current):**
+
+| Area | Status |
+|------|--------|
+| Records / enums | Yes |
+| Free functions (sync + async) | Yes |
+| Opaque classes (instance + static methods, `dispose()` + finalizers) | Yes |
+| Dart-implemented callbacks (sync; async success/error encoding) | Yes |
+| **Foreign callback proxies** (`Box<dyn Trait>` returned to Dart) | Yes |
+| Inline closures (`impl Fn` parameters) | Yes |
+| **Returned closures** (`impl Fn` / `Box<dyn Fn>` returned to Dart) | Yes |
+| Streams (async / batch / callback) | Yes |
+| Exported constants | Yes |
+| Custom types + `[targets.dart.type_mappings]` | Yes |
+| Options, vectors, fallible results, encoded builtins | Yes |
+
+**Not a gap vs Swift:** async methods on foreign callback proxies are not exposed; Swift does not offer that surface either.
+
+Configure under `[targets.dart]` — see [Configuration](/docs/configuration#dart-configuration) for `output`, `native_architectures`, and `type_mappings`.
 
 ### Kotlin Multiplatform
 

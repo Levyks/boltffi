@@ -245,6 +245,54 @@ final class _$$BoltFFIStreamPump<T> {
   }
 }
 
+/// Owns a Rust-returned closure registration (`invoke`/`context`/`release`)
+/// and runs `release` when finalized or disposed.
+final class _ReturnedClosureOwner<T extends $$ffi.Struct> {
+  static final _finalizer = Finalizer<(
+    $$ffi.Pointer<$$ffi.Void>,
+    $$ffi.Pointer<
+      $$ffi.NativeFunction<$$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)>
+    >,
+    $$ffi.Pointer<$$ffi.Void>,
+  )>((state) {
+    final (context, release, storage) = state;
+    if (release != $$ffi.nullptr) {
+      release.asFunction<void Function($$ffi.Pointer<$$ffi.Void>)>()(context);
+    }
+    $$extffi.calloc.free(storage);
+  });
+
+  final $$ffi.Pointer<T> storage;
+  final $$ffi.Pointer<$$ffi.Void> context;
+  final $$ffi.Pointer<
+    $$ffi.NativeFunction<$$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)>
+  >
+  release;
+  bool _closed = false;
+
+  _ReturnedClosureOwner({
+    required this.storage,
+    required this.context,
+    required this.release,
+  }) {
+    _finalizer.attach(
+      this,
+      (context, release, storage.cast()),
+      detach: this,
+    );
+  }
+
+  void dispose() {
+    if (_closed) return;
+    _closed = true;
+    _finalizer.detach(this);
+    if (release != $$ffi.nullptr) {
+      release.asFunction<void Function($$ffi.Pointer<$$ffi.Void>)>()(context);
+    }
+    $$extffi.calloc.free(storage.cast());
+  }
+}
+
 final class _$$WireWriter implements $$ffi.Finalizable {
   static final _finalizer = $$ffi.NativeFinalizer(
     $$extffi.calloc.nativeFree,

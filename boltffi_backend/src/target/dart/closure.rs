@@ -1,16 +1,22 @@
-//! Inline closure parameters (`impl Fn...`) for the Dart C-ABI target.
+//! Inline closures for the Dart C-ABI target.
 //!
-//! Rust receives a call/context/release triple. Dart boxes the function in a
-//! handle map, exposes static trampolines via `Pointer.fromFunction`, and
-//! passes the context as `Pointer.fromAddress(handle)`.
+//! **Parameters** (`impl Fn` into Rust): Dart boxes the function, exposes
+//! call/release trampolines via `Pointer.fromFunction`, and passes
+//! `Pointer.fromAddress(handle)` as context.
+//!
+//! **Returns** (`impl Fn` out of Rust): Dart allocates a
+//! `{invoke, context, release}` storage struct, Rust fills it through a
+//! `void*` out-pointer, and Dart wraps it as a language function with a
+//! finalizer that runs `release`.
 
 use boltffi_binding::{
-    ClosureParameter, DirectValueType, DirectVectorElementType, ErrorChannel, HandlePresence,
-    HandleTarget, ImportedCallable, Native, OutgoingParam, ParamPlan, ReturnPlan,
+    ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel,
+    HandlePresence, HandleTarget, ImportedCallable, IncomingParam, Native, OutgoingParam, ParamPlan,
+    ReturnPlan,
 };
 
 use crate::{
-    bridge::c::{self, CBridgeContract},
+    bridge::c::{self, CBridgeContract, Function},
     core::{AuxChunk, Emitted, Error, HelperId, RenderContext, Result, TextChunk},
 };
 
@@ -156,6 +162,301 @@ pub fn attach_helpers(mut emitted: Emitted, helpers: Vec<(HelperId, String)>) ->
         });
     }
     emitted
+}
+
+// ---------------------------------------------------------------------------
+// Returned closures (Rust → Dart)
+// ---------------------------------------------------------------------------
+
+pub fn returned_api_type(
+    closure: &ClosureReturn<Native, boltffi_binding::OutOfRust>,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let invoke = closure.invoke();
+    let params = invoke
+        .params()
+        .iter()
+        .map(|param| {
+            let IncomingParam::Value(plan) = param.payload() else {
+                return unsupported("nested closure in returned closure");
+            };
+            call::parameter_type(plan, context)
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join(", ");
+    let returns = call::return_type(invoke.returns().plan(), context)?;
+    let ty = format!("{returns} Function({params})");
+    Ok(match closure.presence() {
+        HandlePresence::Nullable => format!("{ty}?"),
+        _ => ty,
+    })
+}
+
+pub fn returned_storage_name(signature: &str) -> String {
+    format!("_ClRet${}", signature.replace(['<', '>', ',', ' '], "_"))
+}
+
+pub fn returned_helper(
+    closure: &ClosureReturn<Native, boltffi_binding::OutOfRust>,
+    c_return: &c::ClosureReturnParameter,
+) -> Result<(HelperId, String)> {
+    let signature = closure.signature().as_str();
+    let storage = returned_storage_name(signature);
+    let call_ty = c_return.call_type();
+    let c::Type::FunctionPointer {
+        returns: call_returns,
+        params: call_params,
+    } = call_ty
+    else {
+        return Err(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "returned closure call type is not a function pointer",
+        });
+    };
+    let invoke_native = format!(
+        "{} Function({})",
+        ffi::native_type(call_returns),
+        call_params
+            .iter()
+            .map(ffi::native_type)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let source = format!(
+        "final class {storage} extends $$ffi.Struct {{\n  external $$ffi.Pointer<$$ffi.NativeFunction<{invoke_native}>> invoke;\n  external $$ffi.Pointer<$$ffi.Void> context;\n  external $$ffi.Pointer<$$ffi.NativeFunction<$$ffi.Void Function($$ffi.Pointer<$$ffi.Void>)>> release;\n}}\n\n"
+    );
+    Ok((
+        HelperId::new(boltffi_binding::CanonicalName::single(format!(
+            "closure_return_{signature}"
+        ))),
+        source,
+    ))
+}
+
+/// Generate the call site that fills a returned-closure storage and wraps it.
+pub fn returned_call(
+    function: &Function,
+    mut args: Vec<String>,
+    closure: &ClosureReturn<Native, boltffi_binding::OutOfRust>,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<(String, Vec<(HelperId, String)>)> {
+    let c_return = function
+        .parameter_groups()
+        .iter()
+        .find_map(|group| match group {
+            c::ParameterGroup::ClosureReturn(value) => Some(value),
+            _ => None,
+        })
+        .ok_or(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "missing C closure return parameter for Dart closure return",
+        })?;
+    let helper = returned_helper(closure, c_return)?;
+    let storage = returned_storage_name(closure.signature().as_str());
+    args.push("storage.cast()".into());
+
+    let c::Type::FunctionPointer {
+        returns: call_returns,
+        params: call_params,
+    } = c_return.call_type()
+    else {
+        return Err(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "returned closure call type is not a function pointer",
+        });
+    };
+    let dart_invoke = format!(
+        "{} Function({})",
+        ffi::dart_type(call_returns),
+        call_params
+            .iter()
+            .map(ffi::dart_type)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let (pack_setup, pack_cleanup, call_args, decode) =
+        invoke_returned(closure, c_return, bridge, context)?;
+    let call_args_joined = call_args.join(", ");
+    let call_args_suffix = if call_args_joined.is_empty() {
+        String::new()
+    } else {
+        format!(", {call_args_joined}")
+    };
+    let pack_body = if pack_setup.is_empty() {
+        format!(
+            "final invoke = owner.storage.ref.invoke.asFunction<{dart_invoke}>();\n  final raw = invoke(owner.storage.ref.context{call_args_suffix});\n  {decode}"
+        )
+    } else {
+        format!(
+            "{}\n  try {{\n    final invoke = owner.storage.ref.invoke.asFunction<{dart_invoke}>();\n    final raw = invoke(owner.storage.ref.context{call_args_suffix});\n    {decode}\n  }} finally {{\n    {}\n  }}",
+            pack_setup.join("\n  "),
+            pack_cleanup.join("\n    "),
+        )
+    };
+
+    let nullable_check = match closure.presence() {
+        HandlePresence::Nullable => {
+            "if (storage.ref.invoke == $$ffi.nullptr) {\n    $$extffi.calloc.free(storage);\n    return null;\n  }\n  "
+                .to_owned()
+        }
+        _ => {
+            "if (storage.ref.invoke == $$ffi.nullptr) {\n    $$extffi.calloc.free(storage);\n    throw StateError('returned BoltFFI closure was null');\n  }\n  "
+                .to_owned()
+        }
+    };
+
+    let lambda_params = closure
+        .invoke()
+        .params()
+        .iter()
+        .map(|param| name_style::lower_camel(param.name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let body = format!(
+        "final storage = $$extffi.calloc<{storage}>();\nfinal status = _f${}({});\nif (status.code != 0) {{\n  $$extffi.calloc.free(storage);\n  throw _$$FFIException(status.code, 'returned closure registration failed');\n}}\n{nullable_check}final owner = _ReturnedClosureOwner<{storage}>(\n  storage: storage,\n  context: storage.ref.context,\n  release: storage.ref.release,\n);\nreturn ({lambda_params}) {{\n  if (owner.storage.ref.invoke == $$ffi.nullptr) {{\n    throw StateError('returned BoltFFI closure was released');\n  }}\n  {pack_body}\n}};",
+        function.name(),
+        args.join(", "),
+    );
+    Ok((body, vec![helper]))
+}
+
+fn invoke_returned(
+    closure: &ClosureReturn<Native, boltffi_binding::OutOfRust>,
+    c_return: &c::ClosureReturnParameter,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>, String)> {
+    let mut setup = Vec::new();
+    let mut cleanup = Vec::new();
+    let mut args = Vec::new();
+    let invoke = closure.invoke();
+
+    // Success-out for fallible invoke returns (rare for simple counters).
+    for group in c_return.parameter_groups() {
+        if let c::ParameterGroup::SuccessOut(index) = group {
+            let param = c_return.parameter(*index);
+            let local = format!("_$out{}", param.name());
+            let c::Type::MutPointer(inner) = param.ty() else {
+                return Err(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "returned-closure success out is not a pointer",
+                });
+            };
+            setup.push(format!(
+                "final {local} = $$extffi.calloc<{}>();",
+                ffi::native_type(inner)
+            ));
+            cleanup.push(format!("$$extffi.calloc.free({local});"));
+            args.push(local);
+        }
+    }
+
+    let arg_groups = c_return
+        .parameter_groups()
+        .iter()
+        .filter(|group| !matches!(group, c::ParameterGroup::SuccessOut(_)))
+        .collect::<Vec<_>>();
+    if arg_groups.len() != invoke.params().len() {
+        return Err(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "returned closure parameter group count mismatch",
+        });
+    }
+
+    for (param, group) in invoke.params().iter().zip(arg_groups) {
+        let IncomingParam::Value(plan) = param.payload() else {
+            return unsupported("nested returned closure parameter");
+        };
+        let name = name_style::lower_camel(param.name());
+        match (plan, group) {
+            (ParamPlan::Direct { ty, .. }, c::ParameterGroup::Value(_)) => match ty {
+                DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
+                    args.push(format!("{name} ? true : false"))
+                }
+                DirectValueType::Enum(_) => args.push(format!("{name}.value")),
+                DirectValueType::Record(_) => args.push(format!("{name}._toStruct()")),
+                _ => args.push(name),
+            },
+            (ParamPlan::Encoded { codec, .. }, c::ParameterGroup::ByteSlice(_)) => {
+                let writer = format!("_$writer{}", name_style::upper_camel(param.name()));
+                let writes = codec
+                    .render_with(&mut Writer::new(&writer, &name, context))
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?
+                    .join(" ");
+                setup.push(format!("final {writer} = _$$WireWriter();\n  {writes}"));
+                cleanup.push(format!("{writer}.close();"));
+                args.extend([format!("{writer}.ptr"), format!("{writer}.len")]);
+            }
+            (ParamPlan::ScalarOption { primitive }, c::ParameterGroup::ByteSlice(_)) => {
+                let writer = format!("_$writer{}", name_style::upper_camel(param.name()));
+                let suffix = primitive::wire_suffix(*primitive)?;
+                setup.push(format!(
+                    "final {writer} = _$$WireWriter();\n  {writer}.writeOptional({name}, (value, writer) => writer.write{suffix}(value));"
+                ));
+                cleanup.push(format!("{writer}.close();"));
+                args.extend([format!("{writer}.ptr"), format!("{writer}.len")]);
+            }
+            (ParamPlan::DirectVec { element, .. }, c::ParameterGroup::DirectVector(_)) => {
+                let local = format!("_$vector{}", name_style::upper_camel(param.name()));
+                match element {
+                    DirectVectorElementType::Primitive(value) => {
+                        let native = call::primitive_native_type(value.primitive())?;
+                        setup.push(format!(
+                            "final {local} = $$extffi.calloc<{native}>({name}.length);\n  for (var i = 0; i < {name}.length; i++) {{ ({local} + i).value = {name}[i]; }}"
+                        ));
+                        cleanup.push(format!("$$extffi.calloc.free({local});"));
+                        args.extend([local, format!("{name}.length")]);
+                    }
+                    _ => return unsupported("returned closure direct vector arg"),
+                }
+            }
+            _ => return unsupported("returned closure argument shape"),
+        }
+    }
+
+    let decode = decode_returned_invoke(invoke.returns().plan(), "raw", bridge, context)?;
+    Ok((setup, cleanup, args, decode))
+}
+
+fn decode_returned_invoke(
+    plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
+    raw: &str,
+    bridge: &CBridgeContract,
+    context: &RenderContext<Native>,
+) -> Result<String> {
+    let _ = bridge;
+    Ok(match plan {
+        ReturnPlan::Void => format!("{raw};"),
+        ReturnPlan::DirectViaReturnSlot { ty } => match ty {
+            DirectValueType::Primitive(_) => format!("return {raw};"),
+            DirectValueType::Enum(_) => format!(
+                "return {}._fromValue({raw});",
+                call::direct_type(ty, context)?
+            ),
+            DirectValueType::Record(_) => format!(
+                "return {}._fromStruct({raw});",
+                call::direct_type(ty, context)?
+            ),
+            _ => return unsupported("returned closure direct return"),
+        },
+        ReturnPlan::EncodedViaReturnSlot { codec, .. } => {
+            let decode = codec.render_with(&mut Reader::new("reader", context))?;
+            format!(
+                "try {{\n    final reader = _$$WireReader({raw}.ptr, {raw}.len);\n    return {decode};\n  }} finally {{\n    if ({raw}.ptr != $$ffi.nullptr) _f$boltffi_free_buf({raw});\n  }}"
+            )
+        }
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "try {{\n    final reader = _$$WireReader({raw}.ptr, {raw}.len);\n    return reader.readOptional((reader) => reader.read{suffix}());\n  }} finally {{\n    if ({raw}.ptr != $$ffi.nullptr) _f$boltffi_free_buf({raw});\n  }}"
+            )
+        }
+        _ => return unsupported("returned closure return shape"),
+    })
 }
 
 fn invoke_body(

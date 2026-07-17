@@ -69,6 +69,9 @@ pub fn return_type(
     plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
     context: &RenderContext<Native>,
 ) -> Result<String> {
+    if let ReturnPlan::ClosureViaOutPointer(closure) = plan {
+        return super::closure::returned_api_type(closure, context);
+    }
     return_plan_type(plan, context)
 }
 pub fn callback_return_type(

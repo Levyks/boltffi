@@ -773,4 +773,45 @@ mod tests {
             "value_len == 0 ? null : _$$WireReader(value_ptr, value_len).readOptional((reader) => reader.readU32())"
         ));
     }
+
+    #[test]
+    fn renders_returned_closures() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub fn make_adder(base: i32) -> impl Fn(i32) -> i32 { move |value| base + value }
+                #[export]
+                pub fn make_string_mapper() -> impl Fn(String) -> String {
+                    |s| s.to_uppercase()
+                }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("int Function(int) makeAdder(int base)"));
+        assert!(library.contains("String Function(String) makeStringMapper()"));
+        assert!(library.contains("final class _ClRet$"));
+        assert!(library.contains("_ReturnedClosureOwner<"));
+        assert!(library.contains("storage.ref.invoke"));
+        assert!(library.contains("storage.ref.release"));
+        assert!(library.contains("$$extffi.calloc<_ClRet$"));
+        assert!(library.contains("returned BoltFFI closure was released"));
+    }
 }

@@ -400,11 +400,14 @@ pub fn function(
     let params = exported_parameters(callable, context)?;
     let return_ty = call::exported_api_return(callable, context)?;
     let function = call::c_function(decl.symbol(), bridge)?;
-    let (setup, cleanup, args, helpers) =
+    let (setup, cleanup, args, mut helpers) =
         call::marshal_exported(callable, None, bridge, context, function)?;
     let body = match callable.execution() {
         ExecutionDecl::Synchronous(_) => {
-            sync_exported_call(callable, function, args.clone(), bridge, context)?
+            let (body, mut more) =
+                sync_exported_call(callable, function, args.clone(), bridge, context)?;
+            helpers.append(&mut more);
+            body
         }
         ExecutionDecl::Asynchronous(protocol) => {
             let invocation = format!("_f${}({})", function.name(), args.join(", "));
@@ -554,7 +557,10 @@ pub fn class(
             helpers.append(&mut closure_helpers);
             let body = match callable.execution() {
                 ExecutionDecl::Synchronous(_) => {
-                    sync_exported_call(callable, function, args.clone(), bridge, context)?
+                    let (body, mut more) =
+                        sync_exported_call(callable, function, args.clone(), bridge, context)?;
+                    helpers.append(&mut more);
+                    body
                 }
                 ExecutionDecl::Asynchronous(protocol) => {
                     let invocation = format!("_f${}({})", function.name(), args.join(", "));
@@ -1277,7 +1283,8 @@ fn sync_exported_return(
             direct_vector_decode("buffer", element, invocation, bridge, context)?
         }
         ReturnPlan::ClosureViaOutPointer(_) => {
-            return unsupported("closure return");
+            // Handled specially in sync_exported_call (needs out-pointer setup).
+            return unsupported("closure return must use sync_exported_call path");
         }
         _ => return unsupported("synchronous exported return"),
     })
@@ -1289,17 +1296,23 @@ fn sync_exported_call(
     mut args: Vec<String>,
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
-) -> Result<String> {
+) -> Result<(String, Vec<(crate::core::HelperId, String)>)> {
     match callable.error().channel() {
         ErrorChannel::None => {
+            if let ReturnPlan::ClosureViaOutPointer(closure) = callable.returns().plan() {
+                return super::closure::returned_call(function, args, closure, bridge, context);
+            }
             let invocation = format!("_f${}({})", function.name(), args.join(", "));
-            sync_exported_return(
-                callable.returns().plan(),
-                ErrorChannel::None,
-                &invocation,
-                bridge,
-                context,
-            )
+            Ok((
+                sync_exported_return(
+                    callable.returns().plan(),
+                    ErrorChannel::None,
+                    &invocation,
+                    bridge,
+                    context,
+                )?,
+                Vec::new(),
+            ))
         }
         ErrorChannel::Encoded { ty, codec, .. } => {
             let success_index = function
@@ -1341,10 +1354,13 @@ fn sync_exported_call(
             } else {
                 error_decode
             };
-            Ok(format!(
-                "{success_setup}try {{\n  final error = _f${}({});\n  if (error.ptr != $$ffi.nullptr) {{\n    try {{\n      final errorReader = _$$WireReader(error.ptr, error.len);\n      throw {thrown};\n    }} finally {{ _f$boltffi_free_buf(error); }}\n  }}\n  {success_value}\n}} finally {{{success_cleanup}\n}}",
-                function.name(),
-                args.join(", ")
+            Ok((
+                format!(
+                    "{success_setup}try {{\n  final error = _f${}({});\n  if (error.ptr != $$ffi.nullptr) {{\n    try {{\n      final errorReader = _$$WireReader(error.ptr, error.len);\n      throw {thrown};\n    }} finally {{ _f$boltffi_free_buf(error); }}\n  }}\n  {success_value}\n}} finally {{{success_cleanup}\n}}",
+                    function.name(),
+                    args.join(", ")
+                ),
+                Vec::new(),
             ))
         }
         ErrorChannel::Status => unsupported("Dart synchronous status error"),

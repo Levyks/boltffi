@@ -544,6 +544,63 @@ The default output is `dist/java/android`. The `min_sdk` sets the minimum Androi
 
 Both JVM and Android targets can be enabled simultaneously. They share the same `package`, `module_name`, and `min_version` settings but produce separate output.
 
+## Dart Configuration
+
+The `[targets.dart]` section is **experimental** (`experimental = ["dart"]` or CLI `--experimental`). It controls Dart package generation and Native Assets packaging.
+
+### Output Directory
+
+Dart packages are written under `dist/dart` by default:
+
+```toml
+experimental = ["dart"]
+
+[targets.dart]
+enabled = true
+output = "dist/dart"
+```
+
+`boltffi generate dart --experimental` writes `{output}/{package.name}/` containing:
+
+- `lib/{package}.dart` — generated bindings and runtime helpers
+- `pubspec.yaml` — package metadata and Native Assets deps
+- `hook/build.dart` — Dart build hook that resolves the native library
+- `dart_target.json` — artifact name for the hook
+
+`boltffi pack dart --experimental` builds the Rust `cdylib` and copies it into
+`{output}/{package.name}/native/<rust-triple>/`. Use `--regenerate` to refresh bindings in the same pack step.
+
+### Native Architectures
+
+By default BoltFFI packages every Dart Native Assets architecture supported on the host. Narrow the matrix when you only need one host triple:
+
+```toml
+[targets.dart]
+enabled = true
+native_architectures = ["windows:x86_64"]
+```
+
+Values use Dart OS/arch names (for example `macos:arm64`, `linux:x64`, `windows:x86_64`). They map to Cargo triples such as `x86_64-pc-windows-msvc`.
+
+### Type Mappings
+
+Map custom types to host Dart types the same way as Swift and Kotlin:
+
+```toml
+[targets.dart.type_mappings]
+Uuid = { type = "String", conversion = "uuid_string" }
+Email = { type = "String", conversion = "url_string" }
+```
+
+Available conversions:
+
+- `uuid_string` — string form of a UUID-like custom type
+- `url_string` — string form of a URL-like custom type
+
+On Dart these usually stay as `String` because the standard library does not ship UUID/URL types comparable to Swift's `UUID` / `URL`.
+
+See [Experimental Features](/docs/experimental#dart) for the full supported export surface (including returned closures and foreign callback proxies).
+
 <h2 id="c-sharp-configuration">C# Configuration</h2>
 
 The `[targets.csharp]` section controls C# generation and NuGet packaging.
@@ -818,4 +875,14 @@ module_name = "mylib_runtime"
 [targets.python.wheel]
 output = "dist/python/wheels"
 interpreters = ["python3.11", "python3.12"]
+
+experimental = ["dart"]
+
+[targets.dart]
+enabled = true
+output = "dist/dart"
+native_architectures = ["windows:x86_64"]
+
+[targets.dart.type_mappings]
+Uuid = { type = "String", conversion = "uuid_string" }
 ```

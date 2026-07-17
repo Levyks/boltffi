@@ -47,6 +47,7 @@ pub struct Generation {
     python_native_library: Option<String>,
     dart_package: Option<String>,
     dart_artifact: Option<String>,
+    dart_custom_mappings: Vec<(String, CustomTypeMapping)>,
     java_package: Option<String>,
     java_file: Option<String>,
     java_android_library: Option<String>,
@@ -95,6 +96,7 @@ impl Generation {
             python_native_library: None,
             dart_package: None,
             dart_artifact: None,
+            dart_custom_mappings: Vec::new(),
             java_package: None,
             java_file: None,
             java_android_library: None,
@@ -203,6 +205,15 @@ impl Generation {
     /// Sets the native artifact loaded by the generated Dart package hook.
     pub fn dart_artifact(mut self, artifact: impl Into<String>) -> Self {
         self.dart_artifact = Some(artifact.into());
+        self
+    }
+
+    /// Registers Dart API mappings for custom types.
+    pub fn dart_custom_mappings(
+        mut self,
+        mappings: impl IntoIterator<Item = (String, CustomTypeMapping)>,
+    ) -> Self {
+        self.dart_custom_mappings = mappings.into_iter().collect();
         self
     }
 
@@ -454,10 +465,14 @@ impl Generation {
             .dart_artifact
             .clone()
             .unwrap_or_else(|| package.clone());
-        let target = boltffi_backend::target::dart::DartHost::new(package, artifact)
-            .map_err(GenerationError::Render)?
-            .into_target()
-            .map_err(GenerationError::Render)?;
+        let host = self.dart_custom_mappings.iter().fold(
+            boltffi_backend::target::dart::DartHost::new(package, artifact)
+                .map_err(GenerationError::Render)?,
+            |host, (custom_type, mapping)| {
+                host.custom_type_mapping(custom_type.clone(), mapping.clone())
+            },
+        );
+        let target = host.into_target().map_err(GenerationError::Render)?;
         let output = target
             .render_with_coverage(bindings, self.coverage)
             .map_err(GenerationError::Render)?;

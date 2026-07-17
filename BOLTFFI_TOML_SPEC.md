@@ -414,6 +414,36 @@ Controls npm package generation in `boltffi pack wasm`.
 
 `boltffi pack python --python <interpreter>` overrides `[targets.python.wheel].interpreters` for that command. Python packaging targets the current host interpreter ABI and rejects explicit Cargo target selection because the wheel tag and compiled CPython extension must match the selected host interpreter.
 
+## Dart
+
+### `[targets.dart]` (optional, experimental)
+
+Requires `experimental = ["dart"]` (or the CLI `--experimental` flag).
+
+- `enabled` (bool): Whether Dart generation and packaging are active.
+  - Default: `false`
+- `output` (path): Dart artifact root directory.
+  - Default: `dist/dart`
+  - `boltffi generate dart --experimental` writes the package under `{output}/{package.name}/` (library, `pubspec.yaml`, Native Assets `hook/build.dart`, and `dart_target.json`).
+  - `boltffi pack dart --experimental` regenerates that package when `--regenerate` is set and copies built `cdylib` artifacts into `{output}/{package.name}/native/<rust-triple>/`.
+- `native_architectures` (array of strings, optional): Host triples to build and package as Dart Native Assets.
+  - Default: all architectures supported by the Dart Native Assets layout for the current host OS family.
+  - Values use Dart OS/arch names, for example `windows:x86_64`, `macos:arm64`, `linux:x64`.
+  - Resolved to Cargo target triples internally (for example `windows:x86_64` → `x86_64-pc-windows-msvc`).
+
+### `[targets.dart.type_mappings]` (optional)
+
+Maps custom types to host Dart types. Same structure as `[targets.apple.swift.type_mappings]`.
+
+```toml
+[targets.dart.type_mappings]
+Uuid = { type = "String", conversion = "uuid_string" }
+```
+
+Available conversions:
+- `uuid_string`: Converts between the Rust custom type's string form and a Dart `String` (or another type that exposes the same string API surface when configured).
+- `url_string`: Converts between the Rust custom type's string form and a Dart `String`.
+
 ## C#
 
 ### `[targets.csharp]` (optional)

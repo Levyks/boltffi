@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::config::TypeMapping;
 use crate::target::RustTarget;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -16,6 +18,8 @@ pub struct DartConfig {
         deserialize_with = "DartConfig::deserialize_native_architectures"
     )]
     pub native_architectures: Option<Vec<RustTarget>>,
+    #[serde(default)]
+    pub type_mappings: HashMap<String, TypeMapping>,
 }
 
 impl Default for DartConfig {
@@ -24,6 +28,7 @@ impl Default for DartConfig {
             output: default_dart_output(),
             enabled: false,
             native_architectures: None,
+            type_mappings: HashMap::new(),
         }
     }
 }

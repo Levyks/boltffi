@@ -125,6 +125,7 @@ fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
         .generation()
         .dart_package(config.package.name.clone())
         .dart_artifact(expansion.artifact_name())
+        .dart_custom_mappings(config.dart_custom_mappings())
         .render(Target::Dart)
         .and_then(|output| Generation::write_output(output, &output_directory))
         .map(drop)

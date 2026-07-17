@@ -1142,6 +1142,16 @@ impl Config {
     pub fn dart_targets(&self) -> Vec<RustTarget> {
         self.dart_native_architectures().to_vec()
     }
+
+    pub fn dart_custom_mappings(
+        &self,
+    ) -> impl Iterator<Item = (String, CustomTypeMapping)> + '_ {
+        self.targets
+            .dart
+            .type_mappings
+            .iter()
+            .map(|(name, mapping)| (name.clone(), mapping.custom_type_mapping()))
+    }
 }
 
 fn normalize_module_name(input: &str) -> String {
