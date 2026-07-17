@@ -423,6 +423,11 @@ impl RustTarget {
         Self::ANDROID_X86,
     ];
 
+    /// Full multi-platform Dart Native Assets matrix used by unit tests.
+    ///
+    /// Production defaults use [`Self::current_dart_host`]; callers opt into a
+    /// broader set via `targets.dart.native_architectures`.
+    #[cfg(test)]
     pub const ALL_DART_NATIVE: &'static [Self] = &[
         Self::ANDROID_ARM64,
         Self::ANDROID_ARMV7,
