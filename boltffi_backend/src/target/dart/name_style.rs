@@ -23,9 +23,18 @@ pub fn binder(raw: u32) -> String {
 }
 
 fn escape(value: String) -> String {
-    if super::syntax::Syntax::KEYWORDS.contains(&value.as_str()) {
+    escape_identifier(value)
+}
+
+/// Escapes a raw identifier that would be illegal as Dart source (keywords).
+///
+/// C bridge field names only escape C keywords, so Dart-only keywords such as
+/// `class` still appear in the C ABI and must be rewritten on the Dart side.
+pub fn escape_identifier(value: impl AsRef<str>) -> String {
+    let value = value.as_ref();
+    if super::syntax::Syntax::KEYWORDS.contains(&value) {
         format!("{value}_")
     } else {
-        value
+        value.to_owned()
     }
 }

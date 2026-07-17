@@ -305,7 +305,7 @@ pub fn marshal_exported(
                             .map(|(field, c_field)| {
                                 format!(
                                     "target.{} = value.{};",
-                                    c_field.name(),
+                                    super::ffi::field_name(c_field.name()),
                                     name_style::field(field.key())
                                 )
                             })

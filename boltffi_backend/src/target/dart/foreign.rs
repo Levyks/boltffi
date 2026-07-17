@@ -336,7 +336,7 @@ fn marshal_proxy_args(
                             .map(|(field, c_field)| {
                                 format!(
                                     "target.{} = value.{};",
-                                    c_field.name(),
+                                    ffi::field_name(c_field.name()),
                                     name_style::field(field.key())
                                 )
                             })
@@ -423,11 +423,24 @@ fn encode_type_ref(
         }
         TypeRef::Custom(id) => {
             // Typedefs have no `_encode`; always encode the representation.
+            // Mapped public types (e.g. Uri) convert to the wire form first.
+            let value = match context.custom_type_mapping(*id) {
+                Some(mapping) => match mapping.conversion() {
+                    crate::core::CustomTypeConversion::UuidString
+                    | crate::core::CustomTypeConversion::UrlString => {
+                        match mapping.target_type().as_str() {
+                            "String" => value.to_owned(),
+                            _ => format!("{value}.toString()"),
+                        }
+                    }
+                },
+                None => value.to_owned(),
+            };
             let representation = context
                 .custom_type(*id)
                 .map(|decl| decl.representation().clone())
                 .ok_or(missing("foreign proxy custom representation"))?;
-            encode_type_ref(&representation, writer, value, context)?
+            encode_type_ref(&representation, writer, &value, context)?
         }
         TypeRef::Optional(inner) => {
             let inner_write = encode_type_ref(inner, "writer", "item", context)?;
@@ -475,7 +488,20 @@ fn decode_type_ref(ty: &TypeRef, reader: &str, context: &RenderContext<Native>) 
                 .custom_type(*id)
                 .map(|decl| decl.representation().clone())
                 .ok_or(missing("foreign proxy custom representation"))?;
-            decode_type_ref(&representation, reader, context)?
+            let decoded = decode_type_ref(&representation, reader, context)?;
+            match context.custom_type_mapping(*id) {
+                Some(mapping) => match mapping.conversion() {
+                    crate::core::CustomTypeConversion::UuidString
+                    | crate::core::CustomTypeConversion::UrlString => {
+                        match mapping.target_type().as_str() {
+                            "String" => decoded,
+                            "Uri" => format!("Uri.parse({decoded})"),
+                            target => format!("{target}.parse({decoded})"),
+                        }
+                    }
+                },
+                None => decoded,
+            }
         }
         TypeRef::Optional(inner) => {
             let inner = decode_type_ref(inner, reader, context)?;

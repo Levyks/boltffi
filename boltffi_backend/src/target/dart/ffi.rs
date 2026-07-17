@@ -46,7 +46,7 @@ fn render_record(record: &Record) -> String {
             format!(
                 "  {annotation}external {} {};",
                 dart_type(field.ty()),
-                field.name()
+                field_name(field.name())
             )
         })
         .collect::<Vec<_>>()
@@ -55,6 +55,11 @@ fn render_record(record: &Record) -> String {
         "final class {} extends $$ffi.Struct {{\n{fields}\n}}",
         record_name(record)
     )
+}
+
+/// Dart-side name for a C struct/vtable field (escapes Dart keywords).
+pub fn field_name(name: &str) -> String {
+    super::name_style::escape_identifier(name)
 }
 
 fn render_function(function: &Function) -> String {
@@ -67,7 +72,13 @@ fn render_function(function: &Function) -> String {
     let parameters = function
         .params()
         .iter()
-        .map(|param| format!("  {} {},", dart_type(param.ty()), param.name()))
+        .map(|param| {
+            format!(
+                "  {} {},",
+                dart_type(param.ty()),
+                field_name(param.name())
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!(

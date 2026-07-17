@@ -3,7 +3,7 @@ use boltffi_binding::{
     EnumId, FieldKey, MapKind, Native, Op, Primitive, RecordId, ValueRef, ValueRoot,
 };
 
-use crate::core::{Error, RenderContext, Result};
+use crate::core::{CustomTypeConversion, CustomTypeMapping, Error, RenderContext, Result};
 
 use super::{DartHost, name_style, primitive};
 
@@ -15,7 +15,7 @@ pub struct Reader<'a, 'bindings> {
 pub struct Writer<'a, 'bindings> {
     name: &'a str,
     scope: String,
-    _context: &'a RenderContext<'bindings, Native>,
+    context: &'a RenderContext<'bindings, Native>,
 }
 
 impl<'a, 'bindings> Reader<'a, 'bindings> {
@@ -70,8 +70,12 @@ impl CodecRead for Reader<'_, '_> {
     fn callback_handle(&mut self, _: CallbackId) -> Self::Expr {
         unsupported("callback handle codec read")
     }
-    fn custom(&mut self, _: CustomTypeId, representation: Self::Expr) -> Self::Expr {
-        representation
+    fn custom(&mut self, id: CustomTypeId, representation: Self::Expr) -> Self::Expr {
+        let representation = representation?;
+        match self.context.custom_type_mapping(id) {
+            Some(mapping) => Ok(custom_type_decode(mapping, &representation)),
+            None => Ok(representation),
+        }
     }
     fn builtin(&mut self, kind: BuiltinType) -> Self::Expr {
         Ok(self.read(match kind {
@@ -133,7 +137,7 @@ impl<'a, 'bindings> Writer<'a, 'bindings> {
         Self {
             name,
             scope: scope.into(),
-            _context: context,
+            context,
         }
     }
 
@@ -142,6 +146,17 @@ impl<'a, 'bindings> Writer<'a, 'bindings> {
     }
     fn write(&self, method: &str, value: &ValueRef) -> Result<String> {
         Ok(format!("{}.{}({});", self.name, method, self.value(value)?))
+    }
+
+    fn with_scope(
+        &mut self,
+        scope: String,
+        render: impl FnOnce(&mut Self, &ValueRef) -> Vec<Result<String>>,
+    ) -> Vec<Result<String>> {
+        let previous = std::mem::replace(&mut self.scope, scope);
+        let statements = render(self, &ValueRef::self_value());
+        self.scope = previous;
+        statements
     }
 }
 
@@ -198,11 +213,17 @@ impl CodecWrite for Writer<'_, '_> {
     fn callback_handle(&mut self, _: CallbackId, _: &ValueRef) -> Vec<Self::Stmt> {
         vec![unsupported("callback handle codec write")]
     }
-    fn custom<F>(&mut self, _: CustomTypeId, value: &ValueRef, representation: F) -> Vec<Self::Stmt>
+    fn custom<F>(&mut self, id: CustomTypeId, value: &ValueRef, representation: F) -> Vec<Self::Stmt>
     where
         F: FnOnce(&mut Self, &ValueRef) -> Vec<Self::Stmt>,
     {
-        representation(self, value)
+        match self.context.custom_type_mapping(id) {
+            Some(mapping) => match self.value(value) {
+                Ok(value) => self.with_scope(custom_type_encode(mapping, &value), representation),
+                Err(error) => vec![Err(error)],
+            },
+            None => representation(self, value),
+        }
     }
     fn builtin(&mut self, kind: BuiltinType, value: &ValueRef) -> Vec<Self::Stmt> {
         vec![self.write(
@@ -373,4 +394,29 @@ fn unsupported<T>(shape: &'static str) -> Result<T> {
         target: DartHost::TARGET,
         shape,
     })
+}
+
+/// Converts a wire representation into the configured Dart target type.
+fn custom_type_decode(mapping: &CustomTypeMapping, representation: &str) -> String {
+    match mapping.conversion() {
+        CustomTypeConversion::UuidString | CustomTypeConversion::UrlString => {
+            match mapping.target_type().as_str() {
+                "String" => representation.to_owned(),
+                "Uri" => format!("Uri.parse({representation})"),
+                target => format!("{target}.parse({representation})"),
+            }
+        }
+    }
+}
+
+/// Converts a configured Dart target value into the wire representation.
+fn custom_type_encode(mapping: &CustomTypeMapping, value: &str) -> String {
+    match mapping.conversion() {
+        CustomTypeConversion::UuidString | CustomTypeConversion::UrlString => {
+            match mapping.target_type().as_str() {
+                "String" => value.to_owned(),
+                _ => format!("{value}.toString()"),
+            }
+        }
+    }
 }

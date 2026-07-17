@@ -452,6 +452,18 @@ mod tests {
         assert!(library.contains("completionCode = 100;"));
         assert!(library.contains("Future<int> run(int value)"));
         assert!(library.contains("_$$BoltFFIAsync.create<int>"));
+        // Vtable trampolines must stay synchronous for Pointer.fromFunction.
+        assert!(
+            !library.contains("static void ") || !library.lines().any(|line| {
+                let trimmed = line.trim_start();
+                trimmed.starts_with("static ") && trimmed.contains(") async {")
+            }),
+            "async keyword on trampoline breaks Pointer.fromFunction typing"
+        );
+        assert!(
+            library.contains("() async {"),
+            "async callback work should run from a fire-and-forget async IIFE"
+        );
     }
 
     #[test]
@@ -1072,6 +1084,100 @@ mod tests {
         assert!(
             !library.contains("when_._encode(") && !library.contains("when._encode("),
             "typedef values must not call a non-existent _encode"
+        );
+    }
+
+    #[test]
+    fn applies_custom_type_mapping_conversions_in_codec() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                custom_type!(
+                    pub FixtureUuid,
+                    remote = uuid::Uuid,
+                    repr = String,
+                    into_ffi = |value: &uuid::Uuid| value.to_string(),
+                    try_from_ffi = |value: String| Ok::<uuid::Uuid, ()>(uuid::Uuid::parse_str(&value).unwrap()),
+                );
+                #[export]
+                pub fn echo_uuid(value: uuid::Uuid) -> uuid::Uuid { value }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .custom_type_mapping(
+                "FixtureUuid",
+                crate::CustomTypeMapping::uuid_string("Uri"),
+            )
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+        assert!(library.contains("typedef FixtureUuid = Uri;"));
+        assert!(
+            library.contains("Uri.parse("),
+            "mapped custom types must convert wire strings to Uri on read: {library}"
+        );
+        assert!(
+            library.contains(".toString()"),
+            "mapped custom types must convert Uri to string on write"
+        );
+    }
+
+    #[test]
+    fn escapes_dart_keyword_c_struct_fields() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[data]
+                #[repr(C)]
+                pub struct Token {
+                    pub class: i32,
+                    pub value: i32,
+                }
+                #[export]
+                pub fn make_token(token: Token) -> Token { token }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+        assert!(
+            library.contains("class_"),
+            "Dart keyword field must be escaped: missing class_ in\n{library}"
+        );
+        assert!(
+            !library.contains("external int class;"),
+            "unescaped `class` field is invalid Dart"
+        );
+        assert!(
+            library.contains("..class_ =") || library.contains("value.class_"),
+            "struct accessors must use the escaped field name"
         );
     }
 

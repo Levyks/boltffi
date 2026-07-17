@@ -782,7 +782,7 @@ fn vector_buffer(
                 .map(|(field, c_field)| {
                     format!(
                         "target.{} = item.{};",
-                        c_field.name(),
+                        ffi::field_name(c_field.name()),
                         name_style::field(field.key())
                     )
                 })

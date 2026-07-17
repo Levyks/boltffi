@@ -262,7 +262,7 @@ pub fn record(
                 .map(|(field, c_field)| {
                     format!(
                         "      ..{} = {}",
-                        c_field.name(),
+                        ffi::field_name(c_field.name()),
                         name_style::field(field.key())
                     )
                 })
@@ -276,7 +276,7 @@ pub fn record(
                     format!(
                         "      {}: value.{},",
                         name_style::field(field.key()),
-                        c_field.name()
+                        ffi::field_name(c_field.name())
                     )
                 })
                 .collect::<Vec<_>>()
@@ -708,7 +708,13 @@ fn callback_method(
     let signature = slot
         .parameters()
         .iter()
-        .map(|parameter| format!("{} {}", ffi::dart_type(parameter.ty()), parameter.name()))
+        .map(|parameter| {
+            format!(
+                "{} {}",
+                ffi::dart_type(parameter.ty()),
+                ffi::field_name(parameter.name())
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let mut setup = vec![
@@ -723,9 +729,9 @@ fn callback_method(
         let local = name_style::lower_camel(param.name());
         let expression = match (plan, group) {
             (ParamPlan::Direct { ty, .. }, crate::bridge::c::ParameterGroup::Value(index)) => {
-                let raw = slot.parameter(*index).name();
+                let raw = ffi::field_name(slot.parameter(*index).name());
                 match ty {
-                    DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => raw.to_string(),
+                    DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => raw,
                     DirectValueType::Enum(id) => format!(
                         "{}._fromValue({raw})",
                         call::direct_type(&DirectValueType::Enum(*id), context)?
@@ -733,15 +739,15 @@ fn callback_method(
                     DirectValueType::Record(_) => {
                         format!("{}._fromStruct({raw})", call::direct_type(ty, context)?)
                     }
-                    _ => raw.to_owned(),
+                    _ => raw,
                 }
             }
             (
                 ParamPlan::Encoded { codec, .. },
                 crate::bridge::c::ParameterGroup::ByteSlice(bytes),
             ) => {
-                let ptr = slot.parameter(bytes.pointer()).name();
-                let len = slot.parameter(bytes.length()).name();
+                let ptr = ffi::field_name(slot.parameter(bytes.pointer()).name());
+                let len = ffi::field_name(slot.parameter(bytes.length()).name());
                 let reader = format!("{local}Reader");
                 setup.push(format!("final {reader} = _$$WireReader({ptr}, {len});"));
                 codec.render_with(&mut Reader::new(&reader, context))?
@@ -752,8 +758,8 @@ fn callback_method(
             ) => {
                 // Native callback args use an empty buffer for None and a
                 // wire-encoded Option payload for Some (see boltffi_macros).
-                let ptr = slot.parameter(bytes.pointer()).name();
-                let len = slot.parameter(bytes.length()).name();
+                let ptr = ffi::field_name(slot.parameter(bytes.pointer()).name());
+                let len = ffi::field_name(slot.parameter(bytes.length()).name());
                 let suffix = primitive::wire_suffix(*primitive)?;
                 format!(
                     "{len} == 0 ? null : _$$WireReader({ptr}, {len}).readOptional((reader) => reader.read{suffix}())"
@@ -763,8 +769,8 @@ fn callback_method(
                 ParamPlan::DirectVec { element, .. },
                 crate::bridge::c::ParameterGroup::DirectVector(vector),
             ) => {
-                let ptr = slot.parameter(vector.pointer()).name();
-                let len = slot.parameter(vector.length()).name();
+                let ptr = ffi::field_name(slot.parameter(vector.pointer()).name());
+                let len = ffi::field_name(slot.parameter(vector.length()).name());
                 match element {
                     boltffi_binding::DirectVectorElementType::Primitive(primitive) => {
                         let native = call::primitive_native_type(primitive.primitive())?;
@@ -797,7 +803,7 @@ fn callback_method(
                 },
                 crate::bridge::c::ParameterGroup::Value(index),
             ) => {
-                let raw = slot.parameter(*index).name();
+                let raw = ffi::field_name(slot.parameter(*index).name());
                 let decoded = match target {
                     HandleTarget::Class(id) => {
                         let name = context
@@ -832,15 +838,13 @@ fn callback_method(
         _ => return unsupported("unknown callback execution"),
     };
     setup.push(body);
+    // Native vtable slots are C functions. `Pointer.fromFunction` requires a
+    // synchronous Dart trampoline (e.g. `void Function(...)`), never an
+    // `async` function whose type is `Future<...> Function(...)`.
     Ok(format!(
-        "  static {} {}({signature}){} {{\n    {}\n  }}",
+        "  static {} {}({signature}) {{\n    {}\n  }}",
         ffi::dart_type(slot.returns()),
         slot.name().as_str(),
-        if callable.execution().uses_async_execution() {
-            " async"
-        } else {
-            ""
-        },
         indent(&setup.join("\n"), 4)
     ))
 }
@@ -1054,7 +1058,7 @@ fn callback_vector_buffer(
                 .map(|(field, c_field)| {
                     format!(
                         "target.{} = item.{};",
-                        c_field.name(),
+                        ffi::field_name(c_field.name()),
                         name_style::field(field.key())
                     )
                 })
@@ -1089,8 +1093,8 @@ fn callback_async_return(
             bridge: DartHost::TARGET,
             invariant: "missing Dart callback completion",
         })?;
-    let callback = slot.parameter(completion.callback()).name();
-    let callback_context = slot.parameter(completion.context()).name();
+    let callback = ffi::field_name(slot.parameter(completion.callback()).name());
+    let callback_context = ffi::field_name(slot.parameter(completion.context()).name());
     let success_writes = callback_success_write(callable.returns().plan(), context)?;
     let writes = match callable.error().channel() {
         ErrorChannel::None => format!(
@@ -1109,8 +1113,10 @@ fn callback_async_return(
         }
         _ => return unsupported("async callback error encoding"),
     };
+    // Fire-and-forget from the synchronous trampoline: the C ABI completion
+    // callback is invoked after the Dart Future settles.
     Ok(format!(
-        "final completion = {callback}.asFunction<void Function($$ffi.Pointer<$$ffi.Void>, _$$FFIStatus, _$$FFIBuf)>();\n    try {{\n      final result = await {call_expr};\n      final writer = _$$WireWriter();\n      try {{\n        {writes}\n        final buffer = writer.toRustBuffer();\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = completionCode, buffer);\n      }} finally {{ writer.close(); }}\n    }} catch (_) {{\n      completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 100, $$ffi.Struct.create<_$$FFIBuf>()..ptr = $$ffi.nullptr..len = 0..cap = 0..align = 1);\n    }}"
+        "() async {{\n      final completion = {callback}.asFunction<void Function($$ffi.Pointer<$$ffi.Void>, _$$FFIStatus, _$$FFIBuf)>();\n      try {{\n        final result = await {call_expr};\n        final writer = _$$WireWriter();\n        try {{\n          {writes}\n          final buffer = writer.toRustBuffer();\n          completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = completionCode, buffer);\n        }} finally {{ writer.close(); }}\n      }} catch (_) {{\n        completion({callback_context}, $$ffi.Struct.create<_$$FFIStatus>()..code = 100, $$ffi.Struct.create<_$$FFIBuf>()..ptr = $$ffi.nullptr..len = 0..cap = 0..align = 1);\n      }}\n    }}();"
     ))
 }
 
