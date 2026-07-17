@@ -25,6 +25,7 @@ pub enum GenerateTarget {
     Header,
     Typescript,
     Dart,
+    DartWeb,
     Python,
     CSharp,
     All,
@@ -55,6 +56,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         }
         GenerateTarget::Typescript => ir::run_ir_generation(config, &options),
         GenerateTarget::Dart => ir::run_ir_generation(config, &options),
+        GenerateTarget::DartWeb => ir::run_ir_generation(config, &options),
         GenerateTarget::Python => ir::run_ir_generation(config, &options),
         GenerateTarget::CSharp => ir::run_ir_generation(config, &options),
         GenerateTarget::All => {

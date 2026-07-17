@@ -2,6 +2,7 @@
 
 pub mod csharp;
 pub mod dart;
+pub mod dart_web;
 pub mod java;
 pub mod jvm;
 pub mod kmp;

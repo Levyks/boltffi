@@ -1,0 +1,6 @@
+.dart_tool/
+pubspec.lock
+*.wasm
+*.wasm.map
+impl.mjs
+impl.support.js

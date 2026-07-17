@@ -94,6 +94,7 @@ pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<(
         GenerateTarget::KotlinMultiplatform => generate_kmp(config, options),
         GenerateTarget::Typescript => generate_typescript(config, options),
         GenerateTarget::Dart => generate_dart(config, options),
+        GenerateTarget::DartWeb => generate_dart_web(config, options),
         GenerateTarget::CSharp => generate_csharp(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
@@ -142,6 +143,50 @@ fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
         .and_then(|output| Generation::write_output(output, &output_directory))
         .map(drop)
         .map_err(|error| generation_error("dart", error))
+}
+
+fn generate_dart_web(config: &Config, options: &GenerateOptions) -> Result<()> {
+    if !config.is_wasm_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.wasm.enabled = false".to_string(),
+            status: None,
+        });
+    }
+    if !config.should_process(Target::DartWeb, options.experimental) {
+        return Err(CliError::CommandFailed {
+            command: format!(
+                "{} is experimental, use --experimental flag or add \"{}\" to [experimental]",
+                Target::DartWeb.name(),
+                Target::DartWeb.name()
+            ),
+            status: None,
+        });
+    }
+
+    let expansion = BindingExpansion::resolve_for_commands(
+        config,
+        &["build", "generate"],
+        &options.cargo_args,
+    )?;
+    let module = config.wasm_typescript_module_name();
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.wasm_typescript_output().join("dart_web"))
+        .join(&module);
+
+    expansion
+        .generation()
+        .binding_surface(BindingMetadataSurface::Wasm32)
+        .coverage_mode(CoverageMode::Partial)
+        .typescript_module(module)
+        .render(Target::DartWeb)
+        .and_then(|output| {
+            print_coverage("dart_web", &output);
+            Generation::write_output(output, &output_directory)
+        })
+        .map(drop)
+        .map_err(|error| generation_error("dart_web", error))
 }
 
 fn generate_typescript(config: &Config, options: &GenerateOptions) -> Result<()> {
@@ -819,6 +864,7 @@ fn target_label(target: &GenerateTarget) -> &'static str {
         GenerateTarget::Header => "header",
         GenerateTarget::Typescript => "typescript",
         GenerateTarget::Dart => "dart",
+        GenerateTarget::DartWeb => "dart_web",
         GenerateTarget::Python => "python",
         GenerateTarget::CSharp => "csharp",
         GenerateTarget::All => "all",

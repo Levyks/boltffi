@@ -172,6 +172,11 @@ pub(crate) enum GenerateTargetArg {
     Typescript,
     #[value(help = "Generate experimental Dart bindings")]
     Dart,
+    #[value(
+        alias = "dart-web",
+        help = "Generate experimental Dart-web (js_interop over wasm) bindings"
+    )]
+    DartWeb,
     #[value(help = "Generate Python bindings")]
     Python,
     #[value(help = "Generate C# bindings")]
@@ -490,6 +495,7 @@ pub(crate) fn execute_command(
                         GenerateTargetArg::Java => GenerateTarget::Java,
                         GenerateTargetArg::Typescript => GenerateTarget::Typescript,
                         GenerateTargetArg::Dart => GenerateTarget::Dart,
+                        GenerateTargetArg::DartWeb => GenerateTarget::DartWeb,
                         GenerateTargetArg::Python => GenerateTarget::Python,
                         GenerateTargetArg::Csharp => GenerateTarget::CSharp,
                         GenerateTargetArg::All => GenerateTarget::All,

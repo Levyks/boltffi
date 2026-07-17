@@ -428,6 +428,7 @@ impl Generation {
             }
             Target::Swift => self.render_swift(),
             Target::TypeScript => self.render_typescript(),
+            Target::DartWeb => self.render_dart_web(),
             Target::Header => Err(GenerationError::UnsupportedTarget { target }),
         }
     }
@@ -463,7 +464,7 @@ impl Generation {
             Target::KotlinMultiplatform => self.render_kmp_bindings(bindings),
             Target::Dart => self.render_dart_bindings(bindings),
             Target::CSharp => self.render_csharp_bindings(bindings),
-            Target::Swift | Target::TypeScript | Target::Header => {
+            Target::Swift | Target::TypeScript | Target::DartWeb | Target::Header => {
                 Err(GenerationError::UnsupportedTarget { target })
             }
         }
@@ -640,6 +641,23 @@ impl Generation {
                     .as_deref()
                     .unwrap_or("@boltffi/runtime"),
             );
+        self.render_backend(&host.into_target(), bindings)
+    }
+
+    fn render_dart_web(&self) -> Result<GeneratedOutput, GenerationError> {
+        let bindings = self.bindings::<Wasm32>()?;
+        self.render_dart_web_bindings(&bindings)
+    }
+
+    fn render_dart_web_bindings(
+        &self,
+        bindings: &Bindings<Wasm32>,
+    ) -> Result<GeneratedOutput, GenerationError> {
+        // Shares the same module name as the TS/wasm output it wraps, since
+        // the generated loader imports that compiled module by this name.
+        let module = self.typescript_module.as_deref().unwrap_or("boltffi");
+        let host = boltffi_backend::target::dart_web::DartWebHost::new(module)
+            .map_err(GenerationError::Render)?;
         self.render_backend(&host.into_target(), bindings)
     }
 
