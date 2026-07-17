@@ -154,7 +154,12 @@ pub fn marshal_exported(
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
     c_function: &Function,
-) -> Result<(Vec<String>, Vec<String>, Vec<String>, Vec<(HelperId, String)>)> {
+) -> Result<(
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<(HelperId, String)>,
+)> {
     let mut setup = Vec::new();
     let mut cleanup = Vec::new();
     let mut helpers = Vec::new();

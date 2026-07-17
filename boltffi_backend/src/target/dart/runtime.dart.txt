@@ -169,6 +169,10 @@ final class _$$BoltFFIStreamPump<T> {
   bool _active = true;
   bool _pollPending = false;
   bool _freed = false;
+  static final _finalizer = Finalizer<(int, void Function(int))>((state) {
+    final (subscription, free) = state;
+    if (subscription != 0) free(subscription);
+  });
 
   _$$BoltFFIStreamPump({
     required this.subscription,
@@ -179,7 +183,11 @@ final class _$$BoltFFIStreamPump<T> {
     required this.onItem,
     required this.onDone,
     this.batchSize = 16,
-  });
+  }) {
+    if (subscription != 0) {
+      _finalizer.attach(this, (subscription, free), detach: this);
+    }
+  }
 
   void start() {
     if (subscription == 0) {
@@ -231,6 +239,7 @@ final class _$$BoltFFIStreamPump<T> {
   void _finish() {
     if (_freed || _pollPending) return;
     _freed = true;
+    _finalizer.detach(this);
     if (subscription != 0) free(subscription);
     onDone();
   }

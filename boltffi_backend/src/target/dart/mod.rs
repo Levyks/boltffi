@@ -4,6 +4,7 @@ mod call;
 mod closure;
 mod codec;
 mod ffi;
+mod foreign;
 mod name_style;
 mod primitive;
 mod render;
@@ -35,6 +36,7 @@ pub struct DartHost {
     artifact: String,
     library_file: PathBuf,
     c_header: PathBuf,
+    custom_mappings: crate::core::CustomTypeMappingSet,
 }
 
 impl DartHost {
@@ -55,7 +57,18 @@ impl DartHost {
             c_header: PathBuf::from("native").join("boltffi.h"),
             package,
             artifact,
+            custom_mappings: crate::core::CustomTypeMappingSet::default(),
         })
+    }
+
+    /// Registers a Dart API mapping for a custom type.
+    pub fn custom_type_mapping(
+        mut self,
+        custom_type: impl Into<String>,
+        mapping: crate::CustomTypeMapping,
+    ) -> Self {
+        self.custom_mappings.insert(custom_type, mapping);
+        self
     }
 
     /// Creates the metadata-backed Dart target.
@@ -65,7 +78,6 @@ impl DartHost {
             CBridge::new(self.c_header.clone())?,
         ))
     }
-
 }
 
 impl host::HostBackend for DartHost {
@@ -92,6 +104,16 @@ impl host::HostBackend for DartHost {
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
         CapabilityRequirements::new().require(BridgeCapability::CAbi)
+    }
+
+    fn custom_type_mappings(
+        &self,
+        bindings: &Bindings<Native>,
+    ) -> Result<crate::core::ResolvedCustomTypeMappings> {
+        self.custom_mappings
+            .resolve(bindings, Self::TARGET, |declaration| {
+                name_style::upper_camel(declaration.name())
+            })
     }
 
     fn record(
@@ -607,7 +629,9 @@ mod tests {
             .contents();
 
         assert!(library.contains("int? echoOptional(int? value)"));
-        assert!(library.contains("writeOptional(value, (value, writer) => writer.writeU32(value))"));
+        assert!(
+            library.contains("writeOptional(value, (value, writer) => writer.writeU32(value))")
+        );
         assert!(library.contains("return reader.readOptional((reader) => reader.readU32());"));
     }
 
@@ -695,7 +719,9 @@ mod tests {
 
         assert!(library.contains("$$async.Stream<int> values()"));
         assert!(library.contains("final class MessagesSubscription"));
-        assert!(library.contains("BoltFFIStreamCancellation callbacks(void Function(int) callback)"));
+        assert!(
+            library.contains("BoltFFIStreamCancellation callbacks(void Function(int) callback)")
+        );
         assert!(library.contains("_$$BoltFFIStreamPump<int>"));
         assert!(library.contains("final count = reader.readU32();"));
     }

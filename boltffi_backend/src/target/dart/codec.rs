@@ -39,10 +39,7 @@ impl CodecRead for Reader<'_, '_> {
     }
     fn interned_string(&mut self, values: &[String]) -> Self::Expr {
         let values = dart_string_list(values);
-        Ok(format!(
-            "{}.readInternedString(const {values})",
-            self.name
-        ))
+        Ok(format!("{}.readInternedString(const {values})", self.name))
     }
     fn bytes(&mut self) -> Self::Expr {
         Ok(self.read("readUint8List"))

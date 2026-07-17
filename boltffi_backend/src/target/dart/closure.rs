@@ -115,8 +115,7 @@ pub fn marshal(
     let class = class_name(closure.signature().as_str());
     let handle = format!(
         "_$handle{}",
-        name
-            .chars()
+        name.chars()
             .next()
             .map(|c| c.to_uppercase().collect::<String>())
             .unwrap_or_default()
@@ -261,12 +260,13 @@ fn decode_param(
                     )
                 }
                 DirectVectorElementType::Record(id) => {
-                    let c_record = bridge.source_direct_record(*id).ok_or(
-                        Error::BrokenBridgeContract {
-                            bridge: DartHost::TARGET,
-                            invariant: "missing closure direct vector record",
-                        },
-                    )?;
+                    let c_record =
+                        bridge
+                            .source_direct_record(*id)
+                            .ok_or(Error::BrokenBridgeContract {
+                                bridge: DartHost::TARGET,
+                                invariant: "missing closure direct vector record",
+                            })?;
                     let c_name = ffi::record_name(c_record);
                     let public = context
                         .record(*id)
@@ -389,10 +389,7 @@ fn infallible_return(
                 let callback = context
                     .callback(*id)
                     .ok_or(missing("closure callback return"))?;
-                let map = format!(
-                    "_I${}HandleMap",
-                    name_style::upper_camel(callback.name())
-                );
+                let map = format!("_I${}HandleMap", name_style::upper_camel(callback.name()));
                 if *presence == HandlePresence::Nullable {
                     format!(
                         "final value = {call_expr};\nreturn value == null ? _$$nullCallbackHandle() : {map}.createHandle(value);"
@@ -468,7 +465,9 @@ fn vector_buffer(
                 .source_direct_record(*id)
                 .ok_or(missing("closure vector C record"))?;
             let native = ffi::record_name(c_record);
-            let record = context.record(*id).ok_or(missing("closure vector record"))?;
+            let record = context
+                .record(*id)
+                .ok_or(missing("closure vector record"))?;
             let boltffi_binding::RecordDecl::Direct(record) = record else {
                 return unsupported("encoded closure direct vector record");
             };

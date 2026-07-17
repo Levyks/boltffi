@@ -13,7 +13,9 @@ use boltffi_backend::target::{
     swift::SwiftHost,
     typescript::TypeScriptHost,
 };
-use boltffi_backend::{CustomTypeMapping, GeneratedOutput, Target as BackendTarget};
+use boltffi_backend::{
+    CustomTypeMapping, FilePath, GeneratedFile, GeneratedOutput, Target as BackendTarget,
+};
 use boltffi_binding::{BindingMetadataSurface, Bindings, Native, Surface, Wasm32};
 use thiserror::Error;
 
@@ -456,15 +458,11 @@ impl Generation {
             .map_err(GenerationError::Render)?
             .into_target()
             .map_err(GenerationError::Render)?;
-        // Dart is still experimental: skip unsupported declarations rather than
-        // failing the whole generation. Callers can tighten coverage later.
-        let coverage = match self.coverage {
-            CoverageMode::Complete => CoverageMode::Partial,
-            other => other,
-        };
-        target
-            .render_with_coverage(bindings, coverage)
-            .map_err(GenerationError::Render)
+        let output = target
+            .render_with_coverage(bindings, self.coverage)
+            .map_err(GenerationError::Render)?;
+        // When partial coverage is requested, attach a machine-readable skip report.
+        Ok(attach_dart_coverage_report(output))
     }
 
     fn render_java_bindings(
@@ -807,6 +805,45 @@ fn write_file(path: &Path, contents: &str) -> Result<(), GenerationError> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+fn attach_dart_coverage_report(mut output: GeneratedOutput) -> GeneratedOutput {
+    let unsupported = output.coverage().unsupported();
+    if unsupported.is_empty() {
+        return output;
+    }
+    let mut lines = vec![
+        "# Dart experimental coverage report".to_owned(),
+        "#".to_owned(),
+        "# Declarations below were skipped because the Dart backend cannot".to_owned(),
+        "# render them yet. Re-run generation after backend improvements.".to_owned(),
+        "#".to_owned(),
+        format!("# skipped: {}", unsupported.len()),
+        String::new(),
+    ];
+    let mut reasons = std::collections::BTreeMap::<String, usize>::new();
+    for item in unsupported {
+        *reasons.entry(item.reason().to_owned()).or_default() += 1;
+        lines.push(format!(
+            "{} {}\t{}",
+            item.declaration().kind(),
+            item.declaration().name(),
+            item.reason()
+        ));
+    }
+    lines.push(String::new());
+    lines.push("# by reason".to_owned());
+    for (reason, count) in reasons {
+        lines.push(format!("# {count}\t{reason}"));
+    }
+    lines.push(String::new());
+    if let Ok(path) = FilePath::new("DART_COVERAGE.md") {
+        output.append(GeneratedOutput::new(
+            vec![GeneratedFile::new(path, lines.join("\n"))],
+            Vec::new(),
+        ));
+    }
+    output
 }
 
 #[cfg(test)]
