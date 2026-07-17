@@ -1106,7 +1106,11 @@ pub(crate) fn clang_release_optimization_flags(
 }
 
 pub(crate) fn clang_cl_jni_linker_args(args: &JniLinkerArgs<'_>) -> Result<Vec<String>> {
-    let mut resolved_args = vec!["/LD".to_string()];
+    let mut resolved_args = vec![
+        "/LD".to_string(),
+        "/std:c11".to_string(),
+        "/experimental:c11atomics".to_string(),
+    ];
     if args.release {
         resolved_args.push("/O2".to_string());
     }
@@ -1980,6 +1984,8 @@ mod tests {
             args,
             vec![
                 "/LD".to_string(),
+                "/std:c11".to_string(),
+                "/experimental:c11atomics".to_string(),
                 "/O2".to_string(),
                 "/tmp/jni/jni_glue.c".to_string(),
                 "/I/tmp/jni".to_string(),
