@@ -468,16 +468,28 @@ impl RustTarget {
         match name {
             "android:arm64" => Some(Self::ANDROID_ARM64),
             "android:armv7" => Some(Self::ANDROID_ARMV7),
-            "android:x86_64" => Some(Self::ANDROID_X86_64),
+            // `x64` is the Dart Native Assets architecture spelling; accept both.
+            "android:x86_64" | "android:x64" => Some(Self::ANDROID_X86_64),
             "ios:arm64" => Some(Self::IOS_ARM64),
             "ios_sim:arm64" => Some(Self::IOS_SIM_ARM64),
-            "ios_sim:x86_64" => Some(Self::IOS_SIM_X86_64),
+            "ios_sim:x86_64" | "ios_sim:x64" => Some(Self::IOS_SIM_X86_64),
             "linux:arm64" => Some(Self::LINUX_ARM64),
-            "linux:x86_64" => Some(Self::LINUX_X86_64),
+            "linux:x86_64" | "linux:x64" => Some(Self::LINUX_X86_64),
             "macos:arm64" => Some(Self::MACOS_ARM64),
-            "macos:x86_64" => Some(Self::MACOS_X86_64),
-            "windows:x86_64" => Some(Self::WINDOWS_X86_64),
+            "macos:x86_64" | "macos:x64" => Some(Self::MACOS_X86_64),
+            "windows:x86_64" | "windows:x64" => Some(Self::WINDOWS_X86_64),
             _ => None,
+        }
+    }
+
+    /// Desktop host triple used when `targets.dart.native_architectures` is omitted.
+    pub fn current_dart_host() -> Option<Self> {
+        match NativeHostPlatform::current()? {
+            NativeHostPlatform::DarwinArm64 => Some(Self::MACOS_ARM64),
+            NativeHostPlatform::DarwinX86_64 => Some(Self::MACOS_X86_64),
+            NativeHostPlatform::LinuxX86_64 => Some(Self::LINUX_X86_64),
+            NativeHostPlatform::LinuxAarch64 => Some(Self::LINUX_ARM64),
+            NativeHostPlatform::WindowsX86_64 => Some(Self::WINDOWS_X86_64),
         }
     }
 
@@ -823,8 +835,21 @@ mod tests {
             Some(RustTarget::WINDOWS_X86_64)
         );
         assert_eq!(
+            RustTarget::from_dart_native_name("linux:x64"),
+            Some(RustTarget::LINUX_X86_64),
+            "documented Dart Native Assets spelling linux:x64 must parse"
+        );
+        assert_eq!(
+            RustTarget::from_dart_native_name("macos:x64"),
+            Some(RustTarget::MACOS_X86_64)
+        );
+        assert_eq!(
             RustTarget::WINDOWS_X86_64.dart_native_name(),
             Some("windows:x86_64")
+        );
+        assert!(
+            RustTarget::current_dart_host().is_some(),
+            "test host should resolve a Dart desktop default target"
         );
     }
 }

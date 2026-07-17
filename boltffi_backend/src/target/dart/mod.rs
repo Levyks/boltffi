@@ -222,8 +222,10 @@ impl host::HostBackend for DartHost {
         let runtime = include_str!("runtime.dart.txt");
         let ffi = ffi::render(_bridge)?;
         let library = format!("{runtime}\n\n{helpers}{body}\n{ffi}");
+        // Standalone package: do not set `resolution: workspace` (that requires a
+        // parent pub workspace registration the generator does not emit).
         let pubspec = format!(
-            "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\nresolution: workspace\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  hooks: ^1.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n",
+            "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  hooks: ^1.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n",
             self.package
         );
         let hook = include_str!("hook.build.dart.txt")
@@ -318,6 +320,10 @@ mod tests {
             .expect("pubspec")
             .contents();
         assert!(pubspec.contains("name: my_lib"));
+        assert!(
+            !pubspec.contains("resolution: workspace"),
+            "generated packages are standalone and must not require a parent workspace"
+        );
     }
 
     #[test]

@@ -1146,16 +1146,22 @@ impl Config {
         normalize_module_name(raw)
     }
 
-    pub fn dart_native_architectures(&self) -> &[RustTarget] {
-        self.targets
-            .dart
-            .native_architectures
-            .as_deref()
-            .unwrap_or(RustTarget::ALL_DART_NATIVE)
+    /// Architectures used for Dart packing/building.
+    ///
+    /// When `targets.dart.native_architectures` is unset, defaults to the
+    /// current desktop host only (not the full Android/iOS/desktop matrix), so
+    /// `boltffi pack dart` does not require every cross-platform toolchain.
+    pub fn dart_native_architectures(&self) -> Vec<RustTarget> {
+        self.dart_targets()
     }
 
     pub fn dart_targets(&self) -> Vec<RustTarget> {
-        self.dart_native_architectures().to_vec()
+        if let Some(targets) = self.targets.dart.native_architectures.as_ref() {
+            return targets.clone();
+        }
+        RustTarget::current_dart_host()
+            .map(|target| vec![target])
+            .unwrap_or_default()
     }
 
     pub fn dart_custom_mappings(&self) -> impl Iterator<Item = (String, CustomTypeMapping)> + '_ {
