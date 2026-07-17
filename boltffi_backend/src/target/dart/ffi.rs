@@ -72,13 +72,7 @@ fn render_function(function: &Function) -> String {
     let parameters = function
         .params()
         .iter()
-        .map(|param| {
-            format!(
-                "  {} {},",
-                dart_type(param.ty()),
-                field_name(param.name())
-            )
-        })
+        .map(|param| format!("  {} {},", dart_type(param.ty()), field_name(param.name())))
         .collect::<Vec<_>>()
         .join("\n");
     format!(

@@ -454,10 +454,11 @@ mod tests {
         assert!(library.contains("_$$BoltFFIAsync.create<int>"));
         // Vtable trampolines must stay synchronous for Pointer.fromFunction.
         assert!(
-            !library.contains("static void ") || !library.lines().any(|line| {
-                let trimmed = line.trim_start();
-                trimmed.starts_with("static ") && trimmed.contains(") async {")
-            }),
+            !library.contains("static void ")
+                || !library.lines().any(|line| {
+                    let trimmed = line.trim_start();
+                    trimmed.starts_with("static ") && trimmed.contains(") async {")
+                }),
             "async keyword on trampoline breaks Pointer.fromFunction typing"
         );
         assert!(
@@ -1110,10 +1111,7 @@ mod tests {
         let bindings = lower::<Native>(&source).expect("lower");
         let output = DartHost::new("demo", "demo")
             .expect("host")
-            .custom_type_mapping(
-                "FixtureUuid",
-                crate::CustomTypeMapping::uuid_string("Uri"),
-            )
+            .custom_type_mapping("FixtureUuid", crate::CustomTypeMapping::uuid_string("Uri"))
             .into_target()
             .expect("target")
             .render_partial(&bindings)

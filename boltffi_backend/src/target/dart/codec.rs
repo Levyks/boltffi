@@ -213,7 +213,12 @@ impl CodecWrite for Writer<'_, '_> {
     fn callback_handle(&mut self, _: CallbackId, _: &ValueRef) -> Vec<Self::Stmt> {
         vec![unsupported("callback handle codec write")]
     }
-    fn custom<F>(&mut self, id: CustomTypeId, value: &ValueRef, representation: F) -> Vec<Self::Stmt>
+    fn custom<F>(
+        &mut self,
+        id: CustomTypeId,
+        value: &ValueRef,
+        representation: F,
+    ) -> Vec<Self::Stmt>
     where
         F: FnOnce(&mut Self, &ValueRef) -> Vec<Self::Stmt>,
     {
