@@ -250,6 +250,9 @@ impl Method {
         let success_pointer = Identifier::known("successPointer");
         let (success_type, success_setup, encoded_success) =
             match method.callable().returns().plan() {
+                // `Result<(), Err>`: nothing to write into `successPointer`,
+                // the caller has nothing to decode either.
+                ReturnPlan::Void => (TypeName::void(), Vec::new(), false),
                 ReturnPlan::DirectViaOutPointer {
                     ty: DirectValueType::Primitive(Primitive::I32),
                 } => (
@@ -477,6 +480,22 @@ impl AsyncMethod {
                 shape: wasm32::BufferShape::Packed,
             } => {
                 let (success, success_setup) = match method.callable().returns().plan() {
+                    // `Result<(), Err>`: the template always references
+                    // `resultWriter.ptr/len/capacity` when completing, so an
+                    // empty owned writer stands in for "nothing to encode".
+                    ReturnPlan::Void => (
+                        TypeName::void(),
+                        vec![Statement::constant(
+                            Identifier::known("resultWriter"),
+                            Expression::call(
+                                Expression::identifier(Identifier::known("_module")),
+                                Identifier::known("allocWriter"),
+                                [Expression::integer(0u64)]
+                                    .into_iter()
+                                    .collect::<ArgumentList>(),
+                            ),
+                        )],
+                    ),
                     ReturnPlan::EncodedViaOutPointer {
                         ty,
                         codec,

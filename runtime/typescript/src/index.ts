@@ -17,17 +17,19 @@ export { StreamCancellable, StreamPollManager, StreamPollResult, StreamSession }
 export type { StreamBatch, StreamLifecycle, StreamPoll } from "./stream.js";
 export {
   BoltFFIModule,
-  BoltFFIExports,
-  BoltFFIImports,
-  PrimitiveBufferAlloc,
-  PrimitiveBufferElementType,
-  StringAlloc,
   WASM_ABI_VERSION,
-  WriterAlloc,
   instantiateBoltFFI,
   instantiateBoltFFISync,
   AsyncFutureManager,
   BoltFFIPanicError,
   BoltFFICancelledError,
   WasmPollStatus,
+} from "./module.js";
+export type {
+  BoltFFIExports,
+  BoltFFIImports,
+  PrimitiveBufferAlloc,
+  PrimitiveBufferElementType,
+  StringAlloc,
+  WriterAlloc,
 } from "./module.js";
