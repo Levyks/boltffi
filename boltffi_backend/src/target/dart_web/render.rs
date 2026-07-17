@@ -105,9 +105,9 @@ pub fn to_js(expr: &str, ty: &TypeRef, context: &RenderContext<Wasm32>) -> Resul
         TypeRef::Builtin(BuiltinType::Duration) => format!("$$durationToJS({expr})"),
         TypeRef::Builtin(BuiltinType::Uuid | BuiltinType::Url) => format!("({expr}).toJS"),
         TypeRef::Optional(inner) => {
-            let converted = to_js("__boltffiValue", inner, context)?;
+            let converted = to_js("__boltffiOpt", inner, context)?;
             format!(
-                "(({expr}) == null ? null : (({{ final __boltffiValue = ({expr})!; return {converted}; }})()))"
+                "(({expr}) == null ? null : (((() {{ final __boltffiOpt = ({expr})!; return {converted}; }})())))"
             )
         }
         TypeRef::Sequence(inner) => {
@@ -166,9 +166,9 @@ pub fn from_js(expr: &str, ty: &TypeRef, context: &RenderContext<Wasm32>) -> Res
             format!("({expr} as $$js.JSString).toDart")
         }
         TypeRef::Optional(inner) => {
-            let converted = from_js("__boltffiValue", inner, context)?;
+            let converted = from_js("__boltffiOpt", inner, context)?;
             format!(
-                "(({expr}) == null ? null : (({{ final __boltffiValue = ({expr})!; return {converted}; }})()))"
+                "(({expr}) == null ? null : (((() {{ final __boltffiOpt = ({expr})!; return {converted}; }})())))"
             )
         }
         TypeRef::Sequence(inner) => {
@@ -816,7 +816,7 @@ fn render_exported_call(
     // hand-written `extension type` per exported class.
     let (external_decl, call) = match receiver {
         None => {
-            let external_name = format!("_js{}", capitalize(&shape.dart_name));
+            let external_name = format!("_js_{}", shape.js_name.replace('.', "_"));
             let js_param_list = shape
                 .params
                 .iter()
@@ -997,6 +997,7 @@ pub fn class(
     )))
 }
 
+#[allow(dead_code)]
 fn capitalize(value: &str) -> String {
     let mut chars = value.chars();
     match chars.next() {
