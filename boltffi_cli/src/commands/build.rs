@@ -130,7 +130,7 @@ fn expanded_builder(
     let expansion = BindingExpansion::resolve(config, &cargo_args)?;
     Ok(Builder::new(
         config,
-        build_options(release, BuildSelection::Expanded(expansion)),
+        build_options(release, BuildSelection::Expanded(Box::new(expansion))),
     ))
 }
 

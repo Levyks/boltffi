@@ -6,6 +6,7 @@ use boltffi_backend::bridge::c::CBridge;
 use boltffi_backend::core::bridge::BridgeBackend;
 use boltffi_backend::core::{CoverageMode, bridge, host};
 use boltffi_backend::target::{
+    csharp::CSharpHost,
     java::{JavaDesktopLoader, JavaHost, JavaVersion},
     kmp::{DEFAULT_KMP_MODULE_NAME, DEFAULT_KMP_PACKAGE_NAME, KmpHost, KmpSupportMode},
     kotlin::{KotlinApiStyle, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost},
@@ -48,6 +49,8 @@ pub struct Generation {
     dart_package: Option<String>,
     dart_artifact: Option<String>,
     dart_custom_mappings: Vec<(String, CustomTypeMapping)>,
+    csharp_namespace: Option<String>,
+    csharp_native_library: Option<String>,
     java_package: Option<String>,
     java_file: Option<String>,
     java_android_library: Option<String>,
@@ -97,6 +100,8 @@ impl Generation {
             dart_package: None,
             dart_artifact: None,
             dart_custom_mappings: Vec::new(),
+            csharp_namespace: None,
+            csharp_native_library: None,
             java_package: None,
             java_file: None,
             java_android_library: None,
@@ -397,6 +402,18 @@ impl Generation {
         self
     }
 
+    /// Sets the namespace used by generated C# source.
+    pub fn csharp_namespace(mut self, namespace: Option<String>) -> Self {
+        self.csharp_namespace = namespace;
+        self
+    }
+
+    /// Sets the native library artifact loaded by generated C# source.
+    pub fn csharp_native_library(mut self, native_library: impl Into<String>) -> Self {
+        self.csharp_native_library = Some(native_library.into());
+        self
+    }
+
     /// Reads the embedded metadata, selects the target surface contract, and renders it.
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
@@ -404,13 +421,14 @@ impl Generation {
             | Target::Java
             | Target::Kotlin
             | Target::KotlinMultiplatform
-            | Target::Dart => {
+            | Target::Dart
+            | Target::CSharp => {
                 let bindings = self.bindings::<Native>()?;
                 self.render_native_bindings(target, &bindings)
             }
             Target::Swift => self.render_swift(),
             Target::TypeScript => self.render_typescript(),
-            Target::Header | Target::CSharp => Err(GenerationError::UnsupportedTarget { target }),
+            Target::Header => Err(GenerationError::UnsupportedTarget { target }),
         }
     }
 
@@ -444,7 +462,8 @@ impl Generation {
             Target::Kotlin => self.render_kotlin_bindings(bindings),
             Target::KotlinMultiplatform => self.render_kmp_bindings(bindings),
             Target::Dart => self.render_dart_bindings(bindings),
-            Target::Swift | Target::TypeScript | Target::Header | Target::CSharp => {
+            Target::CSharp => self.render_csharp_bindings(bindings),
+            Target::Swift | Target::TypeScript | Target::Header => {
                 Err(GenerationError::UnsupportedTarget { target })
             }
         }
@@ -638,6 +657,17 @@ impl Generation {
             .map_err(GenerationError::Render)
     }
 
+    fn render_csharp_bindings(
+        &self,
+        bindings: &Bindings<Native>,
+    ) -> Result<GeneratedOutput, GenerationError> {
+        let target = self
+            .csharp_host()?
+            .into_target()
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, bindings)
+    }
+
     fn render_backend<H, S>(
         &self,
         target: &BackendTarget<H, S>,
@@ -722,6 +752,20 @@ impl Generation {
         self.kmp_module_name
             .clone()
             .unwrap_or_else(|| DEFAULT_KMP_MODULE_NAME.to_string())
+    }
+
+    fn csharp_host(&self) -> Result<CSharpHost, GenerationError> {
+        let host = self
+            .csharp_namespace
+            .as_deref()
+            .map(|namespace| CSharpHost::new().namespace(namespace))
+            .transpose()
+            .map_err(GenerationError::Render)?
+            .unwrap_or_default();
+        Ok(self
+            .csharp_native_library
+            .iter()
+            .fold(host, |host, library| host.native_library(library.clone())))
     }
 
     /// Writes generated output to a directory.

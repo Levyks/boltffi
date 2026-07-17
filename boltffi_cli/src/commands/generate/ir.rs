@@ -94,9 +94,10 @@ pub fn run_ir_generation(config: &Config, options: &GenerateOptions) -> Result<(
         GenerateTarget::KotlinMultiplatform => generate_kmp(config, options),
         GenerateTarget::Typescript => generate_typescript(config, options),
         GenerateTarget::Dart => generate_dart(config, options),
+        GenerateTarget::CSharp => generate_csharp(config, options),
         other => Err(CliError::CommandFailed {
             command: format!(
-                "--ir is only available for swift, python, java, kotlin, kmp, typescript, and dart, not {}",
+                "--ir is only available for swift, python, java, kotlin, kmp, typescript, dart, and csharp, not {}",
                 target_label(other)
             ),
             status: None,
@@ -360,6 +361,38 @@ fn swift_output_directory(config: &Config, options: &GenerateOptions) -> PathBuf
     })
 }
 
+fn generate_csharp(config: &Config, options: &GenerateOptions) -> Result<()> {
+    if !config.is_csharp_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.csharp.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
+    let expansion = BindingExpansion::resolve_for_commands(
+        config,
+        &["build", "generate"],
+        &options.cargo_args,
+    )?;
+    let output_directory = options
+        .output
+        .clone()
+        .unwrap_or_else(|| config.csharp_output());
+
+    expansion
+        .generation()
+        .coverage_mode(CoverageMode::Partial)
+        .csharp_namespace(config.csharp_namespace().map(str::to_owned))
+        .csharp_native_library(expansion.artifact_name())
+        .render(Target::CSharp)
+        .and_then(|output| {
+            print_coverage(Target::CSharp.name(), &output);
+            Generation::write_output(output, &output_directory)
+        })
+        .map(drop)
+        .map_err(|error| generation_error(Target::CSharp.name(), error))
+}
+
 fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
     if !config.is_python_enabled() {
         return Err(CliError::CommandFailed {
@@ -531,6 +564,36 @@ pub fn run_python_generation(
         cargo_args,
         toolchain_selector,
     )
+}
+
+pub fn run_csharp_generation(
+    config: &Config,
+    output: Option<PathBuf>,
+    manifest_path: PathBuf,
+    artifact_name: String,
+    cargo_args: Vec<String>,
+    toolchain_selector: Option<String>,
+) -> Result<()> {
+    if !config.is_csharp_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.csharp.enabled = false".to_string(),
+            status: None,
+        });
+    }
+    let output_directory = output.unwrap_or_else(|| config.csharp_output());
+    Generation::new(manifest_path)
+        .cargo_args(cargo_args)
+        .cargo_toolchain_selector(toolchain_selector)
+        .coverage_mode(CoverageMode::Partial)
+        .csharp_namespace(config.csharp_namespace().map(str::to_owned))
+        .csharp_native_library(artifact_name)
+        .render(Target::CSharp)
+        .and_then(|output| {
+            print_coverage(Target::CSharp.name(), &output);
+            Generation::write_output(output, &output_directory)
+        })
+        .map(drop)
+        .map_err(|error| generation_error(Target::CSharp.name(), error))
 }
 
 pub fn run_kmp_generation(

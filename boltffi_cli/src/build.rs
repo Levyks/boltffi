@@ -136,8 +136,14 @@ pub struct BuildOptions {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BuildSelection {
-    Default { cargo_args: Vec<String> },
-    Expanded(BindingExpansion),
+    Default {
+        cargo_args: Vec<String>,
+    },
+    Package {
+        package: String,
+        cargo_args: Vec<String>,
+    },
+    Expanded(Box<BindingExpansion>),
 }
 
 impl Default for BuildSelection {
@@ -234,6 +240,7 @@ impl<'a> Builder<'a> {
     fn package_spec(&self) -> &str {
         match &self.options.selection {
             BuildSelection::Default { .. } => self.config.library_name(),
+            BuildSelection::Package { package, .. } => package,
             BuildSelection::Expanded(expansion) => expansion.package_id(),
         }
     }
@@ -258,13 +265,13 @@ impl<'a> Builder<'a> {
                 command.arg("--lib");
                 expansion.configure_rustc(command)
             }
-            BuildSelection::Default { .. } => Ok(()),
+            BuildSelection::Default { .. } | BuildSelection::Package { .. } => Ok(()),
         }
     }
 
     fn cargo_build_command_args(&self) -> CargoBuildCommandArgs {
         match &self.options.selection {
-            BuildSelection::Default { cargo_args } => {
+            BuildSelection::Default { cargo_args } | BuildSelection::Package { cargo_args, .. } => {
                 CargoBuildCommandArgs::from_passthrough_args(cargo_args)
             }
             BuildSelection::Expanded(expansion) => CargoBuildCommandArgs {
@@ -447,7 +454,7 @@ name = "demo"
             &config,
             BuildOptions {
                 release: false,
-                selection: BuildSelection::Expanded(expansion),
+                selection: BuildSelection::Expanded(Box::new(expansion)),
                 on_output: None,
             },
         );

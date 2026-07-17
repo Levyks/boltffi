@@ -29,7 +29,7 @@ fn build_dart_targets(
     let expansion = BindingExpansion::resolve(config, build_cargo_args)?;
     let build_options = BuildOptions {
         release,
-        selection: BuildSelection::Expanded(expansion),
+        selection: BuildSelection::Expanded(Box::new(expansion)),
         on_output,
     };
     let builder = Builder::new(config, build_options);

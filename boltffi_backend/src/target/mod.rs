@@ -1,5 +1,6 @@
 //! Host target implementations.
 
+pub mod csharp;
 pub mod dart;
 pub mod java;
 pub mod jvm;
