@@ -70,8 +70,11 @@ final class BoltFFIBuilder implements Builder {
       return;
     }
 
+    // Artifact name locates the prebuilt native library under native/<triple>/.
+    // Asset name must match the Dart library that owns the @Native declarations
+    // (lib/{{ package_name }}.dart → package:<pkg>/{{ package_name }}.dart).
     const artifactName = "{{ artifact_name }}";
-    const assetName = "{{ artifact_name }}.dart";
+    const assetName = "{{ package_name }}.dart";
 
     final codeConfig = input.config.code;
     final targetTriple = targetTripleFromCodeConfig(codeConfig);

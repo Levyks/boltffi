@@ -1,9 +1,17 @@
 //! Foreign callback proxies: Rust-owned callback handles wrapped for Dart use.
+//!
+//! Proxies are emitted only when some exported API returns the callback into
+//! Dart (matching Swift's `proxy_required` analysis). Every method on a required
+//! proxy must be implementable; async methods are unsupported for the reverse
+//! direction rather than silently dropped while still claiming `implements`.
+
+use std::collections::BTreeSet;
 
 use boltffi_binding::{
-    BuiltinType, CallbackDecl, DirectValueType, DirectVectorElementType, ErrorChannel,
-    HandlePresence, HandleTarget, ImportedCallable, ImportedMethodDecl, Native, OutgoingParam,
-    ParamPlan, ReturnPlan, TypeRef, VTableSlot,
+    Bindings, BuiltinType, CallbackDecl, CallbackId, CallbackProtocolIntrospect, DirectValueType,
+    DirectVectorElementType, ErrorChannel, ExportedCallable, HandlePresence, HandleTarget,
+    ImportedCallable, ImportedMethodDecl, Native, OutgoingParam, ParamPlan, ReturnPlan, TypeRef,
+    VTableSlot,
 };
 
 use crate::{
@@ -24,11 +32,20 @@ pub fn wrap_expression(callback_name: &str, presence: HandlePresence, value: &st
     }
 }
 
+/// Whether this callback is returned from Rust into Dart anywhere in the contract.
+pub fn proxy_required(callback: CallbackId, context: &RenderContext<Native>) -> bool {
+    ProxyRequirements::from_context(context).contains(callback)
+}
+
 pub fn proxy_class(
     decl: &CallbackDecl<Native>,
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
-) -> Result<String> {
+) -> Result<Option<String>> {
+    if !proxy_required(decl.id(), context) {
+        return Ok(None);
+    }
+
     let protocol = bridge
         .source_callback(decl.id())
         .ok_or(Error::BrokenBridgeContract {
@@ -37,20 +54,131 @@ pub fn proxy_class(
         })?;
     let name = name_style::upper_camel(decl.name());
     let vtable_name = ffi::record_name(protocol.vtable());
+    // Every interface method must be present — do not filter unsupported shapes
+    // while still claiming `implements {name}`.
     let methods = decl
         .protocol()
         .vtable()
         .methods()
         .iter()
         .zip(protocol.methods())
-        .filter(|(method, _)| !method.callable().execution().uses_async_execution())
         .map(|(method, slot)| proxy_method(&name, &vtable_name, method, slot, bridge, context))
         .collect::<Result<Vec<_>>>()?
         .join("\n\n");
 
-    Ok(format!(
+    Ok(Some(format!(
         "final class _F${name} implements {name} {{\n  static final _finalizer = Finalizer<_$$BoltFFICallbackHandle>((handle) {{\n    if (handle.handle == 0 || handle.vtable == $$ffi.nullptr) return;\n    final vtable = handle.vtable.cast<{vtable_name}>();\n    vtable.ref.free.asFunction<void Function(int)>()(handle.handle);\n  }});\n  _$$BoltFFICallbackHandle _handle;\n  bool _closed = false;\n\n  _F${name}._(this._handle) {{\n    _finalizer.attach(this, _handle, detach: this);\n  }}\n\n  static {name} wrap(_$$BoltFFICallbackHandle handle) {{\n    if (handle.handle == 0 || handle.vtable == $$ffi.nullptr) {{\n      throw StateError('null BoltFFI callback handle');\n    }}\n    return _F${name}._(handle);\n  }}\n\n  void dispose() {{\n    if (_closed) return;\n    _closed = true;\n    _finalizer.detach(this);\n    final vtable = _handle.vtable.cast<{vtable_name}>();\n    final free = vtable.ref.free.asFunction<void Function(int)>();\n    free(_handle.handle);\n    _handle = _$$nullCallbackHandle();\n  }}\n\n{methods}\n}}\n\n"
-    ))
+    )))
+}
+
+/// Callbacks that must be wrappable because Rust hands them to Dart.
+#[derive(Default)]
+struct ProxyRequirements {
+    callbacks: BTreeSet<CallbackId>,
+}
+
+impl ProxyRequirements {
+    fn from_context(context: &RenderContext<Native>) -> Self {
+        let mut requirements = Self::default();
+        requirements.collect(context.bindings());
+        requirements.collect_required_proxy_returns(context);
+        requirements
+    }
+
+    fn contains(&self, callback: CallbackId) -> bool {
+        self.callbacks.contains(&callback)
+    }
+
+    fn collect(&mut self, bindings: &Bindings<Native>) {
+        for declaration in bindings.decls() {
+            for callable in declaration.exported_callables() {
+                self.collect_exported_callable(callable);
+            }
+            for callable in declaration.imported_callables() {
+                self.collect_imported_callable_params(callable);
+            }
+        }
+    }
+
+    fn collect_required_proxy_returns(&mut self, context: &RenderContext<Native>) {
+        let mut previous = None;
+        while previous != Some(self.callbacks.len()) {
+            previous = Some(self.callbacks.len());
+            let pending = self.callbacks.iter().copied().collect::<Vec<_>>();
+            for callback in pending {
+                let Some(declaration) = context.callback(callback) else {
+                    continue;
+                };
+                for callable in declaration.protocol().method_callables() {
+                    self.collect_imported_callable_return(callable);
+                }
+            }
+        }
+    }
+
+    fn collect_exported_callable(&mut self, callable: &ExportedCallable<Native>) {
+        for parameter in callable.params() {
+            if let boltffi_binding::IncomingParam::Closure(closure) = parameter.payload() {
+                self.collect_imported_callable_params(closure.invoke());
+                self.collect_imported_callable_return(closure.invoke());
+            }
+        }
+        self.collect_exported_return(callable.returns().plan());
+    }
+
+    fn collect_imported_callable_params(&mut self, callable: &ImportedCallable<Native>) {
+        for parameter in callable.params() {
+            match parameter.payload() {
+                OutgoingParam::Value(_) => {}
+                OutgoingParam::Closure(closure) => {
+                    self.collect_exported_callable(closure.invoke());
+                }
+            }
+        }
+    }
+
+    fn collect_imported_callable_return(&mut self, callable: &ImportedCallable<Native>) {
+        self.collect_imported_return(callable.returns().plan());
+    }
+
+    fn collect_exported_return(&mut self, plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>) {
+        match plan {
+            ReturnPlan::HandleViaReturnSlot {
+                target: HandleTarget::Callback(id),
+                ..
+            }
+            | ReturnPlan::HandleViaOutPointer {
+                target: HandleTarget::Callback(id),
+                ..
+            } => {
+                self.callbacks.insert(*id);
+            }
+            ReturnPlan::ClosureViaOutPointer(closure) => {
+                self.collect_exported_callable(closure.invoke());
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_imported_return(&mut self, plan: &ReturnPlan<Native, boltffi_binding::IntoRust>) {
+        match plan {
+            ReturnPlan::HandleViaReturnSlot {
+                target: HandleTarget::Callback(id),
+                ..
+            }
+            | ReturnPlan::HandleViaOutPointer {
+                target: HandleTarget::Callback(id),
+                ..
+            } => {
+                self.callbacks.insert(*id);
+            }
+            ReturnPlan::ClosureViaOutPointer(closure) => {
+                self.collect_imported_callable_params(closure.invoke());
+                self.collect_imported_callable_return(closure.invoke());
+            }
+            _ => {}
+        }
+    }
 }
 
 fn proxy_method(
@@ -129,8 +257,6 @@ fn marshal_proxy_args(
     let mut cleanup = Vec::new();
     let mut args = vec!["_handle.handle".to_owned()];
 
-    // Slot parameters: handle + return outs + source args.
-    // Collect success-out first for fallible calls.
     for group in slot.return_parameter_groups() {
         match group {
             c::ParameterGroup::SuccessOut(index) => {
@@ -266,6 +392,10 @@ fn marshal_proxy_args(
     Ok((setup, cleanup, args))
 }
 
+/// Encode a value for the foreign-proxy argument path.
+///
+/// Custom types are Dart `typedef`s over their representation, so encoding must
+/// recurse into that representation instead of calling a non-existent `_encode`.
 fn encode_type_ref(
     ty: &TypeRef,
     writer: &str,
@@ -273,6 +403,10 @@ fn encode_type_ref(
     context: &RenderContext<Native>,
 ) -> Result<String> {
     Ok(match ty {
+        TypeRef::Primitive(value_ty) => {
+            let suffix = primitive::wire_suffix(*value_ty)?;
+            format!("{writer}.write{suffix}({value});")
+        }
         TypeRef::String | TypeRef::InternedString { .. } => {
             format!("{writer}.writeString({value});")
         }
@@ -287,8 +421,16 @@ fn encode_type_ref(
         }
         TypeRef::Builtin(BuiltinType::Uuid) => format!("{writer}.writeUuid({value});"),
         TypeRef::Builtin(BuiltinType::Url) => format!("{writer}.writeString({value});"),
-        TypeRef::Record(_) | TypeRef::Enum(_) | TypeRef::Custom(_) => {
+        TypeRef::Record(_) | TypeRef::Enum(_) => {
             format!("{value}._encode({writer});")
+        }
+        TypeRef::Custom(id) => {
+            // Typedefs have no `_encode`; always encode the representation.
+            let representation = context
+                .custom_type(*id)
+                .map(|decl| decl.representation().clone())
+                .ok_or(missing("foreign proxy custom representation"))?;
+            encode_type_ref(&representation, writer, value, context)?
         }
         TypeRef::Optional(inner) => {
             let inner_write = encode_type_ref(inner, "writer", "item", context)?;
@@ -307,6 +449,10 @@ fn encode_type_ref(
 
 fn decode_type_ref(ty: &TypeRef, reader: &str, context: &RenderContext<Native>) -> Result<String> {
     Ok(match ty {
+        TypeRef::Primitive(value_ty) => {
+            let suffix = primitive::wire_suffix(*value_ty)?;
+            format!("{reader}.read{suffix}()")
+        }
         TypeRef::String | TypeRef::InternedString { .. } => format!("{reader}.readString()"),
         TypeRef::Bytes => format!("{reader}.readUint8List()"),
         TypeRef::Builtin(BuiltinType::Duration) => format!("{reader}.readDuration()"),
@@ -328,16 +474,10 @@ fn decode_type_ref(ty: &TypeRef, reader: &str, context: &RenderContext<Native>) 
             format!("{name}._decode({reader})")
         }
         TypeRef::Custom(id) => {
-            let name = context
-                .custom_type(*id)
-                .map(|decl| name_style::upper_camel(decl.name()))
-                .ok_or(missing("foreign proxy decode custom"))?;
-            // Custom typedefs share representation decode.
             let representation = context
                 .custom_type(*id)
                 .map(|decl| decl.representation().clone())
                 .ok_or(missing("foreign proxy custom representation"))?;
-            let _ = name;
             decode_type_ref(&representation, reader, context)?
         }
         TypeRef::Optional(inner) => {
@@ -477,7 +617,6 @@ fn decode_fallible_success_value(
         },
         ReturnPlan::EncodedViaOutPointer { ty, .. } => {
             let decode = decode_type_ref(ty, "reader", context)?;
-            // Expression form is awkward for buffer frees; use a block expression.
             format!(
                 "() {{ final buffer = {out}.ref; try {{ final reader = _$$WireReader(buffer.ptr, buffer.len); return {decode}; }} finally {{ if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer); }} }}()"
             )
@@ -489,7 +628,6 @@ fn decode_fallible_success_value(
             )
         }
         ReturnPlan::DirectVecViaReturnSlot { element } => {
-            // Keep as expression via IIFE around statements.
             let body = render::direct_vector_decode_public(
                 "buffer",
                 element,

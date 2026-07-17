@@ -226,8 +226,9 @@ impl host::HostBackend for DartHost {
             "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\nresolution: workspace\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  hooks: ^1.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n",
             self.package
         );
-        let hook =
-            include_str!("hook.build.dart.txt").replace("{{ artifact_name }}", &self.artifact);
+        let hook = include_str!("hook.build.dart.txt")
+            .replace("{{ artifact_name }}", &self.artifact)
+            .replace("{{ package_name }}", &self.package);
         Ok(GeneratedOutput::new(
             vec![
                 GeneratedFile::new(FilePath::new(&self.library_file)?, library),
@@ -922,6 +923,183 @@ mod tests {
         assert!(
             !library.contains("clone(handle.handle)"),
             "returned callback wrap must take ownership instead of cloning"
+        );
+    }
+
+    #[test]
+    fn skips_foreign_proxy_for_host_only_callbacks() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub trait Operation: Send + Sync {
+                    fn apply(&self, value: i32) -> i32;
+                    async fn finish(&self, value: i32) -> Result<i32, String>;
+                }
+                pub struct Runner;
+                #[export]
+                impl Runner {
+                    pub fn new(operation: Box<dyn Operation>) -> Self { unimplemented!() }
+                }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("abstract interface class Operation"));
+        assert!(
+            !library.contains("final class _F$Operation"),
+            "host-only callbacks must not emit a foreign proxy class"
+        );
+    }
+
+    #[test]
+    fn rejects_async_methods_on_returned_foreign_callback() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub trait AsyncCallback: Send + Sync {
+                    async fn run(&self, value: i32) -> i32;
+                }
+                #[export]
+                pub fn make_async_callback() -> Box<dyn AsyncCallback> { unimplemented!() }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let error = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render(&bindings)
+            .expect_err("async foreign callback proxy must fail complete generation");
+        let message = error.to_string();
+        assert!(
+            message.contains("async foreign callback proxy method"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn foreign_proxy_encodes_custom_typedef_via_representation() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                custom_type!(
+                    pub FixtureInstant,
+                    remote = std::time::Duration,
+                    repr = i64,
+                    into_ffi = |value: &std::time::Duration| value.as_millis() as i64,
+                    try_from_ffi = |value: i64| Ok::<std::time::Duration, ()>(std::time::Duration::from_millis(value as u64)),
+                );
+                #[export]
+                pub trait InstantCallback: Send + Sync {
+                    fn on_instant(&self, when: std::time::Duration) -> std::time::Duration;
+                }
+                #[export]
+                pub fn make_instant_callback() -> Box<dyn InstantCallback> { unimplemented!() }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        let unsupported = output
+            .coverage()
+            .unsupported()
+            .iter()
+            .map(|item| {
+                format!(
+                    "{} {}: {}",
+                    item.declaration().kind(),
+                    item.declaration().name(),
+                    item.reason()
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            unsupported.is_empty(),
+            "unexpected unsupported decls: {unsupported:?}"
+        );
+        assert!(library.contains("typedef FixtureInstant = int;"));
+        assert!(library.contains("final class _F$InstantCallback implements InstantCallback"));
+        // Custom types are Dart typedefs over their representation. Foreign proxy
+        // params must encode the representation (writeI64) rather than calling a
+        // non-existent `_encode` on the typedef.
+        assert!(
+            library.contains("writeI64(when_)"),
+            "custom typedef params must encode via representation"
+        );
+        assert!(
+            !library.contains("when_._encode(") && !library.contains("when._encode("),
+            "typedef values must not call a non-existent _encode"
+        );
+    }
+
+    #[test]
+    fn hook_asset_name_matches_dart_library_not_artifact() {
+        let source = scan_file(
+            syn::parse_str(r#"#[export] pub fn answer() -> i32 { 42 }"#).expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("my_pkg", "native_artifact")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let hook = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("build.dart"))
+            .expect("hook")
+            .contents();
+        assert!(
+            hook.contains("const artifactName = \"native_artifact\";"),
+            "hook must locate the prebuilt native library by artifact name"
+        );
+        assert!(
+            hook.contains("const assetName = \"my_pkg.dart\";"),
+            "Native asset id must match lib/my_pkg.dart, not the Rust artifact"
+        );
+        assert!(
+            !hook.contains("const assetName = \"native_artifact.dart\";"),
+            "asset name must not follow the artifact when package differs"
         );
     }
 }

@@ -689,7 +689,7 @@ pub fn callback(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let foreign = super::foreign::proxy_class(decl, bridge, context)?;
+    let foreign = super::foreign::proxy_class(decl, bridge, context)?.unwrap_or_default();
     Ok(Emitted::primary(format!(
         "abstract interface class {name} {{\n{interface}\n}}\n\nfinal class _I${name} {{\n  static void free(int handle) => _I${name}HandleMap.remove(handle);\n  static int clone(int handle) => _I${name}HandleMap.clone(handle);\n\n{implementations}\n}}\n\nfinal class _I${name}HandleMapImpl {{\n  final Map<int, {name}> _map = {{}};\n  int _counter = 1;\n  late final $$ffi.Pointer<{vtable_name}> _vtable;\n\n  _I${name}HandleMapImpl() {{\n    _vtable = $$extffi.calloc<{vtable_name}>();\n    _vtable.ref.free = $$ffi.Pointer.fromFunction(_I${name}.free);\n    _vtable.ref.clone = $$ffi.Pointer.fromFunction(_I${name}.clone, 0);\n{assignments}\n    _f${}(_vtable);\n  }}\n\n  int insert({name} value) {{ final handle = _counter += 2; _map[handle] = value; return handle; }}\n  {name}? get(int handle) => _map[handle];\n  {name}? remove(int handle) => _map.remove(handle);\n  int clone(int handle) {{ final value = _map[handle]; return value == null ? 0 : insert(value); }}\n  _$$BoltFFICallbackHandle createHandle({name} value) => _f${}(insert(value));\n}}\n\nfinal _I${name}HandleMap = _I${name}HandleMapImpl();\n\n{foreign}",
         protocol.register().name(),
