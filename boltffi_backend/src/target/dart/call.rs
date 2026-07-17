@@ -151,18 +151,21 @@ pub fn callback_api_return(
     })
 }
 
+/// Setup statements, cleanup statements, C call arguments, and closure helpers.
+type ExportedMarshal = (
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<(HelperId, String)>,
+);
+
 pub fn marshal_exported(
     callable: &ExportedCallable<Native>,
     receiver: Option<&str>,
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
     c_function: &Function,
-) -> Result<(
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-    Vec<(HelperId, String)>,
-)> {
+) -> Result<ExportedMarshal> {
     let mut setup = Vec::new();
     let mut cleanup = Vec::new();
     let mut helpers = Vec::new();

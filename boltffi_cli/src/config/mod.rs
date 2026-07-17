@@ -1158,9 +1158,7 @@ impl Config {
         self.dart_native_architectures().to_vec()
     }
 
-    pub fn dart_custom_mappings(
-        &self,
-    ) -> impl Iterator<Item = (String, CustomTypeMapping)> + '_ {
+    pub fn dart_custom_mappings(&self) -> impl Iterator<Item = (String, CustomTypeMapping)> + '_ {
         self.targets
             .dart
             .type_mappings

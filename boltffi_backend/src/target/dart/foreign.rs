@@ -258,24 +258,21 @@ fn marshal_proxy_args(
     let mut args = vec!["_handle.handle".to_owned()];
 
     for group in slot.return_parameter_groups() {
-        match group {
-            c::ParameterGroup::SuccessOut(index) => {
-                let param = slot.parameter(*index);
-                let local = format!("_$out{}", param.name());
-                let ty = match param.ty() {
-                    c::Type::MutPointer(inner) => ffi::native_type(inner),
-                    _ => {
-                        return Err(Error::BrokenBridgeContract {
-                            bridge: DartHost::TARGET,
-                            invariant: "foreign callback success out is not a pointer",
-                        });
-                    }
-                };
-                setup.push(format!("final {local} = $$extffi.calloc<{ty}>();"));
-                cleanup.push(format!("$$extffi.calloc.free({local});"));
-                args.push(local);
-            }
-            _ => {}
+        if let c::ParameterGroup::SuccessOut(index) = group {
+            let param = slot.parameter(*index);
+            let local = format!("_$out{}", param.name());
+            let ty = match param.ty() {
+                c::Type::MutPointer(inner) => ffi::native_type(inner),
+                _ => {
+                    return Err(Error::BrokenBridgeContract {
+                        bridge: DartHost::TARGET,
+                        invariant: "foreign callback success out is not a pointer",
+                    });
+                }
+            };
+            setup.push(format!("final {local} = $$extffi.calloc<{ty}>();"));
+            cleanup.push(format!("$$extffi.calloc.free({local});"));
+            args.push(local);
         }
     }
 

@@ -725,9 +725,7 @@ fn callback_method(
             (ParamPlan::Direct { ty, .. }, crate::bridge::c::ParameterGroup::Value(index)) => {
                 let raw = slot.parameter(*index).name();
                 match ty {
-                    DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => {
-                        format!("{raw}")
-                    }
+                    DirectValueType::Primitive(boltffi_binding::Primitive::Bool) => raw.to_string(),
                     DirectValueType::Enum(id) => format!(
                         "{}._fromValue({raw})",
                         call::direct_type(&DirectValueType::Enum(*id), context)?

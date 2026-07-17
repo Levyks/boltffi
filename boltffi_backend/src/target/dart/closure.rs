@@ -11,8 +11,8 @@
 
 use boltffi_binding::{
     ClosureParameter, ClosureReturn, DirectValueType, DirectVectorElementType, ErrorChannel,
-    HandlePresence, HandleTarget, ImportedCallable, IncomingParam, Native, OutgoingParam, ParamPlan,
-    ReturnPlan,
+    HandlePresence, HandleTarget, ImportedCallable, IncomingParam, Native, OutgoingParam,
+    ParamPlan, ReturnPlan,
 };
 
 use crate::{
@@ -323,12 +323,15 @@ pub fn returned_call(
     Ok((body, vec![helper]))
 }
 
+/// Setup, cleanup, native invoke args, and return-decode statements.
+type ReturnedInvokeMarshal = (Vec<String>, Vec<String>, Vec<String>, String);
+
 fn invoke_returned(
     closure: &ClosureReturn<Native, boltffi_binding::OutOfRust>,
     c_return: &c::ClosureReturnParameter,
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
-) -> Result<(Vec<String>, Vec<String>, Vec<String>, String)> {
+) -> Result<ReturnedInvokeMarshal> {
     let mut setup = Vec::new();
     let mut cleanup = Vec::new();
     let mut args = Vec::new();
