@@ -590,7 +590,7 @@ Overrides are normalized too, so `package_name = "my-sdk"` still becomes `my_sdk
 
 ### Native Architectures
 
-By default BoltFFI packages every Dart Native Assets architecture supported on the host. Narrow the matrix when you only need one host triple:
+By default BoltFFI packages for the current desktop host architecture. Specify `native_architectures` to build a custom target matrix:
 
 ```toml
 [targets.dart]
@@ -834,6 +834,8 @@ If you omit `interpreters`, BoltFFI falls back to the first available default in
 Here's a full configuration for a library that targets all platforms:
 
 ```toml
+experimental = ["dart"]
+
 [package]
 name = "mylib"
 
@@ -893,8 +895,6 @@ module_name = "mylib_runtime"
 [targets.python.wheel]
 output = "dist/python/wheels"
 interpreters = ["python3.11", "python3.12"]
-
-experimental = ["dart"]
 
 [targets.dart]
 enabled = true

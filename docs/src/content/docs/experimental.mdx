@@ -42,18 +42,20 @@ The CLI flag applies to a single command. The config array applies to every buil
 
 **Key:** `dart`
 
-Generates a Dart package backed by BoltFFI's expanded C ABI and Dart Native Assets
-(`hook/build.dart`). Enable with `experimental = ["dart"]` or `boltffi generate dart --experimental` /
-`boltffi pack dart --experimental`.
+Generates unified multiplatform Dart packages containing both Native Assets (`dart:ffi`) and WebAssembly (`dart:js_interop`) bindings using conditional exports.
+Enable with `experimental = ["dart"]` or `boltffi generate dart --experimental` / `boltffi pack dart --experimental`.
 
 **Supported export surface (current):**
 
 | Area | Status |
 |------|--------|
+| Multiplatform Unified Package (`dart:ffi` + `dart:js_interop` conditional exports) | Yes |
+| WebAssembly target (`wasm32-unknown-unknown` + Web Crypto support) | Yes |
+| Self-contained ES module WASM loader (`.mjs`, zero TypeScript build step) | Yes |
 | Records / enums | Yes |
 | Free functions (sync + async) | Yes |
 | Opaque classes (instance + static methods, `dispose()` + finalizers) | Yes |
-| Dart-implemented callbacks (sync; async success/error encoding) | Yes |
+| Dart-implemented callbacks (sync & async; structured error decoding) | Yes |
 | **Foreign callback proxies** (`Box<dyn Trait>` returned to Dart) | Yes |
 | Inline closures (`impl Fn` parameters) | Yes |
 | **Returned closures** (`impl Fn` / `Box<dyn Fn>` returned to Dart) | Yes |
@@ -61,8 +63,6 @@ Generates a Dart package backed by BoltFFI's expanded C ABI and Dart Native Asse
 | Exported constants | Yes |
 | Custom types + `[targets.dart.type_mappings]` | Yes |
 | Options, vectors, fallible results, encoded builtins | Yes |
-
-Foreign callback proxies currently expose sync methods only. Async methods on those proxies are not generated.
 
 Configure under `[targets.dart]` — see [Configuration](/docs/configuration#dart-configuration) for `output`, `package_name`, `native_architectures`, and `type_mappings`.
 

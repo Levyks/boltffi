@@ -689,10 +689,9 @@ pub fn callback(
         .iter()
         .map(|slot| {
             format!(
-                "    _vtable.ref.{} = $$ffi.Pointer.fromFunction(_I${name}.{}{});",
+                "    _vtable.ref.{} = $$ffi.NativeCallable.listener(_I${name}.{}).nativeFunction;",
                 slot.name().as_str(),
-                slot.name().as_str(),
-                callback_exceptional_return(slot.returns())
+                slot.name().as_str()
             )
         })
         .collect::<Vec<_>>()
@@ -1760,6 +1759,7 @@ fn wrap_call(setup: Vec<String>, cleanup: Vec<String>, body: String) -> String {
     )
 }
 
+#[allow(dead_code)]
 fn callback_exceptional_return(ty: &crate::bridge::c::Type) -> String {
     match ty {
         crate::bridge::c::Type::Void
