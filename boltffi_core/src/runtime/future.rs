@@ -582,6 +582,56 @@ mod tests {
     }
 
     #[test]
+    fn cancel_short_circuits_further_polling_and_reports_cancelled_status() {
+        let (sender, receiver) = mpsc::channel();
+        let sender = Box::new(sender);
+        // Long enough that the test would time out waiting on the natural
+        // completion if cancellation didn't short-circuit it.
+        let handle = rust_future_new(DelayedWakeFuture::new(
+            "boltffi".to_string(),
+            Duration::from_secs(5),
+        ));
+
+        // First poll finds the future still pending: no signal is sent yet
+        // (that only happens once something wakes the parked continuation),
+        // so its continuation is now parked waiting on the 30s delayed wake.
+        unsafe {
+            rust_future_poll::<String>(handle, send_poll_status, callback_data(sender.as_ref()))
+        };
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+
+        // Cancelling delivers a `Ready` signal immediately through the
+        // parked continuation, without waiting on the 30s delayed wake.
+        unsafe { rust_future_cancel::<String>(handle) };
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_millis(200)),
+            Ok(RustFuturePoll::Ready)
+        );
+
+        // The future was never actually resolved, so completing it reports
+        // cancellation rather than a value.
+        assert_eq!(
+            unsafe { rust_future_complete::<String>(handle) },
+            Err(FfiStatus::CANCELLED)
+        );
+
+        // Polling again after cancellation must short-circuit straight to
+        // `Ready` without re-driving the inner future.
+        unsafe {
+            rust_future_poll::<String>(handle, send_poll_status, callback_data(sender.as_ref()))
+        };
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(RustFuturePoll::Ready)
+        );
+
+        unsafe { rust_future_free::<String>(handle) };
+    }
+
+    #[test]
     fn invalid_arg_future_returns_invalid_arg_status() {
         let (sender, receiver) = mpsc::channel();
         let sender = Box::new(sender);

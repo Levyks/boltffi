@@ -225,7 +225,7 @@ impl host::HostBackend for DartHost {
         // Standalone package: do not set `resolution: workspace` (that requires a
         // parent pub workspace registration the generator does not emit).
         let pubspec = format!(
-            "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  hooks: ^2.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n",
+            "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  hooks: ^2.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n  async: ^2.13.0\n",
             self.package
         );
         let hook = include_str!("hook.build.dart.txt")
@@ -450,7 +450,7 @@ mod tests {
         assert!(library.contains("final buffer = writer.toRustBuffer();"));
         assert!(library.contains("case BoltFFIResult$Ok(:final value):"));
         assert!(library.contains("completionCode = 100;"));
-        assert!(library.contains("Future<int> run(int value)"));
+        assert!(library.contains("$$asyncutil.CancelableOperation<int> run(int value)"));
         assert!(library.contains("_$$BoltFFIAsync.create<int>"));
         // Vtable trampolines must stay synchronous for Pointer.fromFunction.
         assert!(
@@ -574,9 +574,17 @@ mod tests {
             .expect("library")
             .contents();
 
-        assert!(library.contains("Future<int?> asyncFind(List<int> values)"));
-        assert!(library.contains("Future<List<int>> asyncDouble(List<int> values)"));
-        assert!(library.contains("Future<String> asyncEcho(String message)"));
+        assert!(
+            library.contains("$$asyncutil.CancelableOperation<int?> asyncFind(List<int> values)")
+        );
+        assert!(
+            library.contains(
+                "$$asyncutil.CancelableOperation<List<int>> asyncDouble(List<int> values)"
+            )
+        );
+        assert!(
+            library.contains("$$asyncutil.CancelableOperation<String> asyncEcho(String message)")
+        );
         assert!(library.contains("final result = _f$"));
         assert!(library.contains("reader.readOptional((reader) => reader.readI32())"));
     }

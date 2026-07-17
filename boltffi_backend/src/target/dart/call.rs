@@ -125,7 +125,11 @@ pub fn exported_api_return(
 ) -> Result<String> {
     let ty = return_type(callable.returns().plan(), context)?;
     Ok(if callable.execution().uses_async_execution() {
-        format!("Future<{ty}>")
+        // `CancelableOperation`, not `Future`: exported async calls into
+        // Rust are cancellable (`_$$BoltFFIAsync.create` wires `.cancel()`
+        // through to the Rust future's own cancel hook), so the public
+        // signature needs to expose that rather than a bare `Future`.
+        format!("$$asyncutil.CancelableOperation<{ty}>")
     } else {
         ty
     })

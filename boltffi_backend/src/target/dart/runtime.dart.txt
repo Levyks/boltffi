@@ -5,6 +5,7 @@ import 'dart:convert' as $$convert;
 import 'dart:typed_data' as $$typed_data;
 import 'dart:ffi' as $$ffi;
 import 'package:ffi/ffi.dart' as $$extffi;
+import 'package:async/async.dart' as $$asyncutil;
 
 final class _$$FFIStatus extends $$ffi.Struct {
   @$$ffi.Int32()
@@ -1199,7 +1200,11 @@ final class _$$BoltFFIAsync {
   static const int _k$RustFuturePoll$Ready = 0;
   static const int _k$RustFuturePoll$MaybeReady = 1;
 
-  static Future<R> create<R>({
+  // Returns a `CancelableOperation` rather than a bare `Future`: cancelling
+  // it actually reaches into Rust (via `cancelFuture`) and drops the
+  // in-flight future instead of merely detaching the Dart-side listener, so
+  // callers get real cooperative cancellation, not just "stop waiting".
+  static $$asyncutil.CancelableOperation<R> create<R>({
     required $$ffi.Pointer<$$ffi.Void> Function() createFuture,
     required void Function(
       $$ffi.Pointer<$$ffi.Void> handle,
@@ -1213,7 +1218,7 @@ final class _$$BoltFFIAsync {
     required R Function($$ffi.Pointer<$$ffi.Void> handle) completeFuture,
     required void Function($$ffi.Pointer<$$ffi.Void> handle) freeFuture,
     required void Function($$ffi.Pointer<$$ffi.Void> handle) cancelFuture,
-  }) async {
+  }) {
     final handle = createFuture();
     final completer = $$async.Completer<R>();
     late final $$ffi.NativeCallable<
@@ -1225,10 +1230,17 @@ final class _$$BoltFFIAsync {
     void finishWithError(Object error, StackTrace stackTrace) {
       if (finished) return;
       finished = true;
-      completerCallbackCallable.close();
+      // `cancelFuture` must run before `close()`: if Rust still has a
+      // continuation registered for this handle, cancelling it delivers
+      // one last signal through `completerCallbackCallable.nativeFunction`
+      // (see `completerCallback`'s own `finished` guard, which no-ops it).
+      // Closing first would delete that native trampoline out from under
+      // the call — `NativeCallable.close` documents this as undefined
+      // behavior.
       try {
         cancelFuture(handle);
       } finally {
+        completerCallbackCallable.close();
         freeFuture(handle);
       }
       completer.completeError(error, stackTrace);
@@ -1272,7 +1284,25 @@ final class _$$BoltFFIAsync {
       finishWithError(error, stackTrace);
     }
 
-    return completer.future;
+    return $$asyncutil.CancelableOperation<R>.fromFuture(
+      completer.future,
+      onCancel: () {
+        // `CancelableOperation` never calls `onCancel` once the wrapped
+        // future has already completed, but guard anyway in case of a
+        // last-instant race between a poll completion and `.cancel()`.
+        if (finished) return;
+        finished = true;
+        // See the matching comment in `finishWithError`: cancel before
+        // close, since Rust may still synchronously deliver one last
+        // signal through the (still-open) native trampoline.
+        try {
+          cancelFuture(handle);
+        } finally {
+          completerCallbackCallable.close();
+          freeFuture(handle);
+        }
+      },
+    );
   }
 }
 
