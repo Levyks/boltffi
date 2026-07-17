@@ -1,6 +1,7 @@
 //! Dart target rendered through the C ABI bridge.
 
 mod call;
+mod closure;
 mod codec;
 mod ffi;
 mod name_style;
@@ -172,15 +173,29 @@ impl host::HostBackend for DartHost {
         _context: &RenderContext<Native>,
         declarations: Vec<RenderedDeclaration<'decl, Native>>,
     ) -> Result<GeneratedOutput> {
-        let body = declarations
-            .into_iter()
-            .map(RenderedDeclaration::into_parts)
-            .map(|(_, emitted)| emitted.primary_chunk().as_str().to_owned())
+        use std::collections::BTreeMap;
+
+        use crate::core::{AuxChunk, HelperId, TextChunk};
+
+        let mut helpers = BTreeMap::<HelperId, TextChunk>::new();
+        let mut body = String::new();
+        for declaration in declarations {
+            let (_, emitted) = declaration.into_parts();
+            for aux in emitted.aux_chunks() {
+                if let AuxChunk::Helper { id, text } = aux {
+                    helpers.entry(id.clone()).or_insert_with(|| text.clone());
+                }
+            }
+            body.push_str(emitted.primary_chunk().as_str());
+        }
+        let helpers = helpers
+            .into_values()
+            .map(|chunk| chunk.as_str().to_owned())
             .collect::<Vec<_>>()
             .join("\n");
         let runtime = include_str!("runtime.dart.txt");
         let ffi = ffi::render(_bridge)?;
-        let library = format!("{runtime}\n\n{body}\n{ffi}");
+        let library = format!("{runtime}\n\n{helpers}{body}\n{ffi}");
         let pubspec = format!(
             "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\nresolution: workspace\n\ndependencies:\n  path: ^1.9.0\n  ffi: ^2.2.0\n  hooks: ^1.0.2\n  logging: ^1.3.0\n  code_assets: ^1.0.0\n  meta: ^1.17.0\n",
             self.package
@@ -346,6 +361,120 @@ mod tests {
         assert!(library.contains("completionCode = 100;"));
         assert!(library.contains("Future<int> run(int value)"));
         assert!(library.contains("_$$BoltFFIAsync.create<int>"));
+    }
+
+    #[test]
+    fn renders_static_class_methods_without_receiver() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                pub struct MathUtils;
+                #[export]
+                impl MathUtils {
+                    pub fn add(a: i32, b: i32) -> i32 { a + b }
+                }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+        assert!(library.contains("int add(int a, int b)"));
+        assert!(
+            !library.contains("add(_rawHandle"),
+            "static methods must not pass a receiver handle"
+        );
+    }
+
+    #[test]
+    fn renders_inline_closures() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub fn apply_closure(f: impl Fn(i32) -> i32, value: i32) -> i32 { f(value) }
+                #[export]
+                pub fn apply_string_closure(f: impl Fn(String) -> String, s: String) -> String { f(s) }
+                #[export]
+                pub fn apply_void_closure(f: impl Fn(i32), value: i32) { f(value) }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("int applyClosure(int Function(int) f, int value)"));
+        assert!(library.contains("String applyStringClosure(String Function(String) f, String s)"));
+        assert!(library.contains("void applyVoidClosure(void Function(int) f, int value)"));
+        assert!(library.contains("final class _Cl$"));
+        assert!(library.contains(".callPtr"));
+        assert!(library.contains(".releasePtr"));
+        assert!(library.contains("Pointer<$$ffi.Void>.fromAddress"));
+    }
+
+    #[test]
+    fn renders_async_buffer_return_slots() {
+        let source = scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub async fn async_find(values: Vec<i32>) -> Option<i32> { unimplemented!() }
+                #[export]
+                pub async fn async_double(values: Vec<i32>) -> Vec<i32> { unimplemented!() }
+                #[export]
+                pub async fn async_echo(message: String) -> String { unimplemented!() }
+                "#,
+            )
+            .expect("source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("scan");
+        let bindings = lower::<Native>(&source).expect("lower");
+        let output = DartHost::new("demo", "demo")
+            .expect("host")
+            .into_target()
+            .expect("target")
+            .render_partial(&bindings)
+            .expect("render");
+        let library = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.dart"))
+            .expect("library")
+            .contents();
+
+        assert!(library.contains("Future<int?> asyncFind(List<int> values)"));
+        assert!(library.contains("Future<List<int>> asyncDouble(List<int> values)"));
+        assert!(library.contains("Future<String> asyncEcho(String message)"));
+        assert!(library.contains("final result = _f$"));
+        assert!(library.contains("reader.readOptional((reader) => reader.readI32())"));
     }
 
     #[test]
@@ -613,5 +742,9 @@ mod tests {
         assert!(library.contains("BoltFFIResult<int, CallbackError> checked(int value)"));
         assert!(library.contains("case BoltFFIResult$Err(:final value):"));
         assert!(library.contains("return _$$emptyBuf();"));
+        // Native callback scalar-option args use an empty buffer for None.
+        assert!(library.contains(
+            "value_len == 0 ? null : _$$WireReader(value_ptr, value_len).readOptional((reader) => reader.readU32())"
+        ));
     }
 }

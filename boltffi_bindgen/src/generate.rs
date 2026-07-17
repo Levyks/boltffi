@@ -456,7 +456,15 @@ impl Generation {
             .map_err(GenerationError::Render)?
             .into_target()
             .map_err(GenerationError::Render)?;
-        self.render_backend(&target, bindings)
+        // Dart is still experimental: skip unsupported declarations rather than
+        // failing the whole generation. Callers can tighten coverage later.
+        let coverage = match self.coverage {
+            CoverageMode::Complete => CoverageMode::Partial,
+            other => other,
+        };
+        target
+            .render_with_coverage(bindings, coverage)
+            .map_err(GenerationError::Render)
     }
 
     fn render_java_bindings(

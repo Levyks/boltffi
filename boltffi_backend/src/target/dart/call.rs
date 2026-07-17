@@ -4,11 +4,11 @@ use boltffi_binding::{
 };
 
 use crate::{
-    bridge::c::{CBridgeContract, Function},
-    core::{Error, RenderContext, Result},
+    bridge::c::{self, CBridgeContract, Function},
+    core::{Error, HelperId, RenderContext, Result},
 };
 
-use super::{DartHost, codec::Writer, name_style, primitive, render::dart_type};
+use super::{DartHost, closure, codec::Writer, name_style, primitive, render::dart_type};
 
 pub fn c_function<'a>(symbol: &NativeSymbol, bridge: &'a CBridgeContract) -> Result<&'a Function> {
     bridge
@@ -153,14 +153,59 @@ pub fn marshal_exported(
     receiver: Option<&str>,
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
-) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+    c_function: &Function,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>, Vec<(HelperId, String)>)> {
     let mut setup = Vec::new();
     let mut cleanup = Vec::new();
+    let mut helpers = Vec::new();
     let mut args = receiver.into_iter().map(str::to_owned).collect::<Vec<_>>();
-    for param in callable.params() {
+    // C functions are ordered as: [receiver group(s)?][source args...][success/error outs...]
+    // Skip the receiver group when present, and ignore trailing return/error groups.
+    let source_groups = c_function
+        .parameter_groups()
+        .iter()
+        .skip(usize::from(receiver.is_some()))
+        .filter(|group| {
+            !matches!(
+                group,
+                c::ParameterGroup::SuccessOut(_)
+                    | c::ParameterGroup::CompletionStatusOut(_)
+                    | c::ParameterGroup::ClosureReturn(_)
+            )
+        })
+        .collect::<Vec<_>>();
+    if source_groups.len() != callable.params().len() {
+        return Err(Error::BrokenBridgeContract {
+            bridge: DartHost::TARGET,
+            invariant: "exported parameter group count mismatch",
+        });
+    }
+    for (param, group) in callable.params().iter().zip(source_groups) {
         let name = name_style::lower_camel(param.name());
-        let IncomingParam::Value(plan) = param.payload() else {
-            return unsupported("inline closure parameter");
+        let plan = match param.payload() {
+            IncomingParam::Value(plan) => plan,
+            IncomingParam::Closure(closure_param) => {
+                let c::ParameterGroup::Closure(c_closure) = group else {
+                    return Err(Error::BrokenBridgeContract {
+                        bridge: DartHost::TARGET,
+                        invariant: "closure parameter missing C closure group",
+                    });
+                };
+                let call_ty = c_function.parameter(c_closure.call()).ty();
+                helpers.push(closure::render_helper(
+                    closure_param,
+                    c_closure,
+                    call_ty,
+                    bridge,
+                    context,
+                )?);
+                let (mut closure_setup, mut closure_cleanup, closure_args) =
+                    closure::marshal(&name, closure_param)?;
+                setup.append(&mut closure_setup);
+                cleanup.append(&mut closure_cleanup);
+                args.extend(closure_args);
+                continue;
+            }
         };
         match plan {
             ParamPlan::Direct { ty, .. } => args.push(match ty {
@@ -279,7 +324,7 @@ pub fn marshal_exported(
             _ => return unsupported("unknown argument marshalling"),
         }
     }
-    Ok((setup, cleanup, args))
+    Ok((setup, cleanup, args, helpers))
 }
 
 pub fn primitive_native_type(primitive: Primitive) -> Result<&'static str> {

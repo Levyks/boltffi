@@ -302,7 +302,7 @@ pub fn record(
                 .flat_map(|field| {
                     field
                         .write()
-                        .render_with(&mut Writer::new("writer", "this", context))
+                        .render_with(&mut Writer::new("writer", "", context))
                 })
                 .collect::<Result<Vec<_>>>()?;
             (fields, reads, writes, String::new())
@@ -385,7 +385,8 @@ pub fn function(
     let params = exported_parameters(callable, context)?;
     let return_ty = call::exported_api_return(callable, context)?;
     let function = call::c_function(decl.symbol(), bridge)?;
-    let (setup, cleanup, args) = call::marshal_exported(callable, None, bridge, context)?;
+    let (setup, cleanup, args, helpers) =
+        call::marshal_exported(callable, None, bridge, context, function)?;
     let body = match callable.execution() {
         ExecutionDecl::Synchronous(_) => {
             sync_exported_call(callable, function, args.clone(), bridge, context)?
@@ -397,11 +398,14 @@ pub fn function(
         _ => return unsupported("unknown free function execution"),
     };
     let body = wrap_call(setup, cleanup, body);
-    Ok(Emitted::primary(format!(
-        "{return_ty} {}({params}) {{\n  {}\n}}\n\n",
-        name_style::lower_camel(decl.name()),
-        indent(&body, 2)
-    )))
+    Ok(super::closure::attach_helpers(
+        Emitted::primary(format!(
+            "{return_ty} {}({params}) {{\n  {}\n}}\n\n",
+            name_style::lower_camel(decl.name()),
+            indent(&body, 2)
+        )),
+        helpers,
+    ))
 }
 
 pub fn constant(
@@ -494,6 +498,7 @@ pub fn class(
 ) -> Result<Emitted> {
     let name = name_style::upper_camel(decl.name());
     let release = call::c_function(decl.release(), bridge)?.name();
+    let mut helpers = Vec::new();
     let initializers = decl
         .initializers()
         .iter()
@@ -501,7 +506,9 @@ pub fn class(
             let callable = initializer.callable();
             let params = exported_parameters(callable, context)?;
             let function = call::c_function(initializer.symbol(), bridge)?;
-            let (setup, cleanup, args) = call::marshal_exported(callable, None, bridge, context)?;
+            let (setup, cleanup, args, mut closure_helpers) =
+                call::marshal_exported(callable, None, bridge, context, function)?;
+            helpers.append(&mut closure_helpers);
             let body = initializer_body(callable, function, args, &name, context)?;
             let body = wrap_call(setup, cleanup, body);
             let initializer_name = name_style::lower_camel(initializer.name());
@@ -525,8 +532,11 @@ pub fn class(
             let params = exported_parameters(callable, context)?;
             let return_ty = call::exported_api_return(callable, context)?;
             let function = call::c_function(method.target(), bridge)?;
-            let (setup, cleanup, args) =
-                call::marshal_exported(callable, Some("_rawHandle"), bridge, context)?;
+            // Static methods have no receiver in the C ABI; only instance methods do.
+            let receiver = callable.receiver().map(|_| "_rawHandle");
+            let (setup, cleanup, args, mut closure_helpers) =
+                call::marshal_exported(callable, receiver, bridge, context, function)?;
+            helpers.append(&mut closure_helpers);
             let body = match callable.execution() {
                 ExecutionDecl::Synchronous(_) => {
                     sync_exported_call(callable, function, args.clone(), bridge, context)?
@@ -546,9 +556,12 @@ pub fn class(
         })
         .collect::<Result<Vec<_>>>()?
         .join("\n\n");
-    Ok(Emitted::primary(format!(
-        "final class {name} {{\n  static final _finalizer = Finalizer<int>((handle) => _f${release}(handle));\n  int _handle;\n  bool _closed = false;\n  {name}._(this._handle) {{ _finalizer.attach(this, _handle, detach: this); }}\n\n  int get _rawHandle {{\n    if (_closed) throw StateError('{name} has been disposed');\n    return _handle;\n  }}\n\n{initializers}\n\n{methods}\n\n  void dispose() {{\n    if (_closed) return;\n    _closed = true;\n    _finalizer.detach(this);\n    _f${release}(_handle);\n    _handle = 0;\n  }}\n}}\n\n"
-    )))
+    Ok(super::closure::attach_helpers(
+        Emitted::primary(format!(
+            "final class {name} {{\n  static final _finalizer = Finalizer<int>((handle) => _f${release}(handle));\n  int _handle;\n  bool _closed = false;\n  {name}._(this._handle) {{ _finalizer.attach(this, _handle, detach: this); }}\n\n  int get _rawHandle {{\n    if (_closed) throw StateError('{name} has been disposed');\n    return _handle;\n  }}\n\n{initializers}\n\n{methods}\n\n  void dispose() {{\n    if (_closed) return;\n    _closed = true;\n    _finalizer.detach(this);\n    _f${release}(_handle);\n    _handle = 0;\n  }}\n}}\n\n"
+        )),
+        helpers,
+    ))
 }
 
 fn initializer_body(
@@ -714,12 +727,14 @@ fn callback_method(
                 ParamPlan::ScalarOption { primitive },
                 crate::bridge::c::ParameterGroup::ByteSlice(bytes),
             ) => {
+                // Native callback args use an empty buffer for None and a
+                // wire-encoded Option payload for Some (see boltffi_macros).
                 let ptr = slot.parameter(bytes.pointer()).name();
                 let len = slot.parameter(bytes.length()).name();
-                let reader = format!("{local}Reader");
                 let suffix = primitive::wire_suffix(*primitive)?;
-                setup.push(format!("final {reader} = _$$WireReader({ptr}, {len});"));
-                format!("{reader}.readOptional((reader) => reader.read{suffix}())")
+                format!(
+                    "{len} == 0 ? null : _$$WireReader({ptr}, {len}).readOptional((reader) => reader.read{suffix}())"
+                )
             }
             (
                 ParamPlan::DirectVec { element, .. },
@@ -1089,6 +1104,40 @@ fn callback_success_write(
             .into_iter()
             .collect::<Result<Vec<_>>>()?
             .join(" "),
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "writer.writeOptional(value, (value, writer) => writer.write{suffix}(value));"
+            )
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } => match element {
+            boltffi_binding::DirectVectorElementType::Primitive(primitive) => {
+                let suffix = primitive::wire_suffix(primitive.primitive())?;
+                format!(
+                    "writer.writeList(value, (value, writer) => writer.write{suffix}(value));"
+                )
+            }
+            boltffi_binding::DirectVectorElementType::Record(_) => {
+                "writer.writeList(value, (value, writer) => value._encode(writer));".into()
+            }
+            _ => return unsupported("callback vector success encoding"),
+        },
+        ReturnPlan::HandleViaReturnSlot {
+            target: HandleTarget::Class(_),
+            presence,
+            ..
+        }
+        | ReturnPlan::HandleViaOutPointer {
+            target: HandleTarget::Class(_),
+            presence,
+            ..
+        } => {
+            if *presence == HandlePresence::Nullable {
+                "writer.writeU64(value?._rawHandle ?? 0);".into()
+            } else {
+                "writer.writeU64(value._rawHandle);".into()
+            }
+        }
         _ => return unsupported("callback success encoding"),
     })
 }
@@ -1101,12 +1150,16 @@ fn exported_parameters(
         .params()
         .iter()
         .map(|param| {
-            let boltffi_binding::IncomingParam::Value(plan) = param.payload() else {
-                return unsupported("closure parameter");
+            let ty = match param.payload() {
+                boltffi_binding::IncomingParam::Value(plan) => {
+                    call::parameter_type(plan, context)?
+                }
+                boltffi_binding::IncomingParam::Closure(closure) => {
+                    super::closure::api_type(closure, context)?
+                }
             };
             Ok(format!(
-                "{} {}",
-                call::parameter_type(plan, context)?,
+                "{ty} {}",
                 name_style::lower_camel(param.name())
             ))
         })
@@ -1185,6 +1238,25 @@ fn sync_exported_return(
                 format!("return {class}._({invocation});")
             }
         }
+        ReturnPlan::HandleViaReturnSlot {
+            target: HandleTarget::Callback(id),
+            presence,
+            ..
+        } => {
+            let callback = context
+                .callback(*id)
+                .ok_or(Error::BrokenBridgeContract {
+                    bridge: DartHost::TARGET,
+                    invariant: "missing synchronous callback return",
+                })?;
+            let name = name_style::upper_camel(callback.name());
+            let map = format!("_I${name}HandleMap");
+            // Returning a foreign callback handle into Dart is not yet supported;
+            // callback *creation* goes Dart -> Rust. Treat as unsupported for now
+            // unless we only receive a handle number (rare export shape).
+            let _ = (presence, map);
+            return unsupported("callback handle return to Dart");
+        }
         ReturnPlan::ScalarOptionViaReturnSlot { primitive } => {
             let suffix = primitive::wire_suffix(*primitive)?;
             format!(
@@ -1193,6 +1265,9 @@ fn sync_exported_return(
         }
         ReturnPlan::DirectVecViaReturnSlot { element } => {
             direct_vector_decode("buffer", element, invocation, bridge, context)?
+        }
+        ReturnPlan::ClosureViaOutPointer(_) => {
+            return unsupported("closure return");
         }
         _ => return unsupported("synchronous exported return"),
     })
@@ -1374,7 +1449,14 @@ fn async_exported_return(
         .collect::<Result<Vec<_>>>()?
         .join(", ");
     let call_complete = format!("_f${}({complete_args})", complete.name());
+    let returns_buffer_by_value = matches!(
+        complete.returns(),
+        crate::bridge::c::Type::Buffer
+    ) && matches!(callable.error().channel(), ErrorChannel::None);
     let error = match callable.error().channel() {
+        ErrorChannel::None if returns_buffer_by_value => {
+            format!("final result = {call_complete};")
+        }
         ErrorChannel::None => format!("{call_complete};"),
         ErrorChannel::Encoded { ty, codec, .. } => {
             let decode = codec.render_with(&mut Reader::new("errorReader", context))?;
@@ -1392,6 +1474,7 @@ fn async_exported_return(
     let success = async_success(
         callable.returns().plan(),
         success_index.is_some(),
+        returns_buffer_by_value,
         bridge,
         context,
     )?;
@@ -1416,6 +1499,7 @@ fn async_exported_return(
 fn async_success(
     plan: &ReturnPlan<Native, boltffi_binding::OutOfRust>,
     out: bool,
+    buffer_by_value: bool,
     bridge: &CBridgeContract,
     context: &RenderContext<Native>,
 ) -> Result<String> {
@@ -1448,6 +1532,12 @@ fn async_success(
                 "final buffer = success.ref;\ntry {{\n  final reader = _$$WireReader(buffer.ptr, buffer.len);\n  return {decode};\n}} finally {{ if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer); }}"
             )
         }
+        ReturnPlan::EncodedViaReturnSlot { codec, .. } if buffer_by_value => {
+            let decode = codec.render_with(&mut Reader::new("reader", context))?;
+            format!(
+                "try {{\n  final reader = _$$WireReader(result.ptr, result.len);\n  return {decode};\n}} finally {{ if (result.ptr != $$ffi.nullptr) _f$boltffi_free_buf(result); }}"
+            )
+        }
         ReturnPlan::HandleViaOutPointer {
             target: HandleTarget::Class(id),
             presence,
@@ -1472,8 +1562,17 @@ fn async_success(
                 "final buffer = success.ref;\ntry {{\n  final reader = _$$WireReader(buffer.ptr, buffer.len);\n  return reader.readOptional((reader) => reader.read{suffix}());\n}} finally {{ if (buffer.ptr != $$ffi.nullptr) _f$boltffi_free_buf(buffer); }}"
             )
         }
+        ReturnPlan::ScalarOptionViaReturnSlot { primitive } if buffer_by_value => {
+            let suffix = primitive::wire_suffix(*primitive)?;
+            format!(
+                "try {{\n  final reader = _$$WireReader(result.ptr, result.len);\n  return reader.readOptional((reader) => reader.read{suffix}());\n}} finally {{ if (result.ptr != $$ffi.nullptr) _f$boltffi_free_buf(result); }}"
+            )
+        }
         ReturnPlan::DirectVecViaReturnSlot { element } if out => {
             direct_vector_decode("buffer", element, "success.ref", bridge, context)?
+        }
+        ReturnPlan::DirectVecViaReturnSlot { element } if buffer_by_value => {
+            direct_vector_decode("buffer", element, "result", bridge, context)?
         }
         _ => return unsupported("Dart async success shape"),
     })
@@ -1589,7 +1688,7 @@ fn data_enum(
             .flat_map(|field| {
                 field
                     .write()
-                    .render_with(&mut Writer::new("writer", "this", context))
+                    .render_with(&mut Writer::new("writer", "", context))
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()

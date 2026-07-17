@@ -320,10 +320,19 @@ fn render_value(value: &ValueRef, self_value: &str) -> Result<String> {
         ValueRoot::Binder(id) => name_style::binder(id.raw()),
         _ => return unsupported("unknown codec value root"),
     };
-    Ok(value.path().iter().fold(root, |base, field| match field {
-        FieldKey::Named(name) => format!("{base}.{}", name_style::lower_camel(name)),
-        FieldKey::Position(position) => format!("{base}.${}", position + 1),
-        _ => unreachable!("unknown field key"),
+    Ok(value.path().iter().fold(root, |base, field| {
+        let segment = match field {
+            FieldKey::Named(name) => name_style::lower_camel(name),
+            FieldKey::Position(position) => format!("${}", position + 1),
+            _ => unreachable!("unknown field key"),
+        };
+        // Prefer bare field access inside instance methods (`message`) over
+        // `this.message`, which triggers dart analyze's unnecessary_this lint.
+        if base.is_empty() {
+            segment
+        } else {
+            format!("{base}.{segment}")
+        }
     }))
 }
 
