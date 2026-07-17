@@ -316,7 +316,7 @@ pub fn returned_call(
         .join(", ");
 
     let body = format!(
-        "final storage = $$extffi.calloc<{storage}>();\nfinal status = _f${}({});\nif (status.code != 0) {{\n  $$extffi.calloc.free(storage);\n  throw _$$FFIException(status.code, 'returned closure registration failed');\n}}\n{nullable_check}final owner = _ReturnedClosureOwner<{storage}>(\n  storage: storage,\n  context: storage.ref.context,\n  release: storage.ref.release,\n);\nreturn ({lambda_params}) {{\n  if (owner.storage.ref.invoke == $$ffi.nullptr) {{\n    throw StateError('returned BoltFFI closure was released');\n  }}\n  {pack_body}\n}};",
+        "final storage = $$extffi.calloc<{storage}>();\nfinal status = _f${}({});\nif (status.code != 0) {{\n  final release = storage.ref.release;\n  final context = storage.ref.context;\n  if (release != $$ffi.nullptr) {{\n    release.asFunction<void Function($$ffi.Pointer<$$ffi.Void>)>()(context);\n  }}\n  $$extffi.calloc.free(storage);\n  throw _$$FFIException(status.code, 'returned closure registration failed');\n}}\n{nullable_check}final owner = _ReturnedClosureOwner<{storage}>(\n  storage: storage,\n  context: storage.ref.context,\n  release: storage.ref.release,\n);\nreturn ({lambda_params}) {{\n  if (owner.isClosed) {{\n    throw StateError('returned BoltFFI closure was released');\n  }}\n  {pack_body}\n}};",
         function.name(),
         args.join(", "),
     );

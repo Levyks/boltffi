@@ -874,7 +874,12 @@ mod tests {
         assert!(library.contains("storage.ref.invoke"));
         assert!(library.contains("storage.ref.release"));
         assert!(library.contains("$$extffi.calloc<_ClRet$"));
+        assert!(library.contains("owner.isClosed"));
         assert!(library.contains("returned BoltFFI closure was released"));
+        assert!(
+            library.contains("if (release != $$ffi.nullptr)"),
+            "failed returned-closure registration must release Rust context when present"
+        );
     }
 
     #[test]

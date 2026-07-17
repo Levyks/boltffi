@@ -237,6 +237,8 @@ final class _$$BoltFFIStreamPump<T> {
   }
 
   void _finish() {
+    // Defer free while a native poll callback is outstanding so Rust cannot
+    // wake a closed NativeCallable.
     if (_freed || _pollPending) return;
     _freed = true;
     _finalizer.detach(this);
@@ -281,6 +283,8 @@ final class _ReturnedClosureOwner<T extends $$ffi.Struct> {
       detach: this,
     );
   }
+
+  bool get isClosed => _closed;
 
   void dispose() {
     if (_closed) return;
