@@ -144,9 +144,22 @@ impl<'a> WasmCallbackMethodExpander<'a> {
             .map(|ty| quote! { -> #ty })
             .unwrap_or_default();
 
+        // `#[inline(never)]`: at wasm32 `-O3` (Cargo's release default), LLVM
+        // inlining this synchronous extern-"C" FFI call into a caller that
+        // also awaits one of this trait's *async* methods corrupts the
+        // caller's async state machine -- observed as a `RuntimeError: null
+        // function` (a `call_indirect` through a bogus `Box<dyn Future>`
+        // vtable slot) the first time such a mixed-method trait is driven
+        // through a foreign (JS/Dart) implementation. Reproduced isolated
+        // down to opt-level (fine at 0/1/2, broken only at the release
+        // default of 3) and confirmed the crash disappears once this
+        // function is kept out-of-line, so this is a targeted inlining
+        // barrier around the trigger, not a logic change. All-sync and
+        // all-async traits were unaffected either way.
         Ok(WasmMethodExpansion {
             extern_import,
             impl_body: quote! {
+                #[inline(never)]
                 fn #method_name(&self, #(#param_names,)*) #output_type {
                     #impl_body
                 }
