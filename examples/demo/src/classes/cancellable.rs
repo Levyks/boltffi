@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 use std::time::Duration;
 
@@ -39,6 +40,7 @@ impl Tick {
         });
         #[cfg(target_arch = "wasm32")]
         {
+            let _ = duration;
             background.ready.store(true, Ordering::Release);
             if let Some(waker) = background.waker.lock().unwrap().take() {
                 waker.wake();
