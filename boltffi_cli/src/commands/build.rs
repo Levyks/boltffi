@@ -1,3 +1,5 @@
+use boltffi_binding::BindingMetadataSurface;
+
 use crate::build::{
     BindingExpansion, BuildOptions, BuildResult, BuildSelection, Builder, all_successful,
     count_successful, failed_targets, resolve_build_profile,
@@ -59,7 +61,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
                 return Ok(Vec::new());
             }
             println!("Building for wasm ({})...", profile);
-            plain_builder(config, release, cargo_args.clone())
+            wasm_expanded_builder(config, release, cargo_args.clone())?
                 .build_wasm_with_triple(config.wasm_triple())?
         }
         BuildPlatform::Dart => {
@@ -87,7 +89,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
             }
             if config.is_wasm_enabled() {
                 all_results.extend(
-                    plain_builder(config, release, cargo_args.clone())
+                    wasm_expanded_builder(config, release, cargo_args.clone())?
                         .build_wasm_with_triple(config.wasm_triple())?,
                 );
             }
@@ -128,6 +130,26 @@ fn expanded_builder(
     cargo_args: Vec<String>,
 ) -> Result<Builder<'_>> {
     let expansion = BindingExpansion::resolve(config, &cargo_args)?;
+    Ok(Builder::new(
+        config,
+        build_options(release, BuildSelection::Expanded(Box::new(expansion))),
+    ))
+}
+
+/// Builds wasm with `BindingMetadataSurface::Wasm32` expansion active, so
+/// the compiled binary's exported symbol names match what `boltffi
+/// generate typescript` / `pack dart-web` (which build wasm through this
+/// same expanded path via `build_wasm_target`) actually call. Building wasm
+/// through `plain_builder` instead -- the surface-less "just run cargo
+/// build" path -- silently produces a binary whose exports don't match the
+/// generated bindings' `LinkError`/`RuntimeError`-triggering expectations.
+fn wasm_expanded_builder(
+    config: &Config,
+    release: bool,
+    cargo_args: Vec<String>,
+) -> Result<Builder<'_>> {
+    let expansion =
+        BindingExpansion::resolve_for_surface(config, &cargo_args, BindingMetadataSurface::Wasm32)?;
     Ok(Builder::new(
         config,
         build_options(release, BuildSelection::Expanded(Box::new(expansion))),

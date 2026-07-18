@@ -979,7 +979,11 @@ pub fn class(
         )?;
         let (external_decl, wrapper) = render_exported_call(&shape, js_module, None, context)?;
         externals.push(external_decl);
-        let ctor_name = if dart_name == "new" {
+        // Compare the raw (unescaped) name -- `dart_name` has already been
+        // keyword-escaped to `new_` by this point, so it would never match
+        // "new" here, always producing an unwanted `ClassName.new_(...)`
+        // named constructor even for a plain Rust `fn new(...) -> Self`.
+        let ctor_name = if js_name(initializer.name()) == "new" {
             name.clone()
         } else {
             format!("{name}.{dart_name}")

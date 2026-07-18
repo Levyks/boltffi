@@ -689,9 +689,10 @@ pub fn callback(
         .iter()
         .map(|slot| {
             format!(
-                "    _vtable.ref.{} = $$ffi.NativeCallable.listener(_I${name}.{}).nativeFunction;",
+                "    _vtable.ref.{} = $$ffi.Pointer.fromFunction(_I${name}.{}{});",
                 slot.name().as_str(),
-                slot.name().as_str()
+                slot.name().as_str(),
+                callback_exceptional_return(slot.returns())
             )
         })
         .collect::<Vec<_>>()
