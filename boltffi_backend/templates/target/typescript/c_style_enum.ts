@@ -10,8 +10,10 @@ export const {{ name }} = {
 {% endfor %}} as const;
 {% if error %}
 export class {{ name }}Exception extends Error {
-  constructor(public readonly code: {{ name }}) {
+  readonly code: {{ name }};
+  constructor(code: {{ name }}) {
     super("{{ name }}");
+    this.code = code;
     this.name = "{{ name }}Exception";
   }
 }

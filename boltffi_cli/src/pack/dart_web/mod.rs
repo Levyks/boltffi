@@ -2,11 +2,9 @@
 //! browser can actually load: builds the wasm binary, generates the
 //! `target::typescript` module (which already has full, tested marshalling
 //! for classes/callbacks/async/records -- everything `target::dart_web`'s
-//! `@JS()` bindings assume), and converts it to plain JS in pure Rust.
-//!
-//! This step has zero external toolchain dependencies beyond Rust and Cargo.
+//! `@JS()` bindings assume), and converts it to plain JS.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use boltffi_bindgen::target::Target;
 
@@ -123,6 +121,10 @@ fn write_runtime(runtime_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn locate_node() -> Option<PathBuf> {
+    which::which("node").ok()
+}
+
 fn strip_file(source_file: &Path, out_file: &Path) -> Result<()> {
     let source =
         std::fs::read_to_string(source_file).map_err(|source_err| CliError::CommandFailed {
@@ -130,11 +132,50 @@ fn strip_file(source_file: &Path, out_file: &Path) -> Result<()> {
             status: None,
         })?;
     let source = source.replace("\"@boltffi/runtime\"", "\"./boltffi_runtime/index.js\"");
-    let stripped = strip_typescript_in_rust(&source);
+
+    let stripped = if let Some(node) = locate_node() {
+        match strip_typescript_with_node(&node, &source) {
+            Ok(js) => js,
+            Err(_) => strip_typescript_in_rust(&source),
+        }
+    } else {
+        strip_typescript_in_rust(&source)
+    };
+
     std::fs::write(out_file, stripped).map_err(|source| CliError::WriteFailed {
         path: out_file.to_path_buf(),
         source,
     })
+}
+
+fn strip_typescript_with_node(node: &Path, source: &str) -> std::result::Result<String, String> {
+    use std::io::Write;
+    let script = r#"
+const fs = require('fs');
+const { stripTypeScriptTypes } = require('node:module');
+const code = fs.readFileSync(0, 'utf8');
+process.stdout.write(stripTypeScriptTypes(code));
+"#;
+
+    let mut child = std::process::Command::new(node)
+        .arg("-e")
+        .arg(script)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(source.as_bytes());
+    }
+
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
 }
 
 fn strip_typescript_in_rust(source: &str) -> String {
@@ -215,6 +256,16 @@ fn strip_ts_annotations(line: &str) -> String {
         }
     }
 
+    if result.trim().starts_with("let ") || result.trim().starts_with("const ") || result.trim().starts_with("var ") {
+        if let Some(colon) = result.find(':') {
+            if let Some(eq) = result[colon..].find('=') {
+                result.replace_range(colon..colon + eq, " ");
+            } else if let Some(semi) = result[colon..].find(';') {
+                result.replace_range(colon..colon + semi, "");
+            }
+        }
+    }
+
     result = result.replace(": number", "");
     result = result.replace(": string", "");
     result = result.replace(": boolean", "");
@@ -223,6 +274,8 @@ fn strip_ts_annotations(line: &str) -> String {
     result = result.replace(": Uint8Array", "");
     result = result.replace(": ArrayBuffer", "");
     result = result.replace(": Error", "");
+    result = result.replace(": unknown[]", "");
+    result = result.replace(": BufferSource | Response", "");
 
     if let Some(pos) = result.find("): ") {
         if let Some(brace) = result[pos..].find('{') {

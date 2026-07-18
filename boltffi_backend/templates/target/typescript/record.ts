@@ -5,8 +5,10 @@ export interface {{ name }} {
 {% endfor %}}
 {% if error %}
 export class {{ name }}Exception extends Error {
-  constructor(public readonly value: {{ name }}) {
+  readonly value: {{ name }};
+  constructor(value: {{ name }}) {
     super("{{ name }}");
+    this.value = value;
     this.name = "{{ name }}Exception";
   }
 }
