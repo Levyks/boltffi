@@ -28,7 +28,11 @@ pub struct DartWebHost {
     package: String,
     /// Global property path the companion JS loader is expected to publish
     /// the compiled wasm/TS module's exports under (see runtime.dart.txt's
-    /// module docs and the generated loader snippet).
+    /// module docs and the generated loader snippet). The loader imports
+    /// the ACTUAL target::typescript-generated module (type-stripped via
+    /// Node's `stripTypeScriptTypes`, not hand-marshalled) -- see
+    /// `boltffi_cli::pack::dart_web`, which produces that module and the
+    /// vendored `@boltffi/runtime` alongside this package's `lib/src/web/`.
     js_module: String,
 }
 
@@ -175,43 +179,35 @@ impl host::HostBackend for DartWebHost {
             "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\ndependencies:\n  async: ^2.13.0\n",
             self.package
         );
+        // The compiled module (`{module}.js`, produced by `boltffi pack
+        // dart-web` via target::typescript + Node's `stripTypeScriptTypes`)
+        // is expected to sit next to this loader, exporting a `default`
+        // async `init(source)` plus one plain export per declaration --
+        // exactly what `render.rs`'s `@JS('{js_module}.*')` bindings
+        // already assume. `{module}_bg.wasm` is the wasm binary copied
+        // alongside it by the same pack step.
         let loader = format!(
-            r#"// Self-contained ES module loader for Dart Web / Flutter WASM targets.
-// Call `initBoltFFI(wasmUrlOrBytes)` before or during Dart app initialization
-// so its `@JS('{js_module}.*')` bindings resolve.
+            r#"// ES module loader for Dart Web / Flutter WASM targets. Call
+// `initBoltFFI(wasmUrlOrBytes)` before or during Dart app initialization so
+// its `@JS('{js_module}.*')` bindings resolve. `{module}.js` (and the
+// vendored `boltffi_runtime/` it imports) are produced by `boltffi pack
+// dart-web`, not by `boltffi generate` -- run that first.
+import * as __boltffiBindings from './{module}.js';
 
 export async function initBoltFFI(wasmSource) {{
-  let bytes;
-  if (typeof wasmSource === 'string' || wasmSource instanceof URL) {{
-    const res = await fetch(wasmSource);
-    bytes = await res.arrayBuffer();
-  }} else if (wasmSource instanceof ArrayBuffer || ArrayBuffer.isView(wasmSource)) {{
-    bytes = wasmSource;
-  }} else {{
-    throw new Error('Invalid WASM source provided to initBoltFFI');
-  }}
-
-  const importObject = {{
-    env: {{
-      __boltffi_wake: (handle) => {{
-        if (globalThis.__boltffi_wake_handler) {{
-          globalThis.__boltffi_wake_handler(handle);
-        }}
-      }},
-    }},
-  }};
-
-  const {{ instance }} = await WebAssembly.instantiate(bytes, importObject);
-  globalThis.{js_module} = instance.exports;
-  return instance.exports;
-}}
-
-export function initBoltFFISync(wasmInstance) {{
-  globalThis.{js_module} = wasmInstance.exports || wasmInstance;
+  const source = wasmSource ?? new URL('./{module}_bg.wasm', import.meta.url);
+  // The compiled module's `init()` (-> `instantiateBoltFFI`) only accepts a
+  // `Response` or a `BufferSource`, not a bare URL/string -- fetch it here
+  // so callers can still pass either a URL/path or pre-fetched bytes.
+  const resolved =
+    typeof source === 'string' || source instanceof URL ? await fetch(source) : source;
+  await __boltffiBindings.default(resolved);
+  globalThis.{js_module} = __boltffiBindings;
   return globalThis.{js_module};
 }}
 "#,
             js_module = self.js_module,
+            module = self.package,
         );
         Ok(GeneratedOutput::new(
             vec![

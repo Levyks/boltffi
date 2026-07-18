@@ -15,9 +15,19 @@ use boltffi_binding::{
     IncomingParam, ParamPlan, Primitive, RecordDecl, ReturnPlan, TypeRef, Wasm32,
 };
 
-use crate::core::{Emitted, Error, RenderContext, Result};
+use crate::core::{Emitted, Error, RenderContext, Result, name_case};
 
 use super::name_style;
+
+/// The JS-facing name for a declaration, as `target::typescript` spells it
+/// -- plain camelCase with no keyword escaping. `name_style::lower_camel`
+/// (the Dart-facing name) escapes Dart keywords (`new` -> `new_`, `get` ->
+/// `get_`, ...); using that escaped spelling to address the compiled JS
+/// module's properties is a name mismatch (JS doesn't reserve `new`/`get`
+/// as property names) that leaves those members silently unreachable.
+fn js_name(name: &boltffi_binding::CanonicalName) -> String {
+    name_case::lower_camel(name)
+}
 
 /// Public Dart type name for a general `TypeRef`.
 pub fn dart_type(ty: &TypeRef, context: &RenderContext<Wasm32>) -> Result<String> {
@@ -710,7 +720,7 @@ fn render_adapter_method(
 
     let success_expr = |value_expr: String| -> Result<String> {
         match &method.success_ty {
-            Some(TypeRef::Primitive(_) | TypeRef::Builtin(_)) | None => Ok(value_expr),
+            None => Ok(value_expr),
             Some(ty) => Ok(to_js(&value_expr, ty, context)?),
         }
     };
@@ -726,11 +736,21 @@ fn render_adapter_method(
             "final __boltffiResult = {invoke};\n    return switch (__boltffiResult) {{\n      BoltFFIResult$Ok(value: final __boltffiValue) => $$wireOk({ok_wrapped}),\n      BoltFFIResult$Err(value: final __boltffiError) => $$wireErr({err_wrapped}),\n    }};"
         )
     } else {
+        // Non-fallible methods: the compiled TS module's callback glue
+        // (`callback.ts`'s `method.fallible == None` branch) reads this
+        // return value directly, with no `matchWireResult`/wireOk unwrapping
+        // -- only a `Result`-returning method's completion path expects the
+        // `{tag: 'ok'|'err', ...}` wire shape (see the `error_ty.is_some()`
+        // branch above). Wrapping here regardless of fallibility (as this
+        // used to) fed the compiled module a wrapped object where it
+        // expected a bare value, corrupting every non-fallible callback
+        // method's result (e.g. a `String` return decoding as
+        // "[object Object]").
         match &method.success_ty {
-            None => format!("{invoke};\n    return $$wireOk(null);"),
+            None => format!("{invoke};\n    return null;"),
             Some(_) => {
                 let wrapped = success_expr(format!("({invoke})"))?;
-                format!("return $$wireOk({wrapped});")
+                format!("return {wrapped};")
             }
         }
     };
@@ -927,7 +947,7 @@ pub fn function(
     context: &RenderContext<Wasm32>,
 ) -> Result<Emitted> {
     let dart_name = name_style::lower_camel(decl.name());
-    let shape = exported_callable_shape(dart_name.clone(), dart_name, decl.callable(), context)?;
+    let shape = exported_callable_shape(dart_name, js_name(decl.name()), decl.callable(), context)?;
     let (external_decl, wrapper) = render_exported_call(&shape, js_module, None, context)?;
     Ok(Emitted::primary(format!("{external_decl}\n{wrapper}\n\n")))
 }
@@ -942,17 +962,13 @@ pub fn class(
     let mut initializers = Vec::new();
     for initializer in decl.initializers() {
         let dart_name = name_style::lower_camel(initializer.name());
-        let js_name = format!(
-            "{}.{}",
-            name,
-            if dart_name == "new" {
-                "new".to_owned()
-            } else {
-                dart_name.clone()
-            }
-        );
-        let shape =
-            exported_callable_shape(dart_name.clone(), js_name, initializer.callable(), context)?;
+        let member_js_name = format!("{}.{}", name, js_name(initializer.name()));
+        let shape = exported_callable_shape(
+            dart_name.clone(),
+            member_js_name,
+            initializer.callable(),
+            context,
+        )?;
         let (external_decl, wrapper) = render_exported_call(&shape, js_module, None, context)?;
         externals.push(external_decl);
         let ctor_name = if dart_name == "new" {
@@ -977,13 +993,13 @@ pub fn class(
     let mut methods = Vec::new();
     for method in decl.methods() {
         let dart_name = name_style::lower_camel(method.name());
-        let js_name = format!("{}.{}", name, dart_name);
+        let member_js_name = format!("{}.{}", name, js_name(method.name()));
         let static_prefix = if method.callable().receiver().is_none() {
             "static "
         } else {
             ""
         };
-        let shape = exported_callable_shape(dart_name, js_name, method.callable(), context)?;
+        let shape = exported_callable_shape(dart_name, member_js_name, method.callable(), context)?;
         let receiver = method.callable().receiver().map(|_| "this._js");
         let (external_decl, wrapper) = render_exported_call(&shape, js_module, receiver, context)?;
         externals.push(external_decl);

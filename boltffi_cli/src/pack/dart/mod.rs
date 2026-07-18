@@ -134,6 +134,8 @@ pub(crate) fn pack_dart(
 
     step.finish_success();
 
+    super::dart_web::pack_dart_web_assets(config, &options, reporter)?;
+
     reporter.finish();
     Ok(())
 }

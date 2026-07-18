@@ -161,7 +161,7 @@ pub(crate) fn pack_wasm(
     Ok(())
 }
 
-fn build_wasm_target(
+pub(crate) fn build_wasm_target(
     config: &Config,
     profile: WasmProfile,
     build_cargo_args: &[String],
@@ -194,12 +194,12 @@ fn build_wasm_target(
     Err(PackError::BuildFailed { targets: failed }.into())
 }
 
-struct WasmArtifactPath {
+pub(crate) struct WasmArtifactPath {
     path: PathBuf,
 }
 
 impl WasmArtifactPath {
-    fn resolve(config: &Config, profile: WasmProfile) -> Result<Self> {
+    pub(crate) fn resolve(config: &Config, profile: WasmProfile) -> Result<Self> {
         Ok(Self::in_target_directory(
             config,
             profile,
@@ -224,7 +224,7 @@ impl WasmArtifactPath {
         Self { path }
     }
 
-    fn into_path(self) -> PathBuf {
+    pub(crate) fn into_path(self) -> PathBuf {
         self.path
     }
 }
