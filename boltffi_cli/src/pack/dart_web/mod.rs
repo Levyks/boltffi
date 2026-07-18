@@ -181,7 +181,7 @@ process.stdout.write(stripTypeScriptTypes(code));
 fn strip_typescript_in_rust(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut in_interface = false;
-    let mut brace_depth = 0;
+    let mut brace_depth: usize = 0;
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -194,20 +194,20 @@ fn strip_typescript_in_rust(source: &str) -> String {
         }
         if trimmed.starts_with("export interface ") || trimmed.starts_with("interface ") {
             in_interface = true;
-            brace_depth += line.chars().filter(|&c| c == '{').count();
-            brace_depth -= line.chars().filter(|&c| c == '}').count();
-            if brace_depth <= 0 {
+            let adds = line.chars().filter(|&c| c == '{').count();
+            let subs = line.chars().filter(|&c| c == '}').count();
+            brace_depth = brace_depth.saturating_add(adds).saturating_sub(subs);
+            if brace_depth == 0 {
                 in_interface = false;
-                brace_depth = 0;
             }
             continue;
         }
         if in_interface {
-            brace_depth += line.chars().filter(|&c| c == '{').count();
-            brace_depth -= line.chars().filter(|&c| c == '}').count();
-            if brace_depth <= 0 {
+            let adds = line.chars().filter(|&c| c == '{').count();
+            let subs = line.chars().filter(|&c| c == '}').count();
+            brace_depth = brace_depth.saturating_add(adds).saturating_sub(subs);
+            if brace_depth == 0 {
                 in_interface = false;
-                brace_depth = 0;
             }
             continue;
         }
@@ -256,8 +256,12 @@ fn strip_ts_annotations(line: &str) -> String {
         }
     }
 
-    if result.trim().starts_with("let ") || result.trim().starts_with("const ") || result.trim().starts_with("var ") {
-        if let Some(colon) = result.find(':') {
+    let is_decl = result.trim().starts_with("let ")
+        || result.trim().starts_with("const ")
+        || result.trim().starts_with("var ");
+    if is_decl {
+        let colon_pos = result.find(':');
+        if let Some(colon) = colon_pos {
             if let Some(eq) = result[colon..].find('=') {
                 result.replace_range(colon..colon + eq, " ");
             } else if let Some(semi) = result[colon..].find(';') {
