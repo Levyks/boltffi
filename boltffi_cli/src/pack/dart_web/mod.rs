@@ -2,9 +2,11 @@
 //! browser can actually load: builds the wasm binary, generates the
 //! `target::typescript` module (which already has full, tested marshalling
 //! for classes/callbacks/async/records -- everything `target::dart_web`'s
-//! `@JS()` bindings assume), and converts it to plain JS.
+//! `@JS()` bindings assume), and compiles it to plain JS via the same
+//! `tsc`-based pipeline `pack wasm` already uses (see
+//! `pack::wasm::transpile_typescript_bundle`) -- no separate toolchain.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use boltffi_bindgen::target::Target;
 
@@ -13,7 +15,7 @@ use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_wi
 use crate::commands::pack::PackDartOptions;
 use crate::config::{Config, WasmProfile};
 use crate::pack::resolve_build_cargo_args;
-use crate::pack::wasm::{WasmArtifactPath, build_wasm_target};
+use crate::pack::wasm::{WasmArtifactPath, build_wasm_target, transpile_typescript_bundle};
 use crate::reporter::Reporter;
 
 /// Pre-stripped runtime JS files embedded directly in the binary.
@@ -109,12 +111,15 @@ pub(crate) fn pack_dart_web_assets(
     let runtime_dir = web_dir.join("boltffi_runtime");
     let step = reporter.step("Packaging JavaScript runtime");
     write_runtime(&runtime_dir)?;
+    step.finish_success();
+
     let generated_ts = typescript_output.join(format!("{module_name}.ts"));
     if !generated_ts.exists() {
         return Err(CliError::FileNotFound(generated_ts));
     }
-    let module_js = web_dir.join(format!("{module_name}.js"));
-    strip_file(&generated_ts, &module_js)?;
+    let step = reporter.step("Compiling TypeScript bindings");
+    rewrite_runtime_import(&generated_ts)?;
+    transpile_typescript_bundle(config, &generated_ts, &web_dir)?;
     step.finish_success();
 
     let step = reporter.step("Copying WASM binary");
@@ -145,119 +150,20 @@ fn write_runtime(runtime_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn locate_node() -> Option<PathBuf> {
-    which::which("node").ok()
-}
-
-fn strip_file(source_file: &Path, out_file: &Path) -> Result<()> {
+/// `transpile_typescript_bundle` compiles as-is; it doesn't rewrite
+/// imports. The compiled module's `@boltffi/runtime` import needs to
+/// resolve to our vendored, locally-written copy via a plain relative ESM
+/// specifier instead -- real npm resolution isn't available in a browser
+/// (or desired here, per `write_runtime`'s pre-baked runtime files).
+fn rewrite_runtime_import(generated_ts: &Path) -> Result<()> {
     let source =
-        std::fs::read_to_string(source_file).map_err(|source_err| CliError::CommandFailed {
-            command: format!("reading {}: {}", source_file.display(), source_err),
+        std::fs::read_to_string(generated_ts).map_err(|source| CliError::CommandFailed {
+            command: format!("reading {}: {}", generated_ts.display(), source),
             status: None,
         })?;
-    let source = source.replace("\"@boltffi/runtime\"", "\"./boltffi_runtime/index.js\"");
-
-    let stripped = if let Some(node) = locate_node() {
-        match strip_with_node(&node, &source) {
-            Ok(js) => js,
-            Err(_) => strip_with_tsc(source_file)?,
-        }
-    } else {
-        strip_with_tsc(source_file)?
-    };
-
-    std::fs::write(out_file, stripped).map_err(|source| CliError::WriteFailed {
-        path: out_file.to_path_buf(),
+    let rewritten = source.replace("\"@boltffi/runtime\"", "\"./boltffi_runtime/index.js\"");
+    std::fs::write(generated_ts, rewritten).map_err(|source| CliError::WriteFailed {
+        path: generated_ts.to_path_buf(),
         source,
-    })
-}
-
-fn strip_with_node(node: &Path, source: &str) -> std::result::Result<String, String> {
-    use std::io::Write;
-    let script = r#"
-const fs = require('fs');
-const { stripTypeScriptTypes } = require('node:module');
-const code = fs.readFileSync(0, 'utf8');
-process.stdout.write(stripTypeScriptTypes(code));
-"#;
-
-    let mut child = std::process::Command::new(node)
-        .arg("--no-warnings")
-        .arg("-e")
-        .arg(script)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(source.as_bytes());
-    }
-
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    if output.status.success() {
-        let js = String::from_utf8_lossy(&output.stdout).to_string();
-        if !js.trim().is_empty() {
-            return Ok(js);
-        }
-    }
-    Err(String::from_utf8_lossy(&output.stderr).to_string())
-}
-
-fn strip_with_tsc(source_file: &Path) -> Result<String> {
-    let temp_ts = source_file.with_extension("tmp.ts");
-    let temp_js = source_file.with_extension("tmp.js");
-    let source = std::fs::read_to_string(source_file).unwrap_or_default();
-    let source = source.replace("\"@boltffi/runtime\"", "\"./boltffi_runtime/index.js\"");
-    std::fs::write(&temp_ts, &source).ok();
-
-    let out_dir = temp_ts.parent().unwrap_or_else(|| Path::new("."));
-
-    let mut cmd = if cfg!(target_os = "windows") {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg("npx");
-        c
-    } else {
-        std::process::Command::new("npx")
-    };
-
-    let output = cmd
-        .arg("-y")
-        .arg("-p")
-        .arg("typescript")
-        .arg("tsc")
-        .arg(&temp_ts)
-        .arg("--target")
-        .arg("es2022")
-        .arg("--module")
-        .arg("esnext")
-        .arg("--noEmitOnError")
-        .arg("false")
-        .arg("--noImplicitAny")
-        .arg("false")
-        .arg("--skipLibCheck")
-        .arg("--outDir")
-        .arg(out_dir)
-        .output()
-        .map_err(|e| CliError::CommandFailed {
-            command: format!("npx tsc: {}", e),
-            status: None,
-        })?;
-
-    let _ = std::fs::remove_file(&temp_ts);
-
-    if temp_js.exists() {
-        let content = std::fs::read_to_string(&temp_js).unwrap_or_default();
-        let _ = std::fs::remove_file(&temp_js);
-        return Ok(content);
-    }
-
-    Err(CliError::CommandFailed {
-        command: format!(
-            "npx tsc failed to compile TS: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ),
-        status: output.status.code(),
     })
 }

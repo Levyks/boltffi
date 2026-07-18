@@ -287,7 +287,7 @@ fn optimize_wasm_binary(config: &Config, wasm_path: &Path) -> Result<()> {
     })
 }
 
-fn transpile_typescript_bundle(
+pub(crate) fn transpile_typescript_bundle(
     config: &Config,
     source_file: &Path,
     output_dir: &Path,
