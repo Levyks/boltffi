@@ -37,31 +37,55 @@ pub(crate) fn pack_dart_web_assets(
     if !config.is_wasm_enabled() {
         return Ok(());
     }
-    if !config.should_process(Target::DartWeb, options.experimental) {
+    let dart_enabled = config.should_process(Target::Dart, options.experimental);
+    let dart_web_enabled = config.should_process(Target::DartWeb, options.experimental);
+    if !dart_enabled && !dart_web_enabled {
         return Ok(());
     }
 
     reporter.section("🕸️", "Packing Dart Web (wasm + JS)");
 
-    let requested_profile = if options.execution.release {
+    let requested_wasm_profile = if options.execution.release {
         WasmProfile::Release
     } else {
         config.wasm_profile()
     };
     let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
+    let build_profile = crate::build::resolve_build_profile(
+        matches!(requested_wasm_profile, WasmProfile::Release),
+        &build_cargo_args,
+    );
+
+    let wasm_artifact_profile = match build_profile {
+        crate::build::CargoBuildProfile::Debug => WasmProfile::Debug,
+        crate::build::CargoBuildProfile::Release => WasmProfile::Release,
+        crate::build::CargoBuildProfile::Named(_) if config.wasm_has_artifact_path_override() => {
+            requested_wasm_profile
+        }
+        crate::build::CargoBuildProfile::Named(profile_name) => {
+            return Err(CliError::CommandFailed {
+                command: format!(
+                    "custom cargo profile '{}' for wasm pack requires targets.wasm.artifact_path",
+                    profile_name
+                ),
+                status: None,
+            });
+        }
+    };
 
     if !options.execution.no_build {
         let step = reporter.step("Building WASM target");
-        build_wasm_target(config, requested_profile, &build_cargo_args, &step)?;
+        build_wasm_target(config, requested_wasm_profile, &build_cargo_args, &step)?;
         step.finish_success();
     }
 
-    let wasm_artifact_path = WasmArtifactPath::resolve(config, requested_profile)?.into_path();
+    let wasm_artifact_path = WasmArtifactPath::resolve(config, wasm_artifact_profile)?.into_path();
     if !wasm_artifact_path.exists() {
         return Err(CliError::FileNotFound(wasm_artifact_path));
     }
 
     let package_name = config.dart_package_name();
+    let module_name = config.wasm_typescript_module_name();
     let web_dir = config.dart_output().join(&package_name).join("lib/src/web");
     std::fs::create_dir_all(&web_dir).map_err(|source| CliError::CreateDirectoryFailed {
         path: web_dir.clone(),
@@ -85,16 +109,16 @@ pub(crate) fn pack_dart_web_assets(
     let runtime_dir = web_dir.join("boltffi_runtime");
     let step = reporter.step("Packaging JavaScript runtime");
     write_runtime(&runtime_dir)?;
-    let generated_ts = typescript_output.join(format!("{package_name}.ts"));
+    let generated_ts = typescript_output.join(format!("{module_name}.ts"));
     if !generated_ts.exists() {
         return Err(CliError::FileNotFound(generated_ts));
     }
-    let module_js = web_dir.join(format!("{package_name}.js"));
+    let module_js = web_dir.join(format!("{module_name}.js"));
     strip_file(&generated_ts, &module_js)?;
     step.finish_success();
 
     let step = reporter.step("Copying WASM binary");
-    let packaged_wasm = web_dir.join(format!("{package_name}_bg.wasm"));
+    let packaged_wasm = web_dir.join(format!("{module_name}_bg.wasm"));
     std::fs::copy(&wasm_artifact_path, &packaged_wasm).map_err(|source| CliError::CopyFailed {
         from: wasm_artifact_path,
         to: packaged_wasm,
@@ -268,6 +292,29 @@ fn strip_ts_annotations(line: &str) -> String {
                 result.replace_range(colon..colon + semi, "");
             }
         }
+    }
+
+    // Remove `implements ...` in class declarations
+    if let Some(imp_pos) = result.find(" implements ") {
+        let brace_pos = result[imp_pos..].find('{');
+        if let Some(brace) = brace_pos {
+            result.replace_range(imp_pos..imp_pos + brace, " ");
+        }
+    }
+
+    // Remove generic type arguments on instantiations like `new CallbackRegistry<...>(...)`
+    while let Some(new_pos) = result.find("new ") {
+        if let Some(open_angle) = result[new_pos..].find('<') {
+            let rest = &result[new_pos + open_angle..];
+            if let Some(close_angle) = rest.find(">(") {
+                result.replace_range(
+                    new_pos + open_angle..new_pos + open_angle + close_angle + 1,
+                    "",
+                );
+                continue;
+            }
+        }
+        break;
     }
 
     result = result.replace(": number", "");

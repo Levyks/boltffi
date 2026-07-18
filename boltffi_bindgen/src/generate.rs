@@ -498,22 +498,15 @@ impl Generation {
             .map_err(GenerationError::Render)?;
         let native_output = attach_dart_coverage_report(native_output);
 
-        match self.bindings_for_surface::<Wasm32>(BindingMetadataSurface::Wasm32) {
-            Ok(wasm_bindings) => match self.render_dart_web_bindings(&wasm_bindings) {
-                Ok(web_output) => {
-                    return Ok(assemble_unified_dart_package(
-                        &package,
-                        native_output,
-                        web_output,
-                    ));
-                }
-                Err(err) => {
-                    eprintln!("[boltffi] Warning: failed to render dart_web bindings: {err}");
-                }
-            },
-            Err(err) => {
-                eprintln!("[boltffi] Warning: bindings_for_surface Wasm32 failed: {err}");
-            }
+        if let Ok(wasm_bindings) =
+            self.bindings_for_surface::<Wasm32>(BindingMetadataSurface::Wasm32)
+        {
+            let web_output = self.render_dart_web_bindings(&wasm_bindings)?;
+            return Ok(assemble_unified_dart_package(
+                &package,
+                native_output,
+                web_output,
+            ));
         }
 
         Ok(native_output)

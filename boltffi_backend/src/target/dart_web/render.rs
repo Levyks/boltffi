@@ -768,6 +768,7 @@ fn render_adapter_method(
     }
 }
 
+#[derive(Debug, Clone)]
 struct ExportedShape {
     dart_name: String,
     js_name: String,
@@ -775,12 +776,14 @@ struct ExportedShape {
     success_ty: Option<TypeRef>,
     error_ty: Option<TypeRef>,
     asynchronous: bool,
+    is_constructor: bool,
 }
 
 fn exported_callable_shape(
     dart_name: String,
     js_name: String,
     callable: &ExportedCallable<Wasm32>,
+    is_constructor: bool,
     context: &RenderContext<Wasm32>,
 ) -> Result<ExportedShape> {
     let params = callable
@@ -808,6 +811,7 @@ fn exported_callable_shape(
         success_ty,
         error_ty,
         asynchronous,
+        is_constructor,
     })
 }
 
@@ -828,12 +832,6 @@ fn render_exported_call(
         .collect::<Result<Vec<_>>>()?
         .join(", ");
 
-    // Static functions/methods/constructors are reachable by module-qualified
-    // path via a plain `@JS()` external declaration. Instance methods are
-    // real JS object methods, not free functions taking the receiver as an
-    // extra argument, so those go through dynamic property dispatch instead
-    // (`dart:js_interop_unsafe`'s `callMethod`) -- avoids needing a
-    // hand-written `extension type` per exported class.
     let (external_decl, call) = match receiver {
         None => {
             let external_name = format!("_js_{}", shape.js_name.replace('.', "_"));
@@ -905,23 +903,38 @@ fn render_exported_call(
         format!(
             "return $$asCancelable($$awaitFallible({call}, (__boltffiValue) => {decode}, {decode_error}));"
         )
-    } else if shape.error_ty.is_some() {
-        // The compiled TS module's fallible sync functions/methods don't
-        // return a `{tag, value}` wrapper -- they return the plain success
-        // value directly and *throw* a real typed `XxxException` (with a
-        // `.value` holding the decoded error payload) on failure, matching
-        // ordinary JS/TS exception idioms (see
-        // `target::typescript::render::function`'s `Failure::render`). Any
-        // wire-tag matching here would silently misread every successful
-        // call (there is no tag to find).
+    } else if shape.is_constructor && shape.error_ty.is_some() {
         let decode = decode_success("__boltffiValue")?;
-        let decode_error = from_js(
-            "(__boltffiError.getProperty('value'.toJS) as $$js.JSAny)",
-            shape.error_ty.as_ref().expect("checked above"),
-            context,
-        )?;
         format!(
-            "try {{\n      final __boltffiValue = {call};\n      return {decode};\n    }} catch (__boltffiError) {{\n      if (__boltffiError is $$js.JSObject && __boltffiError.hasProperty('value'.toJS).toDart) {{\n        throw {decode_error};\n      }}\n      rethrow;\n    }}"
+            "final __boltffiValue = {call};\n      if (__boltffiValue == null) {{\n        throw StateError('{} initialization failed');\n      }}\n      return {decode};",
+            shape.dart_name
+        )
+    } else if let Some(err_ty) = &shape.error_ty {
+        let (err_prop, decode_error) = match err_ty {
+            TypeRef::Enum(_) => (
+                "code",
+                from_js(
+                    "(__boltffiError.getProperty('code'.toJS) as $$js.JSAny)",
+                    err_ty,
+                    context,
+                )?,
+            ),
+            TypeRef::String => (
+                "message",
+                "(__boltffiError.getProperty('message'.toJS) as $$js.JSString).toDart".to_owned(),
+            ),
+            _ => (
+                "value",
+                from_js(
+                    "(__boltffiError.getProperty('value'.toJS) as $$js.JSAny)",
+                    err_ty,
+                    context,
+                )?,
+            ),
+        };
+        let decode = decode_success("__boltffiValue")?;
+        format!(
+            "try {{\n      final __boltffiValue = {call};\n      return {decode};\n    }} catch (__boltffiError) {{\n      if (__boltffiError is $$js.JSObject && __boltffiError.hasProperty('{err_prop}'.toJS).toDart) {{\n        throw {decode_error};\n      }}\n      rethrow;\n    }}"
         )
     } else {
         match &shape.success_ty {
@@ -955,7 +968,13 @@ pub fn function(
     context: &RenderContext<Wasm32>,
 ) -> Result<Emitted> {
     let dart_name = name_style::lower_camel(decl.name());
-    let shape = exported_callable_shape(dart_name, js_name(decl.name()), decl.callable(), context)?;
+    let shape = exported_callable_shape(
+        dart_name,
+        js_name(decl.name()),
+        decl.callable(),
+        false,
+        context,
+    )?;
     let (external_decl, wrapper) = render_exported_call(&shape, js_module, None, context)?;
     Ok(Emitted::primary(format!("{external_decl}\n{wrapper}\n\n")))
 }
@@ -975,21 +994,16 @@ pub fn class(
             dart_name.clone(),
             member_js_name,
             initializer.callable(),
+            true,
             context,
         )?;
         let (external_decl, wrapper) = render_exported_call(&shape, js_module, None, context)?;
         externals.push(external_decl);
-        // Compare the raw (unescaped) name -- `dart_name` has already been
-        // keyword-escaped to `new_` by this point, so it would never match
-        // "new" here, always producing an unwanted `ClassName.new_(...)`
-        // named constructor even for a plain Rust `fn new(...) -> Self`.
         let ctor_name = if js_name(initializer.name()) == "new" {
             name.clone()
         } else {
             format!("{name}.{dart_name}")
         };
-        // `render_exported_call` renders a plain function; splice it into a
-        // factory constructor by reusing its body/signature textually.
         let body_start = wrapper
             .find("{{")
             .unwrap_or_else(|| wrapper.find('{').unwrap_or(0));
@@ -1011,14 +1025,15 @@ pub fn class(
         } else {
             ""
         };
-        let shape = exported_callable_shape(dart_name, member_js_name, method.callable(), context)?;
+        let shape =
+            exported_callable_shape(dart_name, member_js_name, method.callable(), false, context)?;
         let receiver = method.callable().receiver().map(|_| "this._js");
         let (external_decl, wrapper) = render_exported_call(&shape, js_module, receiver, context)?;
         externals.push(external_decl);
         methods.push(format!("  {static_prefix}{wrapper}"));
     }
     Ok(Emitted::primary(format!(
-        "{}\n\nfinal class {name} {{\n  final $$js.JSObject _js;\n\n  {name}._fromJS(this._js);\n\n  $$js.JSObject _toJS() => _js;\n\n{}\n\n{}\n}}\n\n",
+        "{}\n\nfinal class {name} {{\n  final $$js.JSObject _js;\n\n  {name}._fromJS(this._js);\n\n  $$js.JSObject _toJS() => _js;\n\n  void free() {{\n    if (_js.hasProperty('free'.toJS).toDart) {{\n      (_js.getProperty('free'.toJS) as $$js.JSFunction).callAsFunction(_js);\n    }}\n  }}\n\n  void dispose() => free();\n\n{}\n\n{}\n}}\n\n",
         externals.join("\n"),
         initializers.join("\n\n"),
         methods.join("\n\n")
