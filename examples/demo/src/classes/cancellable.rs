@@ -29,6 +29,7 @@ impl Tick {
             waker: Mutex::new(None),
         });
         let background = Arc::clone(&state);
+        #[cfg(not(target_arch = "wasm32"))]
         thread::spawn(move || {
             thread::sleep(duration);
             background.ready.store(true, Ordering::Release);
@@ -36,6 +37,13 @@ impl Tick {
                 waker.wake();
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        {
+            background.ready.store(true, Ordering::Release);
+            if let Some(waker) = background.waker.lock().unwrap().take() {
+                waker.wake();
+            }
+        }
         Self { state }
     }
 }

@@ -10,6 +10,7 @@ const suiteModules = [
   "./tests/callbacks/closures.test.mjs",
   "./tests/callbacks/sync_traits.test.mjs",
   "./tests/classes/async_methods.test.mjs",
+  "./tests/classes/cancellable.test.mjs",
   "./tests/classes/constructor_matrix.test.mjs",
   "./tests/classes/constructors.test.mjs",
   "./tests/classes/methods.test.mjs",

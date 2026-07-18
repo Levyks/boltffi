@@ -294,7 +294,7 @@ fn transpile_typescript_bundle(
 ) -> Result<()> {
     let mut command = if cfg!(windows) {
         let mut command = Command::new("cmd");
-        command.args(["/C", "npx", "tsc"]);
+        command.args(["/C", "npx", "-p", "typescript", "tsc"]);
         command
     } else {
         Command::new("tsc")

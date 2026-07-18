@@ -44,6 +44,9 @@ output = "../platforms/wasm/dist"
 package_name = "@boltffi/demo"
 targets = ["bundler", "web", "nodejs"]
 
+[targets.wasm.optimize]
+on_missing = "warn"
+
 [targets.java]
 min_version = 16
 package = "com.boltffi.demo"
