@@ -294,6 +294,46 @@ fn strip_ts_annotations(line: &str) -> String {
         }
     }
 
+    let trimmed = result.trim();
+    let is_statement = trimmed.starts_with("if ")
+        || trimmed.starts_with("for ")
+        || trimmed.starts_with("while ")
+        || trimmed.starts_with("switch ");
+    if !is_statement {
+        let colon_idx = result.find(':');
+        if let Some(colon) = colon_idx {
+            let semi_idx = result[colon..].find(';');
+            let is_valid_field = !result[..colon].contains('(') && !result[..colon].contains('=');
+            let maybe_semi = if is_valid_field { semi_idx } else { None };
+            if let Some(semi) = maybe_semi {
+                result.replace_range(colon..colon + semi, "");
+            }
+        }
+    }
+
+    let open_idx = result.find('(');
+    if let Some(open_paren) = open_idx {
+        let close_idx = result[open_paren..].find(')');
+        if let Some(close_paren) = close_idx {
+            let params_slice = &result[open_paren + 1..open_paren + close_paren];
+            if params_slice.contains(':') {
+                let stripped_params = params_slice
+                    .split(',')
+                    .map(|param| {
+                        let colon_pos = param.find(':');
+                        if let Some(colon) = colon_pos {
+                            param[..colon].trim().to_string()
+                        } else {
+                            param.trim().to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                result.replace_range(open_paren + 1..open_paren + close_paren, &stripped_params);
+            }
+        }
+    }
+
     // Remove `implements ...` in class declarations
     if let Some(imp_pos) = result.find(" implements ") {
         let brace_pos = result[imp_pos..].find('{');
