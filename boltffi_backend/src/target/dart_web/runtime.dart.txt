@@ -82,7 +82,13 @@ $$js.JSObject $$wireErr($$js.JSAny? error) {
   return result;
 }
 
-/// Awaits a JS `Promise` and converts a `WireResult` error or rejected `*ErrorException` promise into a Dart exception.
+/// Awaits a JS `Promise` from calling an exported fallible Rust async
+/// function. The compiled TS module's fallible functions never resolve to a
+/// `{tag, value}` wrapper -- they resolve with the plain success value and
+/// *reject* with a real typed `XxxException` (holding the decoded error
+/// payload on its `.value`) on failure, matching ordinary JS/TS promise
+/// idioms (see `target::typescript::render::function`'s `Failure::render`,
+/// shared between the sync and async completion paths).
 Future<T> $$awaitFallible<T>(
   $$js.JSPromise<$$js.JSAny?> promise,
   T Function($$js.JSAny? value) decodeSuccess,
@@ -90,26 +96,11 @@ Future<T> $$awaitFallible<T>(
 ) async {
   try {
     final result = await promise.toDart;
-    if (result is $$js.JSObject) {
-      final tag = result.getProperty('tag'.toJS);
-      if (tag is $$js.JSString) {
-        final tagStr = tag.toDart;
-        if (tagStr == 'err') {
-          final errVal = result.getProperty('error'.toJS);
-          throw decodeError(errVal as $$js.JSAny);
-        } else if (tagStr == 'ok') {
-          final okVal = result.getProperty('value'.toJS);
-          return decodeSuccess(okVal as $$js.JSAny?);
-        }
-      }
-    }
     return decodeSuccess(result);
   } catch (error) {
-    if (error is $$js.JSObject) {
+    if (error is $$js.JSObject && error.hasProperty('value'.toJS).toDart) {
       final value = error.getProperty('value'.toJS);
-      if (value is $$js.JSObject && value.hasProperty('tag'.toJS).toDart) {
-        throw decodeError(value);
-      }
+      throw decodeError(value as $$js.JSAny);
     }
     rethrow;
   }

@@ -906,14 +906,22 @@ fn render_exported_call(
             "return $$asCancelable($$awaitFallible({call}, (__boltffiValue) => {decode}, {decode_error}));"
         )
     } else if shape.error_ty.is_some() {
+        // The compiled TS module's fallible sync functions/methods don't
+        // return a `{tag, value}` wrapper -- they return the plain success
+        // value directly and *throw* a real typed `XxxException` (with a
+        // `.value` holding the decoded error payload) on failure, matching
+        // ordinary JS/TS exception idioms (see
+        // `target::typescript::render::function`'s `Failure::render`). Any
+        // wire-tag matching here would silently misread every successful
+        // call (there is no tag to find).
         let decode = decode_success("__boltffiValue")?;
         let decode_error = from_js(
-            "(__boltffiResult.getProperty('value'.toJS) as $$js.JSAny)",
+            "(__boltffiError.getProperty('value'.toJS) as $$js.JSAny)",
             shape.error_ty.as_ref().expect("checked above"),
             context,
         )?;
         format!(
-            "final __boltffiResult = {call} as $$js.JSObject;\n    final __boltffiTag = (__boltffiResult.getProperty('tag'.toJS) as $$js.JSString).toDart;\n    if (__boltffiTag == 'err') {{\n      throw {decode_error};\n    }}\n    final __boltffiValue = __boltffiResult.getProperty('value'.toJS);\n    return {decode};"
+            "try {{\n      final __boltffiValue = {call};\n      return {decode};\n    }} catch (__boltffiError) {{\n      if (__boltffiError is $$js.JSObject && __boltffiError.hasProperty('value'.toJS).toDart) {{\n        throw {decode_error};\n      }}\n      rethrow;\n    }}"
         )
     } else {
         match &shape.success_ty {
