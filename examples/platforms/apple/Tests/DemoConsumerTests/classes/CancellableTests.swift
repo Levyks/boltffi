@@ -3,7 +3,7 @@ import XCTest
 
 final class CancellableTests: DemoTestCase {
     func testCancellableCounterProgressAndCountTo() async throws {
-        let counter = CancellableCounter.new()
+        let counter = CancellableCounter()
         XCTAssertEqual(counter.progress(), 0)
         let total = await counter.countTo(target: 3, tickMillis: 10)
         XCTAssertGreaterThanOrEqual(total, 3)
