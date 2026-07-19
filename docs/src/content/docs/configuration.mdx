@@ -569,6 +569,20 @@ output = "dist/dart"
 
 `{dart_package}` is the normalized pub package name (see below). `boltffi pack dart --experimental` builds the Rust `cdylib` and copies it into `{output}/{dart_package}/native/<rust-triple>/`. Use `--regenerate` to refresh bindings in the same pack step.
 
+### Web (Browser) Support
+
+When `[targets.wasm]` is also enabled (see [WASM Configuration](#wasm-configuration)), the generated Dart package additionally exposes a browser implementation under `lib/src/web/`, selected automatically over the native one at compile time when the app targets `dart.library.js_interop` — no code changes needed on the calling side to support both.
+
+The browser implementation depends on a compiled JS module and a `.wasm` binary that have to be reachable at runtime by the app serving them, and there is no mechanism — Flutter's or plain Dart's — that lets a package deliver files into a consuming app's own `web/` directory automatically. So, once per app, you need to:
+
+1. Copy the contents of `lib/src/web/` into your app's `web/` directory.
+2. Add a small `<script type="module">` block to your app's `web/index.html` that starts loading the module.
+3. Call and await `ensureInitialized()` once before using any other export from the package.
+
+`lib/src/web/README.md`, written alongside the rest of the generated package, has the exact file names, `index.html` snippet, and import path for your specific package — copy it from there rather than from generic docs, since it already has your package's real names substituted in.
+
+`ensureInitialized()` only waits for the module the `index.html` script tag already started loading; it doesn't trigger loading itself. This keeps loading eager and script-tag-driven rather than deferred until first use, so the browser can fetch the wasm module in parallel with the rest of the app's startup instead of serialized behind it.
+
 ### Package Name
 
 Pub package names must be lowercase `[a-z0-9_]`. By default BoltFFI derives the name from `[package].name` and normalizes it the same way as TypeScript modules: non-alphanumeric characters become `_`, and a leading digit is prefixed with `_`.

@@ -131,8 +131,79 @@ pub(crate) fn pack_dart_web_assets(
     })?;
     step.finish_success();
 
+    let step = reporter.step("Writing setup instructions");
+    write_web_readme(&web_dir, &package_name, &module_name)?;
+    step.finish_success();
+
     reporter.finish();
     Ok(())
+}
+
+/// Everything in `lib/src/web/` (this function's `web_dir` argument) has to
+/// be copied into the consuming app's own `web/` directory by hand -- there
+/// is no Flutter or plain-Dart mechanism that reaches into a dependency's
+/// `lib/` and serves arbitrary files from it. Spelling out the exact
+/// filenames and the `index.html` snippet here (rather than only in
+/// out-of-band docs) means the one unavoidable manual step is a copy-paste,
+/// not a look-up.
+fn write_web_readme(web_dir: &Path, package_name: &str, module_name: &str) -> Result<()> {
+    let js_module = format!("__boltffi_{package_name}");
+    let readme = format!(
+        r#"# Web setup
+
+Everything in this folder has to be copied into your app's `web/` directory
+(Flutter or plain Dart web) once. It won't be picked up automatically just by
+depending on this package -- see the note at the bottom for why.
+
+## 1. Copy these files
+
+- `{module_name}.js`
+- `{module_name}_bg.wasm`
+- `{package_name}_web_loader.mjs`
+- `boltffi_runtime/` (whole folder)
+
+## 2. Add this to `web/index.html`
+
+In the `<head>`, before the script tag that loads your compiled app:
+
+```html
+<script type="module">
+  import {{ initBoltFFI }} from './{package_name}_web_loader.mjs';
+  window.{js_module}_ready = initBoltFFI();
+</script>
+```
+
+Adjust the import path if you place the copied files somewhere other than
+directly under `web/`.
+
+## 3. Call this once before using the package
+
+```dart
+import 'package:{package_name}/{package_name}.dart';
+
+await ensureInitialized();
+```
+
+`ensureInitialized()` only *waits* for the module the script tag above
+already started loading -- it doesn't load anything itself. Loading starts
+as soon as the page does, in parallel with the rest of your app's own
+startup, instead of being serialized behind it.
+
+---
+
+Why the manual copy: `pack dart` only ever runs in this package's own repo,
+never in a consuming app's build -- there's no hook it could use to place
+files into an app it doesn't know about. And Flutter's own asset-bundling
+system (`flutter: assets:`) isn't a safe substitute here: it serves files
+through a different pipeline that doesn't guarantee the correct MIME types
+for `.wasm`/`.js`, which can silently break loading in production.
+"#
+    );
+    let readme_path = web_dir.join("README.md");
+    std::fs::write(&readme_path, readme).map_err(|source| CliError::WriteFailed {
+        path: readme_path,
+        source,
+    })
 }
 
 fn write_runtime(runtime_dir: &Path) -> Result<()> {

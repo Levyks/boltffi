@@ -174,7 +174,41 @@ impl host::HostBackend for DartWebHost {
             body.push_str(emitted.primary_chunk().as_str());
         }
         let runtime = include_str!("runtime.dart.txt");
-        let library = format!("{runtime}\n\n{body}");
+        // `{js_module}_ready` is a promise the app's own `web/index.html`
+        // is expected to have already started (see the loader's doc
+        // comment below, and the generated README next to it) -- this
+        // function only awaits it, it never starts loading anything
+        // itself. Keeping loading eager and script-tag-driven (rather than
+        // triggered lazily from Dart) lets the browser fetch the wasm
+        // module in parallel with the Dart runtime's own startup instead
+        // of serialized behind it.
+        let ready_fn = format!(
+            r#"
+@$$js.JS('{js_module}_ready')
+external $$js.JSPromise<$$js.JSAny?>? get _$$readyPromise;
+
+/// Waits for the WASM module to finish loading. Call (and await) this
+/// before using any other export in this library.
+///
+/// Requires a `<script type="module">` block in your app's
+/// `web/index.html` that starts loading the module and stores the
+/// resulting promise on `window.{js_module}_ready` -- see this package's
+/// generated README for the exact snippet to paste in.
+Future<void> ensureInitialized() async {{
+  final promise = _$$readyPromise;
+  if (promise == null) {{
+    throw StateError(
+      "window.{js_module}_ready is not set. Add the <script "
+      "type=\"module\"> block from this package's README to your app's "
+      "web/index.html, before the Flutter/Dart script tag.",
+    );
+  }}
+  await promise.toDart;
+}}
+"#,
+            js_module = self.js_module,
+        );
+        let library = format!("{runtime}\n\n{body}{ready_fn}");
         let pubspec = format!(
             "name: {}\n\nenvironment:\n  sdk: ^3.10.8\n\ndependencies:\n  async: ^2.13.0\n",
             self.package
