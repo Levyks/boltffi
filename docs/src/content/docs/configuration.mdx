@@ -579,7 +579,7 @@ The browser implementation depends on a compiled JS module and a `.wasm` binary 
 2. Add a small `<script type="module">` block to your app's `web/index.html` that starts loading the module.
 3. Call and await `ensureInitialized()` once before using any other export from the package.
 
-`lib/src/web/README.md`, written alongside the rest of the generated package, has the exact file names, `index.html` snippet, and import path for your specific package — copy it from there rather than from generic docs, since it already has your package's real names substituted in.
+`WEB_SETUP.md`, written at the root of the generated package (deliberately not inside `lib/src/web/` itself — otherwise a literal "copy this folder" would also copy the doc into your app's public web assets), has the exact file names, `index.html` snippet, and import path for your specific package — copy it from there rather than from generic docs, since it already has your package's real names substituted in.
 
 `ensureInitialized()` only waits for the module the `index.html` script tag already started loading; it doesn't trigger loading itself. This keeps loading eager and script-tag-driven rather than deferred until first use, so the browser can fetch the wasm module in parallel with the rest of the app's startup instead of serialized behind it.
 

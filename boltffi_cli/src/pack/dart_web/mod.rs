@@ -88,7 +88,8 @@ pub(crate) fn pack_dart_web_assets(
 
     let package_name = config.dart_package_name();
     let module_name = config.wasm_typescript_module_name();
-    let web_dir = config.dart_output().join(&package_name).join("lib/src/web");
+    let package_root = config.dart_output().join(&package_name);
+    let web_dir = package_root.join("lib/src/web");
     std::fs::create_dir_all(&web_dir).map_err(|source| CliError::CreateDirectoryFailed {
         path: web_dir.clone(),
         source,
@@ -132,30 +133,34 @@ pub(crate) fn pack_dart_web_assets(
     step.finish_success();
 
     let step = reporter.step("Writing setup instructions");
-    write_web_readme(&web_dir, &package_name, &module_name)?;
+    write_web_setup_doc(&package_root, &package_name, &module_name)?;
     step.finish_success();
 
     reporter.finish();
     Ok(())
 }
 
-/// Everything in `lib/src/web/` (this function's `web_dir` argument) has to
-/// be copied into the consuming app's own `web/` directory by hand -- there
-/// is no Flutter or plain-Dart mechanism that reaches into a dependency's
-/// `lib/` and serves arbitrary files from it. Spelling out the exact
-/// filenames and the `index.html` snippet here (rather than only in
-/// out-of-band docs) means the one unavoidable manual step is a copy-paste,
-/// not a look-up.
-fn write_web_readme(web_dir: &Path, package_name: &str, module_name: &str) -> Result<()> {
+/// Everything in `lib/src/web/` has to be copied into the consuming app's
+/// own `web/` directory by hand -- there is no Flutter or plain-Dart
+/// mechanism that reaches into a dependency's `lib/` and serves arbitrary
+/// files from it. Spelling out the exact filenames and the `index.html`
+/// snippet here (rather than only in out-of-band docs) means the one
+/// unavoidable manual step is a copy-paste, not a look-up.
+///
+/// Deliberately written at the package root, not inside `lib/src/web/`
+/// itself: easier to spot, and it means a literal "copy everything in this
+/// folder" doesn't also copy this doc into the app's public web assets.
+fn write_web_setup_doc(package_root: &Path, package_name: &str, module_name: &str) -> Result<()> {
     let js_module = format!("__boltffi_{package_name}");
-    let readme = format!(
+    let doc = format!(
         r#"# Web setup
 
-Everything in this folder has to be copied into your app's `web/` directory
-(Flutter or plain Dart web) once. It won't be picked up automatically just by
-depending on this package -- see the note at the bottom for why.
+The contents of `lib/src/web/` have to be copied into your app's `web/`
+directory (Flutter or plain Dart web) once. They won't be picked up
+automatically just by depending on this package -- see the note at the
+bottom for why.
 
-## 1. Copy these files
+## 1. Copy these files, from `lib/src/web/`
 
 - `{module_name}.js`
 - `{module_name}_bg.wasm`
@@ -199,9 +204,9 @@ through a different pipeline that doesn't guarantee the correct MIME types
 for `.wasm`/`.js`, which can silently break loading in production.
 "#
     );
-    let readme_path = web_dir.join("README.md");
-    std::fs::write(&readme_path, readme).map_err(|source| CliError::WriteFailed {
-        path: readme_path,
+    let doc_path = package_root.join("WEB_SETUP.md");
+    std::fs::write(&doc_path, doc).map_err(|source| CliError::WriteFailed {
+        path: doc_path,
         source,
     })
 }
