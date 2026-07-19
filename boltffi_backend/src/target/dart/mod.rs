@@ -221,7 +221,13 @@ impl host::HostBackend for DartHost {
             .join("\n");
         let runtime = include_str!("runtime.dart.txt");
         let ffi = ffi::render(_bridge)?;
-        let library = format!("{runtime}\n\n{helpers}{body}\n{ffi}");
+        // No-op counterpart to the web target's `ensureInitialized()` (which
+        // awaits the wasm module's own load). Native has nothing to wait
+        // for, but exposing the same name here means callers that support
+        // both targets can call it unconditionally instead of needing their
+        // own conditional-import shim just to bridge the two.
+        let ready_fn = "\nFuture<void> ensureInitialized() async {}\n";
+        let library = format!("{runtime}\n\n{helpers}{body}\n{ffi}{ready_fn}");
         // Standalone package: do not set `resolution: workspace` (that requires a
         // parent pub workspace registration the generator does not emit).
         let pubspec = format!(
