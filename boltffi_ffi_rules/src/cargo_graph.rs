@@ -210,8 +210,9 @@ impl PackageGraph {
             })
             .or_else(|| {
                 root_module_name.and_then(|module_name| {
+                    let module_name = naming::cargo_crate_name(module_name);
                     packages.iter().find(|package| {
-                        package.library_target_name().as_deref() == Some(module_name)
+                        package.library_target_name().as_deref() == Some(module_name.as_str())
                     })
                 })
             })
@@ -478,5 +479,84 @@ impl LegacyExportDetector {
                     .require_list()
                     .is_ok_and(|meta| meta.tokens.to_string().contains("FfiType"))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn crate_manifest_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")
+    }
+
+    fn virtual_root_manifest_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crate dir has a parent")
+            .join("Cargo.toml")
+    }
+
+    fn package_with_library_target(id: &str, target_name: &str) -> CargoPackage {
+        CargoPackage {
+            id: id.to_owned(),
+            manifest_path: crate_manifest_path(),
+            source: None,
+            targets: vec![CargoTarget {
+                name: target_name.to_owned(),
+                kind: vec!["lib".to_owned()],
+                src_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+            }],
+        }
+    }
+
+    #[test]
+    fn resolves_root_by_manifest_path() {
+        let packages = vec![package_with_library_target("my-lib-id", "my_lib")];
+
+        let root_id = PackageGraph::resolve_root_id(&packages, &crate_manifest_path(), None)
+            .expect("manifest path match");
+
+        assert_eq!(root_id, PackageId::new("my-lib-id".to_owned()));
+    }
+
+    #[test]
+    fn falls_back_to_module_name_for_virtual_root_manifest() {
+        let packages = vec![package_with_library_target("my-lib-id", "my_lib")];
+
+        let root_id =
+            PackageGraph::resolve_root_id(&packages, &virtual_root_manifest_path(), Some("my_lib"))
+                .expect("module name fallback match");
+
+        assert_eq!(root_id, PackageId::new("my-lib-id".to_owned()));
+    }
+
+    #[test]
+    fn module_name_fallback_normalizes_dashed_crate_names() {
+        let packages = vec![package_with_library_target("my-lib-id", "my_lib")];
+
+        let root_id =
+            PackageGraph::resolve_root_id(&packages, &virtual_root_manifest_path(), Some("my-lib"))
+                .expect("dashed module name normalizes to library target name");
+
+        assert_eq!(root_id, PackageId::new("my-lib-id".to_owned()));
+    }
+
+    #[test]
+    fn errors_when_no_package_matches_manifest_or_module_name() {
+        let packages = vec![package_with_library_target("my-lib-id", "my_lib")];
+
+        let error = PackageGraph::resolve_root_id(
+            &packages,
+            &virtual_root_manifest_path(),
+            Some("other-lib"),
+        )
+        .expect_err("no matching package");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cargo metadata did not include package")
+        );
     }
 }
