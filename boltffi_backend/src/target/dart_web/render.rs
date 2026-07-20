@@ -38,22 +38,22 @@ pub fn stream(
         .transpose()?;
     let item_type = match decl.item() {
         StreamItemPlan::Encoded { ty, .. } => dart_type(ty, context)?,
-        StreamItemPlan::Direct { ty, .. } => match ty {
-            DirectValueType::Primitive(primitive) => {
-                dart_type(&TypeRef::Primitive(*primitive), context)?
-            }
-            _ => return unsupported("dart_web direct stream item"),
-        },
+        StreamItemPlan::Direct {
+            ty: DirectValueType::Primitive(primitive),
+            ..
+        } => dart_type(&TypeRef::Primitive(*primitive), context)?,
+        StreamItemPlan::Direct { .. } => {
+            return unsupported("dart_web direct stream item");
+        }
         _ => return unsupported("dart_web stream item"),
     };
     let item_decode = match decl.item() {
         StreamItemPlan::Encoded { ty, .. } => from_js("__boltffiItem", ty, context)?,
-        StreamItemPlan::Direct { ty, .. } => match ty {
-            DirectValueType::Primitive(primitive) => {
-                from_js("__boltffiItem", &TypeRef::Primitive(*primitive), context)?
-            }
-            _ => unreachable!(),
-        },
+        StreamItemPlan::Direct {
+            ty: DirectValueType::Primitive(primitive),
+            ..
+        } => from_js("__boltffiItem", &TypeRef::Primitive(*primitive), context)?,
+        StreamItemPlan::Direct { .. } => unreachable!(),
         _ => unreachable!(),
     };
     if !matches!(decl.mode(), StreamMode::Async) {
