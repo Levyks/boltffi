@@ -368,6 +368,15 @@ fn swift_target_renders_async_callback_return_shapes() {
 }
 
 #[test]
+fn swift_target_renders_async_callback_unit_results() {
+    let rendered = rendered_fixture("callback/async_callback_unit_result");
+
+    assert!(rendered.contains("completion?(completionContext, FfiStatus(code: 0), FfiBuf_u8())"));
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
 fn swift_target_renders_async_callback_handle_returns() {
     insta::assert_snapshot!(rendered_fixture(
         "callback/async_callback_returning_callback_handle"
