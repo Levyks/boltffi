@@ -12,12 +12,80 @@
 use boltffi_binding::{
     BuiltinType, CallbackDecl, ClassDecl, DataVariantPayload, DirectValueType, EnumDecl,
     ErrorChannel, ExecutionDecl, ExportedCallable, FunctionDecl, HandlePresence, HandleTarget,
-    IncomingParam, ParamPlan, Primitive, RecordDecl, ReturnPlan, TypeRef, Wasm32,
+    IncomingParam, ParamPlan, Primitive, RecordDecl, ReturnPlan, StreamDecl, StreamItemPlan,
+    StreamMode, TypeRef, Wasm32,
 };
 
 use crate::core::{Emitted, Error, RenderContext, Result, name_case};
 
 use super::name_style;
+
+pub fn stream(
+    decl: &StreamDecl<Wasm32>,
+    js_module: &str,
+    context: &RenderContext<Wasm32>,
+) -> Result<Emitted> {
+    let name = name_style::lower_camel(decl.name());
+    let type_name = name_style::upper_camel(decl.name());
+    let owner = decl
+        .owner()
+        .map(|id| {
+            context
+                .class(id)
+                .map(|class| name_style::upper_camel(class.name()))
+                .ok_or_else(|| missing("Dart stream owner"))
+        })
+        .transpose()?;
+    let item_type = match decl.item() {
+        StreamItemPlan::Encoded { ty, .. } => dart_type(ty, context)?,
+        StreamItemPlan::Direct { ty, .. } => match ty {
+            DirectValueType::Primitive(primitive) => {
+                dart_type(&TypeRef::Primitive(*primitive), context)?
+            }
+            _ => return unsupported("dart_web direct stream item"),
+        },
+        _ => return unsupported("dart_web stream item"),
+    };
+    let item_decode = match decl.item() {
+        StreamItemPlan::Encoded { ty, .. } => from_js("__boltffiItem", ty, context)?,
+        StreamItemPlan::Direct { ty, .. } => match ty {
+            DirectValueType::Primitive(primitive) => {
+                from_js("__boltffiItem", &TypeRef::Primitive(*primitive), context)?
+            }
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
+    };
+    if !matches!(decl.mode(), StreamMode::Async) {
+        return unsupported("dart_web streams currently support async mode only");
+    }
+    let callback = format!(
+        "final class _{type_name}StreamItemCallback {{\n  final void Function($$js.JSAny?) _onItem;\n  _{type_name}StreamItemCallback(this._onItem);\n  void onItem($$js.JSAny? item) => _onItem(item);\n}}"
+    );
+    let external = if owner.is_none() {
+        format!("@$$js.JS('{js_module}.{name}')\nexternal $$js.JSObject? _$$stream_{name}();")
+    } else {
+        String::new()
+    };
+    let session_call = if owner.is_some() {
+        format!(
+            "(this._js.getProperty('{name}'.toJS) as $$js.JSFunction).callAsFunction(this._js) as $$js.JSObject"
+        )
+    } else {
+        format!("_$$stream_{name}()!")
+    };
+    let method = format!(
+        "$$async.Stream<{item_type}> {name}() {{\n  late final $$async.StreamController<{item_type}> controller;\n  $$js.JSObject? cancellation;\n  controller = $$async.StreamController<{item_type}>(\n    onListen: () {{\n      final session = {session_call};\n      final adapter = _{type_name}StreamItemCallback((__boltffiItem) {{\n        if (!controller.isClosed) controller.add({item_decode});\n      }});\n      cancellation = (session.getProperty('consume'.toJS) as $$js.JSFunction).callAsFunction(\n        session,\n        $$js.createJSInteropWrapper(adapter),\n      ) as $$js.JSObject;\n      final done = cancellation!.getProperty('done'.toJS) as $$js.JSPromise<$$js.JSAny?>;\n      $$async.unawaited(() async {{\n        try {{\n          await done.toDart;\n          if (!controller.isClosed) await controller.close();\n        }} catch (error, stack) {{\n          if (!controller.isClosed) {{\n            controller.addError(error, stack);\n            await controller.close();\n          }}\n        }}\n      }}());\n    }},\n    onCancel: () {{\n      final value = cancellation;\n      if (value != null) {{\n        (value.getProperty('cancel'.toJS) as $$js.JSFunction).callAsFunction(value);\n      }}\n    }},\n  );\n  return controller.stream;\n}}"
+    );
+    let body = if let Some(owner) = owner {
+        format!("extension {type_name}Stream on {owner} {{\n  {method}\n}}")
+    } else {
+        method
+    };
+    Ok(Emitted::primary(format!(
+        "{external}\n\n{callback}\n\n{body}\n\n"
+    )))
+}
 
 /// The JS-facing name for a declaration, as `target::typescript` spells it
 /// -- plain camelCase with no keyword escaping. `name_style::lower_camel`

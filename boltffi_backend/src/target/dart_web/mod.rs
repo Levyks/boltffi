@@ -74,6 +74,7 @@ impl host::HostBackend for DartWebHost {
             .stable(BindingCapability::Functions)
             .stable(BindingCapability::Classes)
             .stable(BindingCapability::Callbacks)
+            .stable(BindingCapability::Streams)
     }
 
     fn bridge_capabilities(&self) -> CapabilityRequirements<BridgeCapability> {
@@ -127,14 +128,11 @@ impl host::HostBackend for DartWebHost {
 
     fn stream(
         &self,
-        _decl: &StreamDecl<Self::Surface>,
+        decl: &StreamDecl<Self::Surface>,
         _bridge: &Self::Bridge,
-        _context: &RenderContext<Self::Surface>,
+        context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        Err(Error::UnsupportedTarget {
-            target: Self::TARGET,
-            shape: "streams",
-        })
+        render::stream(decl, &self.js_module, context)
     }
 
     fn constant(
