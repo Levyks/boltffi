@@ -14,9 +14,6 @@ typedef uint8_t ___Mode;
 ___Point boltffi_function_demo_echo_point(___Point point);
 ___Mode boltffi_function_demo_echo_mode(___Mode mode);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

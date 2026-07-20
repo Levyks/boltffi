@@ -13,9 +13,6 @@ void boltffi_register_callback_demo_listener(const ___ListenerVTable *vtable);
 BoltFFICallbackHandle boltffi_create_callback_demo_listener(uint64_t handle);
 BoltFFICallbackHandle boltffi_function_demo_make_listener(void);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

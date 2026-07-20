@@ -12,9 +12,6 @@ typedef struct {
 void boltffi_register_callback_demo_status_mapper(const ___StatusMapperVTable *vtable);
 BoltFFICallbackHandle boltffi_create_callback_demo_status_mapper(uint64_t handle);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

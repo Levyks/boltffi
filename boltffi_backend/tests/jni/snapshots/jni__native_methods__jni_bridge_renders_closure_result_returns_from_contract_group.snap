@@ -8,9 +8,6 @@ typedef int32_t ___MathError;
 #define MATH_ERROR_INVALID_INPUT ((___MathError)0)
 FfiBuf_u8 boltffi_function_demo_apply(FfiBuf_u8 (*callback_call)(void *, int32_t, int32_t *), void *callback_context, void (*callback_release)(void *), int32_t value, int32_t *return_out);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

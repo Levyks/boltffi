@@ -12,9 +12,6 @@ ___Point boltffi_init_record_demo_point_origin(void);
 double boltffi_method_record_demo_point_distance(___Point receiver, ___Point other);
 FfiBuf_u8 boltffi_method_record_demo_person_rename(const uint8_t *receiver_ptr, uintptr_t receiver_len, const uint8_t *name_ptr, uintptr_t name_len);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

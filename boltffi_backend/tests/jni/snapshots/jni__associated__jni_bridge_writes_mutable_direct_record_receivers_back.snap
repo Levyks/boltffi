@@ -10,9 +10,6 @@ typedef struct {
 } ___Point;
 FfiStatus boltffi_method_record_demo_point_move_by(___Point receiver, ___Point *receiver_out, double dx);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

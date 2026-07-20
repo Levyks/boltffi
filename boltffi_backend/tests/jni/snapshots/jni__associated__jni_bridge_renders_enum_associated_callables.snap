@@ -10,9 +10,6 @@ typedef uint8_t ___Mode;
 ___Mode boltffi_init_enum_demo_mode_default(void);
 uint8_t boltffi_method_enum_demo_mode_code(___Mode receiver);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 JNIEXPORT jbyte JNICALL Java_com_boltffi_demo_Native_boltffi_1init_1enum_1demo_1mode_1default(JNIEnv *env, jclass cls) {

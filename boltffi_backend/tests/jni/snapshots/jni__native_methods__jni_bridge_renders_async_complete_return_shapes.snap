@@ -27,9 +27,6 @@ FfiBuf_u8 boltffi_async_function_demo_load_point_panic_message(RustFutureHandle 
 void boltffi_async_function_demo_load_point_cancel(RustFutureHandle handle);
 void boltffi_async_function_demo_load_point_free(RustFutureHandle handle);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

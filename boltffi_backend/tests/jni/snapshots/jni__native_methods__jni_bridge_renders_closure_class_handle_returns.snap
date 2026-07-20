@@ -8,9 +8,6 @@ void boltffi_release_class_demo_engine(uint64_t handle);
 uint64_t boltffi_init_class_demo_engine_new(void);
 FfiStatus boltffi_function_demo_install(uint64_t (*callback_call)(void *), void *callback_context, void (*callback_release)(void *));
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

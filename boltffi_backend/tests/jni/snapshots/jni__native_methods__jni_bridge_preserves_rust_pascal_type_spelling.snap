@@ -8,9 +8,6 @@ void boltffi_release_class_demo_gps_simulator(uint64_t handle);
 uint64_t boltffi_init_class_demo_gps_simulator_new(bool enabled);
 bool boltffi_method_class_demo_gps_simulator_enabled(uint64_t receiver);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 JNIEXPORT void JNICALL Java_com_boltffi_demo_Native_boltffi_1release_1class_1demo_1gps_1simulator(JNIEnv *env, jclass cls, jlong handle) {

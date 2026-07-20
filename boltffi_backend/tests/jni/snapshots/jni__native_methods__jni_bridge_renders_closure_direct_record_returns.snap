@@ -10,9 +10,6 @@ typedef struct {
 } ___Point;
 FfiStatus boltffi_function_demo_install(___Point (*callback_call)(void *), void *callback_context, void (*callback_release)(void *));
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>

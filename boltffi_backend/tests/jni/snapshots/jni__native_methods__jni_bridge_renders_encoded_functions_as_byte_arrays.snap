@@ -15,9 +15,6 @@ FfiBuf_u8 boltffi_function_demo_keep_person(const uint8_t *person_ptr, uintptr_t
 FfiBuf_u8 boltffi_function_demo_keep_shape(const uint8_t *shape_ptr, uintptr_t shape_len);
 FfiBuf_u8 boltffi_function_demo_echo_message(const uint8_t *message_ptr, uintptr_t message_len);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni exception helpers>

@@ -121,7 +121,8 @@ fn normalized_file(path: &str, contents: &str) -> String {
 }
 
 fn normalized_header(contents: &str) -> String {
-    line_end_after(contents, "void boltffi_clear_last_error(void);").map_or_else(
+    let contents = contents.replace("\r\n", "\n");
+    line_end_after(&contents, "void boltffi_clear_last_error(void);").map_or_else(
         || contents.to_owned(),
         |end| {
             format!(

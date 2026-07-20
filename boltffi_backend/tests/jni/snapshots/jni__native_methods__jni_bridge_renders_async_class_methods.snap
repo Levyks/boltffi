@@ -13,9 +13,6 @@ FfiBuf_u8 boltffi_async_method_class_demo_engine_compute_panic_message(RustFutur
 void boltffi_async_method_class_demo_engine_compute_cancel(RustFutureHandle handle);
 void boltffi_async_method_class_demo_engine_compute_free(RustFutureHandle handle);
 
-#ifdef __cplusplus
-}
-#endif
 ===== jni/jni_glue.c =====
 <jni source includes>
 <jni thread runtime>
