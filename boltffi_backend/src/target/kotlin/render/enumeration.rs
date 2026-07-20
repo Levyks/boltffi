@@ -56,15 +56,56 @@ const KOTLIN_SHADOWABLE_PRIMITIVES: &[&str] = &[
     "Double",
 ];
 
-fn qualify_if_shadowed(ty: TypeName, variant_names: &[String]) -> TypeName {
-    let name = ty.to_string();
-    if KOTLIN_SHADOWABLE_PRIMITIVES.contains(&name.as_str())
-        && variant_names.iter().any(|variant| variant == &name)
-    {
-        TypeName::new(format!("kotlin.{name}"))
-    } else {
-        ty
+fn shadowed_primitive_names(enum_name: &TypeName, variant_names: &[String]) -> Vec<String> {
+    let enum_name = enum_name.to_string();
+    KOTLIN_SHADOWABLE_PRIMITIVES
+        .iter()
+        .filter(|primitive| {
+            enum_name == **primitive || variant_names.iter().any(|variant| variant == *primitive)
+        })
+        .map(|primitive| (*primitive).to_string())
+        .collect()
+}
+
+fn qualify_shadowed(ty: TypeName, shadowed: &[String]) -> TypeName {
+    if shadowed.is_empty() {
+        return ty;
     }
+    let spelling = ty.to_string();
+    let mut result = String::with_capacity(spelling.len());
+    let mut token = String::new();
+    let mut preceding = None;
+    for ch in spelling.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            token.push(ch);
+        } else {
+            flush_token(&mut result, &mut token, preceding, shadowed);
+            result.push(ch);
+            preceding = Some(ch);
+        }
+    }
+    flush_token(&mut result, &mut token, preceding, shadowed);
+    if result == spelling {
+        ty
+    } else {
+        TypeName::new(result)
+    }
+}
+
+fn flush_token(
+    result: &mut String,
+    token: &mut String,
+    preceding: Option<char>,
+    shadowed: &[String],
+) {
+    if token.is_empty() {
+        return;
+    }
+    if preceding != Some('.') && shadowed.iter().any(|name| name == token) {
+        result.push_str("kotlin.");
+    }
+    result.push_str(token);
+    token.clear();
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -356,49 +397,50 @@ impl Enumeration {
                     .map(|name| name.to_string())
             })
             .collect::<Result<Vec<_>>>()?;
-        let wire_size_type = qualify_if_shadowed(TypeName::int(), &variant_names);
+        let shadowed = shadowed_primitive_names(&name, &variant_names);
+        let wire_size_type = qualify_shadowed(TypeName::int(), &shadowed);
+        let requalify = |calls: Vec<ExportedCall>| {
+            calls
+                .into_iter()
+                .map(|call| call.requalify_types(&|ty| qualify_shadowed(ty, &shadowed)))
+                .collect::<Vec<_>>()
+        };
         Ok(Self {
-            name,
-            error,
             body: Body::Data {
                 variants: enumeration
                     .variants()
                     .iter()
                     .map(|variant| {
-                        DataVariant::from_declaration(
-                            variant,
-                            host,
-                            context,
-                            package,
-                            &variant_names,
-                        )
+                        DataVariant::from_declaration(variant, host, context, package, &shadowed)
                     })
                     .collect::<Result<Vec<_>>>()?,
                 wire_size_type,
             },
-            initializers: Self::initializer_calls(
+            initializers: requalify(Self::initializer_calls(
                 enumeration.initializers(),
                 bridge,
                 host,
                 context,
                 package,
-            )?,
-            static_methods: Self::methods(
+            )?),
+            static_methods: requalify(Self::methods(
                 enumeration.methods(),
                 None,
                 bridge,
                 host,
                 context,
                 package,
-            )?,
-            instance_methods: Self::methods(
+            )?),
+            instance_methods: requalify(Self::methods(
                 enumeration.methods(),
                 Some(receiver),
                 bridge,
                 host,
                 context,
                 package,
-            )?,
+            )?),
+            name,
+            error,
         })
     }
 
@@ -575,12 +617,11 @@ impl DataVariant {
         host: &KotlinHost,
         context: &RenderContext<Native>,
         package: Option<&KotlinPackage>,
-        variant_names: &[String],
+        shadowed: &[String],
     ) -> Result<Self> {
         let name = Name::new(variant.name()).variant()?;
         let tag = Self::tag_expression(variant.tag())?;
-        let fields =
-            Self::payload_fields(variant.payload(), host, context, package, variant_names)?;
+        let fields = Self::payload_fields(variant.payload(), host, context, package, shadowed)?;
         let read = Self::read_expression(name.clone(), &fields);
         let size = fields
             .iter()
@@ -606,7 +647,7 @@ impl DataVariant {
         host: &KotlinHost,
         context: &RenderContext<Native>,
         package: Option<&KotlinPackage>,
-        variant_names: &[String],
+        shadowed: &[String],
     ) -> Result<Vec<EncodedField>> {
         let reader = Identifier::parse("reader")?;
         let writer = Identifier::parse("writer")?;
@@ -636,7 +677,7 @@ impl DataVariant {
                 })
                 .map(|field| {
                     field.map(|field| {
-                        let qualified = qualify_if_shadowed(field.ty().clone(), variant_names);
+                        let qualified = qualify_shadowed(field.ty().clone(), shadowed);
                         field.requalified(qualified)
                     })
                 })
