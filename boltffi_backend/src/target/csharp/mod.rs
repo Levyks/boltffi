@@ -855,16 +855,16 @@ mod tests {
 
         let source = file(&output, "Demo.cs");
         assert!(source.contains("IAsyncEnumerable<int> Values(this Engine self"));
-        assert!(source.contains("MessagesSubscription Messages(this Engine self)"));
-        assert!(source.contains("TicksCancellable Ticks(this Engine self"));
+        assert!(source.contains("EngineMessagesSubscription Messages(this Engine self)"));
+        assert!(source.contains("EngineTicksCancellable Ticks(this Engine self"));
         assert!(source.contains("EnumeratorCancellation"));
-        assert!(source.contains("NativeValuesPopBatch"));
+        assert!(source.contains("NativeEngineValuesPopBatch"));
         assert!(source.contains("NativeMethods.FreeBuf(buffer);"));
         assert!(source.contains(
             "await foreach (var item in ReadAll(subscription, cancellation.Token)) callback(item);"
         ));
         let callback_subscribe = source
-            .find("ulong subscription = NativeMethods.NativeTicksSubscribe(receiver);")
+            .find("ulong subscription = NativeMethods.NativeEngineTicksSubscribe(receiver);")
             .expect("callback stream should subscribe synchronously");
         let callback_task = source[callback_subscribe..]
             .find("global::System.Threading.Tasks.Task.Run(async () =>")
@@ -873,6 +873,45 @@ mod tests {
         assert!(callback_subscribe < callback_task);
         assert!(
             !source.contains("ReadAll(subscription, cancellation.Token).ConfigureAwait(false)")
+        );
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn csharp_target_renders_same_named_streams_per_class() {
+        let bindings = bindings(
+            r#"
+            use boltffi::EventSubscription;
+            use std::sync::Arc;
+
+            pub struct Store;
+            pub struct Draft;
+
+            #[export]
+            impl Store {
+                #[ffi_stream(item = i32)]
+                pub fn snapshots(&self) -> Arc<EventSubscription<i32>> { loop {} }
+            }
+
+            #[export]
+            impl Draft {
+                #[ffi_stream(item = String)]
+                pub fn snapshots(&self) -> Arc<EventSubscription<String>> { loop {} }
+            }
+            "#,
+        );
+        let output = target(CSharpHost::new())
+            .render(&bindings)
+            .expect("streams should render");
+
+        let source = file(&output, "Demo.cs");
+        assert!(source.contains("EntryPoint = \"boltffi_stream_demo_store_snapshots_subscribe\""));
+        assert!(source.contains("EntryPoint = \"boltffi_stream_demo_draft_snapshots_subscribe\""));
+        assert!(source.contains("IAsyncEnumerable<int> Snapshots(this Store self"));
+        assert!(source.contains("IAsyncEnumerable<string> Snapshots(this Draft self"));
+        assert!(
+            source.contains("=> StoreSnapshotsStreamRuntime.ReadAll(self.Handle")
+                && source.contains("=> DraftSnapshotsStreamRuntime.ReadAll(self.Handle")
         );
         assert!(output.diagnostics().is_empty());
     }
