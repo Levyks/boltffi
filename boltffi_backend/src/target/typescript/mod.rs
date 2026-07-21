@@ -647,6 +647,24 @@ mod tests {
     }
 
     #[test]
+    fn browser_init_accepts_a_precompiled_wasm_module_source() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render(&bindings())
+            .expect("target renders");
+
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+        assert!(browser.contents().contains(
+            "export default async function init(source: BufferSource | Response | WebAssembly.Module): Promise<void>"
+        ));
+    }
+
+    #[test]
     fn renders_primitive_functions_through_the_wasm_surface() {
         let output = TypeScriptHost::new("demo")
             .expect("host constructs")
