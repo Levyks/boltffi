@@ -59,9 +59,7 @@ pub fn stream(
     if !matches!(decl.mode(), StreamMode::Async) {
         return unsupported("dart_web streams currently support async mode only");
     }
-    let callback = format!(
-        "final class _{type_name}StreamItemCallback {{\n  final void Function($$js.JSAny?) _onItem;\n  _{type_name}StreamItemCallback(this._onItem);\n  void onItem($$js.JSAny? item) => _onItem(item);\n}}"
-    );
+    let callback = String::new();
     let external = if owner.is_none() {
         format!("@$$js.JS('{js_module}.{name}')\nexternal $$js.JSObject? _$$stream_{name}();")
     } else {
@@ -75,7 +73,7 @@ pub fn stream(
         format!("_$$stream_{name}()!")
     };
     let method = format!(
-        "$$async.Stream<{item_type}> {name}() {{\n  late final $$async.StreamController<{item_type}> controller;\n  $$js.JSObject? cancellation;\n  controller = $$async.StreamController<{item_type}>(\n    onListen: () {{\n      final session = {session_call};\n      final adapter = _{type_name}StreamItemCallback((__boltffiItem) {{\n        if (!controller.isClosed) controller.add({item_decode});\n      }});\n      cancellation = (session.getProperty('consume'.toJS) as $$js.JSFunction).callAsFunction(\n        session,\n        $$js.createJSInteropWrapper(adapter),\n      ) as $$js.JSObject;\n      final done = cancellation!.getProperty('done'.toJS) as $$js.JSPromise<$$js.JSAny?>;\n      $$async.unawaited(() async {{\n        try {{\n          await done.toDart;\n          if (!controller.isClosed) await controller.close();\n        }} catch (error, stack) {{\n          if (!controller.isClosed) {{\n            controller.addError(error, stack);\n            await controller.close();\n          }}\n        }}\n      }}());\n    }},\n    onCancel: () {{\n      final value = cancellation;\n      if (value != null) {{\n        (value.getProperty('cancel'.toJS) as $$js.JSFunction).callAsFunction(value);\n      }}\n    }},\n  );\n  return controller.stream;\n}}"
+        "$$async.Stream<{item_type}> {name}() {{\n  late final $$async.StreamController<{item_type}> controller;\n  $$js.JSObject? cancellation;\n  controller = $$async.StreamController<{item_type}>(\n    onListen: () {{\n      final session = {session_call};\n      final callback = (($$js.JSAny? __boltffiItem) {{\n        if (!controller.isClosed) controller.add({item_decode});\n      }}).toJS;\n      cancellation = (session.getProperty('consume'.toJS) as $$js.JSFunction).callAsFunction(\n        session,\n        callback,\n      ) as $$js.JSObject;\n      final done = cancellation!.getProperty('done'.toJS) as $$js.JSPromise<$$js.JSAny?>;\n      $$async.unawaited(() async {{\n        try {{\n          await done.toDart;\n          if (!controller.isClosed) await controller.close();\n        }} catch (error, stack) {{\n          if (!controller.isClosed) {{\n            controller.addError(error, stack);\n            await controller.close();\n          }}\n        }}\n      }}());\n    }},\n    onCancel: () {{\n      final value = cancellation;\n      if (value != null) {{\n        (value.getProperty('cancel'.toJS) as $$js.JSFunction).callAsFunction(value);\n      }}\n    }},\n  );\n  return controller.stream;\n}}"
     );
     let body = if let Some(owner) = owner {
         format!("extension {type_name}Stream on {owner} {{\n  {method}\n}}")
@@ -175,10 +173,9 @@ pub fn to_js(expr: &str, ty: &TypeRef, context: &RenderContext<Wasm32>) -> Resul
         TypeRef::Callback(id) => {
             let callback = context.callback(*id).ok_or_else(|| missing("callback"))?;
             let name = name_style::upper_camel(callback.name());
-            // The JS side takes the interface object directly (its own
-            // `registerXxx` bookkeeping happens internally); Dart only
-            // needs to hand over the js_interop-wrapped adapter.
-            format!("$$js.createJSInteropWrapper(_{name}JSAdapter({expr}))")
+            format!(
+                "((() {{ final __boltffiCallback = {expr}; return __boltffiCallback is {name}JsWrapper ? __boltffiCallback._js : $$js.createJSInteropWrapper(_{name}JSAdapter(__boltffiCallback)); }})())"
+            )
         }
         TypeRef::Builtin(BuiltinType::Duration) => format!("$$durationToJS({expr})"),
         TypeRef::Builtin(BuiltinType::Uuid | BuiltinType::Url) => format!("({expr}).toJS"),
@@ -575,6 +572,7 @@ fn data_enum(
 
 struct CallbackMethodShape {
     dart_name: String,
+    js_name: String,
     params: Vec<(String, TypeRef)>,
     success_ty: Option<TypeRef>,
     error_ty: Option<TypeRef>,
@@ -603,6 +601,7 @@ fn callback_method_shape(
     let asynchronous = matches!(callable.execution(), ExecutionDecl::Asynchronous(_));
     Ok(CallbackMethodShape {
         dart_name: name_style::lower_camel(method.name()),
+        js_name: js_name(method.name()),
         params,
         success_ty,
         error_ty,
@@ -756,8 +755,14 @@ pub fn callback(decl: &CallbackDecl<Wasm32>, context: &RenderContext<Wasm32>) ->
         .collect::<Result<Vec<_>>>()?
         .join("\n\n");
 
+    let wrapper_methods = methods
+        .iter()
+        .map(|method| render_wrapper_method(method, context))
+        .collect::<Result<Vec<_>>>()?
+        .join("\n\n");
+
     Ok(Emitted::primary(format!(
-        "abstract interface class {name} {{\n{interface_methods}\n}}\n\n@$$js.JSExport()\nfinal class _{name}JSAdapter {{\n  final {name} _impl;\n\n  _{name}JSAdapter(this._impl);\n\n{adapter_methods}\n}}\n\n"
+        "abstract interface class {name} {{\n{interface_methods}\n}}\n\n@$$js.JSExport()\nfinal class _{name}JSAdapter {{\n  final {name} _impl;\n\n  _{name}JSAdapter(this._impl);\n\n{adapter_methods}\n}}\n\n/// Wraps a raw JS object that already speaks this callback's wire\n/// contract (see the \"Dart Web: bypassing the dart2wasm hop\" section of\n/// the callbacks docs) so it can be handed to Rust without routing calls\n/// through the dart2wasm module at all. Passing an instance of this class\n/// anywhere a {name} is expected skips the usual\n/// rust -> js -> dart(wasm) -> js -> rust round trip in favor of a plain\n/// rust -> js -> rust call.\nfinal class {name}JsWrapper implements {name} {{\n  final $$js.JSObject _js;\n\n  const {name}JsWrapper(this._js);\n\n{wrapper_methods}\n}}\n\n"
     )))
 }
 
@@ -831,6 +836,93 @@ fn render_adapter_method(
     } else {
         Ok(format!(
             "  $$js.JSAny? {}({js_params}) {{\n    {body}\n  }}",
+            method.dart_name
+        ))
+    }
+}
+
+/// Renders one `{Name}JsWrapper` method: the mirror image of
+/// [render_adapter_method]. Where the adapter takes a Dart-typed call and
+/// produces this callback's wire shape for Rust to consume, this takes a
+/// Dart-typed call and *decodes* that same wire shape back out of a raw JS
+/// method call -- i.e. it's what lets a hand-written JS object stand in for
+/// a Dart implementation. The wire contract (bare value/void for
+/// non-fallible methods, `{tag: 'ok'|'err', ...}` for fallible ones,
+/// `Promise`-wrapped for async) must match [render_adapter_method] exactly,
+/// since both are read by the same compiled Rust/TS glue.
+fn render_wrapper_method(
+    method: &CallbackMethodShape,
+    context: &RenderContext<Wasm32>,
+) -> Result<String> {
+    let params_sig = method
+        .params
+        .iter()
+        .map(|(name, ty)| Ok(format!("{} {name}", dart_type(ty, context)?)))
+        .collect::<Result<Vec<_>>>()?
+        .join(", ");
+    let call_args = method
+        .params
+        .iter()
+        .map(|(name, ty)| to_js(name, ty, context))
+        .collect::<Result<Vec<_>>>()?
+        .join(", ");
+    let method_args = if call_args.is_empty() {
+        "_js".to_owned()
+    } else {
+        format!("_js, {call_args}")
+    };
+    let cast_ty = if method.asynchronous {
+        "$$js.JSPromise<$$js.JSAny?>"
+    } else {
+        "$$js.JSAny?"
+    };
+    let call = format!(
+        "(_js.getProperty('{}'.toJS) as $$js.JSFunction).callAsFunction({method_args}) as {cast_ty}",
+        method.js_name
+    );
+    let invoke = if method.asynchronous {
+        format!("await ({call}).toDart")
+    } else {
+        call
+    };
+
+    let body = if let Some(error_ty) = &method.error_ty {
+        let ok_decode = match &method.success_ty {
+            Some(ty) => from_js(
+                "(__boltffiResult.getProperty('value'.toJS))",
+                ty,
+                context,
+            )?,
+            None => "null".to_owned(),
+        };
+        let err_decode = from_js(
+            "(__boltffiResult.getProperty('error'.toJS) as $$js.JSAny)",
+            error_ty,
+            context,
+        )?;
+        format!(
+            "final __boltffiRaw = {invoke};\n    final __boltffiResult = __boltffiRaw as $$js.JSObject;\n    final __boltffiTag = (__boltffiResult.getProperty('tag'.toJS) as $$js.JSString).toDart;\n    return switch (__boltffiTag) {{\n      'ok' => BoltFFIResult.ok({ok_decode}),\n      'err' => BoltFFIResult.err({err_decode}),\n      final tag => throw StateError('Unknown wire tag from JsWrapper.{}: $tag'),\n    }};",
+            method.dart_name
+        )
+    } else {
+        match &method.success_ty {
+            None => format!("{invoke};"),
+            Some(ty) => {
+                let decode = from_js("__boltffiRaw", ty, context)?;
+                format!("final __boltffiRaw = {invoke};\n    return {decode};")
+            }
+        }
+    };
+
+    let return_ty = callback_public_return_type(method, context)?;
+    if method.asynchronous {
+        Ok(format!(
+            "  @override\n  {return_ty} {}({params_sig}) async {{\n    {body}\n  }}",
+            method.dart_name
+        ))
+    } else {
+        Ok(format!(
+            "  @override\n  {return_ty} {}({params_sig}) {{\n    {body}\n  }}",
             method.dart_name
         ))
     }

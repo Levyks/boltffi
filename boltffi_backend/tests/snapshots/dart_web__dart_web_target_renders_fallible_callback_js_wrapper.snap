@@ -1,0 +1,209 @@
+---
+source: boltffi_backend/tests/dart_web.rs
+expression: "rendered_fixture(\"callback/callback_status_result\")"
+---
+===== lib/demo.dart =====
+// ignore_for_file: camel_case_types, non_constant_identifier_names, unused_element, unused_local_variable, library_prefixes, library_private_types_in_public_api, no_leading_underscores_for_local_identifiers
+
+import 'dart:async' as $$async;
+import 'dart:js_interop' as $$js;
+import 'dart:js_interop_unsafe' as $$js_unsafe;
+import 'dart:typed_data' as $$typed_data;
+import 'package:async/async.dart' as $$asyncutil;
+
+/// `dart:js_interop` has no built-in `int <-> JSBigInt` conversion (unlike
+/// `double`/`JSNumber`), since a plain Dart `int` doesn't map to a single JS
+/// representation across compilers. i64/u64-range values cross as JS
+/// `bigint` (matching the wasm/TS runtime's own convention), round-tripped
+/// through JS's own decimal-string coercion since that's the only
+/// unconditionally available bridge.
+@$$js.JS('BigInt')
+external $$js.JSAny _$$jsBigIntFromString($$js.JSString value);
+
+@$$js.JS('String')
+external $$js.JSString _$$jsStringFromAny($$js.JSAny value);
+
+$$js.JSAny $$dartIntToJSBigInt(int value) =>
+    _$$jsBigIntFromString(value.toString().toJS);
+
+int $$jsBigIntToDartInt($$js.JSAny value) =>
+    int.parse(_$$jsStringFromAny(value).toDart);
+
+/// Matches the shape of the native (dart:ffi) target's `BoltFFIResult` so
+/// callback-trait implementations are source-compatible across both.
+sealed class BoltFFIResult<Ok, Err extends Object> {
+  const BoltFFIResult();
+
+  factory BoltFFIResult.ok(Ok value) = BoltFFIResult$Ok;
+
+  factory BoltFFIResult.err(Err value) = BoltFFIResult$Err;
+}
+
+final class BoltFFIResult$Ok<Ok, Err extends Object>
+    extends BoltFFIResult<Ok, Err> {
+  final Ok value;
+
+  const BoltFFIResult$Ok(this.value);
+}
+
+final class BoltFFIResult$Err<Ok, Err extends Object>
+    extends BoltFFIResult<Ok, Err> {
+  final Err value;
+
+  const BoltFFIResult$Err(this.value);
+}
+
+/// Every object-typed success value crossing into a fallible callback or
+/// export must be wrapped like this -- `@boltffi/runtime`'s
+/// `matchWireResult` only lets bare primitives pass through as an implicit
+/// "ok"; any other object is rejected as an ambiguous `WireResult`/`WireErr`
+/// shape. Wrapping unconditionally (including primitives) is always safe.
+$$js.JSObject $$wireOk($$js.JSAny? value) {
+  final result = $$js.JSObject();
+  result.setProperty('tag'.toJS, 'ok'.toJS);
+  result.setProperty('value'.toJS, value);
+  return result;
+}
+
+/// Failure counterpart of [$$wireOk]. This must be *thrown*, matching
+/// `matchWireResult`'s own `WireErr` handling, not returned -- a callback
+/// implementation reports failure through a Dart exception even though the
+/// underlying Rust method returns `Result::Err`.
+///
+/// Wrapped in a genuine Dart `Exception` class rather than thrown as a raw
+/// `JSObject`: dart2wasm's exception machinery requires a real Dart object
+/// identity to throw/catch (a bare js_interop external reference fails with
+/// "Attempting to box non-Dart object"), so the JS-shaped payload travels
+/// as a field instead.
+final class _WireErrException implements Exception {
+  final $$js.JSObject value;
+  const _WireErrException(this.value);
+}
+
+$$js.JSObject $$wireErr($$js.JSAny? error) {
+  final result = $$js.JSObject();
+  result.setProperty('tag'.toJS, 'err'.toJS);
+  result.setProperty('error'.toJS, error);
+  return result;
+}
+
+/// Awaits a JS `Promise` from calling an exported fallible Rust async
+/// function. The compiled TS module's fallible functions never resolve to a
+/// `{tag, value}` wrapper -- they resolve with the plain success value and
+/// *reject* with a real typed `XxxException` (holding the decoded error
+/// payload on its `.value`) on failure, matching ordinary JS/TS promise
+/// idioms (see `target::typescript::render::function`'s `Failure::render`,
+/// shared between the sync and async completion paths).
+Future<T> $$awaitFallible<T>(
+  $$js.JSPromise<$$js.JSAny?> promise,
+  T Function($$js.JSAny? value) decodeSuccess,
+  Object Function($$js.JSAny error) decodeError,
+) async {
+  try {
+    final result = await promise.toDart;
+    return decodeSuccess(result);
+  } catch (error) {
+    if (error is $$js.JSObject && error.hasProperty('value'.toJS).toDart) {
+      final value = error.getProperty('value'.toJS);
+      throw decodeError(value as $$js.JSAny);
+    }
+    rethrow;
+  }
+}
+
+/// Matches the wasm/TS runtime's own `Duration` wire shape (`{secs, nanos}`,
+/// with `secs` crossing as a JS `bigint`).
+$$js.JSObject $$durationToJS(Duration value) {
+  final micros = value.inMicroseconds;
+  final secs = micros ~/ 1000000;
+  final nanos = (micros % 1000000) * 1000;
+  final result = $$js.JSObject();
+  result.setProperty('secs'.toJS, $$dartIntToJSBigInt(secs));
+  result.setProperty('nanos'.toJS, nanos.toDouble().toJS);
+  return result;
+}
+
+Duration $$durationFromJS($$js.JSObject value) {
+  final secs = $$jsBigIntToDartInt(value.getProperty('secs'.toJS) as $$js.JSAny);
+  final nanos = (value.getProperty('nanos'.toJS) as $$js.JSNumber).toDartInt;
+  return Duration(microseconds: secs * 1000000 + nanos ~/ 1000);
+}
+
+/// Wraps an exported async call's `Promise<T>` as a `CancelableOperation<T>`
+/// so exported async calls have the identical public signature as the
+/// native (dart:ffi) target, which can drive real cancellation. On web,
+/// cancellation is best-effort: the wasm computation can't actually be
+/// aborted mid-flight once started, so `.cancel()` here just stops the
+/// caller from observing the eventual result -- same trade-off any
+/// Future-based API has, just made explicit by matching the native type.
+$$asyncutil.CancelableOperation<T> $$asCancelable<T>(Future<T> future) {
+  return $$asyncutil.CancelableOperation<T>.fromFuture(future);
+}
+
+
+abstract interface class StatusMapper {
+  BoltFFIResult<int, String> mapStatus(int status);
+}
+
+@$$js.JSExport()
+final class _StatusMapperJSAdapter {
+  final StatusMapper _impl;
+
+  _StatusMapperJSAdapter(this._impl);
+
+  $$js.JSAny? mapStatus($$js.JSAny? __boltffiArg0) {
+    final __boltffiResult = _impl.mapStatus((__boltffiArg0 as $$js.JSNumber).toDartInt);
+    return switch (__boltffiResult) {
+      BoltFFIResult$Ok(value: final __boltffiValue) => $$wireOk((__boltffiValue).toDouble().toJS),
+      BoltFFIResult$Err(value: final __boltffiError) => $$wireErr((__boltffiError).toJS),
+    };
+  }
+}
+
+/// Wraps a raw JS object that already speaks this callback's wire
+/// contract (see the "Dart Web: bypassing the dart2wasm hop" section of
+/// the callbacks docs) so it can be handed to Rust without routing calls
+/// through the dart2wasm module at all. Passing an instance of this class
+/// anywhere a StatusMapper is expected skips the usual
+/// rust -> js -> dart(wasm) -> js -> rust round trip in favor of a plain
+/// rust -> js -> rust call.
+final class StatusMapperJsWrapper implements StatusMapper {
+  final $$js.JSObject _js;
+
+  const StatusMapperJsWrapper(this._js);
+
+  @override
+  BoltFFIResult<int, String> mapStatus(int status) {
+    final __boltffiRaw = (_js.getProperty('mapStatus'.toJS) as $$js.JSFunction).callAsFunction(_js, (status).toDouble().toJS) as $$js.JSAny?;
+    final __boltffiResult = __boltffiRaw as $$js.JSObject;
+    final __boltffiTag = (__boltffiResult.getProperty('tag'.toJS) as $$js.JSString).toDart;
+    return switch (__boltffiTag) {
+      'ok' => BoltFFIResult.ok(((__boltffiResult.getProperty('value'.toJS)) as $$js.JSNumber).toDartInt),
+      'err' => BoltFFIResult.err(((__boltffiResult.getProperty('error'.toJS) as $$js.JSAny) as $$js.JSString).toDart),
+      final tag => throw StateError('Unknown wire tag from JsWrapper.mapStatus: $tag'),
+    };
+  }
+}
+
+
+@$$js.JS('__boltffi_demo_ready')
+external $$js.JSPromise<$$js.JSAny?>? get _$$readyPromise;
+
+/// Waits for the WASM module to finish loading. Call (and await) this
+/// before using any other export in this library.
+///
+/// Requires a `<script type="module">` block in your app's
+/// `web/index.html` that starts loading the module and stores the
+/// resulting promise on `window.__boltffi_demo_ready` -- see this package's
+/// generated README for the exact snippet to paste in.
+Future<void> ensureInitialized() async {
+  final promise = _$$readyPromise;
+  if (promise == null) {
+    throw StateError(
+      "window.__boltffi_demo_ready is not set. Add the <script "
+      "type=\"module\"> block from this package's README to your app's "
+      "web/index.html, before the Flutter/Dart script tag.",
+    );
+  }
+  await promise.toDart;
+}

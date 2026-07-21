@@ -574,3 +574,53 @@ Trait callbacks have some restrictions:
 Closures are passed as function pointers with an associated context. When the target language calls a function that accepts a closure, it packages the lambda and any captured state into a handle. Rust receives this handle and invokes the closure through a generated wrapper that unpacks arguments, calls the target language function, and returns the result.
 
 Trait callbacks use a vtable mechanism. When the target language passes a callback object, BoltFFI creates a handle that pairs the object reference with a vtable of function pointers. Each method in the trait has a corresponding entry in the vtable. When Rust calls a method, it invokes the function pointer with the handle, which dispatches to the target language implementation. The handle tracks ownership so the object stays alive as long as Rust holds a reference.
+
+## Dart Web: bypassing the dart2wasm hop
+
+The `dart_web` target compiles your Dart app to `dart2wasm`, a *separate* WebAssembly module from the one produced for your Rust crate. The two wasm modules can't call each other directly -- every call between them crosses through JS glue. For a trait callback implemented in Dart, that means a full round trip on every invocation:
+
+```
+rust(wasm) → js → dart(wasm) → js → rust(wasm)
+```
+
+If your Dart implementation is itself just forwarding to a plain JS object -- for example, your package is consumed from a JS/TS app that implements the callback interface directly -- two of those four hops are pure overhead: JS calls into the dart2wasm module only to have it immediately call back out to the same JS object.
+
+For every generated trait callback `Foo`, BoltFFI also generates `FooJsWrapper`:
+
+```dart
+final class FooJsWrapper implements Foo {
+  const FooJsWrapper(JSObject js);
+  // ...
+}
+```
+
+Pass a `FooJsWrapper` anywhere a `Foo` is expected, and BoltFFI recognizes it at the call site: instead of wrapping your object in the usual Dart-side adapter, it hands the underlying `JSObject` straight to Rust. That collapses the call path to:
+
+```
+rust(wasm) → js → rust(wasm)
+```
+
+skipping the dart2wasm module entirely, for every call made through that callback.
+
+```dart
+// Given a raw JS object (e.g. handed in from a JS/TS caller of your
+// package) that already implements the Foo interface's methods:
+final JSObject jsImplementation = /* ... */;
+
+download(
+  url: 'https://example.com',
+  handler: FooJsWrapper(jsImplementation),
+);
+```
+
+### The wire contract
+
+The JS object wrapped by `FooJsWrapper` must speak the exact same wire shape that BoltFFI's own generated Dart-to-JS adapter would have produced, since Rust's compiled glue reads it the same way regardless of where it came from:
+
+- **Non-fallible methods** return the bare value directly (or nothing, for `void`).
+- **Fallible methods** (returning `Result`) return `{ tag: 'ok', value }` or `{ tag: 'err', error }`.
+- **Async methods** return a `Promise` of the above, rather than the bare/tagged value synchronously.
+
+This is exactly the shape BoltFFI's `target::typescript` output already uses, so a JS/TS object built against that target's generated types satisfies the contract without any extra work. If you're hand-writing a JS callback implementation instead, match this shape explicitly.
+
+This optimization only matters when you actually hold a raw `JSObject` -- an ordinary Dart class implementing `Foo` gets no benefit from `FooJsWrapper` and should just be passed as-is.
