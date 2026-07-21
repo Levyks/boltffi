@@ -12,6 +12,7 @@ impl SourceFixture {
         }
     }
 
+    #[allow(dead_code)]
     pub fn many<I, F>(fragments: I) -> Self
     where
         I: IntoIterator<Item = F>,

@@ -888,11 +888,7 @@ fn render_wrapper_method(
 
     let body = if let Some(error_ty) = &method.error_ty {
         let ok_decode = match &method.success_ty {
-            Some(ty) => from_js(
-                "(__boltffiResult.getProperty('value'.toJS))",
-                ty,
-                context,
-            )?,
+            Some(ty) => from_js("(__boltffiResult.getProperty('value'.toJS))", ty, context)?,
             None => "null".to_owned(),
         };
         let err_decode = from_js(
