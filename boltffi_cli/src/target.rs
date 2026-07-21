@@ -411,6 +411,12 @@ impl RustTarget {
         architecture: Architecture::X86_64,
     };
 
+    pub const WINDOWS_ARM64: Self = Self {
+        triple: "aarch64-pc-windows-msvc",
+        platform: Platform::Windows,
+        architecture: Architecture::Arm64,
+    };
+
     pub const ALL_IOS: &'static [Self] =
         &[Self::IOS_ARM64, Self::IOS_SIM_ARM64, Self::IOS_SIM_X86_64];
 
@@ -440,6 +446,7 @@ impl RustTarget {
         Self::MACOS_ARM64,
         Self::MACOS_X86_64,
         Self::WINDOWS_X86_64,
+        Self::WINDOWS_ARM64,
     ];
 
     pub const fn from_axes(platform: Platform, architecture: Architecture) -> Option<Self> {
@@ -457,6 +464,7 @@ impl RustTarget {
             (Platform::Linux, Architecture::Arm64) => Some(Self::LINUX_ARM64),
             (Platform::Linux, Architecture::X86_64) => Some(Self::LINUX_X86_64),
             (Platform::Windows, Architecture::X86_64) => Some(Self::WINDOWS_X86_64),
+            (Platform::Windows, Architecture::Arm64) => Some(Self::WINDOWS_ARM64),
             _ => None,
         }
     }
@@ -483,6 +491,7 @@ impl RustTarget {
             "macos:arm64" => Some(Self::MACOS_ARM64),
             "macos:x86_64" | "macos:x64" => Some(Self::MACOS_X86_64),
             "windows:x86_64" | "windows:x64" => Some(Self::WINDOWS_X86_64),
+            "windows:arm64" => Some(Self::WINDOWS_ARM64),
             _ => None,
         }
     }
@@ -511,6 +520,7 @@ impl RustTarget {
             (Platform::MacOs, Architecture::Arm64) => Some("macos:arm64"),
             (Platform::MacOs, Architecture::X86_64) => Some("macos:x86_64"),
             (Platform::Windows, Architecture::X86_64) => Some("windows:x86_64"),
+            (Platform::Windows, Architecture::Arm64) => Some("windows:arm64"),
             _ => None,
         }
     }
@@ -831,13 +841,18 @@ mod tests {
                 "x86_64-unknown-linux-gnu",
                 "aarch64-apple-darwin",
                 "x86_64-apple-darwin",
-                "x86_64-pc-windows-msvc"
+                "x86_64-pc-windows-msvc",
+                "aarch64-pc-windows-msvc"
             ]
         );
 
         assert_eq!(
             RustTarget::from_dart_native_name("windows:x86_64"),
             Some(RustTarget::WINDOWS_X86_64)
+        );
+        assert_eq!(
+            RustTarget::from_dart_native_name("windows:arm64"),
+            Some(RustTarget::WINDOWS_ARM64)
         );
         assert_eq!(
             RustTarget::from_dart_native_name("linux:x64"),
