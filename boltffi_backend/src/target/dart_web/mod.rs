@@ -729,6 +729,65 @@ mod tests {
     }
 
     #[test]
+    fn async_optional_returns_await_outside_the_decoder_closure() {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                #[export]
+                pub async fn maybe_value(flag: bool) -> Option<i32> { None }
+
+                pub struct Probe;
+
+                #[export]
+                impl Probe {
+                    pub fn new() -> Self { Self }
+
+                    pub async fn sense(&self) -> Option<i32> { None }
+                }
+
+                #[export]
+                #[allow(async_fn_in_trait)]
+                pub trait MaybeGreeter {
+                    async fn maybe_greet(&self) -> Option<String>;
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        let bindings = lower::<Wasm32>(&source).expect("source lowers");
+
+        let output = DartWebHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render(&bindings)
+            .expect("target renders");
+        let source = source_of(&output);
+
+        // The Optional decoder wraps its input in a synchronous IIFE
+        // (single evaluation for the null check), so an `await`ed call
+        // can't be decoded in place -- it's hoisted into a local first at
+        // all three call shapes: free function, class method, and the
+        // JsWrapper's callback invocation.
+        assert!(source.contains("final __boltffiAwaited = (await (_boltffiExtern_maybeValue("));
+        assert!(
+            source.contains("final __boltffiAwaited = (await ((js).callMethodVarArgs('sense'.toJS")
+        );
+        assert!(
+            source.contains(
+                "final __boltffiAwaited = (await (_js.callMethodVarArgs('maybeGreet'.toJS"
+            )
+        );
+        assert!(source.contains("final __boltffiRaw = __boltffiAwaited;"));
+        assert!(source.contains(
+            "return __boltffiRaw == null ? null : (__boltffiRaw! as JSNumber).toDartInt;"
+        ));
+        // No `await` may remain inside the synchronous decoder IIFE.
+        assert!(!source.contains("(() { final __boltffiRaw = (await"));
+    }
+
+    #[test]
     fn renders_callback_interface_adapter_and_js_wrapper_escape_hatch() {
         let output = DartWebHost::new("demo")
             .expect("host constructs")
@@ -852,7 +911,9 @@ mod tests {
         // JS-reserved names.
         assert!(source.contains("bool $extension;"));
         assert!(!source.contains("final bool $extension;"));
-        assert!(source.contains("result.setProperty('extension'.toJS, ($extension).toJS);"));
+        // Field references are `this.`-qualified so a field named e.g.
+        // `result` can't resolve to the toJS accumulator local instead.
+        assert!(source.contains("result.setProperty('extension'.toJS, (this.$extension).toJS);"));
         assert!(
             source.contains("$extension: (js.getProperty('extension'.toJS) as JSBoolean).toDart")
         );
@@ -882,7 +943,7 @@ mod tests {
         assert!(source.contains("class Filter$ByRange extends Filter"));
         assert!(source.contains("final int value0;"));
         assert!(source.contains("final int value1;"));
-        assert!(source.contains("result.setProperty('value0'.toJS, (value0).toJS);"));
+        assert!(source.contains("result.setProperty('value0'.toJS, (this.value0).toJS);"));
 
         assert!(source.contains("Point echoPoint(Point arg0)"));
         assert!(source.contains("(arg0).toJS()"));
@@ -896,6 +957,37 @@ mod tests {
         // The constant name is lowerCamelCase and `const`, matching
         // target::dart's own Constant convention.
         assert!(source.contains("const Filter defaultFilter = Filter$None();"));
+    }
+
+    #[test]
+    fn record_field_named_result_does_not_collide_with_tojs_accumulator() {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(
+                r#"
+                #[data]
+                pub struct Outcome {
+                    pub result: i32,
+                }
+                "#,
+            )
+            .expect("valid source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("source scans");
+        let bindings = lower::<Wasm32>(&source).expect("source lowers");
+
+        let output = DartWebHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render(&bindings)
+            .expect("target renders");
+        let source = source_of(&output);
+
+        // toJS() declares `final result = JSObject();` -- a field literally
+        // named `result` must stay `this.`-qualified or the generated code
+        // writes the accumulator to itself instead of the field.
+        assert!(source.contains("result.setProperty('result'.toJS, (this.result).toJS);"));
+        assert!(source.contains("result: (js.getProperty('result'.toJS) as JSNumber).toDartInt"));
     }
 
     #[test]

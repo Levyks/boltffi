@@ -533,6 +533,12 @@ fn render_free_function(
 
     let body_statement = if signature.return_ty.is_none() {
         format!("{awaited_expr};")
+    } else if signature.asynchronous {
+        // `await` can't sit inside the synchronous IIFE some decoders
+        // (Optional, Sequence<Optional<...>>) wrap their input in --
+        // hoist the awaited value into a local and decode from there.
+        let decoded = signature.decode_return("__boltffiAwaited", context)?;
+        format!("final __boltffiAwaited = {awaited_expr};\n    return {decoded};")
     } else {
         let decoded = signature.decode_return(&awaited_expr, context)?;
         format!("return {decoded};")
@@ -647,7 +653,9 @@ fn render_data_class(
         let dart_type = interop::dart_type(ty, context)?;
         field_decls.push(format!("  {field_keyword}{dart_type} {dart_name};"));
         ctor_params.push(format!("required this.{dart_name}"));
-        let to_js = interop::to_js(dart_name, ty, context)?;
+        // `this.` qualification keeps a field named e.g. `result` from
+        // resolving to the toJS accumulator local instead of the field.
+        let to_js = interop::to_js(&format!("this.{dart_name}"), ty, context)?;
         to_js_entries.push(format!(
             "    result.setProperty('{wire_key}'.toJS, {to_js});"
         ));
@@ -960,6 +968,13 @@ impl Callback {
                 None => {
                     if signature.return_ty.is_none() {
                         format!("{{ {raw_result}; }}")
+                    } else if signature.asynchronous {
+                        // Same await-in-sync-IIFE hazard as the outbound
+                        // call sites: decode a hoisted local instead.
+                        let decoded = signature.decode_return("__boltffiAwaited", context)?;
+                        format!(
+                            "{{ final __boltffiAwaited = {raw_result};\n    return {decoded}; }}"
+                        )
                     } else {
                         let decoded = signature.decode_return(&raw_result, context)?;
                         format!("{{ return {decoded}; }}")
@@ -1191,8 +1206,11 @@ fn render_class_method(
         let body_statement = if signature.return_ty.is_none() {
             format!("{call_expr};")
         } else {
-            let decoded = signature.decode_return(&call_expr, context)?;
-            format!("return {decoded};")
+            // Hoist the awaited call into a local: return decoders may wrap
+            // their input in a non-async IIFE (e.g. Optional's null check),
+            // where a bare `await` is illegal.
+            let decoded = signature.decode_return("__boltffiAwaited", context)?;
+            format!("final __boltffiAwaited = {call_expr};\n    return {decoded};")
         };
         return Ok(format!(
             "  {keyword}{} {method_name}({params}) {async_keyword}{{\n    {}\n  }}",
