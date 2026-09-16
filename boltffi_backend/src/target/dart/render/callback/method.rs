@@ -1053,6 +1053,7 @@ fn async_success_payload(
     };
     match (plan, payload) {
         (ReturnPlan::Void, CBridgeType::Buffer) => Ok(vec![
+            format!("{call};"),
             "final _l$payloadBuffer = $$ffi.Struct.create<_$$BoltFFIBuf>();".to_owned(),
         ]),
         (ReturnPlan::DirectViaReturnSlot { ty }, CBridgeType::Buffer)

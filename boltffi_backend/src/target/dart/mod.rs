@@ -480,6 +480,39 @@ mod tests {
     }
 
     #[test]
+    fn dart_fallible_async_void_callback_invokes_the_implementation() {
+        // G-01 regression: a `Future<Result<(), E>>` callback completes with
+        // an empty payload buffer, so the success arm used to emit only the
+        // buffer and silently discard the `await implementation.<m>(...)`.
+        let bindings = bindings(
+            r#"
+            #[error]
+            pub enum IoError {
+                Failed { reason: String },
+            }
+
+            #[export]
+            pub trait ByteSink {
+                async fn write_all(&self, data: Vec<u8>) -> Result<(), IoError>;
+            }
+
+            #[export]
+            pub fn flush(sink: impl ByteSink) {}
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("fallible async void callback should render");
+
+        let source = file(&output, "demo/lib/demo.dart");
+        assert!(
+            source.contains("await implementation.writeAll("),
+            "the implementation call must be emitted before the empty \
+             success payload — dropped calls silently complete without I/O"
+        );
+    }
+
+    #[test]
     fn dart_shim_symbols_use_callback_register_path() {
         let bindings = bindings(
             r#"
