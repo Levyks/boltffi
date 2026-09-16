@@ -36,6 +36,7 @@ use syntax::Syntax;
 pub struct DartHost {
     package: Option<String>,
     artifact: Option<String>,
+    standalone_pubspec: bool,
 }
 
 impl DartHost {
@@ -51,6 +52,17 @@ impl DartHost {
     pub fn native_artifact(mut self, artifact: impl Into<String>) -> Self {
         self.artifact = Some(artifact.into());
         self
+    }
+
+    /// Emits a pubspec without `resolution: workspace`, for packages consumed
+    /// through a bare path/git dependency outside any pub workspace.
+    pub fn standalone_pubspec(mut self) -> Self {
+        self.standalone_pubspec = true;
+        self
+    }
+
+    fn is_standalone_pubspec(&self) -> bool {
+        self.standalone_pubspec
     }
 
     pub fn into_target(self) -> Result<Target<Self, CBridge>> {

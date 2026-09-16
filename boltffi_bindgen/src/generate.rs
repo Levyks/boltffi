@@ -49,6 +49,7 @@ pub struct Generation {
     csharp_native_library: Option<String>,
     dart_package: Option<String>,
     dart_native_artifact: Option<String>,
+    dart_standalone_pubspec: bool,
     java_package: Option<String>,
     java_file: Option<String>,
     java_android_library: Option<String>,
@@ -103,6 +104,7 @@ impl Generation {
             csharp_native_library: None,
             dart_package: None,
             dart_native_artifact: None,
+            dart_standalone_pubspec: false,
             java_package: None,
             java_file: None,
             java_android_library: None,
@@ -426,6 +428,13 @@ impl Generation {
         self
     }
 
+    /// Emits a pubspec without `resolution: workspace`, for packages consumed
+    /// through a bare path/git dependency outside any pub workspace.
+    pub fn dart_standalone_pubspec(mut self, standalone: bool) -> Self {
+        self.dart_standalone_pubspec = standalone;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn dart_web_module(mut self, module: impl Into<String>) -> Self {
         self.dart_web_module = Some(module.into());
@@ -627,6 +636,9 @@ impl Generation {
         }
         if let Some(artifact) = &self.dart_native_artifact {
             host = host.native_artifact(artifact.clone());
+        }
+        if self.dart_standalone_pubspec {
+            host = host.standalone_pubspec();
         }
         let target = host.into_target().map_err(GenerationError::Render)?;
         self.render_backend(&target, bindings)

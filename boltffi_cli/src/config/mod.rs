@@ -1162,6 +1162,10 @@ impl Config {
         self.dart_native_targets().to_vec()
     }
 
+    pub fn dart_standalone(&self) -> bool {
+        self.targets.dart.standalone
+    }
+
     pub fn dart_web_output(&self) -> PathBuf {
         self.targets.dart_web.output.clone()
     }

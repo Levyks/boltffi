@@ -153,6 +153,7 @@ fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
         .generation()
         .dart_package(config.package.name.clone())
         .dart_native_artifact(expansion.artifact_name())
+        .dart_standalone_pubspec(config.dart_standalone())
         .render(Target::Dart)
         .map_err(|error| generation_error(Target::Dart.name(), error))?;
 
