@@ -169,7 +169,7 @@ impl Enumeration {
         }
     }
 
-    pub fn constant_variant(
+    pub fn unit_variant_expression(
         id: EnumId,
         variant_name: &boltffi_binding::CanonicalName,
         initialization: VariantInitialization,
@@ -179,7 +179,7 @@ impl Enumeration {
         let enumeration = context
             .enumeration(id)
             .ok_or(JavaHost::broken_bridge_contract(
-                "constant enum type was not found in render context",
+                "enum type was not found in render context",
             ))?;
         let owner = TypeName::named(Name::new(enumeration.name()).type_name(version)?);
         match enumeration {
@@ -188,8 +188,8 @@ impl Enumeration {
                 Name::new(variant_name).enum_entry(version)?,
             )),
             EnumDecl::Data(enumeration) => DataForm::classify(enumeration, version, context)?
-                .constant_variant(enumeration, owner, variant_name, initialization, version),
-            _ => Err(JavaHost::unsupported("unknown enum constant value")),
+                .unit_variant_expression(enumeration, owner, variant_name, initialization, version),
+            _ => Err(JavaHost::unsupported("unknown enum variant value")),
         }
     }
 }
@@ -440,7 +440,7 @@ impl DataForm {
         }
     }
 
-    fn constant_variant(
+    fn unit_variant_expression(
         self,
         enumeration: &DataEnumDecl<Native>,
         owner: TypeName,
@@ -452,7 +452,7 @@ impl DataForm {
             .variants()
             .iter()
             .find(|variant| variant.name() == variant_name && variant.payload().is_unit())
-            .ok_or_else(|| JavaHost::unsupported("data enum constant variant"))?;
+            .ok_or_else(|| JavaHost::unsupported("data enum unit variant"))?;
         let variant = Name::new(variant.name()).variant(version)?;
         match (self, initialization) {
             (Self::FlatError, _) => Ok(Expression::static_member(

@@ -128,8 +128,12 @@ export class AsyncFutureManager {
     queueMicrotask(() => this.repollHandle(handle));
   }
 
-  // A lower-level counterpart to `signal` for callers that can pass a
-  // plain int but not cheaply build a real AbortController.
+  // Lower-level counterpart to `options.signal` for callers that can pass a
+  // plain int but not cheaply build a real AbortController (dart-web / KMP).
+  // `callId` must be unique among in-flight calls: reusing an id while the
+  // first call is still pending overwrites the mapping, and settling either
+  // call removes the key for both. Prefer an autoincrement or thread-local
+  // counter when the id is produced by another language's codegen.
   cancelById(callId: number): void {
     const handle = this.cancelIds.get(callId);
     if (handle === undefined) return;
@@ -192,6 +196,21 @@ export class AsyncFutureManager {
       );
     }
     return new Promise((resolve, reject) => {
+      // Most suspended calls never cancel. Skip the three extra closures and
+      // the abort listener setup unless the caller asked for cancellation.
+      const wantsCancel = signal !== undefined || cancelId !== undefined;
+      if (!wantsCancel) {
+        this.pendingFutures.set(handle, {
+          resolve,
+          reject,
+          pollSync,
+          panicMessage,
+          free,
+          cancel,
+        });
+        return;
+      }
+
       let onAbort: (() => void) | undefined;
       if (signal) {
         onAbort = () => this.cancel(handle);
@@ -626,6 +645,11 @@ export class BoltFFIModule {
     return toBoolArray(this.getBytes().subarray(ptr, ptr + len));
   }
 
+  /** Lends a `&[u8]` / `&mut [u8]` parameter buffer without copying it. */
+  borrowU8Array(ptr: number, len: number): Uint8Array {
+    return this.getBytes().subarray(ptr, ptr + len);
+  }
+
   borrowI8Array(ptr: number, len: number): Int8Array {
     return this.getI8().subarray(ptr, ptr + len);
   }
@@ -665,6 +689,12 @@ export class BoltFFIModule {
   allocU8Array(value: Uint8Array | readonly number[]): PrimitiveBufferAlloc {
     const len = value.length;
     const ptr = this.exports.boltffi_wasm_alloc(len);
+    // A failed allocation returns zero, and copying there would write the
+    // payload over the start of linear memory and then hand the callee a
+    // pointer it reads as empty. Neither is recoverable, and neither is loud.
+    if (ptr === 0 && len > 0) {
+      throw new Error("Failed to allocate memory for a byte-slice parameter");
+    }
     this.getBytes().set(value, ptr);
     return { ptr, len, allocationSize: len };
   }
@@ -799,11 +829,16 @@ export class BoltFFIModule {
 
   copyPrimitiveBufferInto(
     allocation: PrimitiveBufferAlloc,
-    target: Int8Array | Int16Array | Uint16Array | Int32Array | Uint32Array | BigInt64Array | BigUint64Array | Float32Array | Float64Array,
-    elementType: Exclude<PrimitiveBufferElementType, "bool" | "u8">
+    target: Uint8Array | Int8Array | Int16Array | Uint16Array | Int32Array | Uint32Array | BigInt64Array | BigUint64Array | Float32Array | Float64Array,
+    elementType: Exclude<PrimitiveBufferElementType, "bool">
   ): void {
     const { ptr, len } = allocation;
     switch (elementType) {
+      // `u8` only reaches this path from a `&mut [u8]` parameter. Every other
+      // shape of bytes crosses as a byte buffer, which has no way back.
+      case "u8":
+        (target as Uint8Array).set(this.getBytes().subarray(ptr, ptr + len));
+        return;
       case "i8":
         (target as Int8Array).set(this.getI8().subarray(ptr, ptr + len));
         return;

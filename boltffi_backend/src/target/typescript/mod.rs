@@ -203,6 +203,13 @@ mod tests {
                 pub fn echo_vec_bool(value: Vec<bool>) -> Vec<bool> { value }
 
                 #[export]
+                pub fn fill_bytes(value: &mut [u8]) {
+                    for byte in value.iter_mut() {
+                        *byte = 7;
+                    }
+                }
+
+                #[export]
                 pub fn increment_u64(value: &mut [u64]) {
                     if let Some(first) = value.first_mut() {
                         *first += 1;
@@ -243,6 +250,18 @@ mod tests {
         )
         .expect("source scans");
         lower::<Wasm32>(&source).expect("source lowers")
+    }
+
+    fn custom_type_default_bindings() -> Bindings<Wasm32> {
+        let source = boltffi_scan::scan_file(
+            syn::parse_str(include_str!(
+                "../../../tests/fixtures/source/records/custom_type_default.rs"
+            ))
+            .expect("valid custom type default source"),
+            PackageInfo::new("demo", None),
+        )
+        .expect("custom type default source scans");
+        lower::<Wasm32>(&source).expect("custom type default source lowers")
     }
 
     fn constant_bindings() -> Bindings<Wasm32> {
@@ -805,6 +824,25 @@ mod tests {
         assert!(browser.contents().contains(
             "return _module.takePackedBytes((_exports.boltffi_function_demo_echo_bytes as Function)(__boltffi_value_allocation.ptr, __boltffi_value_allocation.len) as bigint);"
         ));
+        // A writable byte slice crosses as a direct vector: the pointer goes
+        // unframed and the host copies back what the callee wrote. Framing it
+        // as a byte buffer would decode into a `Vec` the wrapper owns, and
+        // every write would be dropped with it.
+        assert!(
+            browser
+                .contents()
+                .contains("const __boltffi_value_allocation = _module.allocU8Array(value);")
+        );
+        assert!(browser.contents().contains(
+            "_module.copyPrimitiveBufferInto(__boltffi_value_allocation, value, \"u8\");"
+        ));
+        // The free cannot be skipped when the copy back throws, so it sits in a
+        // `finally` of its own rather than after the copy in the same block.
+        assert!(
+            browser
+                .contents()
+                .contains("_module.freePrimitiveBuffer(__boltffi_value_allocation);")
+        );
         assert!(browser.contents().contains(
             "export function echoVecI32(value: readonly number[] | Int32Array): Int32Array"
         ));
@@ -1276,12 +1314,17 @@ mod tests {
             .expect("browser module");
 
         assert!(browser.contents().contains(
-            "export async function asyncAdd(left: number, right: number, options?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<number>"
+            "export async function asyncAdd(left: number, right: number, options?: { signal?: AbortSignal; cancelId?: number }): Promise<number>"
         ));
         assert!(
             browser
                 .contents()
                 .contains("const __boltffiSignal = options?.signal;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("const __boltffiCancelId = options?.cancelId;")
         );
         assert!(
             browser
@@ -1306,15 +1349,15 @@ mod tests {
                 .contains("import { BoltFFICancelledError,")
         );
         assert!(browser.contents().contains(
-            "export async function asyncName(value: string, options?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<string>"
+            "export async function asyncName(value: string, options?: { signal?: AbortSignal; cancelId?: number }): Promise<string>"
         ));
         assert!(browser.contents().contains("_module.takePackedUtf8String("));
         assert!(browser.contents().contains(
-            "export async function asyncValues(value: readonly number[] | Int32Array, options?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<Int32Array>"
+            "export async function asyncValues(value: readonly number[] | Int32Array, options?: { signal?: AbortSignal; cancelId?: number }): Promise<Int32Array>"
         ));
         assert!(browser.contents().contains("_module.takeSlotI32Array()"));
         assert!(browser.contents().contains(
-            "export async function asyncSize(options?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<number>"
+            "export async function asyncSize(options?: { signal?: AbortSignal; cancelId?: number }): Promise<number>"
         ));
         assert!(
             !browser
@@ -1332,10 +1375,10 @@ mod tests {
             )
         );
         assert!(browser.contents().contains(
-            "async get(options?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<number>"
+            "async get(options?: { signal?: AbortSignal; cancelId?: number }): Promise<number>"
         ));
         assert!(browser.contents().contains(
-            "async duplicate(options?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<Worker>"
+            "async duplicate(options?: { signal?: AbortSignal; cancelId?: number }): Promise<Worker>"
         ));
         assert!(browser.contents().contains("Worker._fromHandle("));
     }
@@ -1384,12 +1427,17 @@ mod tests {
             .expect("browser module");
 
         assert!(browser.contents().contains(
-            "export async function asyncEcho(options: string, __boltffiOptions?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<string>"
+            "export async function asyncEcho(options: string, __boltffiOptions?: { signal?: AbortSignal; cancelId?: number }): Promise<string>"
         ));
         assert!(
             browser
                 .contents()
                 .contains("const __boltffiSignal = __boltffiOptions?.signal;")
+        );
+        assert!(
+            browser
+                .contents()
+                .contains("const __boltffiCancelId = __boltffiOptions?.cancelId;")
         );
     }
 
@@ -1438,7 +1486,7 @@ mod tests {
             .expect("browser module");
 
         assert!(browser.contents().contains(
-            "export async function asyncEcho(options: string, boltffiOptions: string, __boltffiOptions?: { signal?: AbortSignal }, __boltffiCancelId?: number): Promise<string>"
+            "export async function asyncEcho(options: string, boltffiOptions: string, __boltffiOptions?: { signal?: AbortSignal; cancelId?: number }): Promise<string>"
         ));
     }
 
@@ -1543,6 +1591,31 @@ mod tests {
                 .contents()
                 .contains("export function keepTimestamp(value: Timestamp): Timestamp")
         );
+    }
+
+    #[test]
+    fn renders_custom_type_defaults_through_representations() {
+        let output = TypeScriptHost::new("demo")
+            .expect("host constructs")
+            .into_target()
+            .render(&custom_type_default_bindings())
+            .expect("target renders");
+        let browser = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path().ends_with("demo.ts"))
+            .expect("browser module");
+
+        assert!(
+            browser
+                .contents()
+                .contains("readonly maxRejoinDistance?: Length;"),
+            "{}",
+            browser.contents()
+        );
+        assert!(browser.contents().contains(
+            "value.maxRejoinDistance === undefined ? { meters: 1500.0 } : value.maxRejoinDistance"
+        ));
     }
 
     /// Only an owned `Vec<u8>` crosses unframed.

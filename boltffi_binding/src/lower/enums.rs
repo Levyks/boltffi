@@ -86,7 +86,7 @@ fn lower_c_style<S: SurfaceLower>(
                 Ok(CStyleVariantDecl::new(
                     CanonicalName::from(&variant.name),
                     IntegerValue::new(discriminant),
-                    metadata::element_meta(variant.doc.as_ref(), None, None),
+                    metadata::element_meta(variant.doc.as_ref(), None),
                 ))
             })
             .collect::<Result<Vec<_>, LowerError>>()?,
@@ -136,7 +136,7 @@ fn lower_variant(
         CanonicalName::from(&variant.name),
         VariantTag::from_index(variant_index).ok_or_else(LowerError::variant_tag_overflow)?,
         lower_payload(index, ids, &variant.payload)?,
-        metadata::element_meta(variant.doc.as_ref(), None, None),
+        metadata::element_meta(variant.doc.as_ref(), None),
     ))
 }
 
@@ -171,11 +171,13 @@ fn lower_payload(
                     key,
                     ty,
                     codec,
-                    metadata::element_meta(
+                    metadata::value_meta(
+                        index,
+                        &field.type_expr,
                         field.doc.as_ref(),
                         None,
-                        metadata::default_value(field.default.as_ref())?,
-                    ),
+                        field.default.as_ref(),
+                    )?,
                 ))
             })
             .collect::<Result<Vec<_>, LowerError>>()

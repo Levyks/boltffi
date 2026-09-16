@@ -19,6 +19,7 @@ pub enum GenerateTarget {
     DartWeb,
     Python,
     CSharp,
+    C,
     All,
 }
 
@@ -43,6 +44,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::DartWeb => bindings::run_generation(config, &options),
         GenerateTarget::Python => bindings::run_generation(config, &options),
         GenerateTarget::CSharp => bindings::run_generation(config, &options),
+        GenerateTarget::C => bindings::run_generation(config, &options),
         GenerateTarget::All => {
             if config.should_process(Target::Swift, options.experimental) {
                 bindings::run_generation(
@@ -140,6 +142,19 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
                     config,
                     &GenerateOptions {
                         target: GenerateTarget::Python,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        cargo_args: options.cargo_args.clone(),
+                        deny_skipped: options.deny_skipped,
+                    },
+                )?;
+            }
+
+            if config.should_process(Target::C, options.experimental) {
+                bindings::run_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::C,
                         output: options.output.clone(),
                         experimental: options.experimental,
                         cargo_args: options.cargo_args.clone(),

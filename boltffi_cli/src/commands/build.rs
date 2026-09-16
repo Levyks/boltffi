@@ -85,23 +85,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
                 return Ok(Vec::new());
             }
             println!("Building for dart ({})...", profile);
-            let mut results = expanded_builder(config, release, cargo_args.clone())?
-                .build_targets(&config.dart_targets())?;
-            // `pack dart` unifies the web half in when dart_web is also
-            // enabled, which needs the wasm cdylib built -- without this,
-            // a `--no-build` unify pack has nothing to vendor because this
-            // platform selection never otherwise touches the wasm target.
-            if config.is_dart_web_enabled() {
-                results.extend(
-                    wasm_builder(
-                        config,
-                        wasm_build_is_release(config, release),
-                        cargo_args.clone(),
-                    )?
-                    .build_wasm_with_triple(config.wasm_triple())?,
-                );
-            }
-            results
+            build_dart(config, release, &cargo_args)?
         }
         BuildPlatform::All => {
             println!("Building all targets ({})...", profile);
@@ -129,10 +113,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
                 );
             }
             if config.is_dart_enabled() {
-                all_results.extend(
-                    expanded_builder(config, release, cargo_args.clone())?
-                        .build_targets(&config.dart_targets())?,
-                );
+                all_results.extend(build_dart(config, release, &cargo_args)?);
             }
             all_results
         }
@@ -153,6 +134,25 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
         }
         .into())
     }
+}
+
+fn build_dart(config: &Config, release: bool, cargo_args: &[String]) -> Result<Vec<BuildResult>> {
+    let mut results = crate::pack::dart::build_dart_targets(config, release, cargo_args, false)?;
+    // `pack dart` unifies the web half in when dart_web is also
+    // enabled, which needs the wasm cdylib built -- without this,
+    // a `--no-build` unify pack has nothing to vendor because this
+    // platform selection never otherwise touches the wasm target.
+    if config.is_dart_web_enabled() {
+        results.extend(
+            wasm_builder(
+                config,
+                wasm_build_is_release(config, release),
+                cargo_args.to_vec(),
+            )?
+            .build_wasm_with_triple(config.wasm_triple())?,
+        );
+    }
+    Ok(results)
 }
 
 // Cargo only sets CARGO_FEATURE_* for build scripts, so every platform here
@@ -206,6 +206,7 @@ fn build_options(release: bool, selection: BuildSelection) -> BuildOptions {
         release,
         selection,
         on_output: None,
+        extra_env: Vec::new(),
     }
 }
 

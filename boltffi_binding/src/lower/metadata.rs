@@ -19,38 +19,24 @@ pub fn decl_meta(
 pub fn element_meta(
     doc: Option<&SourceDocComment>,
     deprecated: Option<&SourceDeprecationInfo>,
-    default: Option<DefaultValue>,
 ) -> ElementMeta {
-    ElementMeta::new(
-        doc.map(DocComment::from),
-        deprecated.map(Into::into),
-        default,
-    )
+    ElementMeta::new(doc.map(DocComment::from), deprecated.map(Into::into), None)
 }
 
-pub fn default_value(
-    default: Option<&SourceDefaultValue>,
-) -> Result<Option<DefaultValue>, LowerError> {
-    default.map(DefaultValue::try_from).transpose()
-}
-
-pub fn default_value_for_type(
+pub fn value_meta(
     index: &Index,
     type_expr: &TypeExpr,
+    doc: Option<&SourceDocComment>,
+    deprecated: Option<&SourceDeprecationInfo>,
     default: Option<&SourceDefaultValue>,
-) -> Result<Option<DefaultValue>, LowerError> {
-    default
-        .map(|default| match (type_expr, default) {
-            (TypeExpr::Enum { id, .. }, SourceDefaultValue::Path(path)) => index
-                .enumeration(id)
-                .and_then(|enumeration| constants::enum_variant_default(enumeration, path))
-                .ok_or_else(|| LowerError::unsupported_type(UnsupportedType::DefaultValue)),
-            (_, SourceDefaultValue::Path(_)) => {
-                Err(LowerError::unsupported_type(UnsupportedType::DefaultValue))
-            }
-            (_, default) => DefaultValue::try_from(default),
-        })
-        .transpose()
+) -> Result<ElementMeta, LowerError> {
+    Ok(ElementMeta::new(
+        doc.map(DocComment::from),
+        deprecated.map(Into::into),
+        default
+            .map(|default| lower_default(index, type_expr, default))
+            .transpose()?,
+    ))
 }
 
 impl From<&SourceDocComment> for DocComment {
@@ -83,6 +69,23 @@ impl TryFrom<&SourceDefaultValue> for DefaultValue {
                 Err(LowerError::unsupported_type(UnsupportedType::DefaultValue))
             }
         }
+    }
+}
+
+fn lower_default(
+    index: &Index,
+    type_expr: &TypeExpr,
+    default: &SourceDefaultValue,
+) -> Result<DefaultValue, LowerError> {
+    match (type_expr, default) {
+        (TypeExpr::Enum { id, .. }, SourceDefaultValue::Path(path)) => index
+            .enumeration(id)
+            .and_then(|enumeration| constants::enum_variant_default(enumeration, path))
+            .ok_or_else(|| LowerError::unsupported_type(UnsupportedType::DefaultValue)),
+        (_, SourceDefaultValue::Path(_)) => {
+            Err(LowerError::unsupported_type(UnsupportedType::DefaultValue))
+        }
+        (_, default) => DefaultValue::try_from(default),
     }
 }
 

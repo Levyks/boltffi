@@ -20,6 +20,7 @@ pub enum WasmPollStatus {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn __boltffi_wake(handle: u32);
 }
@@ -212,7 +213,7 @@ impl<T: Send + 'static> RustFuture<T> {
         self: &Arc<Self>,
         continuation_callback: RustFutureContinuationCallback,
         callback_data: u64,
-    ) {
+    ) -> RustFuturePoll {
         let is_cancelled = self.wake_target.is_cancelled();
 
         let is_ready = is_cancelled || {
@@ -222,9 +223,11 @@ impl<T: Send + 'static> RustFuture<T> {
 
         if is_ready {
             continuation_callback(callback_data, RustFuturePoll::Ready);
+            RustFuturePoll::Ready
         } else {
             self.wake_target
                 .store_continuation(continuation_callback, callback_data);
+            RustFuturePoll::MaybeReady
         }
     }
 
@@ -439,9 +442,9 @@ pub unsafe fn rust_future_poll<T: Send + 'static>(
     handle: RustFutureHandle,
     continuation_callback: RustFutureContinuationCallback,
     callback_data: u64,
-) {
+) -> i8 {
     RustFutureHandleAccess::<T>::new(handle)
-        .with_future_arc(|rust_future| rust_future.poll(continuation_callback, callback_data));
+        .with_future_arc(|rust_future| rust_future.poll(continuation_callback, callback_data) as i8)
 }
 
 pub unsafe fn rust_future_complete<T: Send + 'static>(

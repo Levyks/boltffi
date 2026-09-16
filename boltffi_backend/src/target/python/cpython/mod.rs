@@ -1824,6 +1824,23 @@ Coordinates are plain `f64`.
     }
 
     #[test]
+    fn python_target_renders_custom_type_defaults_through_representations() {
+        let output = target()
+            .render(&bindings(include_str!(
+                "../../../../tests/fixtures/source/records/custom_type_default.rs"
+            )))
+            .expect("Python target should render custom type defaults");
+        let init = file(&output, "demo/__init__.py");
+        let stub = file(&output, "demo/__init__.pyi");
+
+        assert!(
+            init.contains("max_rejoin_distance: LengthFFI = LengthFFI(meters=1500)"),
+            "{init}"
+        );
+        assert!(stub.contains("max_rejoin_distance: LengthFFI = LengthFFI(meters=1500)"));
+    }
+
+    #[test]
     fn python_target_defines_enum_before_record_with_enum_variant_default() {
         let output = target()
             .render(&bindings(
@@ -2116,7 +2133,7 @@ Coordinates are plain `f64`.
         let stub = file(&output, "demo/__init__.pyi");
 
         assert!(header.contains("RustFutureHandle boltffi_function_demo_fetch(void);"));
-        assert!(header.contains("void boltffi_async_function_demo_fetch_poll("));
+        assert!(header.contains("int8_t boltffi_async_function_demo_fetch_poll("));
         assert!(header.contains("int32_t boltffi_async_function_demo_fetch_complete("));
         assert!(extension.contains("static PyObject *boltffi_python_box_future_handle"));
         assert!(extension.contains("static void boltffi_python_future_wake"));

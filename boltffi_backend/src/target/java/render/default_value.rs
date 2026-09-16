@@ -1,10 +1,17 @@
-use boltffi_binding::{DefaultValue, FloatValue, Primitive as BindingPrimitive, TypeRef};
+use boltffi_binding::{
+    CustomTypeId, DefaultValue, FloatValue, Native, Primitive as BindingPrimitive, TypeRef,
+};
 
 use crate::{
-    core::Result,
+    core::{
+        RenderContext, Result,
+        default_value::{Field as RepresentationField, Representation},
+    },
     target::java::{
         JavaHost, JavaVersion,
+        name_style::Name,
         primitive::Primitive,
+        render::{Enumeration, VariantInitialization},
         syntax::{Expression, Identifier, StringLiteral, TypeIdentifier, TypeName},
     },
 };
@@ -12,13 +19,21 @@ use crate::{
 pub struct DefaultExpression;
 
 impl DefaultExpression {
-    pub fn render(ty: &TypeRef, value: &DefaultValue, version: JavaVersion) -> Result<Expression> {
+    pub fn render(
+        ty: &TypeRef,
+        value: &DefaultValue,
+        version: JavaVersion,
+        context: &RenderContext<Native>,
+    ) -> Result<Expression> {
         if let TypeRef::Optional(inner) = ty {
             return match value {
                 DefaultValue::Null => Ok(Self::optional("empty", None, version)),
-                _ => Self::render(inner, value, version)
+                _ => Self::render(inner, value, version, context)
                     .map(|value| Self::optional("of", Some(value), version)),
             };
+        }
+        if let TypeRef::Custom(custom_type) = ty {
+            return Self::custom(*custom_type, value, version, context);
         }
         match value {
             DefaultValue::Bool(value) => match ty {
@@ -30,9 +45,48 @@ impl DefaultExpression {
             DefaultValue::String(value) => {
                 Ok(Expression::string(StringLiteral::new(value.clone())))
             }
-            DefaultValue::EnumVariant { .. } => Err(JavaHost::unsupported("enum default value")),
+            DefaultValue::EnumVariant { variant_name, .. } => match ty {
+                TypeRef::Enum(id) => Enumeration::unit_variant_expression(
+                    *id,
+                    variant_name,
+                    VariantInitialization::External,
+                    version,
+                    context,
+                ),
+                _ => Err(JavaHost::unsupported("enum default type")),
+            },
             DefaultValue::Null => Ok(Expression::null()),
             _ => Err(JavaHost::unsupported("unknown default value")),
+        }
+    }
+
+    fn custom(
+        custom_type: CustomTypeId,
+        value: &DefaultValue,
+        version: JavaVersion,
+        context: &RenderContext<Native>,
+    ) -> Result<Expression> {
+        match Representation::resolve(custom_type, context)? {
+            Representation::Transparent(representation) => {
+                Self::render(representation, value, version, context)
+            }
+            Representation::Record(record) => {
+                let value = match record.field() {
+                    RepresentationField::Direct(field) => Self::render(
+                        &TypeRef::Primitive(field.ty().primitive()),
+                        value,
+                        version,
+                        context,
+                    )?,
+                    RepresentationField::Encoded(field) => {
+                        Self::render(field.ty(), value, version, context)?
+                    }
+                };
+                Ok(Expression::construct(
+                    TypeName::named(Name::new(record.name()).type_name(version)?),
+                    [value].into_iter().collect(),
+                ))
+            }
         }
     }
 

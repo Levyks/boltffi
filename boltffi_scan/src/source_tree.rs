@@ -104,7 +104,19 @@ fn walk(
     let spans = file.spans;
     let (own_items, mut child_modules) = file.items.into_iter().try_fold(
         (Vec::new(), Vec::new()),
-        |(mut own_items, mut child_modules), item| {
+        |(mut own_items, mut child_modules), mut item| {
+            if !cfg.matches_item(&item)? {
+                return Ok((own_items, child_modules));
+            }
+            if let syn::Item::Impl(item_impl) = &mut item {
+                cfg.retain_active_impl_items(item_impl)?;
+            }
+            if let syn::Item::Enum(item_enum) = &mut item {
+                cfg.retain_active_enum_variants(item_enum)?;
+            }
+            if let syn::Item::Struct(item_struct) = &mut item {
+                cfg.retain_active_struct_fields(item_struct)?;
+            }
             match item {
                 syn::Item::Mod(item_mod) => {
                     child_modules.extend(descend(
@@ -400,5 +412,133 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
         assert!(module_paths(&tree).contains(&"demo::ffi::".to_owned()));
+    }
+
+    #[test]
+    fn inactive_cfg_gated_items_and_methods_are_removed() {
+        let tree = SourceTree::in_memory(
+            "demo",
+            parse_items(
+                "#[cfg(feature = \"ffi\")] pub struct Hidden; \
+                 pub struct Engine; \
+                 #[export] impl Engine { \
+                     pub fn available(&self) {} \
+                     #[cfg(feature = \"ffi\")] pub fn hidden(&self, value: Hidden) {} \
+                 }",
+            ),
+        )
+        .expect("inactive cfg items are removed");
+        let items = tree
+            .modules()
+            .iter()
+            .find(|module| module.scope().path() == &ModulePath::root("demo"))
+            .expect("root module")
+            .items();
+        let methods = items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Impl(item) => Some(&item.items),
+                _ => None,
+            })
+            .expect("exported impl");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(methods.len(), 1);
+    }
+
+    #[test]
+    fn active_cfg_gated_items_and_methods_are_retained() {
+        let cfg = ActiveCfg::default().with_feature("ffi");
+        let tree = SourceTree::in_memory_with_cfg(
+            "demo",
+            parse_items(
+                "#[cfg(feature = \"ffi\")] pub struct Input; \
+                 pub struct Engine; \
+                 #[export] impl Engine { \
+                     #[cfg(feature = \"ffi\")] pub fn run(&self, input: Input) {} \
+                 }",
+            ),
+            &cfg,
+        )
+        .expect("active cfg items are retained");
+        let items = tree
+            .modules()
+            .iter()
+            .find(|module| module.scope().path() == &ModulePath::root("demo"))
+            .expect("root module")
+            .items();
+        let methods = items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Impl(item) => Some(&item.items),
+                _ => None,
+            })
+            .expect("exported impl");
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(methods.len(), 1);
+    }
+
+    #[test]
+    fn enum_variants_follow_the_active_configuration() {
+        let source = "pub enum Mode { #[cfg(feature = \"experimental\")] Experimental, Stable }";
+        let inactive = SourceTree::in_memory("demo", parse_items(source))
+            .expect("inactive enum variant is removed");
+        let active = SourceTree::in_memory_with_cfg(
+            "demo",
+            parse_items(source),
+            &ActiveCfg::default().with_feature("experimental"),
+        )
+        .expect("active enum variant is retained");
+        let variant_names = |tree: &SourceTree| {
+            tree.modules()
+                .iter()
+                .flat_map(SourceModule::items)
+                .find_map(|item| match item {
+                    syn::Item::Enum(enumeration) => Some(
+                        enumeration
+                            .variants
+                            .iter()
+                            .map(|variant| variant.ident.to_string())
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                })
+                .expect("source contains an enum")
+        };
+
+        assert_eq!(variant_names(&inactive), vec!["Stable"]);
+        assert_eq!(variant_names(&active), vec!["Experimental", "Stable"]);
+    }
+
+    #[test]
+    fn data_fields_follow_the_active_configuration() {
+        let source = "pub struct Position { latitude: f64, #[cfg(feature = \"experimental\")] altitude: f64 } \
+                      pub enum Event { Position { latitude: f64, #[cfg(feature = \"experimental\")] altitude: f64 } }";
+        let inactive = SourceTree::in_memory("demo", parse_items(source))
+            .expect("inactive data fields are removed");
+        let active = SourceTree::in_memory_with_cfg(
+            "demo",
+            parse_items(source),
+            &ActiveCfg::default().with_feature("experimental"),
+        )
+        .expect("active data fields are retained");
+        let field_counts = |tree: &SourceTree| {
+            tree.modules()
+                .iter()
+                .flat_map(SourceModule::items)
+                .filter_map(|item| match item {
+                    syn::Item::Struct(record) => Some(record.fields.len()),
+                    syn::Item::Enum(enumeration) => enumeration
+                        .variants
+                        .first()
+                        .map(|variant| variant.fields.len()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(field_counts(&inactive), vec![1, 1]);
+        assert_eq!(field_counts(&active), vec![2, 2]);
     }
 }

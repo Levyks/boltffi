@@ -15,6 +15,7 @@ impl Experimental {
         Experimental::WholeTarget(Target::Dart),
         Experimental::WholeTarget(Target::DartWeb),
         Experimental::WholeTarget(Target::KotlinMultiplatform),
+        Experimental::WholeTarget(Target::C),
     ];
 
     pub fn is_target_experimental(target: Target) -> bool {

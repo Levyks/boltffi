@@ -1,8 +1,8 @@
 use boltffi_ast::PackageInfo;
 use boltffi_binding::{
-    Bindings, ClassDecl, ConstantDecl, ConstantValueDecl, Decl, DefaultValue, HandlePresence,
-    HandleTarget, IncomingParam, IntegerValue, Native, ParamPlan, Primitive, Receive, RecordDecl,
-    ReturnPlan, TypeRef, lower,
+    Bindings, CanonicalName, ClassDecl, ConstantDecl, ConstantValueDecl, Decl, DefaultValue,
+    HandlePresence, HandleTarget, IncomingParam, IntegerValue, Native, ParamPlan, Primitive,
+    Receive, RecordDecl, ReturnPlan, TypeRef, lower,
 };
 use boltffi_scan::scan_file;
 
@@ -18,6 +18,12 @@ const SOURCE: &str = "
     pub enum Mode {
         VeryFast,
         Slow,
+    }
+
+    #[data]
+    pub struct Options {
+        #[boltffi::default(Mode::VeryFast)]
+        pub mode: Mode,
     }
 
     #[export]
@@ -160,7 +166,7 @@ fn scans_and_lowers_point_contract_to_bindings() {
         .iter()
         .filter(|decl| matches!(decl, Decl::CustomType(_)))
         .count();
-    assert_eq!(records, 1, "Point lowers to one record");
+    assert_eq!(records, 2, "Point and Options lower to records");
     assert_eq!(functions, 3, "functions lower from scanned exports");
     assert_eq!(callbacks, 1, "ValueCallback lowers to one callback");
     assert_eq!(classes, 2, "Engine and Marker lower to classes");
@@ -177,6 +183,27 @@ fn scans_and_lowers_point_contract_to_bindings() {
         .expect("record declaration");
 
     assert_eq!(record_method_counts(record), (1, 1));
+
+    let options = bindings
+        .decls()
+        .iter()
+        .find_map(|decl| match decl {
+            Decl::Record(record) if record.name().as_path_string() == "options" => {
+                Some(record.as_ref())
+            }
+            _ => None,
+        })
+        .expect("options record");
+    let RecordDecl::Encoded(options) = options else {
+        panic!("options must use encoded fields");
+    };
+    assert_eq!(
+        options.fields()[0].meta().default(),
+        Some(&DefaultValue::EnumVariant {
+            enum_name: CanonicalName::single("mode"),
+            variant_name: CanonicalName::new(vec!["very".into(), "fast".into()]),
+        })
+    );
 
     let engine = class(&bindings, "engine");
     let marker = class(&bindings, "marker");

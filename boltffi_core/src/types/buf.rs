@@ -126,6 +126,31 @@ pub extern "C" fn boltffi_free_buf(buf: FfiBuf) {
     drop(buf);
 }
 
+/// Decodes an owned, wire-encoded UTF-8 string buffer into an [`FfiString`].
+///
+/// The returned string is length-delimited and is **not** NUL-terminated.
+#[unsafe(no_mangle)]
+pub extern "C" fn boltffi_buf_into_string(buf: FfiBuf) -> crate::FfiString {
+    let mut bytes = unsafe { buf.into_vec::<u8>() };
+    let Some(length) = bytes
+        .get(..core::mem::size_of::<u32>())
+        .and_then(|prefix| prefix.try_into().ok())
+        .map(u32::from_le_bytes)
+        .and_then(|length| usize::try_from(length).ok())
+    else {
+        return crate::FfiString::default();
+    };
+    let prefix_len = core::mem::size_of::<u32>();
+    if bytes.len() != prefix_len.saturating_add(length) {
+        return crate::FfiString::default();
+    }
+    bytes.copy_within(prefix_len.., 0);
+    bytes.truncate(length);
+    String::from_utf8(bytes)
+        .map(crate::FfiString::from)
+        .unwrap_or_default()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn boltffi_buf_from_bytes(ptr: *const u8, len: usize) -> FfiBuf {
     if ptr.is_null() || len == 0 {
@@ -162,6 +187,23 @@ impl FfiBuf {
         if self.cap == len && self.align == 1 {
             let ptr = self.ptr;
             mem::forget(self);
+            return ((len as u64) << 32) | (ptr as u64);
+        }
+
+        if self.align == 1 {
+            // The host frees this with `Vec::from_raw_parts(ptr, len, len)`, so
+            // a capacity above the length has to go before the pointer can
+            // cross. `shrink_to_fit` asks the allocator to split the block in
+            // place; dlmalloc does that without touching the payload, which is
+            // the whole point of trying it before falling back to a copy.
+            let mut bytes = unsafe { self.into_vec::<u8>() };
+            bytes.shrink_to_fit();
+            if bytes.capacity() == len {
+                let mut bytes = ManuallyDrop::new(bytes);
+                return ((len as u64) << 32) | (bytes.as_mut_ptr() as u64);
+            }
+            let boxed = bytes.into_boxed_slice();
+            let ptr = Box::into_raw(boxed) as *mut u8;
             return ((len as u64) << 32) | (ptr as u64);
         }
 
@@ -247,5 +289,21 @@ mod tests {
         assert_eq!(unsafe { actual.as_byte_slice() }, unsafe {
             expected.as_byte_slice()
         });
+    }
+
+    #[test]
+    fn encoded_string_buffer_converts_to_owned_ffi_string() {
+        let encoded = FfiBuf::wire_encode(&String::from("not NUL-terminated"));
+        let decoded = boltffi_buf_into_string(encoded);
+
+        assert_eq!(decoded.as_str(), Some("not NUL-terminated"));
+    }
+
+    #[test]
+    fn malformed_encoded_string_buffer_converts_to_empty_string() {
+        let malformed = FfiBuf::from_vec(vec![5_u8, 0, 0, 0, b'x']);
+        let decoded = boltffi_buf_into_string(malformed);
+
+        assert!(decoded.is_empty());
     }
 }

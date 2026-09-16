@@ -272,7 +272,7 @@ impl Record {
         let fields = record
             .fields()
             .iter()
-            .map(|field| Field::from_direct(field, record, version))
+            .map(|field| Field::from_direct(field, record, version, context))
             .collect::<Result<Vec<_>>>()?;
         let (initializers, static_methods, instance_methods) = ValueCalls::from_declarations(
             record.initializers(),
@@ -473,6 +473,7 @@ impl Field {
         field: &DirectFieldDecl,
         record: &DirectRecordDecl<Native>,
         version: JavaVersion,
+        context: &RenderContext<Native>,
     ) -> Result<Self> {
         let name = ValueMemberAccess::RecordField.field(field.key(), version)?;
         let offset = record
@@ -497,6 +498,7 @@ impl Field {
                     &boltffi_binding::TypeRef::Primitive(field.ty().primitive()),
                     value,
                     version,
+                    context,
                 )
             })
             .transpose()?;
@@ -609,7 +611,7 @@ impl Field {
         let default = field
             .meta()
             .default()
-            .map(|value| DefaultExpression::render(field.ty(), value, version))
+            .map(|value| DefaultExpression::render(field.ty(), value, version, context))
             .transpose()?;
         Ok(Self {
             name,

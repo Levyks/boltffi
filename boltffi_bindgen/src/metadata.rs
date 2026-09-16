@@ -103,8 +103,15 @@ impl BindingMetadataBuild {
         )?;
         let source_root = SourceRoot::resolve(&metadata, &manifest)?;
         let features = metadata.active_features(&manifest, cargo_args)?;
-        let output =
-            CargoBuild::new(self, &manifest, &source_root, cargo_args, features).output()?;
+        let output = CargoBuild::new(
+            self,
+            &manifest,
+            &source_root,
+            cargo_args,
+            features,
+            metadata.target_directory(),
+        )
+        .output()?;
         let artifacts = output.artifacts(&manifest)?;
         BindingMetadataReader::new(artifacts.into_paths())
             .read_required()
@@ -252,6 +259,11 @@ impl SourceRoot {
 #[derive(Clone, Debug, Deserialize)]
 struct CargoMetadata {
     packages: Vec<MetadataPackage>,
+    /// Cargo's resolved target directory. Trustworthy because `load` runs cargo
+    /// with the caller's environment and toolchain, so `CARGO_TARGET_DIR` and
+    /// any config override are already applied.
+    #[serde(default)]
+    target_directory: PathBuf,
 }
 
 impl CargoMetadata {
@@ -285,6 +297,15 @@ impl CargoMetadata {
                 source,
             }
         })
+    }
+
+    /// `None` when cargo reported no target directory, which leaves cargo's own
+    /// default in place rather than guessing one.
+    fn target_directory(&self) -> Option<&Path> {
+        match self.target_directory.as_os_str().is_empty() {
+            true => None,
+            false => Some(&self.target_directory),
+        }
     }
 
     fn package(
@@ -369,6 +390,7 @@ struct CargoBuild<'build> {
     source_root: &'build SourceRoot,
     cargo_args: &'build MetadataCargoArgs,
     features: MetadataFeatures,
+    target_directory: Option<&'build Path>,
 }
 
 impl<'build> CargoBuild<'build> {
@@ -378,6 +400,7 @@ impl<'build> CargoBuild<'build> {
         source_root: &'build SourceRoot,
         cargo_args: &'build MetadataCargoArgs,
         features: MetadataFeatures,
+        target_directory: Option<&'build Path>,
     ) -> Self {
         Self {
             build,
@@ -385,6 +408,7 @@ impl<'build> CargoBuild<'build> {
             source_root,
             cargo_args,
             features,
+            target_directory,
         }
     }
 
@@ -393,6 +417,28 @@ impl<'build> CargoBuild<'build> {
             .output()
             .map_err(|source| BindingMetadataBuildError::CargoSpawn { source })
             .and_then(CargoOutput::from_output)
+    }
+
+    /// Target directory for the metadata build: `<target>/boltffi-metadata`.
+    ///
+    /// Cargo records `cargo rustc -- --cfg …` and tracked env in a unit's
+    /// fingerprint but not in its hash, so this build and an ordinary
+    /// `cargo build` of the same crate and features write the *same* artifact
+    /// slot and dirty each other — alternating them recompiles the crate every
+    /// time. A directory of its own keeps both caches warm.
+    ///
+    /// `None` leaves cargo's default in place: a caller that chose a target
+    /// directory itself keeps it, and a failure to resolve one is not worth
+    /// failing the build over.
+    fn metadata_target_dir(&self) -> Option<PathBuf> {
+        if self
+            .cargo_args
+            .iter()
+            .any(|arg| arg.starts_with("--target-dir"))
+        {
+            return None;
+        }
+        Some(self.target_directory?.join("boltffi-metadata"))
     }
 
     fn command(self) -> Command {
@@ -419,6 +465,9 @@ impl<'build> CargoBuild<'build> {
             command.arg("--target").arg(target);
         }
         command.args(self.cargo_args.iter());
+        if let Some(target_dir) = self.metadata_target_dir() {
+            command.arg("--target-dir").arg(target_dir);
+        }
         command.env(BINDING_METADATA_BUILD_ENV, "1");
         command.env(BINDING_METADATA_SOURCE_ENV, self.source_root.path());
         command.env(BINDING_METADATA_SURFACE_ENV, surface.as_str());
@@ -813,6 +862,7 @@ mod tests {
             MetadataFeatures {
                 names: BTreeSet::from(["ffi".to_string()]),
             },
+            Some(Path::new("/workspace/target")),
         )
         .command();
         let arguments = command
@@ -857,6 +907,7 @@ mod tests {
             MetadataFeatures {
                 names: BTreeSet::new(),
             },
+            Some(Path::new("/workspace/target")),
         )
         .command();
         let arguments = command

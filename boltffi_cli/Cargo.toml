@@ -21,8 +21,8 @@ boltffi_bindgen.workspace = true
 boltffi_backend.workspace = true
 boltffi_binding.workspace = true
 boltffi_verify.workspace = true
-cap-fs-ext = "=4.0.2"
-cap-std = "=4.0.2"
+cap-fs-ext = "=4.0.3"
+cap-std = "=4.0.3"
 clap = { version = "4.4", features = ["derive"] }
 serde.workspace = true
 toml = "1.0"

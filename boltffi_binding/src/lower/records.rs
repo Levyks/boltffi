@@ -62,13 +62,14 @@ fn lower_one<S: SurfaceLower>(
     let initializers = methods::lower_record_initializers::<S>(index, ids, allocator, record)?;
     let record_methods = methods::lower_record_methods::<S>(index, ids, allocator, record)?;
     if is_direct(record) {
-        lower_direct(ids, record, initializers, record_methods).map(RecordDecl::direct)
+        lower_direct(index, ids, record, initializers, record_methods).map(RecordDecl::direct)
     } else {
         lower_encoded(index, ids, record, initializers, record_methods).map(RecordDecl::encoded)
     }
 }
 
 fn lower_direct<S: SurfaceLower>(
+    index: &Index,
     ids: &DeclarationIds,
     record: &SourceRecord,
     initializers: Vec<InitializerDecl<S>>,
@@ -82,11 +83,13 @@ fn lower_direct<S: SurfaceLower>(
                 FieldKey::from(field),
                 primitive::direct_field_type(&field.type_expr)
                     .ok_or_else(|| LowerError::unsupported_type(UnsupportedType::RecordField))?,
-                metadata::element_meta(
+                metadata::value_meta(
+                    index,
+                    &field.type_expr,
                     field.doc.as_ref(),
                     None,
-                    metadata::default_value(field.default.as_ref())?,
-                ),
+                    field.default.as_ref(),
+                )?,
             ))
         })
         .collect::<Result<Vec<_>, LowerError>>()?;
@@ -121,15 +124,13 @@ fn lower_encoded<S: SurfaceLower>(
                 key,
                 ty,
                 codec,
-                metadata::element_meta(
+                metadata::value_meta(
+                    index,
+                    &field.type_expr,
                     field.doc.as_ref(),
                     None,
-                    metadata::default_value_for_type(
-                        index,
-                        &field.type_expr,
-                        field.default.as_ref(),
-                    )?,
-                ),
+                    field.default.as_ref(),
+                )?,
             ))
         })
         .collect::<Result<Vec<_>, LowerError>>()?;
@@ -2264,7 +2265,7 @@ mod tests {
     }
 
     #[test]
-    fn parameter_path_default_is_rejected_without_type_context() {
+    fn path_default_is_rejected_for_non_enum_parameter() {
         let mut factor = value_param("factor", TypeExpr::Primitive(Primitive::I32));
         factor.default = Some(SourceDefaultValue::Path(SourcePath::single("Mode")));
 
@@ -2274,7 +2275,67 @@ mod tests {
             vec![factor],
             ReturnDef::Void,
         )]))
-        .expect_err("path defaults need declared-type validation and must reject here");
+        .expect_err("a non-enum parameter cannot use a path default");
+
+        assert!(matches!(
+            error.kind(),
+            LowerErrorKind::UnsupportedType(UnsupportedType::DefaultValue)
+        ));
+    }
+
+    #[test]
+    fn parameter_enum_variant_default_resolves_from_its_declared_type() {
+        let mut mode = EnumDef::new("demo::Mode".into(), name("Mode"));
+        mode.variants = vec![
+            VariantDef::unit(name("Fast")),
+            VariantDef::unit(name("Slow")),
+        ];
+        let mut selected = value_param("selected", enum_type("demo::Mode", "Mode"));
+        selected.default = Some(SourceDefaultValue::Path(SourcePath::new(
+            PathRoot::Relative,
+            vec![PathSegment::new("Mode"), PathSegment::new("Fast")],
+        )));
+
+        let bindings = lower_contract::<Native>(
+            vec![point_record_with_methods(vec![method_with(
+                "select",
+                Receiver::Mutable,
+                vec![selected],
+                ReturnDef::Void,
+            )])],
+            vec![mode],
+        );
+        let methods = first_record_methods(&bindings);
+
+        assert_eq!(
+            methods[0].callable().params()[0].meta().default(),
+            Some(&DefaultValue::EnumVariant {
+                enum_name: CanonicalName::single("Mode"),
+                variant_name: CanonicalName::single("Fast"),
+            })
+        );
+    }
+
+    #[test]
+    fn parameter_enum_variant_default_rejects_another_enum_qualifier() {
+        let mut mode = EnumDef::new("demo::Mode".into(), name("Mode"));
+        mode.variants = vec![VariantDef::unit(name("Fast"))];
+        let mut selected = value_param("selected", enum_type("demo::Mode", "Mode"));
+        selected.default = Some(SourceDefaultValue::Path(SourcePath::new(
+            PathRoot::Relative,
+            vec![PathSegment::new("OtherMode"), PathSegment::new("Fast")],
+        )));
+        let mut contract = package();
+        contract.records = vec![point_record_with_methods(vec![method_with(
+            "select",
+            Receiver::Mutable,
+            vec![selected],
+            ReturnDef::Void,
+        )])];
+        contract.enums = vec![mode];
+
+        let error = lower::<Native>(&contract)
+            .expect_err("a default path qualified by another enum must reject");
 
         assert!(matches!(
             error.kind(),

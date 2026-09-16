@@ -225,6 +225,38 @@ const RECORD_DEFAULTS: &str = r#"
     }
 "#;
 
+const CUSTOM_TYPE_DEFAULT: &str = include_str!("fixtures/source/records/custom_type_default.rs");
+
+const ENUM_RECORD_DEFAULTS: &str = r#"
+    #[repr(u8)]
+    #[data]
+    pub enum Mode {
+        Fast = 1,
+        Slow = 2,
+    }
+
+    #[data]
+    pub enum State {
+        Idle,
+        Busy { progress: u32 },
+    }
+
+    #[data]
+    pub struct EnumDefaults {
+        #[boltffi::default(Mode::Fast)]
+        pub mode: Mode,
+        #[boltffi::default(State::Idle)]
+        pub state: State,
+    }
+
+    #[data(impl)]
+    impl EnumDefaults {
+        pub fn selected(&self, #[boltffi::default(Mode::Fast)] mode: Mode) -> Mode {
+            mode
+        }
+    }
+"#;
+
 const ERROR_RECORD: &str = r#"
     #[error]
     pub struct AppError {
@@ -1351,6 +1383,33 @@ fn java_target_renders_trailing_record_default_constructors() {
 }
 
 #[test]
+fn java_target_renders_custom_type_defaults_through_representations() {
+    let output = render(CUSTOM_TYPE_DEFAULT, CoverageMode::Complete);
+    let config = java_source(&output, "com.boltffi.demo", "DeviationConfig");
+
+    assert!(config.contains("public DeviationConfig()"));
+    assert!(config.contains("this(new LengthFFI(1500.0));"));
+}
+
+#[test]
+fn java_target_renders_enum_record_defaults_and_accepts_parameter_defaults() {
+    let java_eight = render(ENUM_RECORD_DEFAULTS, CoverageMode::Complete);
+    let java_eight_defaults = java_source(&java_eight, "com.boltffi.demo", "EnumDefaults");
+    let java_seventeen = render_with_host(
+        ENUM_RECORD_DEFAULTS,
+        CoverageMode::Complete,
+        JavaHost::for_version("com.boltffi.demo", "Demo", JavaVersion::JAVA_17)
+            .expect("Java 17 host")
+            .desktop_loader(JavaDesktopLoader::None),
+    );
+    let java_seventeen_defaults = java_source(&java_seventeen, "com.boltffi.demo", "EnumDefaults");
+
+    assert!(java_eight_defaults.contains("this(Mode.FAST, State.Idle.INSTANCE);"));
+    assert!(java_eight_defaults.contains("public Mode selected(Mode mode)"));
+    assert!(java_seventeen_defaults.contains("this(Mode.FAST, new State.Idle());"));
+}
+
+#[test]
 fn java_target_uses_class_semantics_for_primitive_array_fields() {
     let output = render_with_host(
         ENCODED_RECORD,
@@ -2453,7 +2512,7 @@ fn java_target_rejects_generated_name_collisions() {
         matches!(
             &error,
             Error::JavaNameCollision { scope, name }
-            if scope == "boltffi_function_demo_collision" && name == "_class"
+            if scope == "boltffi_function_demo_collision" && name == "class_"
         ),
         "{error:?}"
     );
@@ -2816,6 +2875,40 @@ fn generated_record_defaults_and_errors_compile_for_java_eight_when_available() 
         JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
     );
     compile_generated_java(&compiler, &output, "boltffi-java-record-semantics");
+}
+
+#[test]
+fn generated_enum_record_defaults_compile_for_java_eight_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    let output = render_with_host(
+        ENUM_RECORD_DEFAULTS,
+        CoverageMode::Complete,
+        JavaHost::new("com.boltffi.demo", "Demo").expect("Java host"),
+    );
+    compile_generated_java(&compiler, &output, "boltffi-java-enum-record-defaults");
+}
+
+#[test]
+fn generated_enum_record_defaults_compile_for_java_seventeen_when_available() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+
+    let output = render_with_host(
+        ENUM_RECORD_DEFAULTS,
+        CoverageMode::Complete,
+        JavaHost::for_version("com.boltffi.demo", "Demo", JavaVersion::JAVA_17)
+            .expect("Java 17 host"),
+    );
+    compile_generated_java_for_release(
+        &compiler,
+        &output,
+        "boltffi-java-enum-record-defaults-sealed",
+        17,
+    );
 }
 
 #[test]

@@ -578,7 +578,7 @@ impl Function {
                     async_call.body,
                     true,
                     Some(format!(
-                        "{options_name}?: {{ signal?: AbortSignal }}, __boltffiCancelId?: number"
+                        "{options_name}?: {{ signal?: AbortSignal; cancelId?: number }}"
                     )),
                 )
             }
@@ -1164,27 +1164,33 @@ impl Parameter {
         let allocation = Identifier::parse(format!("__boltffi_{name}_allocation"))?;
         let allocation_value = Expression::identifier(allocation.clone());
         let value = Expression::identifier(name.clone());
-        let mut cleanup = match vector.writeback() {
-            true => vec![Statement::expression(Expression::call(
-                Expression::identifier(Identifier::known("_module")),
-                Identifier::known("copyPrimitiveBufferInto"),
-                [
-                    allocation_value.clone(),
-                    value.clone(),
-                    Expression::string(vector.element_literal()),
-                ]
-                .into_iter()
-                .collect::<ArgumentList>(),
-            ))],
-            false => Vec::new(),
-        };
-        cleanup.push(Statement::expression(Expression::call(
+        let free = Statement::expression(Expression::call(
             Expression::identifier(Identifier::known("_module")),
             vector.free_method(),
             [allocation_value.clone()]
                 .into_iter()
                 .collect::<ArgumentList>(),
-        )));
+        ));
+        // The copy back can throw — a destination view detaches if the callee
+        // grew linear memory — and a throw there must not take the free with
+        // it, so the free gets a `finally` of its own.
+        let cleanup = match vector.writeback() {
+            true => vec![Statement::try_finally(
+                vec![Statement::expression(Expression::call(
+                    Expression::identifier(Identifier::known("_module")),
+                    Identifier::known("copyPrimitiveBufferInto"),
+                    [
+                        allocation_value.clone(),
+                        value.clone(),
+                        Expression::string(vector.element_literal()),
+                    ]
+                    .into_iter()
+                    .collect::<ArgumentList>(),
+                ))],
+                vec![free],
+            )],
+            false => vec![free],
+        };
         Ok(Self {
             ty: vector.parameter_type()?,
             setup: vec![Statement::constant(
@@ -1497,9 +1503,10 @@ impl Return {
             })
             .collect::<Result<Vec<_>>>()?;
         let signal = Identifier::known("__boltffiSignal");
-        // A separate trailing parameter, not nested in `options`, for
-        // callers that can pass a bare number but not build a JS object
-        // cheaply. `signal` stays the only mechanism idiomatic callers see.
+        // Nested in `options` next to `signal` so every async export keeps a
+        // single optional bag -- no trailing public parameter. Callers that
+        // can only pass a bare int (dart-web / KMP) still allocate only when
+        // they actually request cancellation via `{ cancelId }`.
         let cancel_id = Identifier::known("__boltffiCancelId");
         // Reading off a plain optional options parameter, rather than
         // destructuring it in the signature, avoids allocating a fresh `{}`
@@ -1509,6 +1516,13 @@ impl Return {
             Expression::optional_property(
                 Expression::identifier(options_name.clone()),
                 Identifier::known("signal"),
+            ),
+        );
+        let cancel_id_binding = Statement::constant(
+            cancel_id.clone(),
+            Expression::optional_property(
+                Expression::identifier(options_name.clone()),
+                Identifier::known("cancelId"),
             ),
         );
         // Runs before parameter setup, matching `fetch()`: an already-
@@ -1548,7 +1562,7 @@ impl Return {
                 .collect::<ArgumentList>(),
         ));
         Ok(AsyncCall {
-            pre_setup: vec![signal_binding, signal_check],
+            pre_setup: vec![signal_binding, cancel_id_binding, signal_check],
             body: vec![
                 Statement::constant(future, start),
                 Statement::constant(awaited, poll),

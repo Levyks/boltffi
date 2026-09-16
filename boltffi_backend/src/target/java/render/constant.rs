@@ -56,7 +56,7 @@ impl Constant {
                     (
                         boltffi_binding::TypeRef::Enum(id),
                         boltffi_binding::DefaultValue::EnumVariant { variant_name, .. },
-                    ) => Enumeration::constant_variant(
+                    ) => Enumeration::unit_variant_expression(
                         *id,
                         variant_name,
                         match declaration.owner() {
@@ -71,7 +71,7 @@ impl Constant {
                     (_, boltffi_binding::DefaultValue::EnumVariant { .. }) => {
                         return Err(JavaHost::unsupported("enum constant type"));
                     }
-                    _ => DefaultExpression::render(ty, value, version)?,
+                    _ => DefaultExpression::render(ty, value, version, context)?,
                 }),
                 doc,
             }),

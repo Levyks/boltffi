@@ -16,7 +16,8 @@ export default async function init(source: BufferSource | Response | WebAssembly
 {{ constant_initializers }}
 }
 
-// Lower-level counterpart to `options.signal` -- see AsyncFutureManager.cancelById.
+// Lower-level counterpart to `options.signal` / `options.cancelId`.
+// `callId` must be unique among in-flight calls -- see AsyncFutureManager.cancelById.
 export function __boltffiCancelById(callId: number): void {
   _module.asyncManager.cancelById(callId);
 }

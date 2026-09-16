@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 
 use serde::Deserialize;
 use syn::{Attribute, Item};
@@ -18,12 +18,21 @@ pub struct ExportedPackage {
     id: PackageId,
     source_file: PathBuf,
     module_name: String,
+    resolved_features: ResolvedFeatures,
 }
 
 pub struct PackageGraph {
     packages: HashMap<PackageId, CargoPackage>,
-    dependencies: HashMap<PackageId, Vec<CargoDependency>>,
+    resolved_packages: HashMap<PackageId, ResolvedPackage>,
     root_id: PackageId,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedFeatures(BTreeSet<String>);
+
+struct ResolvedPackage {
+    dependencies: Vec<CargoDependency>,
+    features: ResolvedFeatures,
 }
 
 #[derive(Debug)]
@@ -60,6 +69,8 @@ struct CargoResolve {
 struct CargoNode {
     id: String,
     deps: Vec<CargoNodeDependency>,
+    #[serde(default)]
+    features: BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -81,17 +92,7 @@ impl PackageGraph {
             return Ok(None);
         }
 
-        let output = MetadataCommand::new(&manifest_path).output()?;
-        if !output.status.success() {
-            return Err(LoadError::new(format!(
-                "cargo metadata failed with status {:?}: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)
-            .map_err(|error| LoadError::new(format!("failed to parse cargo metadata: {error}")))?;
+        let metadata = MetadataCommand::new(&manifest_path).metadata()?;
         let root_id = Self::resolve_root_id(&metadata.packages, &manifest_path)?;
         Ok(Some(Self::from_metadata(metadata, root_id)))
     }
@@ -114,27 +115,19 @@ impl PackageGraph {
             .into_iter()
             .map(|package| (PackageId::new(package.id.clone()), package))
             .collect::<HashMap<_, _>>();
-        let dependencies = metadata
+        let resolved_packages = metadata
             .resolve
             .map(|resolve| {
                 resolve
                     .nodes
                     .into_iter()
-                    .map(|node| {
-                        (
-                            PackageId::new(node.id),
-                            node.deps
-                                .into_iter()
-                                .map(CargoDependency::from)
-                                .collect::<Vec<_>>(),
-                        )
-                    })
+                    .map(CargoNode::into_resolved)
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
         Self {
             packages,
-            dependencies,
+            resolved_packages,
             root_id,
         }
     }
@@ -167,17 +160,19 @@ impl PackageGraph {
     }
 
     fn exported_dependencies(&self, id: &PackageId) -> Vec<ExportedPackage> {
-        self.dependencies
+        self.resolved_packages
             .get(id)
             .into_iter()
-            .flat_map(|dependencies| dependencies.iter())
+            .flat_map(|resolved_package| resolved_package.dependencies.iter())
             .filter_map(|dependency| {
+                let resolved_package = self.resolved_packages.get(&dependency.package_id)?;
                 let package = self.packages.get(&dependency.package_id)?;
                 package.is_local().then_some(())?;
                 package.has_exports().then_some(())?;
                 package.export(
                     dependency.package_id.clone(),
                     dependency.import_name.clone(),
+                    resolved_package.features.clone(),
                 )
             })
             .collect()
@@ -215,6 +210,16 @@ impl ExportedPackage {
     pub fn module_name(&self) -> &str {
         &self.module_name
     }
+
+    pub fn resolved_features(&self) -> impl Iterator<Item = &str> {
+        self.resolved_features.iter()
+    }
+}
+
+impl ResolvedFeatures {
+    fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
 }
 
 impl LoadError {
@@ -240,15 +245,24 @@ impl<'manifest> MetadataCommand<'manifest> {
         Self { manifest_path }
     }
 
-    fn output(self) -> Result<Output, LoadError> {
+    fn metadata(self) -> Result<CargoMetadata, LoadError> {
         let mut command = Command::new(Self::cargo_executable());
         command
             .args(["metadata", "--format-version", "1", "--manifest-path"])
             .arg(self.manifest_path)
             .args(Self::mode_args());
-        command
+        let output = command
             .output()
-            .map_err(|error| LoadError::new(format!("cargo metadata failed: {error}")))
+            .map_err(|error| LoadError::new(format!("cargo metadata failed: {error}")))?;
+        if !output.status.success() {
+            return Err(LoadError::new(format!(
+                "cargo metadata failed with status {:?}: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| LoadError::new(format!("failed to parse cargo metadata: {error}")))
     }
 
     fn cargo_executable() -> OsString {
@@ -289,6 +303,19 @@ impl From<CargoNodeDependency> for CargoDependency {
     }
 }
 
+impl CargoNode {
+    fn into_resolved(self) -> (PackageId, ResolvedPackage) {
+        let Self { id, deps, features } = self;
+        (
+            PackageId::new(id),
+            ResolvedPackage {
+                dependencies: deps.into_iter().map(CargoDependency::from).collect(),
+                features: ResolvedFeatures(features),
+            },
+        )
+    }
+}
+
 impl CargoPackage {
     fn is_local(&self) -> bool {
         self.source.is_none()
@@ -321,11 +348,17 @@ impl CargoPackage {
             })
     }
 
-    fn export(&self, id: PackageId, import_name: String) -> Option<ExportedPackage> {
+    fn export(
+        &self,
+        id: PackageId,
+        import_name: String,
+        resolved_features: ResolvedFeatures,
+    ) -> Option<ExportedPackage> {
         Some(ExportedPackage {
             id,
             source_file: self.source_file()?,
             module_name: import_name,
+            resolved_features,
         })
     }
 

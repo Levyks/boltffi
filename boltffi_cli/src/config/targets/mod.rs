@@ -1,4 +1,5 @@
 pub mod apple;
+pub mod c;
 pub mod c_header;
 pub mod csharp;
 pub mod dart;
@@ -12,6 +13,7 @@ pub mod wasm;
 pub use apple::{
     AppleConfig, SpmConfig, SpmDistribution, SpmLayout, SwiftConfig, XcframeworkConfig,
 };
+pub use c::CConfig;
 pub use c_header::HeaderConfig;
 pub use csharp::CSharpConfig;
 #[cfg(test)]
@@ -23,8 +25,8 @@ pub use java::JavaConfig;
 pub use java::JavaJvmConfig;
 pub use kmp::KotlinMultiplatformConfig;
 pub use kotlin::{
-    AndroidConfig, AndroidPackConfig, KotlinApiStyle, KotlinConfig, KotlinDesktopLoader,
-    KotlinFactoryStyle,
+    AndroidConfig, AndroidLinkConfig, AndroidPackConfig, KotlinApiStyle, KotlinConfig,
+    KotlinDesktopLoader, KotlinFactoryStyle,
 };
 pub use python::PythonConfig;
 #[cfg(test)]
@@ -53,4 +55,6 @@ pub struct TargetsConfig {
     pub python: PythonConfig,
     #[serde(default)]
     pub csharp: CSharpConfig,
+    #[serde(default)]
+    pub c: CConfig,
 }

@@ -249,6 +249,13 @@ mod tests {
         }
     }
 
+    /// Drops the dart sync-export enter guard so expansion snapshots stay focused
+    /// on ABI shape. The guard is always present on native sync exports.
+    fn expansion_string(tokens: &TokenStream) -> String {
+        const GUARD: &str = "let _boltffi_dart_sync_ffi = :: boltffi :: __dart_sync_ffi :: SyncFfiScope :: enter () ; ";
+        tokens.to_string().replace(GUARD, "")
+    }
+
     fn assert_generated_crate_checks(name: &str, code: TokenStream) {
         let generated_crate = GeneratedCrate::create(name);
         generated_crate.write(code);
@@ -2135,6 +2142,40 @@ mod tests {
         source
     }
 
+    fn async_borrowed_class_param_contract(passing: ParameterPassing) -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::engine_id"),
+            CanonicalName::single("engine_id"),
+        );
+        function.execution = ExecutionKind::Async;
+        let mut parameter = parameter("engine", class("Engine"));
+        parameter.passing = passing;
+        function.parameters = vec![parameter];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.classes.push(engine_class());
+        source.functions.push(function);
+        source
+    }
+
+    fn async_borrowed_optional_class_param_contract() -> SourceContract {
+        let mut function = FunctionDef::new(
+            FunctionId::new("demo::engine_id"),
+            CanonicalName::single("engine_id"),
+        );
+        function.execution = ExecutionKind::Async;
+        let mut parameter = parameter("engine", TypeExpr::option(class("Engine")));
+        parameter.passing = ParameterPassing::Ref;
+        function.parameters = vec![parameter];
+        function.returns = ReturnDef::value(TypeExpr::Primitive(Primitive::U32));
+
+        let mut source = SourceContract::new(PackageInfo::new("demo", None));
+        source.classes.push(engine_class());
+        source.functions.push(function);
+        source
+    }
+
     fn result_class_string_contract() -> SourceContract {
         let mut function = FunctionDef::new(
             FunctionId::new("demo::try_open"),
@@ -2497,7 +2538,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn answer() -> u32 {
                     42
@@ -2527,7 +2568,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn syntax_payload() -> u32 {
                     42
@@ -2557,7 +2598,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn syntax_payload(value: u32) -> u32 {
                     value
@@ -2589,7 +2630,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn answer() -> u32 {
                     42
@@ -2619,7 +2660,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn year(when: Timestamp) -> u32 {
                     when.year()
@@ -4000,7 +4041,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn stamp() -> Timestamp {
                     Timestamp::now()
@@ -4176,7 +4217,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn answer() -> u32 {
                     42
@@ -4206,7 +4247,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn answer() -> u32 {
                     42
@@ -4256,7 +4297,7 @@ mod tests {
         };
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn answer() -> u32 {
                     42
@@ -4322,7 +4363,7 @@ mod tests {
             .expect("expanded async function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub async fn answer() -> u32 {
                     42
@@ -4340,7 +4381,7 @@ mod tests {
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
-                ) {
+                ) -> i8 {
                     unsafe {
                         ::boltffi::__private::rustfuture::rust_future_poll::<u32>(
                             handle,
@@ -4422,7 +4463,7 @@ mod tests {
             .expect("expanded async function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub async fn greet() -> String {
                     String::from("hello")
@@ -4440,7 +4481,7 @@ mod tests {
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
-                ) {
+                ) -> i8 {
                     unsafe {
                         ::boltffi::__private::rustfuture::rust_future_poll::<String>(
                             handle,
@@ -4523,7 +4564,7 @@ mod tests {
         let rust_return_type: syn::Type = syn::parse_quote! { Result<i32, String> };
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub async fn try_count() -> Result<i32, String> {
                     Ok(7)
@@ -4541,7 +4582,7 @@ mod tests {
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
-                ) {
+                ) -> i8 {
                     unsafe {
                         ::boltffi::__private::rustfuture::rust_future_poll::<#rust_return_type>(
                             handle,
@@ -4638,7 +4679,7 @@ mod tests {
             .expect("expanded async function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub async fn ping() {}
                 #[cfg(target_arch = "wasm32")]
@@ -4728,7 +4769,7 @@ mod tests {
             .expect("expanded async function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub async fn name_len(name: String) -> u32 {
                     name.len() as u32
@@ -4772,7 +4813,7 @@ mod tests {
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
-                ) {
+                ) -> i8 {
                     unsafe {
                         ::boltffi::__private::rustfuture::rust_future_poll::<u32>(
                             handle,
@@ -4860,6 +4901,144 @@ mod tests {
     }
 
     #[test]
+    fn async_borrowed_class_param_expansion_retains_required_handle() {
+        let source = async_borrowed_class_param_contract(ParameterPassing::Ref);
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub async fn engine_id(engine: &Engine) -> u32 {
+                7
+            }
+        };
+
+        let tokens =
+            expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
+
+        assert!(tokens.to_string().contains(
+            &quote! {
+                pub unsafe extern "C" fn boltffi_function_demo_engine_id(
+                    engine: u64
+                ) -> ::boltffi::__private::RustFutureHandle {
+                    if engine == 0 {
+                        ::boltffi::__private::set_last_error(concat!(stringify!(engine), ": null class handle"));
+                        return ::boltffi::__private::rustfuture::rust_future_invalid_arg::<u32>();
+                    }
+                    let engine = match unsafe {
+                        __BoltffiEngineHandle::retain(engine as usize as *mut __BoltffiEngineHandle)
+                    } {
+                        Some(handle) => handle,
+                        None => {
+                            ::boltffi::__private::set_last_error(concat!(stringify!(engine), ": released class handle"));
+                            return ::boltffi::__private::rustfuture::rust_future_invalid_arg::<u32>();
+                        }
+                    };
+                    ::boltffi::__private::rustfuture::rust_future_new(async move {
+                        engine_id(engine.shared()).await
+                    })
+                }
+            }
+            .to_string()
+        ));
+    }
+
+    #[test]
+    fn async_borrowed_class_param_expansion_compiles() {
+        for (name, target) in [
+            ("native_async_borrowed_class_param", None),
+            (
+                "wasm_async_borrowed_class_param",
+                Some("wasm32-unknown-unknown"),
+            ),
+        ] {
+            let source = async_borrowed_class_param_contract(ParameterPassing::Ref);
+            let syntax: ItemFn = syn::parse_quote! {
+                pub async fn engine_id(engine: &Engine) -> u32 {
+                    engine.id()
+                }
+            };
+            let generated = match target {
+                None => {
+                    let lowered =
+                        lower_with_declarations::<Native>(&source).expect("lowered bindings");
+                    let expansion = Expansion::new(&lowered);
+                    let class_tokens =
+                        expand_class(&expansion, &source.classes[0]).expect("expanded class");
+                    let function_tokens = expand_function(&expansion, &source.functions[0], syntax)
+                        .expect("expanded function");
+                    quote! { #class_tokens #function_tokens }
+                }
+                Some(_) => {
+                    let lowered =
+                        lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
+                    let expansion = Expansion::new(&lowered);
+                    let class_tokens =
+                        expand_class(&expansion, &source.classes[0]).expect("expanded class");
+                    let function_tokens = expand_function(&expansion, &source.functions[0], syntax)
+                        .expect("expanded function");
+                    quote! { #class_tokens #function_tokens }
+                }
+            };
+            let generated = quote! {
+                pub struct Engine;
+
+                impl Engine {
+                    pub fn id(&self) -> u32 {
+                        7
+                    }
+                }
+
+                #generated
+            };
+            syn::parse2::<syn::File>(generated.clone())
+                .expect("async borrowed class param expansion parses");
+            match target {
+                None => assert_generated_crate_checks(name, generated),
+                Some(target) => assert_generated_crate_checks_target(name, target, generated),
+            }
+        }
+    }
+
+    #[test]
+    fn async_mutably_borrowed_class_param_expansion_is_rejected() {
+        let source = async_borrowed_class_param_contract(ParameterPassing::RefMut);
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub async fn engine_id(engine: &mut Engine) -> u32 {
+                7
+            }
+        };
+
+        let error = expand_function(&expansion, &source.functions[0], syntax)
+            .expect_err("async exclusive class borrows must not be retained");
+
+        assert_eq!(
+            error.to_string(),
+            "unsupported expansion: async reference parameter"
+        );
+    }
+
+    #[test]
+    fn async_borrowed_optional_class_param_expansion_is_rejected() {
+        let source = async_borrowed_optional_class_param_contract();
+        let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
+        let expansion = Expansion::new(&lowered);
+        let syntax = syn::parse_quote! {
+            pub async fn engine_id(engine: &Option<Engine>) -> u32 {
+                7
+            }
+        };
+
+        let error = expand_function(&expansion, &source.functions[0], syntax)
+            .expect_err("nullable class borrows must not be retained");
+
+        assert_eq!(
+            error.to_string(),
+            "unsupported expansion: async reference parameter"
+        );
+    }
+
+    #[test]
     fn void_function_expansion_returns_void() {
         let source = void_source_contract();
         let lowered = lower_with_declarations::<Native>(&source).expect("lowered bindings");
@@ -4872,7 +5051,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn ping() {}
                 #[cfg(not(target_arch = "wasm32"))]
@@ -4900,7 +5079,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn norm(point: Point) -> f64 {
                     point.x
@@ -4935,7 +5114,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn norm(point: Point) -> f64 {
                     point.x
@@ -4979,7 +5158,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn shift(point: &mut Point) -> f64 {
                     point.x += 1.0;
@@ -5018,7 +5197,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn shift(point: &mut Point) -> f64 {
                     point.x += 1.0;
@@ -5070,7 +5249,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn bump(count: &mut i32) {
                     *count += 1;
@@ -5104,7 +5283,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn name_len(name: String) -> u32 {
                     name.len() as u32
@@ -5160,7 +5339,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn name_len(name: &str) -> u32 {
                     name.len() as u32
@@ -5217,7 +5396,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn rewrite(name: &mut str) -> u32 {
                     name.len() as u32
@@ -5288,7 +5467,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn bytes_len(bytes: Vec<u8>) -> u32 {
                     bytes.len() as u32
@@ -5344,7 +5523,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn bytes_sum(bytes: &[u8]) -> u32 {
                     bytes.iter().map(|byte| u32::from(*byte)).sum()
@@ -5424,8 +5603,16 @@ mod tests {
         assert!(tokens.contains("__boltffi_right_ptr"), "{tokens}");
     }
 
+    /// A `&mut [u8]` parameter borrows the host's buffer in place.
+    ///
+    /// This used to decode the payload into a `Vec<u8>` the wrapper owned and
+    /// hand the callee `as_mut_slice()` of it — so everything the callee wrote
+    /// was dropped when the wrapper returned, with no error anywhere. Byte
+    /// buffers have no way to carry writes back, which is why a writable slice
+    /// takes direct-vector transport instead: the pointer crosses unframed and
+    /// the host copies back from the same buffer it passed in.
     #[test]
-    fn wasm_mutable_bytes_param_expansion_decodes_mut_slice_ref() {
+    fn wasm_mutable_bytes_param_expansion_borrows_the_host_buffer() {
         let source = mutable_bytes_param_contract();
         let lowered = lower_with_declarations::<Wasm32>(&source).expect("lowered bindings");
         let expansion = Expansion::new(&lowered);
@@ -5439,7 +5626,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn fill(bytes: &mut [u8]) -> u32 {
                     bytes.len() as u32
@@ -5447,33 +5634,19 @@ mod tests {
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
                 pub unsafe extern "C" fn boltffi_function_demo_fill(
-                    __boltffi_bytes_ptr: *const u8,
+                    __boltffi_bytes_ptr: *mut u8,
                     __boltffi_bytes_len: usize
                 ) -> u32 {
-                    let mut __boltffi_bytes_storage: Vec<u8> = {
-                        if __boltffi_bytes_ptr.is_null() && __boltffi_bytes_len > 0 {
-                            ::boltffi::__private::set_last_error_len(stringify!(__boltffi_bytes_storage), "null pointer with non-zero length", __boltffi_bytes_len as usize);
-                            return <u32 as ::core::default::Default>::default();
-                        }
-                        let __boltffi_bytes: &[u8] = if __boltffi_bytes_len == 0 {
-                            &[]
-                        } else {
-                            unsafe {
-                                ::core::slice::from_raw_parts(
-                                    __boltffi_bytes_ptr,
-                                    __boltffi_bytes_len
-                                )
-                            }
-                        };
-                        match ::boltffi::__private::wire::decode::<Vec<u8> >(__boltffi_bytes) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                ::boltffi::__private::set_last_error_display(stringify!(__boltffi_bytes_storage), "wire decode failed", &error, __boltffi_bytes_len as usize);
-                                return <u32 as ::core::default::Default>::default();
-                            }
+                    let bytes: &mut [u8] = if __boltffi_bytes_ptr.is_null() {
+                        &mut []
+                    } else {
+                        unsafe {
+                            ::core::slice::from_raw_parts_mut(
+                                __boltffi_bytes_ptr,
+                                __boltffi_bytes_len
+                            )
                         }
                     };
-                    let bytes = __boltffi_bytes_storage.as_mut_slice();
                     fill(bytes)
                 }
             }
@@ -5494,7 +5667,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn set_count(count: Option<i32>) {}
                 #[cfg(not(target_arch = "wasm32"))]
@@ -5542,7 +5715,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn name_score(profile: Profile) -> u32 {
                     profile.name.len() as u32
@@ -5598,7 +5771,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn rename(profile: &mut Profile) -> u32 {
                     profile.name.len() as u32
@@ -5669,7 +5842,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn open(engine: Engine) -> Option<Engine> {
                     Some(engine)
@@ -6833,7 +7006,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn listen(listener: Box<dyn Listener>) {}
                 #[cfg(not(target_arch = "wasm32"))]
@@ -7635,7 +7808,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn maybe(listener: Option<std::sync::Arc<dyn Listener> >) -> u32 {
                     listener.is_some() as u32
@@ -7679,7 +7852,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn make_listener() -> Box<dyn Listener> {
                     unimplemented!()
@@ -7712,7 +7885,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn shared_listener() -> std::sync::Arc<dyn Listener> {
                     unimplemented!()
@@ -7745,7 +7918,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn maybe_listener() -> Option<std::sync::Arc<dyn Listener> > {
                     None
@@ -7781,7 +7954,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn maybe_boxed_listener() -> Option<Box<dyn Listener> > {
                     None
@@ -7818,7 +7991,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn try_make_listener() -> Result<Box<dyn Listener>, String> {
                     unimplemented!()
@@ -7867,7 +8040,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn render(callback: impl Fn(u32) -> u32) -> u32 {
                     callback(41)
@@ -7914,7 +8087,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn render(callback: impl Fn(u32) -> u32) -> u32 {
                     callback(41)
@@ -8767,7 +8940,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn engine_id(engine: &Engine) -> u32 {
                     7
@@ -8806,7 +8979,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn try_open() -> Result<Engine, String> {
                     Ok(Engine)
@@ -8851,7 +9024,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn set_count(count: Option<i32>) {}
                 #[cfg(target_arch = "wasm32")]
@@ -8887,7 +9060,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn sum(values: Vec<u32>) -> u32 {
                     values.into_iter().sum()
@@ -8930,7 +9103,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn count_points(points: Vec<Point>) -> u32 {
                     points.len() as u32
@@ -8986,7 +9159,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn origin() -> Point {
                     Point { x: 0.0 }
@@ -9016,7 +9189,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn origin() -> Point {
                     Point { x: 0.0 }
@@ -9056,7 +9229,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn try_count() -> Result<i32, String> {
                     Ok(7)
@@ -9103,7 +9276,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn try_ping() -> Result<(), String> {
                     Ok(())
@@ -9140,7 +9313,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn try_greet() -> Result<String, String> {
                     Ok(String::from("hello"))
@@ -9189,7 +9362,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn maybe_count() -> Option<i32> {
                     Some(7)
@@ -9241,7 +9414,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn maybe_count() -> Option<i32> {
                     Some(7)
@@ -9296,7 +9469,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn numbers() -> Vec<i32> {
                     vec![1, 2, 3]
@@ -9327,7 +9500,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn numbers() -> Vec<i32> {
                     vec![1, 2, 3]
@@ -9366,7 +9539,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn greet() -> String {
                     String::from("hello")
@@ -9397,7 +9570,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn greet() -> String {
                     String::from("hello")
@@ -9428,7 +9601,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn payload() -> Vec<u8> {
                     vec![1, 2, 3]
@@ -9459,7 +9632,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
 
         assert_eq!(
-            tokens.to_string(),
+            expansion_string(&tokens),
             quote! {
                 pub fn payload() -> Vec<u8> {
                     vec![1, 2, 3]
