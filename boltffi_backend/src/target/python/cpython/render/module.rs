@@ -237,6 +237,11 @@ impl ModuleDeclarations {
                     .iter()
                     .map(|enumeration| enumeration.declaration.cleanup()),
             )
+            .chain(
+                self.classes
+                    .iter()
+                    .filter_map(|class| class.declaration.cleanup()),
+            )
             .collect()
     }
 
@@ -689,6 +694,7 @@ struct ModuleSupport {
     encoded_records: bool,
     data_enums: bool,
     record_types: bool,
+    class_types: bool,
     c_style_enums: bool,
     callback_handles: bool,
     async_functions: bool,
@@ -730,6 +736,10 @@ impl ModuleSupport {
             encoded_records,
             data_enums,
             record_types: !artifacts.records.is_empty(),
+            class_types: artifacts
+                .classes
+                .iter()
+                .any(|class| class.has_registered_type()),
             c_style_enums: !artifacts.enums.is_empty(),
             callback_handles: !artifacts.callbacks.is_empty(),
             async_functions,
@@ -812,7 +822,7 @@ impl ModuleSupport {
     }
 
     fn uses_registered_types(&self) -> bool {
-        self.record_types || self.c_style_enums
+        self.record_types || self.c_style_enums || self.class_types
     }
 
     fn uses_native_record_types(&self) -> bool {
