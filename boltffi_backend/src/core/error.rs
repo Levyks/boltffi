@@ -189,6 +189,12 @@ pub enum BackendError {
     #[allow(missing_docs)]
     #[error("invalid TypeScript identifier `{identifier}`")]
     InvalidTypeScriptIdentifier { identifier: String },
+    /// A generated Ruby method, member, or constant name was invalid.
+    #[error("invalid Ruby identifier `{identifier}`")]
+    InvalidRubyIdentifier {
+        /// Invalid identifier text.
+        identifier: String,
+    },
     /// Two generated Python declarations require the same name in one scope.
     #[error("python name collision in {scope}: `{name}` is used by {existing} and {colliding}")]
     PythonNameCollision {

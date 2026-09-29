@@ -106,6 +106,33 @@ impl BindingExpansion {
         &self.cargo_args
     }
 
+    /// Returns the active cargo features of the selected package, comma
+    /// separated, as the binding metadata sees them.
+    pub fn features(&self) -> &str {
+        &self.features
+    }
+
+    /// Returns the cargo arguments that select features, as the caller wrote
+    /// them, so a later cargo build can replay the same selection.
+    pub fn feature_args(&self) -> Vec<String> {
+        let mut selected = Vec::new();
+        let mut arguments = self.cargo_args.iter();
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--all-features" | "--no-default-features" => selected.push(argument.clone()),
+                "--features" | "-F" => {
+                    selected.push(argument.clone());
+                    selected.extend(arguments.next().cloned());
+                }
+                _ if argument.starts_with("--features=") || argument.starts_with("-F") => {
+                    selected.push(argument.clone());
+                }
+                _ => {}
+            }
+        }
+        selected
+    }
+
     pub fn artifact_name(&self) -> &str {
         self.library.artifact_name()
     }
@@ -583,6 +610,40 @@ mod tests {
         assert_eq!(
             active_features(&available, &all),
             available.keys().cloned().collect()
+        );
+    }
+
+    #[test]
+    fn feature_args_keep_every_selector_as_written_and_drop_other_arguments() {
+        let expansion = BindingExpansion::fixture(
+            "/external/workspace/Cargo.toml",
+            "/external/workspace/demo/Cargo.toml",
+            [
+                "--all-features",
+                "--no-default-features",
+                "--features",
+                "demo/c-demo",
+                "--locked",
+                "--features=serde/std",
+                "-F",
+                "extra",
+                "-Fmore",
+            ]
+            .map(str::to_owned),
+        );
+
+        assert_eq!(
+            expansion.feature_args(),
+            [
+                "--all-features",
+                "--no-default-features",
+                "--features",
+                "demo/c-demo",
+                "--features=serde/std",
+                "-F",
+                "extra",
+                "-Fmore",
+            ]
         );
     }
 

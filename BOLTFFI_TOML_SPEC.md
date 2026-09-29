@@ -76,6 +76,7 @@ Each `[targets.<name>]` table listed below also accepts `cargo_args` (array of s
 | `[targets.python]` | `generate python`, `pack python` |
 | `[targets.csharp]` | `generate csharp`, `pack csharp` |
 | `[targets.c]` | `generate c`, `pack c` |
+| `[targets.ruby]` | `generate ruby`, `pack ruby` |
 
 `generate all`, `build all`, `pack all`, and `release` apply each target's `cargo_args` to that target only.
 
@@ -589,6 +590,43 @@ previous C package build.
 See [C linking and ownership](https://www.boltffi.dev/docs/c) for consumption and
 [experimental C limits](https://www.boltffi.dev/docs/experimental#c) for the
 remaining API restrictions.
+
+## Ruby
+
+### `[targets.ruby]` (experimental, optional)
+
+Enable Ruby with `--experimental` or `experimental = ["ruby"]` at the top level.
+
+- `enabled` (bool): Whether Ruby generation and packaging are active.
+  - Default: `false`
+- `output` (path): Gem source root.
+  - Default: `dist/ruby`
+  - `generate ruby` writes `{output}/<gem>.gemspec`, `{output}/lib/<stem>.rb`, and
+    the extension sources under `{output}/ext/<stem>/`.
+  - `pack ruby` also copies the host static library and its link metadata into
+    `{output}/ext/<stem>/`.
+- `gem_name` (string, optional): Gem name.
+  - Default: the Cargo package name.
+  - The extension stem `<stem>` is the gem name in `snake_case`. It names
+    `lib/<stem>.rb`, `ext/<stem>/`, and the `Init_<stem>` entry point.
+- `module_name` (string, optional): Ruby module that holds the functions and
+  records, such as `MyLib::Native`.
+  - Default: the Cargo package name in `UpperCamelCase`.
+- `version` (string, optional): Gem version.
+  - Default: the selected Cargo package's version.
+- `cargo_manifest` (string, optional): Crate manifest path, relative to
+  `{output}/ext/<stem>/`. With the default `output`, a manifest at the project
+  root is `../../../../Cargo.toml`.
+  - The generated `extconf.rb` builds this crate when no prebuilt static
+    library exists. The build replays the cargo feature arguments that
+    `boltffi generate` used, so the library exports every function the
+    extension calls.
+  - A `.gem` file holds the generated files but not the crate. So the path
+    works only when `extconf.rb` runs in a checkout that holds the crate,
+    such as a Bundler `git:` gem.
+
+`pack ruby` requires the `staticlib` crate type and builds for the current
+host, which must be macOS or Linux.
 
 ## Dart
 

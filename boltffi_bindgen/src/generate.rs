@@ -13,6 +13,7 @@ use boltffi_backend::target::{
     kmp::{DEFAULT_KMP_MODULE_NAME, DEFAULT_KMP_PACKAGE_NAME, KmpHost, KmpSupportMode},
     kotlin::{KotlinApiStyle, KotlinDesktopLoader, KotlinFactoryStyle, KotlinHost},
     python::PythonCExtHost,
+    ruby::RubyCExtHost,
     swift::SwiftHost,
     typescript::TypeScriptHost,
 };
@@ -44,6 +45,7 @@ pub struct Generation {
     python_distribution_name: Option<String>,
     python_package_version: Option<String>,
     python_native_library: Option<String>,
+    ruby_host: RubyCExtHost,
     csharp_namespace: Option<String>,
     csharp_module_class: Option<String>,
     csharp_native_library: Option<String>,
@@ -98,6 +100,7 @@ impl Generation {
             python_distribution_name: None,
             python_package_version: None,
             python_native_library: None,
+            ruby_host: RubyCExtHost::new(),
             csharp_namespace: None,
             csharp_module_class: None,
             csharp_native_library: None,
@@ -202,6 +205,12 @@ impl Generation {
     /// Sets the native library artifact name loaded by the Python package.
     pub fn python_native_library(mut self, native_library: impl Into<String>) -> Self {
         self.python_native_library = Some(native_library.into());
+        self
+    }
+
+    /// Sets the Ruby host that renders the Ruby target.
+    pub fn ruby_host(mut self, host: RubyCExtHost) -> Self {
+        self.ruby_host = host;
         self
     }
 
@@ -435,6 +444,7 @@ impl Generation {
     pub fn render(&self, target: Target) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python
+            | Target::Ruby
             | Target::Java
             | Target::Kotlin
             | Target::KotlinMultiplatform
@@ -449,7 +459,7 @@ impl Generation {
                 let bindings = self.bindings::<Native>()?;
                 self.render_native_bindings(target, &bindings)
             }
-            Target::Header | Target::Ruby => Err(GenerationError::UnsupportedTarget { target }),
+            Target::Header => Err(GenerationError::UnsupportedTarget { target }),
         }
     }
 
@@ -479,13 +489,14 @@ impl Generation {
     ) -> Result<GeneratedOutput, GenerationError> {
         match target {
             Target::Python => self.render_python_bindings(bindings),
+            Target::Ruby => self.render_ruby_bindings(bindings),
             Target::Java => self.render_java_bindings(bindings),
             Target::Kotlin => self.render_kotlin_bindings(bindings),
             Target::KotlinMultiplatform => self.render_kmp_bindings(bindings),
             Target::CSharp => self.render_csharp_bindings(bindings),
             Target::Dart => self.render_dart_bindings(bindings),
             Target::C => self.render_c_bindings(bindings),
-            Target::Swift | Target::TypeScript | Target::Header | Target::Ruby => {
+            Target::Swift | Target::TypeScript | Target::Header => {
                 Err(GenerationError::UnsupportedTarget { target })
             }
         }
@@ -593,6 +604,18 @@ impl Generation {
     ) -> Result<GeneratedOutput, GenerationError> {
         let target = self
             .python_host()?
+            .into_target(bindings)
+            .map_err(GenerationError::Render)?;
+        self.render_backend(&target, bindings)
+    }
+
+    fn render_ruby_bindings(
+        &self,
+        bindings: &Bindings<Native>,
+    ) -> Result<GeneratedOutput, GenerationError> {
+        let target = self
+            .ruby_host
+            .clone()
             .into_target(bindings)
             .map_err(GenerationError::Render)?;
         self.render_backend(&target, bindings)
