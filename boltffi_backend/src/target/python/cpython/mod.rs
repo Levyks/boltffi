@@ -2168,21 +2168,19 @@ Coordinates are plain `f64`.
         let init = file(&output, "demo/__init__.py");
         let stub = file(&output, "demo/__init__.pyi");
 
-        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_raw_wire"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_bytes"));
         assert!(
             extension.contains(
                 "static PyObject *boltffi_python_callable_wrapper_boltffi_const_demo_magic"
             )
         );
         assert!(extension.contains(
-            "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_const_demo_magic());"
+            "result = boltffi_python_decode_owned_bytes(boltffi_python_boltffi_const_demo_magic());"
         ));
         assert!(extension.contains(
             "{\"magic\", (PyCFunction)boltffi_python_callable_wrapper_boltffi_const_demo_magic, METH_FASTCALL, NULL}"
         ));
-        assert!(init.contains(
-            "magic: bytes = _boltffi_read_wire(_native.magic(), lambda reader: reader.bytes())"
-        ));
+        assert!(init.contains("magic: bytes = _native.magic()"));
         assert!(init.contains("\"magic\","));
         assert!(stub.contains("magic: bytes"));
     }
@@ -2578,20 +2576,65 @@ Coordinates are plain `f64`.
         let extension = extension(&output);
         let init = file(&output, "demo/__init__.py");
 
-        assert!(extension.contains("static int boltffi_python_wire_raw"));
-        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_raw_wire"));
+        assert!(extension.contains("static int boltffi_python_wire_bytes"));
+        assert!(extension.contains("PyObject_GetBuffer(value, &view, PyBUF_CONTIG_RO)"));
+        assert!(extension.contains("static PyObject *boltffi_python_decode_owned_bytes"));
         assert!(extension.contains("PyObject *bytes_wire = NULL;"));
         assert!(extension.contains("const uint8_t *bytes_ptr = NULL;"));
         assert!(extension.contains("uintptr_t bytes_len = 0;"));
         assert!(
-            extension
-                .contains("boltffi_python_wire_raw(args[0], &bytes_wire, &bytes_ptr, &bytes_len)")
+            extension.contains(
+                "boltffi_python_wire_bytes(args[0], &bytes_wire, &bytes_ptr, &bytes_len)"
+            )
         );
         assert!(extension.contains(
-            "result = boltffi_python_decode_owned_raw_wire(boltffi_python_boltffi_function_demo_echo(bytes_ptr, bytes_len));"
+            "result = boltffi_python_decode_owned_bytes(boltffi_python_boltffi_function_demo_echo(bytes_ptr, bytes_len));"
         ));
         assert!(extension.contains("Py_XDECREF(bytes_wire);"));
-        assert!(init.contains("_native.echo(_boltffi_wire_bytes(bytes))"));
-        assert!(init.contains("lambda reader: reader.bytes()"));
+        assert!(init.contains("return _native.echo(bytes)"));
+        assert!(!init.contains("_native.echo(_boltffi_wire_bytes(bytes))"));
+        assert!(!init.contains("_boltffi_read_wire(_native.echo"));
+    }
+
+    #[test]
+    fn python_target_renders_string_and_bytes_lists_through_native_codecs() {
+        let output = target()
+            .render(&bindings(
+                r#"
+                #[export]
+                pub fn names(names: Vec<String>) -> Vec<String> {
+                    names
+                }
+
+                #[export]
+                pub fn chunks(chunks: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+                    chunks
+                }
+                "#,
+            ))
+            .expect("Python target should render");
+        let extension = extension(&output);
+        let init = file(&output, "demo/__init__.py");
+
+        assert!(extension.contains("static int boltffi_python_list_wire_str("));
+        assert!(extension.contains("static PyObject *boltffi_python_list_decode_str("));
+        assert!(extension.contains("static int boltffi_python_list_wire_bytes("));
+        assert!(extension.contains("static PyObject *boltffi_python_list_decode_bytes("));
+        assert!(extension.contains(
+            "boltffi_python_list_wire_str(args[0], &names_wire, &names_ptr, &names_len)"
+        ));
+        assert!(extension.contains(
+            "result = boltffi_python_list_decode_str(boltffi_python_boltffi_function_demo_names(names_ptr, names_len));"
+        ));
+        assert!(extension.contains(
+            "boltffi_python_list_wire_bytes(args[0], &chunks_wire, &chunks_ptr, &chunks_len)"
+        ));
+        assert!(extension.contains(
+            "result = boltffi_python_list_decode_bytes(boltffi_python_boltffi_function_demo_chunks(chunks_ptr, chunks_len));"
+        ));
+        assert!(init.contains("return _native.names(names)"));
+        assert!(init.contains("return _native.chunks(chunks)"));
+        assert!(!init.contains("_boltffi_read_wire(_native.names"));
+        assert!(!init.contains("_boltffi_read_wire(_native.chunks"));
     }
 }

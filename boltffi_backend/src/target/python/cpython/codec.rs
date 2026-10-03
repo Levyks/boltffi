@@ -272,8 +272,10 @@ impl NativeCodec {
             }
             CodecNode::Sequence { element, .. } => match element.as_ref() {
                 CodecNode::EncodedRecord(record_id) => Self::record(*record_id, context)
-                    .and_then(|record| record.map(NativeSequence::new).transpose())
+                    .and_then(|record| record.map(NativeSequence::of_records).transpose())
                     .map(|sequence| sequence.map(Self::Sequence)),
+                CodecNode::String => NativeSequence::of_strings().map(|s| Some(Self::Sequence(s))),
+                CodecNode::Bytes => NativeSequence::of_bytes().map(|s| Some(Self::Sequence(s))),
                 _ => Ok(None),
             },
             _ => Ok(None),
@@ -288,6 +290,7 @@ impl NativeCodec {
             CodecNode::EncodedRecord(record_id) => supports_record(*record_id),
             CodecNode::Sequence { element, .. } => match element.as_ref() {
                 CodecNode::EncodedRecord(record_id) => supports_record(*record_id),
+                CodecNode::String | CodecNode::Bytes => Ok(true),
                 _ => Ok(false),
             },
             _ => Ok(false),
@@ -369,16 +372,46 @@ impl NativeRecord {
 pub struct NativeSequence {
     encoder: Identifier,
     decoder: Identifier,
-    item: NativeRecord,
+    item: NativeSequenceItem,
+}
+
+/// The elements of a [`NativeSequence`].
+///
+/// Strings and byte buffers are written straight from the `str` and buffer
+/// objects and read into `str` and `bytes`, without an object per element on
+/// the way in.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum NativeSequenceItem {
+    Record(NativeRecord),
+    String,
+    Bytes,
 }
 
 impl NativeSequence {
-    fn new(item: NativeRecord) -> Result<Self> {
+    fn of_records(item: NativeRecord) -> Result<Self> {
         let stem = item.stem();
         Ok(Self {
             encoder: Identifier::parse(format!("boltffi_python_wire_vec_{stem}"))?,
             decoder: Identifier::parse(format!("boltffi_python_decode_owned_vec_{stem}"))?,
-            item,
+            item: NativeSequenceItem::Record(item),
+        })
+    }
+
+    // The `boltffi_python_list_` prefix keeps these apart from the record
+    // codecs, which are named after records and could spell any other name.
+    fn of_strings() -> Result<Self> {
+        Ok(Self {
+            encoder: Identifier::parse("boltffi_python_list_wire_str")?,
+            decoder: Identifier::parse("boltffi_python_list_decode_str")?,
+            item: NativeSequenceItem::String,
+        })
+    }
+
+    fn of_bytes() -> Result<Self> {
+        Ok(Self {
+            encoder: Identifier::parse("boltffi_python_list_wire_bytes")?,
+            decoder: Identifier::parse("boltffi_python_list_decode_bytes")?,
+            item: NativeSequenceItem::Bytes,
         })
     }
 
@@ -390,11 +423,20 @@ impl NativeSequence {
         &self.decoder
     }
 
-    pub fn item_encoder(&self) -> &Identifier {
-        self.item.encoder()
+    pub fn is_string(&self) -> bool {
+        matches!(self.item, NativeSequenceItem::String)
     }
 
-    pub fn item_reader(&self) -> &Identifier {
-        self.item.reader()
+    pub fn is_bytes(&self) -> bool {
+        matches!(self.item, NativeSequenceItem::Bytes)
+    }
+
+    /// The element record of a sequence of records, whose codec encodes and
+    /// reads each element.
+    pub fn record_item(&self) -> Option<&NativeRecord> {
+        match &self.item {
+            NativeSequenceItem::Record(record) => Some(record),
+            NativeSequenceItem::String | NativeSequenceItem::Bytes => None,
+        }
     }
 }

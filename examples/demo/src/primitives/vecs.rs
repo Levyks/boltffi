@@ -171,6 +171,96 @@ pub fn vec_string_lengths(v: Vec<String>) -> Vec<u32> {
 }
 
 #[demo_bench_macros::demo_case(
+    "primitives.vecs.bytes.should_roundtrip_values",
+    justification = "Ensure a vector of byte buffers, an empty one among them, crosses the wire and returns unchanged.",
+    directions = "Call `primitives::vecs::echo_vec_bytes` through the generated binding and assert a vector of byte buffers, an empty one among them, crosses the wire and returns unchanged.",
+    exclude(
+        swift,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Swift demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        kotlin,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Kotlin demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        java,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Java demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        csharp,
+        reason = ExclusionReason::CoverageGap,
+        details = "The C# demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        typescript,
+        reason = ExclusionReason::CoverageGap,
+        details = "The TypeScript demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        dart,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Dart demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        c,
+        reason = ExclusionReason::CoverageGap,
+        details = "The C demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+)]
+#[export]
+pub fn echo_vec_bytes(v: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    v
+}
+
+#[demo_bench_macros::demo_case(
+    "primitives.vecs.bytes.should_report_lengths",
+    justification = "Ensure a vector of byte buffers crosses the wire and returns the length of each buffer.",
+    directions = "Call `primitives::vecs::vec_bytes_lengths` through the generated binding and assert a vector of byte buffers crosses the wire and returns the length of each buffer.",
+    exclude(
+        swift,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Swift demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        kotlin,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Kotlin demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        java,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Java demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        csharp,
+        reason = ExclusionReason::CoverageGap,
+        details = "The C# demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        typescript,
+        reason = ExclusionReason::CoverageGap,
+        details = "The TypeScript demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        dart,
+        reason = ExclusionReason::CoverageGap,
+        details = "The Dart demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+    exclude(
+        c,
+        reason = ExclusionReason::CoverageGap,
+        details = "The C demo suite does not assert byte buffer vectors yet. Add the marker when that coverage lands."
+    ),
+)]
+#[export]
+pub fn vec_bytes_lengths(v: Vec<Vec<u8>>) -> Vec<u32> {
+    v.iter().map(|bytes| bytes.len() as u32).collect()
+}
+
+#[demo_bench_macros::demo_case(
     "primitives.vecs.i32.should_make_range",
     justification = "Ensure Start and end bounds cross the wire and return as an i32 range.",
     directions = "Call `primitives::vecs::make_range` through the generated binding and assert Start and end bounds cross the wire and return as an i32 range."

@@ -46,6 +46,7 @@ impl Conversion {
             Some(
                 OwnedBuffer::RawWire
                 | OwnedBuffer::Utf8Text
+                | OwnedBuffer::Bytes
                 | OwnedBuffer::OptionalPrimitive(_)
                 | OwnedBuffer::Native(_),
             )
@@ -163,6 +164,7 @@ impl<'plan, 'render> ReturnPlanRender<'plan, Native, OutOfRust> for Renderer<'re
                     Some(native) => OwnedBuffer::Native(Box::new(native)),
                     None => match EncodedCrossing::of(codec.root()) {
                         EncodedCrossing::Utf8Text => OwnedBuffer::Utf8Text,
+                        EncodedCrossing::Bytes => OwnedBuffer::Bytes,
                         EncodedCrossing::WireBytes => OwnedBuffer::RawWire,
                     },
                 },
@@ -239,6 +241,7 @@ impl ReturnValueSlotMessage for ReturnValueSlot {
 pub enum OwnedBuffer {
     RawWire,
     Utf8Text,
+    Bytes,
     DirectVector(Box<direct_vector::Element>),
     OptionalPrimitive(primitive::Runtime),
     Native(Box<native_codec::NativeCodec>),
@@ -249,6 +252,7 @@ impl OwnedBuffer {
         match self {
             Self::RawWire => Identifier::parse("boltffi_python_decode_owned_raw_wire"),
             Self::Utf8Text => Identifier::parse("boltffi_python_decode_owned_utf8"),
+            Self::Bytes => Identifier::parse("boltffi_python_decode_owned_bytes"),
             Self::DirectVector(element) => Ok(element.vector_decoder().clone()),
             Self::OptionalPrimitive(primitive) => primitive.optional_owned_wire_decoder(),
             Self::Native(codec) => Ok(codec.decoder().clone()),
@@ -258,16 +262,22 @@ impl OwnedBuffer {
     pub fn primitive(&self) -> Option<primitive::Runtime> {
         match self {
             Self::OptionalPrimitive(primitive) => Some(*primitive),
-            Self::RawWire | Self::Utf8Text | Self::DirectVector(_) | Self::Native(_) => None,
+            Self::RawWire
+            | Self::Utf8Text
+            | Self::Bytes
+            | Self::DirectVector(_)
+            | Self::Native(_) => None,
         }
     }
 
     pub fn native_sequence(&self) -> Option<native_codec::NativeSequence> {
         match self {
             Self::Native(codec) => codec.sequence().cloned(),
-            Self::RawWire | Self::Utf8Text | Self::DirectVector(_) | Self::OptionalPrimitive(_) => {
-                None
-            }
+            Self::RawWire
+            | Self::Utf8Text
+            | Self::Bytes
+            | Self::DirectVector(_)
+            | Self::OptionalPrimitive(_) => None,
         }
     }
 }

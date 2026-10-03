@@ -199,7 +199,7 @@ impl Conversion {
     }
 
     pub fn is_bytes(&self) -> bool {
-        false
+        matches!(&self.kind, Kind::Buffered(buffered) if buffered.argument.is_bytes())
     }
 
     pub fn is_raw_wire(&self) -> bool {
@@ -684,6 +684,9 @@ impl<'plan, 'render> ParamPlanRender<'plan, Native, IntoRust> for ParameterConve
                         }
                         (_, EncodedCrossing::Utf8Text, Receive::ByValue | Receive::ByRef) => {
                             BufferedArgument::Utf8Text
+                        }
+                        (_, EncodedCrossing::Bytes, Receive::ByValue | Receive::ByRef) => {
+                            BufferedArgument::Bytes
                         }
                         _ => BufferedArgument::RawWire,
                     },

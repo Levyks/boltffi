@@ -317,9 +317,11 @@ impl<'plan, 'package> ParamPlanRender<'plan, Native, IntoRust> for StubArgument<
             receive,
         ) {
             (true, _, Receive::ByValue | Receive::ByRef)
-            | (false, EncodedCrossing::Utf8Text, Receive::ByValue | Receive::ByRef) => {
-                Ok(Expression::identifier(self.name.clone()))
-            }
+            | (
+                false,
+                EncodedCrossing::Utf8Text | EncodedCrossing::Bytes,
+                Receive::ByValue | Receive::ByRef,
+            ) => Ok(Expression::identifier(self.name.clone())),
             _ => CodecExpression::write_argument(codec, self.package)
                 .map(CodecExpression::into_expression),
         }
@@ -371,7 +373,7 @@ impl<'plan, 'package> ParamPlanRender<'plan, Native, IntoRust> for WireHelperUse
             (
                 native::BufferShape::Slice,
                 false,
-                EncodedCrossing::Utf8Text,
+                EncodedCrossing::Utf8Text | EncodedCrossing::Bytes,
                 Receive::ByValue | Receive::ByRef,
             )
             | (native::BufferShape::Slice, true, _, Receive::ByValue | Receive::ByRef) => Ok(false),

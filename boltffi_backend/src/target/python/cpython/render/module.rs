@@ -442,6 +442,7 @@ impl<'module> SupportArtifacts<'module> {
                 result::OwnedBuffer::DirectVector(element) => Some((**element).clone()),
                 result::OwnedBuffer::RawWire
                 | result::OwnedBuffer::Utf8Text
+                | result::OwnedBuffer::Bytes
                 | result::OwnedBuffer::OptionalPrimitive(_)
                 | result::OwnedBuffer::Native(_) => None,
             })
@@ -596,6 +597,7 @@ impl<'module> SupportArtifacts<'module> {
                 result::OwnedBuffer::OptionalPrimitive(primitive) => Some(*primitive),
                 result::OwnedBuffer::RawWire
                 | result::OwnedBuffer::Utf8Text
+                | result::OwnedBuffer::Bytes
                 | result::OwnedBuffer::DirectVector(_)
                 | result::OwnedBuffer::Native(_) => None,
             })
@@ -690,6 +692,7 @@ struct ModuleSupport {
     raw_wire_arguments: bool,
     raw_wire_returns: bool,
     utf8_returns: bool,
+    bytes_returns: bool,
     native_record_types: bool,
     encoded_records: bool,
     data_enums: bool,
@@ -729,6 +732,7 @@ impl ModuleSupport {
             raw_wire_arguments,
             raw_wire_returns: owned_buffers.contains(&result::OwnedBuffer::RawWire),
             utf8_returns: owned_buffers.contains(&result::OwnedBuffer::Utf8Text),
+            bytes_returns: owned_buffers.contains(&result::OwnedBuffer::Bytes),
             native_record_types: artifacts
                 .records
                 .iter()
@@ -780,6 +784,7 @@ impl ModuleSupport {
     fn uses_owned_buffers(&self) -> bool {
         self.raw_wire_returns
             || self.utf8_returns
+            || self.bytes_returns
             || !self.owned_primitives.is_empty()
             || !self.direct_vector_elements.is_empty()
             || !self.native_sequences.is_empty()
@@ -806,7 +811,7 @@ impl ModuleSupport {
     }
 
     fn uses_owned_bytes(&self) -> bool {
-        false
+        self.bytes_returns
     }
 
     fn uses_owned_raw_wire(&self) -> bool {
