@@ -15,7 +15,7 @@ use crate::{
         JavaHost, JavaVersion,
         name_style::Name,
         primitive::Primitive,
-        render::{Class, ClosureHandle, Enumeration, VariantInitialization},
+        render::{Enumeration, VariantInitialization, signature::ValueType},
         syntax::{Expression, Identifier, StringLiteral, TypeIdentifier, TypeName},
     },
 };
@@ -26,6 +26,7 @@ impl DefaultExpression {
     pub fn parameter(
         parameter: &ParamDecl<Native, IntoRust>,
         value: &DefaultValue,
+        java_type: &ValueType,
         version: JavaVersion,
         context: &RenderContext<Native>,
     ) -> Result<Expression> {
@@ -34,24 +35,18 @@ impl DefaultExpression {
             .as_value()
             .and_then(|plan| plan.value_type())
         {
-            Some(TypeRef::Optional(inner)) if matches!(*inner, TypeRef::Class(_)) => {
-                match (inner.as_ref(), value) {
-                    (TypeRef::Class(class), DefaultValue::Null) => Ok(Expression::cast(
-                        TypeName::named(Class::type_name_for(*class, context, version)?),
-                        Expression::null(),
-                    )),
-                    _ => Err(JavaHost::unsupported("class parameter default")),
+            Some(TypeRef::Optional(inner)) if matches!(*inner, TypeRef::Class(_)) => match value {
+                DefaultValue::Null => {
+                    Ok(Expression::cast(java_type.type_name(), Expression::null()))
                 }
-            }
+                _ => Err(JavaHost::unsupported("class parameter default")),
+            },
             Some(ty) => Self::render(&ty, value, version, context),
             None => match (parameter.payload().as_closure(), value) {
                 (Some(closure), DefaultValue::Null)
                     if closure.presence() == HandlePresence::Nullable =>
                 {
-                    Ok(Expression::cast(
-                        ClosureHandle::type_name(closure, version, None)?,
-                        Expression::null(),
-                    ))
+                    Ok(Expression::cast(java_type.type_name(), Expression::null()))
                 }
                 _ => Err(JavaHost::unsupported(
                     "parameter default without a value type",

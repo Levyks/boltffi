@@ -132,7 +132,9 @@ impl Parameter<ValueType> {
         let default = parameter
             .meta()
             .default()
-            .map(|value| DefaultExpression::parameter(parameter, value, version, context))
+            .map(|value| {
+                DefaultExpression::parameter(parameter, value, signature.ty(), version, context)
+            })
             .transpose()?;
         Ok(signature.with_default(default))
     }
@@ -146,25 +148,33 @@ impl<T: Clone> DefaultOverload<T> {
             .count();
         (1..=defaults)
             .map(|omitted| {
-                let supplied = defaults - omitted;
-                let (parameters, arguments): (Vec<_>, Vec<_>) = parameters
-                    .iter()
-                    .scan(supplied, |remaining, parameter| {
-                        Some(match &parameter.default {
-                            Some(default) if *remaining == 0 => (None, default.clone()),
-                            default => {
-                                *remaining -= usize::from(default.is_some());
-                                (
-                                    Some(parameter.clone().with_default(None)),
-                                    Expression::identifier(parameter.name.clone()),
-                                )
+                let mut supplied_defaults = defaults - omitted;
+                let (included_parameters, forwarded_arguments) = parameters.iter().fold(
+                    (
+                        Vec::with_capacity(parameters.len() - omitted),
+                        Vec::with_capacity(parameters.len()),
+                    ),
+                    |(mut included_parameters, mut forwarded_arguments), parameter| {
+                        match &parameter.default {
+                            Some(default) if supplied_defaults == 0 => {
+                                forwarded_arguments.push(default.clone());
                             }
-                        })
-                    })
-                    .unzip();
+                            default => {
+                                supplied_defaults -= usize::from(default.is_some());
+                                included_parameters.push(Parameter::new(
+                                    parameter.name.clone(),
+                                    parameter.ty.clone(),
+                                ));
+                                forwarded_arguments
+                                    .push(Expression::identifier(parameter.name.clone()));
+                            }
+                        }
+                        (included_parameters, forwarded_arguments)
+                    },
+                );
                 Self {
-                    parameters: parameters.into_iter().flatten().collect(),
-                    arguments: arguments.into_iter().collect(),
+                    parameters: included_parameters,
+                    arguments: forwarded_arguments.into_iter().collect(),
                 }
             })
             .collect()

@@ -17,7 +17,7 @@ use crate::{
             AssociatedConstants, Constant, Stream,
             call::{AssociatedCallContext, Call, Receiver},
             native::Method,
-            signature::{ErasedSignature, Parameter, ReturnType, ValueType},
+            signature::{ErasedSignature, ReturnType, ValueType},
         },
         syntax::{
             ArgumentList, Expression, Identifier, Javadoc, Statement, TypeIdentifier, TypeName,
@@ -53,9 +53,6 @@ pub struct Constructor {
     call: Call,
     arguments: ArgumentList,
 }
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ConstructorSignature(Vec<TypeName>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassHandle {
@@ -95,83 +92,82 @@ impl Class {
                 .chain(declaration.initializers().iter().filter(|initializer| {
                     primary.is_none_or(|primary| primary.id() != initializer.id())
                 }));
-        let (_, constructors, factories) = initializers.try_fold(
-            (
-                HashSet::from([ConstructorSignature(vec![TypeName::primitive(handle)])]),
-                Vec::new(),
-                Vec::new(),
-            ),
-            |(mut signatures, mut constructors, mut factories), initializer| -> Result<_> {
-                if initializer.callable().execution().uses_async_execution() {
-                    factories.push(Call::from_class_factory(
-                        initializer,
-                        bridge,
-                        native_owner,
-                        None,
-                        version,
-                        context,
-                    )?);
-                    return Ok((signatures, constructors, factories));
-                }
-                let helper = Identifier::parse_for(
-                    format!("__boltffiCreateHandle{}", initializer.id().raw()),
-                    version,
-                )?;
-                let call = Call::from_class_initializer(
+        let constructor_name = name.identifier().clone();
+        let mut constructor_signatures = HashSet::from([ErasedSignature::new(
+            constructor_name.clone(),
+            [ValueType::Primitive(handle)],
+        )]);
+        let mut constructors = Vec::new();
+        let mut factories = Vec::new();
+        initializers.try_for_each(|initializer| -> Result<()> {
+            if initializer.callable().execution().uses_async_execution() {
+                factories.push(Call::from_class_factory(
                     initializer,
-                    declaration.id(),
-                    helper,
-                    AssociatedCallContext::local(bridge, native_owner, version, context),
-                )?;
-                let signature = ConstructorSignature::from_parameters(call.parameters());
-                let is_primary = primary.is_some_and(|primary| primary.id() == initializer.id());
-                if is_primary {
-                    std::iter::once(signature)
-                        .chain(call.overloads().iter().map(|overload| {
-                            ConstructorSignature::from_parameters(overload.parameters())
-                        }))
-                        .try_for_each(|signature| {
-                            if signatures.insert(signature.clone()) {
-                                return Ok(());
-                            }
-                            Err(Error::JavaNameCollision {
+                    bridge,
+                    native_owner,
+                    None,
+                    version,
+                    context,
+                )?);
+                return Ok(());
+            }
+            let helper = Identifier::parse_for(
+                format!("__boltffiCreateHandle{}", initializer.id().raw()),
+                version,
+            )?;
+            let call = Call::from_class_initializer(
+                initializer,
+                declaration.id(),
+                helper,
+                AssociatedCallContext::local(bridge, native_owner, version, context),
+            )?;
+            let signature = ErasedSignature::new(
+                constructor_name.clone(),
+                call.parameters()
+                    .iter()
+                    .map(|parameter| parameter.ty().clone()),
+            );
+            let is_primary = primary.is_some_and(|primary| primary.id() == initializer.id());
+            if is_primary {
+                std::iter::once(signature)
+                    .chain(
+                        call.overloads()
+                            .iter()
+                            .map(|overload| overload.erased_signature(&constructor_name)),
+                    )
+                    .try_for_each(|signature| {
+                        if let Some(collision) = constructor_signatures.replace(signature) {
+                            return Err(Error::JavaNameCollision {
                                 scope: format!("{name} constructors"),
-                                name: format!(
-                                    "{name}({})",
-                                    signature
-                                        .0
-                                        .iter()
-                                        .map(ToString::to_string)
-                                        .collect::<Vec<_>>()
-                                        .join(", "),
-                                ),
-                            })
-                        })?;
-                    constructors.push(Constructor::new(call));
-                    return Ok((signatures, constructors, factories));
-                }
-                match signatures.insert(signature) {
-                    true => {
-                        if !call.overloads().is_empty() {
-                            factories.push(call.constructor_factory(
-                                Name::new(initializer.name()).function(version)?,
-                                name.clone(),
-                            )?);
+                                name: collision.to_string(),
+                            });
                         }
-                        constructors.push(Constructor::new(call.without_default_overloads()));
+                        Ok(())
+                    })?;
+                constructors.push(Constructor::new(call));
+                return Ok(());
+            }
+            match constructor_signatures.insert(signature) {
+                true => {
+                    if !call.overloads().is_empty() {
+                        factories.push(call.constructor_factory(
+                            Name::new(initializer.name()).function(version)?,
+                            name.clone(),
+                        )?);
                     }
-                    false => factories.push(Call::from_class_factory(
-                        initializer,
-                        bridge,
-                        native_owner,
-                        None,
-                        version,
-                        context,
-                    )?),
+                    constructors.push(Constructor::new(call.without_default_overloads()));
                 }
-                Ok((signatures, constructors, factories))
-            },
-        )?;
+                false => factories.push(Call::from_class_factory(
+                    initializer,
+                    bridge,
+                    native_owner,
+                    None,
+                    version,
+                    context,
+                )?),
+            }
+            Ok(())
+        })?;
         let static_methods = declaration
             .methods()
             .iter()
@@ -382,17 +378,6 @@ impl Constructor {
 
     pub fn arguments(&self) -> &ArgumentList {
         &self.arguments
-    }
-}
-
-impl ConstructorSignature {
-    fn from_parameters(parameters: &[Parameter<ValueType>]) -> Self {
-        Self(
-            parameters
-                .iter()
-                .map(|parameter| parameter.ty().type_name().erased())
-                .collect(),
-        )
     }
 }
 

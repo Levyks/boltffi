@@ -313,14 +313,10 @@ impl JavaHost {
                 DeclarationRef::Function(function) => Some(function),
                 _ => None,
             })
-            .map(|function| {
-                self.function_plan(function, bridge, context)
-                    .map(|call| call.signatures().collect::<Vec<_>>())
-            })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+            .try_fold(Vec::new(), |mut signatures, function| -> Result<_> {
+                signatures.extend(self.function_plan(function, bridge, context)?.signatures());
+                Ok(signatures)
+            })?;
         ErasedSignature::validate_owner(self.file(), &functions)?;
         bindings.decls().iter().try_for_each(|declaration| {
             match DeclarationRef::from(declaration) {
