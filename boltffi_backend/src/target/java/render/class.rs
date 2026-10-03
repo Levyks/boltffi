@@ -76,7 +76,9 @@ impl Class {
         release_native.validate_return(&ReturnType::Void)?;
         let release = Statement::expression(release_native.call(
             native_owner,
-            [Expression::this().member(Identifier::known("handle"))],
+            [Expression::identifier(Identifier::known(
+                "__boltffi_handle",
+            ))],
         )?);
         let primary = declaration.initializers().iter().find(|initializer| {
             initializer.name() == &CanonicalName::single("new")
@@ -93,9 +95,17 @@ impl Class {
                     primary.is_none_or(|primary| primary.id() != initializer.id())
                 }));
         let constructor_name = name.identifier().clone();
+        let long_constructor_signature =
+            ErasedSignature::new(constructor_name.clone(), [ValueType::Primitive(handle)]);
         let mut constructor_signatures = HashSet::from([ErasedSignature::new(
             constructor_name.clone(),
-            [ValueType::Primitive(handle)],
+            [ValueType::Reference(TypeName::qualified(
+                ["java", "util", "concurrent", "atomic"]
+                    .into_iter()
+                    .map(Identifier::known)
+                    .collect(),
+                TypeIdentifier::known("AtomicLong", version),
+            ))],
         )]);
         let mut constructors = Vec::new();
         let mut factories = Vec::new();
@@ -147,7 +157,9 @@ impl Class {
                 constructors.push(Constructor::new(call));
                 return Ok(());
             }
-            match constructor_signatures.insert(signature) {
+            match signature != long_constructor_signature
+                && constructor_signatures.insert(signature)
+            {
                 true => {
                     if !call.overloads().is_empty() {
                         factories.push(call.constructor_factory(
@@ -339,6 +351,10 @@ impl Class {
         ["close", "rawHandle"]
             .into_iter()
             .map(|name| ErasedSignature::new(Identifier::known(name), []))
+            .chain(std::iter::once(ErasedSignature::new(
+                Identifier::known("__boltffiFromHandle"),
+                [ValueType::Primitive(self.handle)],
+            )))
             .chain(
                 self.constructors
                     .iter()
@@ -424,25 +440,14 @@ impl ClassHandle {
 
     pub fn value_statements(&self, value: Expression) -> Result<Vec<Statement>> {
         match self.presence {
-            HandlePresence::Required => Ok(vec![Statement::return_value(Expression::construct(
-                self.ty.clone(),
-                [value].into_iter().collect(),
-            ))]),
+            HandlePresence::Required => {
+                Ok(vec![Statement::return_value(self.value_expression(value)?)])
+            }
             HandlePresence::Nullable => {
                 let handle = Identifier::known("__boltffi_handle");
                 Ok(vec![
                     Statement::value(TypeName::primitive(self.carrier), handle.clone(), value),
-                    Statement::return_value(
-                        Expression::identifier(handle.clone())
-                            .equal(Expression::long(0))
-                            .conditional(
-                                Expression::null(),
-                                Expression::construct(
-                                    self.ty.clone(),
-                                    [Expression::identifier(handle)].into_iter().collect(),
-                                ),
-                            ),
-                    ),
+                    Statement::return_value(self.value_expression(Expression::identifier(handle))?),
                 ])
             }
             _ => Err(JavaHost::unsupported("class handle presence")),
@@ -450,7 +455,11 @@ impl ClassHandle {
     }
 
     pub fn value_expression(&self, value: Expression) -> Result<Expression> {
-        let wrapped = Expression::construct(self.ty.clone(), [value.clone()].into_iter().collect());
+        let wrapped = Expression::static_call(
+            self.ty.clone(),
+            Identifier::known("__boltffiFromHandle"),
+            [value.clone()].into_iter().collect(),
+        );
         match self.presence {
             HandlePresence::Required => Ok(wrapped),
             HandlePresence::Nullable => Ok(value

@@ -772,6 +772,32 @@ public final class DemoTest {
         try (DefaultedCounter counter = DefaultedCounter.withOffset(7, 3)) {
             assert counter.offset() == 11;
         }
+        try (DefaultedWideCounter counter = new DefaultedWideCounter()) {
+            assert counter.value() == 10L;
+            counter.close();
+            counter.close();
+            try {
+                counter.value();
+                throw new AssertionError("closed counter remained usable");
+            } catch (IllegalStateException expected) {
+                assert expected.getMessage().equals("DefaultedWideCounter is closed");
+            }
+        }
+        java.util.stream.LongStream.of(0L, 5L, Long.MIN_VALUE, Long.MAX_VALUE).forEach(value -> {
+            try (DefaultedWideCounter counter = new DefaultedWideCounter(value)) {
+                assert counter.value() == value;
+            }
+        });
+        try (DefaultedWideCounter original = new DefaultedWideCounter(20L);
+             DefaultedWideCounter adjusted = DefaultedWideCounter.withOffset(original)) {
+            assert adjusted.value() == 21L;
+            try {
+                original.value();
+                throw new AssertionError("transferred counter remained usable");
+            } catch (IllegalStateException expected) {
+                assert expected.getMessage().equals("DefaultedWideCounter is closed");
+            }
+        }
         IntegerLimits limits = DefaultedCounter.integerLimits();
         assert limits.lower() == Long.MIN_VALUE;
         assert limits.upper() == -1L;

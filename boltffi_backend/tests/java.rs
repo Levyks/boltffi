@@ -1450,6 +1450,159 @@ fn java_target_renders_parameter_defaults_as_forwarding_overloads() {
 }
 
 #[test]
+fn defaulted_long_class_constructors_compile_without_native_handle_collisions() {
+    let source = r#"
+        pub struct SignedCounter {
+            value: i64,
+        }
+
+        #[export]
+        impl SignedCounter {
+            pub fn new(#[boltffi::default(10)] value: i64) -> Self {
+                Self { value }
+            }
+        }
+
+        pub struct UnsignedCounter {
+            value: u64,
+        }
+
+        #[export]
+        impl UnsignedCounter {
+            pub fn new(#[boltffi::default(18446744073709551615)] value: u64) -> Self {
+                Self { value }
+            }
+        }
+
+        pub struct SteppedCounter {
+            value: i64,
+        }
+
+        #[export]
+        impl SteppedCounter {
+            pub fn new(value: i64, #[boltffi::default(1)] step: i32) -> Self {
+                Self { value: value + i64::from(step) }
+            }
+        }
+
+        pub struct ExplicitCounter {
+            value: i64,
+        }
+
+        #[export]
+        impl ExplicitCounter {
+            pub fn new(value: i64) -> Self {
+                Self { value }
+            }
+        }
+    "#;
+    [JavaVersion::JAVA_8, JavaVersion::JAVA_16]
+        .into_iter()
+        .for_each(|version| {
+            let output = render_with_host(
+                source,
+                CoverageMode::Complete,
+                JavaHost::for_version("com.boltffi.demo", "Demo", version)
+                    .expect("Java constructor defaults host"),
+            );
+            let signed = java_source(&output, "com.boltffi.demo", "SignedCounter");
+            let unsigned = java_source(&output, "com.boltffi.demo", "UnsignedCounter");
+            let stepped = java_source(&output, "com.boltffi.demo", "SteppedCounter");
+            assert!(signed.contains("public SignedCounter(long value)"));
+            assert!(signed.contains("public SignedCounter()"));
+            assert!(unsigned.contains("public UnsignedCounter(long value)"));
+            assert!(unsigned.contains("public UnsignedCounter()"));
+            assert!(stepped.contains("public SteppedCounter(long value, int step)"));
+            assert!(stepped.contains("public SteppedCounter(long value)"));
+            if let Some(compiler) = JavaCompiler::discover() {
+                compile_generated_java_with_release(
+                    &compiler,
+                    &output,
+                    "boltffi-java-long-constructor-defaults",
+                    &[(
+                        "com/boltffi/demo/LongConstructorCaller.java",
+                        r#"package com.boltffi.demo;
+                        final class LongConstructorCaller {
+                            static void call() {
+                                new SignedCounter();
+                                new SignedCounter(0L);
+                                new SignedCounter(Long.MIN_VALUE);
+                                new UnsignedCounter();
+                                new UnsignedCounter(-1L);
+                                new SteppedCounter(10L);
+                                new SteppedCounter(10L, 2);
+                                ExplicitCounter._new(10L);
+                            }
+                        }"#,
+                    )],
+                    Some(version.release().into()),
+                );
+            }
+        });
+}
+
+#[test]
+fn generated_class_handles_preserve_single_ownership() {
+    let Some(compiler) = JavaCompiler::discover() else {
+        return;
+    };
+    let output = render_with_host(
+        CLASSES,
+        CoverageMode::Complete,
+        JavaHost::new("com.boltffi.demo", "Demo").expect("Java class handle host"),
+    );
+    compile_and_run_generated_java(
+        &compiler,
+        &output,
+        "boltffi-java-class-handle-ownership",
+        &[(
+            "com/boltffi/demo/ClassHandleProbe.java",
+            r#"package com.boltffi.demo;
+            final class ClassHandleProbe {
+                public static void main(String[] arguments) {
+                    Counter counter = Counter.__boltffiFromHandle(42L);
+                    if (counter.rawHandle() != 42L) throw new AssertionError("handle changed");
+                    if (counter.__boltffiTakeHandle() != 42L) throw new AssertionError("handle was not transferred");
+                    counter.close();
+                    counter.close();
+                    try {
+                        counter.rawHandle();
+                        throw new AssertionError("transferred handle remained readable");
+                    } catch (IllegalStateException expected) {
+                        if (!expected.getMessage().equals("Counter is closed")) throw expected;
+                    }
+                    try {
+                        counter.__boltffiTakeHandle();
+                        throw new AssertionError("handle was transferred twice");
+                    } catch (IllegalStateException expected) {
+                        if (!expected.getMessage().equals("Counter is closed")) throw expected;
+                    }
+                    try {
+                        Counter.__boltffiFromHandle(0L);
+                        throw new AssertionError("null native handle was accepted");
+                    } catch (IllegalArgumentException expected) {
+                        if (!expected.getMessage().contains("must not be zero")) throw expected;
+                    }
+                    Counter concurrent = Counter.__boltffiFromHandle(-1L);
+                    long owners = java.util.Collections.nCopies(32, concurrent).parallelStream().filter(candidate -> {
+                        try {
+                            if (candidate.__boltffiTakeHandle() != -1L) throw new AssertionError("handle bits changed");
+                            return true;
+                        } catch (IllegalStateException expected) {
+                            if (!expected.getMessage().equals("Counter is closed")) throw expected;
+                            return false;
+                        }
+                    }).count();
+                    if (owners != 1) throw new AssertionError("handle had multiple owners");
+                    concurrent.close();
+                }
+            }"#,
+        )],
+        "com.boltffi.demo.ClassHandleProbe",
+    );
+}
+
+#[test]
 fn generated_parameter_defaults_compile_for_java_eight_and_sixteen_when_available() {
     let Some(compiler) = JavaCompiler::discover() else {
         return;
@@ -1941,22 +2094,19 @@ fn java_target_renders_class_ownership_and_handle_calls_from_binding_ir() {
     let module = java_source(&output, "com.boltffi.demo", "Demo");
 
     assert!(counter.contains("public final class Counter implements AutoCloseable"));
-    assert!(counter.contains("private final long handle;"));
-    assert!(counter.contains("private final AtomicBoolean closed = new AtomicBoolean(false);"));
+    assert!(counter.contains("private final java.util.concurrent.atomic.AtomicLong handle;"));
     assert!(counter.contains("public Counter(int value)"));
     assert!(counter.contains("private static long __boltffiCreateHandle0(int value)"));
     assert!(counter.contains("return Native.boltffi_init_class_demo_counter_new(value);"));
     assert!(counter.contains("public static Counter tryNew(int value)"));
-    assert!(
-        counter
-            .contains("return new Counter(Native.boltffi_init_class_demo_counter_try_new(value));")
-    );
+    assert!(counter.contains(
+        "return Counter.__boltffiFromHandle(Native.boltffi_init_class_demo_counter_try_new(value));"
+    ));
     assert!(counter.contains("throw new RuntimeException(\"Factory constructor failed\")"));
-    assert!(counter.contains("if (!closed.compareAndSet(false, true)) return;"));
-    assert!(counter.contains("Native.boltffi_release_class_demo_counter(this.handle);"));
+    assert!(counter.contains("if (__boltffi_handle == 0) return;"));
+    assert!(counter.contains("Native.boltffi_release_class_demo_counter(__boltffi_handle);"));
     assert!(
-        counter
-            .contains("if (closed.get()) throw new IllegalStateException(\"Counter is closed\");")
+        counter.contains("if (value == 0) throw new IllegalStateException(\"Counter is closed\");")
     );
     assert!(counter.contains("public int get()"));
     assert!(counter.contains("public void set(int value)"));
@@ -1971,17 +2121,16 @@ fn java_target_renders_class_ownership_and_handle_calls_from_binding_ir() {
     assert!(!fallible.contains("this(new FallibleOnly"));
 
     assert!(factory.contains("public static Counter make(int value)"));
-    assert!(
-        factory
-            .contains("return new Counter(Native.boltffi_method_class_demo_factory_make(value));")
-    );
+    assert!(factory.contains(
+        "return Counter.__boltffiFromHandle(Native.boltffi_method_class_demo_factory_make(value));"
+    ));
     assert!(factory.contains("public Counter maybe(int value)"));
     assert!(factory.contains(
         "long __boltffi_handle = Native.boltffi_method_class_demo_factory_maybe(this.rawHandle(), value);"
     ));
-    assert!(
-        factory.contains("return (__boltffi_handle == 0L ? null : new Counter(__boltffi_handle));")
-    );
+    assert!(factory.contains(
+        "return (__boltffi_handle == 0L ? null : Counter.__boltffiFromHandle(__boltffi_handle));"
+    ));
     assert!(factory.contains("public int read(Counter counter)"));
     assert!(factory.contains("counter.rawHandle()"));
 

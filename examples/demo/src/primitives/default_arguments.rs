@@ -69,6 +69,27 @@ pub struct DefaultedCounter {
     start: i32,
 }
 
+pub struct DefaultedWideCounter {
+    value: i64,
+}
+
+#[export]
+impl DefaultedWideCounter {
+    pub fn new(#[boltffi::default(10)] value: i64) -> Self {
+        Self { value }
+    }
+
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+
+    pub fn with_offset(counter: Self, #[boltffi::default(1)] step: i64) -> Self {
+        Self {
+            value: counter.value + step,
+        }
+    }
+}
+
 #[data]
 #[derive(Clone, Copy)]
 pub struct IntegerLimits {
