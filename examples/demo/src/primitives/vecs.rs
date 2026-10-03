@@ -156,6 +156,7 @@ pub fn echo_vec_bool(v: Vec<bool>) -> Vec<bool> {
     directions = "Call `primitives::vecs::echo_vec_string` through the generated binding and assert a non-empty string vector crosses the wire and returns unchanged."
 )]
 #[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn echo_vec_string(v: Vec<String>) -> Vec<String> {
     v
 }
@@ -176,6 +177,7 @@ pub fn vec_string_lengths(v: Vec<String>) -> Vec<u32> {
     directions = "Call `primitives::vecs::echo_vec_bytes` through the generated binding and assert a vector of byte buffers, an empty one among them, crosses the wire and returns unchanged."
 )]
 #[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn echo_vec_bytes(v: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     v
 }
