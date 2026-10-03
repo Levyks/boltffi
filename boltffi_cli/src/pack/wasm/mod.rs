@@ -23,11 +23,13 @@ use crate::build::{
 use crate::cli::{CliError, Result};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use crate::commands::pack::PackWasmOptions;
-use crate::config::{Config, WasmNpmTarget, WasmOptimizeLevel, WasmOptimizeOnMissing, WasmProfile};
+use crate::config::{
+    Config, TargetSection, WasmNpmTarget, WasmOptimizeLevel, WasmOptimizeOnMissing, WasmProfile,
+};
 use crate::pack::PackError;
 use crate::reporter::Reporter;
 
-use super::{print_cargo_line, resolve_build_cargo_args};
+use super::{pack_generate_cargo_args, print_cargo_line, resolve_build_cargo_args};
 
 use self::npm::{
     generate_wasm_loader_entrypoints, generate_wasm_package_json, generate_wasm_readme,
@@ -61,7 +63,8 @@ pub(crate) fn pack_wasm(
         config.wasm_profile()
     };
 
-    let build_cargo_args = resolve_build_cargo_args(config, &options.execution.cargo_args);
+    let build_cargo_args =
+        resolve_build_cargo_args(config, TargetSection::Wasm, &options.execution.cargo_args);
     let build_profile = crate::build::resolve_build_profile(
         matches!(requested_wasm_profile, WasmProfile::Release),
         &build_cargo_args,
@@ -151,7 +154,12 @@ pub(crate) fn pack_wasm(
                 target: GenerateTarget::Typescript,
                 output: Some(staging.clone()),
                 experimental: false,
-                cargo_args: build_cargo_args.clone(),
+                cargo_args: pack_generate_cargo_args(
+                    config,
+                    TargetSection::Wasm,
+                    &GenerateTarget::Typescript,
+                    &options.execution.cargo_args,
+                ),
                 deny_skipped: options.execution.deny_skipped,
             },
         )?;
