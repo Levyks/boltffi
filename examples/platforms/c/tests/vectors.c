@@ -66,6 +66,15 @@ bool test_vectors(void) {
     DemoU32Sequence lengths = demo_vec_string_lengths((DemoStringSlice){strings, 3});
     CHECK(lengths.len == 3 && lengths.ptr[0] == 5 && lengths.ptr[1] == 5 && lengths.ptr[2] == 0, "case:primitives.vecs.string.should_report_utf8_byte_lengths");
     demo_u32_sequence_free(&lengths);
+
+    const uint8_t chunk_bytes[] = {0x00, 0xff, 1, 2, 3};
+    const DemoBytesView chunks[] = {{chunk_bytes, 2}, {NULL, 0}, {chunk_bytes + 2, 3}};
+    DemoSequenceOfBytes echoed = demo_echo_vec_bytes((DemoSliceOfBytesView){chunks, 3});
+    CHECK(echoed.len == 3 && echoed.ptr[0].len == 2 && memcmp(echoed.ptr[0].ptr, chunk_bytes, 2) == 0 && echoed.ptr[1].len == 0 && echoed.ptr[2].len == 3 && memcmp(echoed.ptr[2].ptr, chunk_bytes + 2, 3) == 0, "case:primitives.vecs.bytes.should_roundtrip_values");
+    demo_sequence_of_bytes_free(&echoed);
+    DemoU32Sequence chunk_lengths = demo_vec_bytes_lengths((DemoSliceOfBytesView){chunks, 3});
+    CHECK(chunk_lengths.len == 3 && chunk_lengths.ptr[0] == 2 && chunk_lengths.ptr[1] == 0 && chunk_lengths.ptr[2] == 3, "case:primitives.vecs.bytes.should_report_lengths");
+    demo_u32_sequence_free(&chunk_lengths);
     return true;
 }
 

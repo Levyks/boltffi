@@ -34,6 +34,14 @@ export async function run() {
   assertArrayEqual(demo.echoVecString(["hello", "world"]), ["hello", "world"]);
   globalThis.demoCase("case:primitives.vecs.string.should_report_utf8_byte_lengths");
   assertArrayEqual(demo.vecStringLengths(["hi", "café"]), [2, 5]);
+  globalThis.demoCase("case:primitives.vecs.bytes.should_roundtrip_values");
+  const chunks = demo.echoVecBytes([Uint8Array.from([0, 255]), new Uint8Array(0), Uint8Array.from([1, 2, 3])]);
+  assert.equal(chunks.length, 3);
+  assertArrayEqual(chunks[0], [0, 255]);
+  assertArrayEqual(chunks[1], []);
+  assertArrayEqual(chunks[2], [1, 2, 3]);
+  globalThis.demoCase("case:primitives.vecs.bytes.should_report_lengths");
+  assertArrayEqual(demo.vecBytesLengths([Uint8Array.from([1, 2]), Uint8Array.from([3, 4, 5]), Uint8Array.from([6])]), [2, 3, 1]);
   globalThis.demoCase("case:primitives.vecs.i32.should_make_range");
   assertArrayEqual(demo.makeRange(0, 5), [0, 1, 2, 3, 4]);
   globalThis.demoCase("case:primitives.vecs.i32.should_reverse_values");
