@@ -344,7 +344,9 @@ impl<'plan, 'package> ReturnPlanRender<'plan, Native, OutOfRust> for ReturnedVal
                     self.delivery.native()
                 } else {
                     match EncodedCrossing::of(codec.root()) {
-                        EncodedCrossing::Utf8Text => self.delivery.native(),
+                        EncodedCrossing::Utf8Text | EncodedCrossing::Bytes => {
+                            self.delivery.native()
+                        }
                         EncodedCrossing::WireBytes => {
                             ReturnedValue::from_encoded_plan(codec, self.package)
                         }

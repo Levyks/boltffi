@@ -1238,6 +1238,17 @@ public static partial class DemoTest
         uint[] lengths = VecStringLengths(new[] { "", "a", "café", "🌍" });
         Require(lengths.SequenceEqual(new uint[] { 0u, 1u, 5u, 4u }), "vecStringLengths UTF-8 byte counts");
 
+        DemoCase("case:primitives.vecs.bytes.should_roundtrip_values");
+        byte[][] chunks = EchoVecBytes(new[] { new byte[] { 0, 0xff }, Array.Empty<byte>(), new byte[] { 1, 2, 3 } });
+        Require(chunks.Length == 3, "echoVecBytes count");
+        Require(chunks[0].SequenceEqual(new byte[] { 0, 0xff }), "echoVecBytes[0]");
+        Require(chunks[1].Length == 0, "echoVecBytes[1] empty");
+        Require(chunks[2].SequenceEqual(new byte[] { 1, 2, 3 }), "echoVecBytes[2]");
+
+        DemoCase("case:primitives.vecs.bytes.should_report_lengths");
+        uint[] chunkLengths = VecBytesLengths(new[] { new byte[] { 1, 2 }, new byte[] { 3, 4, 5 }, new byte[] { 6 } });
+        Require(chunkLengths.SequenceEqual(new uint[] { 2u, 3u, 1u }), "vecBytesLengths");
+
         DemoCase("case:primitives.vecs.nested_i32.should_roundtrip_values");
         int[][] nestedInts = new[]
         {

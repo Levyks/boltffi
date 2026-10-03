@@ -156,6 +156,7 @@ pub fn echo_vec_bool(v: Vec<bool>) -> Vec<bool> {
     directions = "Call `primitives::vecs::echo_vec_string` through the generated binding and assert a non-empty string vector crosses the wire and returns unchanged."
 )]
 #[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn echo_vec_string(v: Vec<String>) -> Vec<String> {
     v
 }
@@ -168,6 +169,27 @@ pub fn echo_vec_string(v: Vec<String>) -> Vec<String> {
 #[export]
 pub fn vec_string_lengths(v: Vec<String>) -> Vec<u32> {
     v.iter().map(|s| s.len() as u32).collect()
+}
+
+#[demo_bench_macros::demo_case(
+    "primitives.vecs.bytes.should_roundtrip_values",
+    justification = "Ensure a vector of byte buffers, an empty one among them, crosses the wire and returns unchanged.",
+    directions = "Call `primitives::vecs::echo_vec_bytes` through the generated binding and assert a vector of byte buffers, an empty one among them, crosses the wire and returns unchanged."
+)]
+#[export]
+#[benchmark_candidate(function, uniffi)]
+pub fn echo_vec_bytes(v: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    v
+}
+
+#[demo_bench_macros::demo_case(
+    "primitives.vecs.bytes.should_report_lengths",
+    justification = "Ensure a vector of byte buffers crosses the wire and returns the length of each buffer.",
+    directions = "Call `primitives::vecs::vec_bytes_lengths` through the generated binding and assert a vector of byte buffers crosses the wire and returns the length of each buffer."
+)]
+#[export]
+pub fn vec_bytes_lengths(v: Vec<Vec<u8>>) -> Vec<u32> {
+    v.iter().map(|bytes| bytes.len() as u32).collect()
 }
 
 #[demo_bench_macros::demo_case(

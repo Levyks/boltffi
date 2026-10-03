@@ -1488,6 +1488,7 @@ static int boltffi_python_raise_frozen_field(PyObject *name) {
 {{ record }}
 {% endfor %}
 {% for sequence in support.native_sequences() %}
+{% if let Some(record) = sequence.record_item() %}
 static int {{ sequence.encoder() }}(PyObject *value, PyObject **out_wire, const uint8_t **out_ptr, uintptr_t *out_len) {
     typedef struct {
         PyObject *wire;
@@ -1519,7 +1520,7 @@ static int {{ sequence.encoder() }}(PyObject *value, PyObject **out_wire, const 
         }
     }
     for (index = 0; index < item_count; index += 1) {
-        if (!{{ sequence.item_encoder() }}(PySequence_Fast_GET_ITEM(sequence, index), &items[index].wire, &items[index].ptr, &items[index].len)) {
+        if (!{{ record.encoder() }}(PySequence_Fast_GET_ITEM(sequence, index), &items[index].wire, &items[index].ptr, &items[index].len)) {
             goto done;
         }
         if (!boltffi_python_wire_add(&wire_len, items[index].len)) {
@@ -1584,7 +1585,7 @@ static PyObject *{{ sequence.decoder() }}(FfiBuf_u8 buffer) {
         goto done;
     }
     for (index = 0; index < count; index += 1) {
-        item = {{ sequence.item_reader() }}(&reader);
+        item = {{ record.reader() }}(&reader);
         if (item == NULL) {
             Py_CLEAR(result);
             goto done;
@@ -1600,6 +1601,156 @@ done:
     boltffi_python_release_owned_buffer(buffer);
     return result;
 }
+{% else %}
+static int {{ sequence.encoder() }}(PyObject *value, PyObject **out_wire, const uint8_t **out_ptr, uintptr_t *out_len) {
+    PyObject *sequence = NULL;
+{% if sequence.is_bytes() %}
+    Py_buffer *views = NULL;
+    Py_ssize_t viewed = 0;
+{% endif %}
+    PyObject *wire = NULL;
+    boltffi_python_wire_writer writer;
+    uintptr_t wire_len = 4;
+    Py_ssize_t item_count = 0;
+    Py_ssize_t index = 0;
+    int ok = 0;
+    sequence = PySequence_Fast(value, "expected sequence");
+    if (sequence == NULL) {
+        return 0;
+    }
+    item_count = PySequence_Fast_GET_SIZE(sequence);
+    if (item_count > UINT32_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "sequence too large to encode");
+        goto done;
+    }
+{% if sequence.is_bytes() %}
+    if (item_count > 0) {
+        views = PyMem_Calloc((size_t)item_count, sizeof(Py_buffer));
+        if (views == NULL) {
+            PyErr_NoMemory();
+            goto done;
+        }
+    }
+{% endif %}
+    /* sized first, so the payload is written once into one buffer */
+    for (index = 0; index < item_count; index += 1) {
+        Py_ssize_t len = 0;
+{% if sequence.is_string() %}
+        /* the str keeps its UTF-8, so the write pass reads it again for free */
+        if (PyUnicode_AsUTF8AndSize(PySequence_Fast_GET_ITEM(sequence, index), &len) == NULL) {
+            goto done;
+        }
+{% else %}
+        if (PyObject_GetBuffer(PySequence_Fast_GET_ITEM(sequence, index), &views[index], PyBUF_CONTIG_RO) < 0) {
+            goto done;
+        }
+        viewed += 1;
+        len = views[index].len;
+{% endif %}
+        if ((uint64_t)len > UINT32_MAX) {
+            PyErr_SetString(PyExc_OverflowError, "sequence element too large to encode");
+            goto done;
+        }
+        if (!boltffi_python_wire_add(&wire_len, 4) || !boltffi_python_wire_add(&wire_len, (uintptr_t)len)) {
+            goto done;
+        }
+    }
+    wire = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)wire_len);
+    if (wire == NULL) {
+        goto done;
+    }
+    writer.ptr = (uint8_t *)PyBytes_AS_STRING(wire);
+    writer.len = wire_len;
+    writer.offset = 0;
+    if (!boltffi_python_wire_writer_u32(&writer, (uint32_t)item_count)) {
+        goto done;
+    }
+    for (index = 0; index < item_count; index += 1) {
+{% if sequence.is_string() %}
+        Py_ssize_t len = 0;
+        const char *payload = PyUnicode_AsUTF8AndSize(PySequence_Fast_GET_ITEM(sequence, index), &len);
+        if (payload == NULL) {
+            goto done;
+        }
+{% else %}
+        Py_ssize_t len = views[index].len;
+        const void *payload = views[index].buf;
+{% endif %}
+        if (!boltffi_python_wire_writer_u32(&writer, (uint32_t)len)
+            || !boltffi_python_wire_writer_write(&writer, (const uint8_t *)payload, (uintptr_t)len)) {
+            goto done;
+        }
+    }
+    *out_wire = wire;
+    *out_ptr = (const uint8_t *)PyBytes_AS_STRING(wire);
+    *out_len = wire_len;
+    wire = NULL;
+    ok = 1;
+done:
+    Py_XDECREF(wire);
+{% if sequence.is_bytes() %}
+    for (index = 0; index < viewed; index += 1) {
+        PyBuffer_Release(&views[index]);
+    }
+    PyMem_Free(views);
+{% endif %}
+    Py_DECREF(sequence);
+    return ok;
+}
+
+static PyObject *{{ sequence.decoder() }}(FfiBuf_u8 buffer) {
+    boltffi_python_wire_reader reader;
+    PyObject *result = NULL;
+    PyObject *item = NULL;
+    uint32_t item_count = 0;
+    Py_ssize_t index = 0;
+    if (!boltffi_python_validate_owned_memory(buffer)) {
+        goto done;
+    }
+    reader.ptr = buffer.ptr;
+    reader.len = buffer.len;
+    reader.offset = 0;
+    if (!boltffi_python_wire_reader_u32(&reader, &item_count)) {
+        goto done;
+    }
+    /* every element takes at least its four length bytes */
+    if ((uintptr_t)item_count > (reader.len - reader.offset) / 4) {
+        PyErr_SetString(PyExc_ValueError, "truncated BoltFFI wire bytes");
+        goto done;
+    }
+    result = PyList_New((Py_ssize_t)item_count);
+    if (result == NULL) {
+        goto done;
+    }
+    for (index = 0; index < (Py_ssize_t)item_count; index += 1) {
+        uint32_t len = 0;
+        const uint8_t *payload = NULL;
+        if (!boltffi_python_wire_reader_u32(&reader, &len)
+            || !boltffi_python_wire_reader_read(&reader, len, &payload)) {
+            Py_CLEAR(result);
+            goto done;
+        }
+{% if sequence.is_string() %}
+        item = PyUnicode_FromStringAndSize((const char *)payload, (Py_ssize_t)len);
+{% else %}
+        item = PyBytes_FromStringAndSize((const char *)payload, (Py_ssize_t)len);
+{% endif %}
+        if (item == NULL) {
+            Py_CLEAR(result);
+            goto done;
+        }
+        PyList_SET_ITEM(result, index, item);
+        item = NULL;
+    }
+    if (reader.offset != reader.len) {
+        PyErr_SetString(PyExc_ValueError, "trailing BoltFFI wire bytes");
+        Py_CLEAR(result);
+    }
+done:
+    boltffi_python_release_owned_buffer(buffer);
+    return result;
+}
+{% endif %}
 {% endfor %}
 {% for enumeration in enums %}
 {{ enumeration }}

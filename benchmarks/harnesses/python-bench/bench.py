@@ -45,7 +45,10 @@ class SubjectFixtures:
     echo_string_200: str
     echo_string_1k: str
     echo_string_64k: str
+    echo_bytes_64: bytes
     echo_bytes_64k: bytes
+    echo_vec_string_100: list[str]
+    echo_vec_bytes_100: list[bytes]
     roundtrip_i32_vec_1k: list[int]
     echo_vec_i32_10k: list[int]
     boltffi_i32_vec_1k: list[int]
@@ -112,7 +115,10 @@ class PythonBenchmarkHarness:
             echo_string_200="x" * 200,
             echo_string_1k="x" * 1000,
             echo_string_64k="x" * 65536,
+            echo_bytes_64=bytes([42]) * 64,
             echo_bytes_64k=bytes([42]) * 65536,
+            echo_vec_string_100=[f"name-{index}" for index in range(100)],
+            echo_vec_bytes_100=[bytes([index]) * 64 for index in range(100)],
             roundtrip_i32_vec_1k=list(range(1000)),
             echo_vec_i32_10k=list(range(10000)),
             boltffi_i32_vec_1k=self.subjects.boltffi.generate_i32_vec(1000),
@@ -221,11 +227,26 @@ class PythonBenchmarkHarness:
             BenchmarkCase("generate_string_1k", lambda: boltffi.generate_string(1000), lambda: uniffi.generate_string(1000)),
             BenchmarkCase("generate_string_64k", lambda: boltffi.generate_string(65536), lambda: uniffi.generate_string(65536)),
             BenchmarkCase(
+                "echo_bytes_64",
+                lambda: boltffi.echo_bytes(fixtures.echo_bytes_64),
+                lambda: uniffi.echo_bytes(fixtures.echo_bytes_64),
+            ),
+            BenchmarkCase(
                 "echo_bytes_64k",
                 lambda: boltffi.echo_bytes(fixtures.echo_bytes_64k),
                 lambda: uniffi.echo_bytes(fixtures.echo_bytes_64k),
             ),
             BenchmarkCase("generate_bytes_64k", lambda: boltffi.generate_bytes(65536), lambda: uniffi.generate_bytes(65536)),
+            BenchmarkCase(
+                "echo_vec_string_100",
+                lambda: boltffi.echo_vec_string(fixtures.echo_vec_string_100),
+                lambda: uniffi.echo_vec_string(fixtures.echo_vec_string_100),
+            ),
+            BenchmarkCase(
+                "echo_vec_bytes_100",
+                lambda: boltffi.echo_vec_bytes(fixtures.echo_vec_bytes_100),
+                lambda: uniffi.echo_vec_bytes(fixtures.echo_vec_bytes_100),
+            ),
             BenchmarkCase(
                 "simple_enum",
                 lambda: (boltffi.opposite_direction(boltffi.Direction.NORTH), boltffi.direction_to_degrees(boltffi.Direction.EAST)),

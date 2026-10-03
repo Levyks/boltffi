@@ -1344,6 +1344,17 @@ public final class DemoTest {
         assert lengths[0] == 2 : "vecStringLengths[0]";
         assert lengths[1] == 5 : "vecStringLengths[1] (utf8)";
 
+        demoCase("case:primitives.vecs.bytes.should_roundtrip_values");
+        List<byte[]> chunks = Demo.echoVecBytes(Arrays.asList(new byte[] {0, (byte) 0xff}, new byte[0], new byte[] {1, 2, 3}));
+        assert chunks.size() == 3 : "echoVecBytes size";
+        assert Arrays.equals(chunks.get(0), new byte[] {0, (byte) 0xff}) : "echoVecBytes[0]";
+        assert chunks.get(1).length == 0 : "echoVecBytes[1] empty";
+        assert Arrays.equals(chunks.get(2), new byte[] {1, 2, 3}) : "echoVecBytes[2]";
+
+        demoCase("case:primitives.vecs.bytes.should_report_lengths");
+        int[] chunkLengths = Demo.vecBytesLengths(Arrays.asList(new byte[] {1, 2}, new byte[] {3, 4, 5}, new byte[] {6}));
+        assert Arrays.equals(chunkLengths, new int[] {2, 3, 1}) : "vecBytesLengths";
+
         System.out.println("  PASS\n");
     }
 

@@ -12,11 +12,13 @@ use boltffi_binding::CodecNode;
 ///
 /// A `-> String` return classifies as `Utf8Text`: the extension returns
 /// the finished `str` and the package body is a bare native call. A
-/// `-> Vec<String>` return classifies as `WireBytes`: the extension
-/// returns the payload and the package decodes it.
+/// `-> Vec<u8>` return classifies as `Bytes` the same way, with a finished
+/// `bytes`. A `-> Vec<Point>` return classifies as `WireBytes`: the
+/// extension returns the payload and the package decodes it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EncodedCrossing {
     Utf8Text,
+    Bytes,
     WireBytes,
 }
 
@@ -24,6 +26,7 @@ impl EncodedCrossing {
     pub fn of(root: &CodecNode) -> Self {
         match root {
             CodecNode::String => Self::Utf8Text,
+            CodecNode::Bytes => Self::Bytes,
             _ => Self::WireBytes,
         }
     }
