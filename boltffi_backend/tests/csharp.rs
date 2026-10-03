@@ -252,6 +252,180 @@ fn csharp_non_trailing_and_constructed_defaults_compile_at_call_sites() {
 }
 
 #[test]
+fn csharp_module_class_collides_with_exported_record() {
+    let source = r#"
+        #[data]
+        pub struct Demo {
+            pub value: i32,
+        }
+
+        #[export]
+        pub fn make_demo() -> Demo {
+            Demo { value: 1 }
+        }
+        "#;
+    let control = target(CSharpHost::new().native_library("demo_native"))
+        .render(&bindings(&source.replace("Demo", "Widget")))
+        .expect("noncolliding C# output should render");
+    compile_csharp_with_dotnet_when_available(&control, "csharp-module-record-control");
+
+    let bindings = bindings(source);
+    let error = target(CSharpHost::new()).render(&bindings).unwrap_err();
+    assert!(
+        matches!(error, boltffi_backend::BackendError::CSharpModuleClassCollision { ref name, .. } if name == "Demo")
+    );
+    assert!(error.to_string().contains("targets.csharp.module_class"));
+
+    let output = target(CSharpHost::new().module_class("DemoApi").unwrap())
+        .render(&bindings)
+        .expect("distinct module class should render");
+    let module = output
+        .files()
+        .iter()
+        .find(|file| file.path().as_path() == Path::new("DemoApi.cs"))
+        .expect("generated DemoApi.cs");
+    assert!(module.contents().contains("public static class DemoApi"));
+    assert!(
+        output
+            .files()
+            .iter()
+            .any(|file| file.path().as_path() == Path::new("Demo.cs"))
+    );
+    compile_csharp_with_dotnet_when_available(&output, "csharp-module-record-collision");
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_callback_companions() {
+    let bindings = bindings(
+        r#"
+        #[export]
+        pub trait Handler {
+            fn invoke(&self, value: String) -> String;
+        }
+        "#,
+    );
+    for name in ["HandlerProxy", "HandlerBridge", "BoltFFICallbackHandle"] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(output, Err(boltffi_backend::BackendError::CSharpModuleClassCollision { name: ref collision, .. }) if collision == name),
+            "module class {name} must not shadow a callback companion"
+        );
+    }
+    let output = target(CSharpHost::new().module_class("handlerProxy").unwrap())
+        .render(&bindings)
+        .expect("case-sensitive C# type names with distinct filenames should render");
+    compile_csharp_with_dotnet_when_available(&output, "csharp-module-callback-companions");
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_stream_companions() {
+    let bindings = bindings(include_str!("fixtures/source/stream/protocol_functions.rs"));
+    for name in [
+        "EnginePointsStreamRuntime",
+        "EnginePointsSubscription",
+        "EngineNamesStreamRuntime",
+        "EngineTicksStreamRuntime",
+        "EngineTicksCancellable",
+    ] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow a stream companion"
+        );
+    }
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_enum_companions() {
+    let bindings = bindings(include_str!("fixtures/source/constant/associated.rs"));
+    let methods = self::bindings(include_str!("fixtures/source/associated/enum_callables.rs"));
+    for (name, bindings) in [("ModeConstants", &bindings), ("ModeMethods", &methods)] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow an enum companion"
+        );
+    }
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_exception_types() {
+    let bindings = bindings(include_str!("fixtures/source/enums/error_message.rs"));
+    for name in ["ServiceErrorException", "RecordErrorException"] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow an exception type"
+        );
+    }
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_emitted_runtime_types() {
+    let bindings = bindings("#[export] pub async fn text(value: String) -> String { value }");
+    for name in [
+        "FfiStatus",
+        "FfiBuf",
+        "WireReader",
+        "WireWriter",
+        "BoltException",
+        "BoltFFIAsync",
+    ] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow an emitted runtime type"
+        );
+    }
+    let closure = self::bindings(include_str!("fixtures/source/exports/closure_parameter.rs"));
+    let output = target(
+        CSharpHost::new()
+            .module_class("BoltFFIOwnedClosure")
+            .unwrap(),
+    )
+    .render(&closure);
+    assert!(matches!(
+        output,
+        Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+    ));
+    let output = target(CSharpHost::new().module_class("WireReader").unwrap())
+        .render(&self::bindings("#[export] pub fn ping() {}"))
+        .expect("a runtime name is available when that runtime is not emitted");
+    compile_csharp_with_dotnet_when_available(&output, "csharp-module-unused-runtime");
+}
+
+#[test]
+fn csharp_module_class_rejects_case_insensitive_output_collision() {
+    let output = target(CSharpHost::new().module_class("demo").unwrap())
+        .render(&bindings("#[data] pub struct Demo { pub value: i32 }"));
+    assert!(matches!(
+        output,
+        Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+    ));
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_native_methods() {
+    let output = target(CSharpHost::new().module_class("NativeMethods").unwrap())
+        .render(&bindings("#[export] pub fn ping() {}"));
+    assert!(
+        matches!(output, Err(boltffi_backend::BackendError::CSharpModuleClassCollision { name, .. }) if name == "NativeMethods")
+    );
+}
+
+#[test]
 fn csharp_generated_helpers_do_not_shadow_exported_parameters() {
     let bindings = bindings(
         r#"
