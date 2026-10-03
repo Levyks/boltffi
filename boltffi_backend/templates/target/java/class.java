@@ -17,6 +17,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 {% endif %}    public {{ class.name() }}({% for parameter in constructor.call().parameters() %}{{ parameter.ty() }} {{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}) {
         this({{ class.name() }}.{{ constructor.call().name() }}({{ constructor.arguments() }}));
     }
+{% for overload in constructor.call().overloads() %}
+    public {{ class.name() }}({% for parameter in overload.parameters() %}{{ parameter.ty() }} {{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}) {
+        this({{ overload.arguments() }});
+    }
+{% endfor %}
 
     private static {{ constructor.call().returns() }} {{ constructor.call().name() }}({% for parameter in constructor.call().parameters() %}{{ parameter.ty() }} {{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}) {
 {% for statement in constructor.call().body() %}        {{ statement }}
@@ -38,7 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
         {{ class.release() }}
     }
 {% for call in class.factories() %}
-{% include "target/java/call/initializer.java" %}
+{% include "target/java/call/static_method.java" %}
 {% endfor %}{% for call in class.static_methods() %}
 {% include "target/java/call/static_method.java" %}
 {% endfor %}{% for call in class.instance_methods() %}

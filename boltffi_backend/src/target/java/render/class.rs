@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 
 use askama::Template as AskamaTemplate;
-use boltffi_binding::{ClassDecl, ClassId, ConstantOwner, HandlePresence, Native, native};
+use boltffi_binding::{
+    CanonicalName, ClassDecl, ClassId, ConstantOwner, HandlePresence, Native, native,
+};
 
 use crate::{
     bridge::jni::JniBridgeContract,
-    core::{AuxChunk, Emitted, RenderContext, Result},
+    core::{AuxChunk, Emitted, Error, RenderContext, Result},
     target::java::{
         JavaFile, JavaHost, JavaPackage, JavaVersion,
         admission::ClassShape,
@@ -15,7 +17,7 @@ use crate::{
             AssociatedConstants, Constant, Stream,
             call::{AssociatedCallContext, Call, Receiver},
             native::Method,
-            signature::{ErasedSignature, ReturnType, ValueType},
+            signature::{ErasedSignature, Parameter, ReturnType, ValueType},
         },
         syntax::{
             ArgumentList, Expression, Identifier, Javadoc, Statement, TypeIdentifier, TypeName,
@@ -53,7 +55,7 @@ pub struct Constructor {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ConstructorSignature(Vec<ValueType>);
+struct ConstructorSignature(Vec<TypeName>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassHandle {
@@ -79,9 +81,38 @@ impl Class {
             native_owner,
             [Expression::this().member(Identifier::known("handle"))],
         )?);
-        let (_, constructors, factories) = declaration.initializers().iter().try_fold(
-            (HashSet::new(), Vec::new(), Vec::new()),
+        let primary = declaration.initializers().iter().find(|initializer| {
+            initializer.name() == &CanonicalName::single("new")
+                && initializer
+                    .callable()
+                    .params()
+                    .iter()
+                    .any(|parameter| parameter.meta().default().is_some())
+        });
+        let mut initializers =
+            primary
+                .into_iter()
+                .chain(declaration.initializers().iter().filter(|initializer| {
+                    primary.is_none_or(|primary| primary.id() != initializer.id())
+                }));
+        let (_, constructors, factories) = initializers.try_fold(
+            (
+                HashSet::from([ConstructorSignature(vec![TypeName::primitive(handle)])]),
+                Vec::new(),
+                Vec::new(),
+            ),
             |(mut signatures, mut constructors, mut factories), initializer| -> Result<_> {
+                if initializer.callable().execution().uses_async_execution() {
+                    factories.push(Call::from_class_factory(
+                        initializer,
+                        bridge,
+                        native_owner,
+                        None,
+                        version,
+                        context,
+                    )?);
+                    return Ok((signatures, constructors, factories));
+                }
                 let helper = Identifier::parse_for(
                     format!("__boltffiCreateHandle{}", initializer.id().raw()),
                     version,
@@ -92,8 +123,43 @@ impl Class {
                     helper,
                     AssociatedCallContext::local(bridge, native_owner, version, context),
                 )?;
-                match signatures.insert(ConstructorSignature::from_call(&call)) {
-                    true => constructors.push(Constructor::new(call)),
+                let signature = ConstructorSignature::from_parameters(call.parameters());
+                let is_primary = primary.is_some_and(|primary| primary.id() == initializer.id());
+                if is_primary {
+                    std::iter::once(signature)
+                        .chain(call.overloads().iter().map(|overload| {
+                            ConstructorSignature::from_parameters(overload.parameters())
+                        }))
+                        .try_for_each(|signature| {
+                            if signatures.insert(signature.clone()) {
+                                return Ok(());
+                            }
+                            Err(Error::JavaNameCollision {
+                                scope: format!("{name} constructors"),
+                                name: format!(
+                                    "{name}({})",
+                                    signature
+                                        .0
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                ),
+                            })
+                        })?;
+                    constructors.push(Constructor::new(call));
+                    return Ok((signatures, constructors, factories));
+                }
+                match signatures.insert(signature) {
+                    true => {
+                        if !call.overloads().is_empty() {
+                            factories.push(call.constructor_factory(
+                                Name::new(initializer.name()).function(version)?,
+                                name.clone(),
+                            )?);
+                        }
+                        constructors.push(Constructor::new(call.without_default_overloads()));
+                    }
                     false => factories.push(Call::from_class_factory(
                         initializer,
                         bridge,
@@ -278,9 +344,18 @@ impl Class {
             .into_iter()
             .map(|name| ErasedSignature::new(Identifier::known(name), []))
             .chain(
-                self.calls()
+                self.constructors
+                    .iter()
+                    .map(Constructor::call)
                     .map(Call::signature)
                     .map(|signature| signature.erased()),
+            )
+            .chain(
+                self.factories
+                    .iter()
+                    .chain(&self.static_methods)
+                    .chain(&self.instance_methods)
+                    .flat_map(Call::signatures),
             )
             .chain(
                 self.streams
@@ -311,11 +386,11 @@ impl Constructor {
 }
 
 impl ConstructorSignature {
-    fn from_call(call: &Call) -> Self {
+    fn from_parameters(parameters: &[Parameter<ValueType>]) -> Self {
         Self(
-            call.parameters()
+            parameters
                 .iter()
-                .map(|parameter| parameter.ty().clone())
+                .map(|parameter| parameter.ty().type_name().erased())
                 .collect(),
         )
     }
