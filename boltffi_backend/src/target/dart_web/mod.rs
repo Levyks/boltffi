@@ -1,7 +1,6 @@
 mod interop;
 mod name_style;
 mod render;
-mod syntax;
 
 use boltffi_binding::{
     Bindings, CallbackDecl, ClassDecl, ConstantDecl, CustomTypeDecl, EnumDecl, FunctionDecl,
@@ -26,11 +25,13 @@ pub struct DartWebHost {
 }
 
 impl DartWebHost {
+    /// JavaScript support required by the generated Dart web bindings.
+    pub fn js_support() -> &'static str {
+        include_str!("../../../templates/target/dart_web/support.js")
+    }
+
     pub fn new(module: impl Into<String>) -> Result<Self> {
         let module = module.into();
-        // Used to build generated file/directory names (`<module>.dart`,
-        // `<module>_web_loader.mjs`); anything but a plain identifier risks
-        // writing outside the requested output directory.
         let is_valid_identifier = !module.is_empty()
             && module
                 .chars()
@@ -60,7 +61,7 @@ impl DartWebHost {
 impl host::HostBackend for DartWebHost {
     type Surface = Wasm32;
     type Bridge = WasmBridgeContract;
-    type Syntax = syntax::Syntax;
+    type Syntax = crate::target::dart::syntax::Syntax;
 
     fn name(&self) -> &'static str {
         "dart_web"
@@ -286,12 +287,6 @@ mod tests {
 
     #[test]
     fn renders_a_fallible_callback_method_via_wire_result() {
-        // A fallible callback method's Dart implementation signals Err(E)
-        // by throwing, matching target::dart's own convention -- the
-        // adapter wraps that as target::typescript's wasm callback bridge
-        // expects (`{tag: 'ok'|'err', ...}`, see
-        // runtime/typescript/src/wire.ts), and the JsWrapper escape hatch
-        // unwraps the same shape back into a thrown Dart exception.
         let output = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
@@ -300,7 +295,7 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("abstract interface class Validator"));
-        assert!(source.contains("int validate(int arg0);"));
+        assert!(source.contains("int validate(int value);"));
 
         // Adapter: Dart implementation's throw becomes a wire error.
         assert!(source.contains("@JSExport('validate')"));
@@ -310,7 +305,7 @@ mod tests {
                 .contains("final __boltffiResult = _impl.validate((arg0 as JSNumber).toDartInt);")
         );
         assert!(source.contains("return boltffiWireOk((__boltffiResult).toJS);"));
-        assert!(source.contains("} on BoltFFIStringException catch (__boltffiError) {"));
+        assert!(source.contains("} on $$BoltException catch (__boltffiError) {"));
         assert!(source.contains("return boltffiWireErr((__boltffiError.message).toJS);"));
 
         // JsWrapper escape hatch: a raw JS object's wire error becomes a
@@ -326,7 +321,7 @@ mod tests {
             )
         );
         assert!(source.contains(
-            "throw BoltFFIStringException(((__boltffiRaw as JSObject).getProperty('error'.toJS) as JSString).toDart);"
+            "throw $$BoltException(((__boltffiRaw as JSObject).getProperty('error'.toJS) as JSString).toDart);"
         ));
     }
 
@@ -359,11 +354,6 @@ mod tests {
 
     #[test]
     fn renders_an_async_fallible_callback_method_with_a_record_error() {
-        // Matches an async trait method returning `Result<T, E>` where `E`
-        // is a #[data] record -- the record itself is thrown/caught
-        // directly (it already implements Exception, since it's the
-        // error-channel payload) rather than being wrapped like a String
-        // error is.
         let output = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
@@ -372,7 +362,7 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("class ValidationError implements Exception"));
-        assert!(source.contains("Future<int> validate(int arg0);"));
+        assert!(source.contains("Future<int> validate(int value);"));
         assert!(source.contains("JSPromise<JSAny?> validate(JSAny? arg0) {"));
         assert!(source.contains("on ValidationError catch (__boltffiError) {"));
     }
@@ -399,26 +389,12 @@ mod tests {
 
     #[test]
     fn rejects_a_nullable_closure_parameter() {
-        // `Option<Box<dyn Fn>>`'s `None` case has nowhere to go: the
-        // generated Dart type stays non-nullable and every value gets
-        // wrapped/called unconditionally, so this must be reported
-        // unsupported rather than making the Rust API's None case
-        // unreachable from Dart.
         let result = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
             .render(&nullable_closure_bindings());
         assert!(result.is_err());
     }
-
-    // Like a record with its own #[export] impl, an enum with one rejects
-    // at the scan stage (ConflictingDeclarations: the same name can't be
-    // both an `enum`/`#[data]` declaration and an `#[export] impl`
-    // target), so an enum with populated initializers()/methods() is not
-    // reachable through supported source syntax today. The defensive
-    // rejection in Enumeration::from_declaration stays in place for when
-    // that changes, but is not covered by an end-to-end test here for the
-    // same reason.
 
     fn record_bindings() -> Bindings<Wasm32> {
         let source = boltffi_scan::scan_file(
@@ -584,11 +560,6 @@ mod tests {
 
         assert!(source.contains("@JS('__boltffi_demo_ready')"));
         assert!(source.contains("external JSPromise<JSAny?> get _boltffiReady;"));
-        // Plain `init` would collide with an exported Rust function of the
-        // same (very plausible) name -- Dart doesn't allow two top-level
-        // declarations with the same identifier, so both would fail to
-        // analyze. Prefixed to match every other generated helper's
-        // reserved namespace.
         assert!(
             source.contains("Future<void> boltffiInit() => _boltffiReady.toDart.then((_) {});")
         );
@@ -618,24 +589,16 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("@JS('__boltffi_demo.add')"));
-        assert!(source.contains("int add(int arg0, int arg1)"));
+        assert!(source.contains("int add(int a, int b)"));
         assert!(source.contains("@JS('__boltffi_demo.shout')"));
-        assert!(source.contains("String shout(String arg0)"));
+        assert!(source.contains("String shout(String name)"));
         assert!(source.contains("@JS('__boltffi_demo.addAsync')"));
         assert!(source.contains(
-            "addAsync(int arg0, int arg1, { $$BoltCancellationToken? cancellationToken }) async"
+            "addAsync(int a, int b, { $$BoltCancellationToken? cancellationToken }) async"
         ));
         assert!(source.contains(".toDart"));
-        // Must match target::typescript's own reserved-word escaping
-        // (prefix underscore) or this binds to a JS export that was never
-        // produced.
         assert!(source.contains("@JS('__boltffi_demo._delete')"));
 
-        // `expr` inside interop::from_js's Optional branch is a call
-        // (`_boltffiExtern_maybeValue(...)`), not a variable -- it must be
-        // evaluated exactly once (into a temporary), not once for the null
-        // check and again for the non-null decode, or an Option-returning
-        // export invokes the underlying JS/Rust call twice per call site.
         assert_eq!(
             source.matches("_boltffiExtern_maybeValue(").count(),
             2,
@@ -643,7 +606,7 @@ mod tests {
              once in the call, not duplicated by the null check:\n{source}"
         );
         assert!(source.contains(
-            "final __boltffiRaw = _boltffiExtern_maybeValue((arg0).toJS); \
+            "final __boltffiRaw = _boltffiExtern_maybeValue((present).toJS); \
              return __boltffiRaw == null ? null : (__boltffiRaw! as JSNumber).toDartInt;"
         ));
     }
@@ -687,11 +650,11 @@ mod tests {
         assert!(source.contains("final class $$BoltCancellationToken {"));
         assert!(source.contains("bool get isCancelled => _isCancelled;"));
         assert!(source.contains("void cancel() {"));
-        assert!(source.contains("int _registerCall() {"));
-        assert!(source.contains("void _unregisterCall(int id) {"));
+        assert!(source.contains("_BoltAbortController? _controller;"));
+        assert!(source.contains("_controller?.abort();"));
         assert!(source.contains("final class $$BoltCancelledException implements Exception {"));
-        assert!(source.contains("@JS('__boltffi_demo.__boltffiCancelById')"));
-        assert!(source.contains("external void _boltffiCancelById(JSAny? callId);"));
+        assert!(source.contains("@JS('AbortController')"));
+        assert!(source.contains("external JSObject get signal;"));
     }
 
     #[test]
@@ -707,22 +670,18 @@ mod tests {
         // parameter, no leading ", " from an empty parameter list.
         assert!(source.contains("ping({ $$BoltCancellationToken? cancellationToken }) async"));
         assert!(
-            source.contains("_boltffiExtern_ping(_boltffiCancellationOptions(__boltffiCallId))")
+            source.contains("_boltffiExtern_ping(_boltffiCancellationOptions(cancellationToken))")
         );
         assert!(source.contains("external JSPromise<JSAny?> _boltffiExtern_ping(JSAny? options);"));
-        assert!(source.contains("'cancelId'.toJS, callId.toJS"));
-        assert!(source.contains(
-            "callMethodVarArgs('connect'.toJS, [_boltffiCancellationOptions(__boltffiCallId)])"
-        ));
-        assert!(source.contains(
-            "callMethodVarArgs('tick'.toJS, [_boltffiCancellationOptions(__boltffiCallId)])"
-        ));
+        assert!(source.contains("'signal'.toJS, token._signal"));
+        assert!(source.contains("_call_connect(_boltffiCancellationOptions(cancellationToken))"));
+        assert!(source.contains("_call_tick(_boltffiCancellationOptions(cancellationToken))"));
         assert!(source.contains("if (cancellationToken?.isCancelled ?? false)"));
-        assert!(source.contains("final __boltffiCallId = cancellationToken?._registerCall();"));
-        assert!(source.contains("cancellationToken!._unregisterCall(__boltffiCallId);"));
+        assert!(source.contains("_boltffiCancellationOptions(cancellationToken)"));
+        assert!(!source.contains("_activeCallIds"));
 
         // A sync free function must not gain a token it can never use.
-        assert!(source.contains("int add(int arg0, int arg1)"));
+        assert!(source.contains("int add(int a, int b)"));
         assert!(!source.contains("int add(int arg0, int arg1, {"));
 
         // Async initializer, rendered as a static method.
@@ -775,20 +734,11 @@ mod tests {
             .expect("target renders");
         let source = source_of(&output);
 
-        // The Optional decoder wraps its input in a synchronous IIFE
-        // (single evaluation for the null check), so an `await`ed call
-        // can't be decoded in place -- it's hoisted into a local first at
-        // all three call shapes: free function, class method, and the
-        // JsWrapper's callback invocation.
-        assert!(source.contains("final __boltffiAwaited = (await (_boltffiExtern_maybeValue("));
-        assert!(
-            source.contains("final __boltffiAwaited = (await ((js).callMethodVarArgs('sense'.toJS")
-        );
-        assert!(
-            source.contains(
-                "final __boltffiAwaited = (await (_js.callMethodVarArgs('maybeGreet'.toJS"
-            )
-        );
+        assert!(source.contains("_boltffiCaptureAsync(_boltffiExtern_maybeValue("));
+        assert!(source.contains("_boltffiCaptureAsync(_boltffiProbeClassMethods(js)._call_sense("));
+        assert!(source.contains(
+            "final __boltffiAwaited = (await (_MaybeGreeterJSMethods(js)._call_maybeGreet("
+        ));
         assert!(source.contains("final __boltffiRaw = __boltffiAwaited;"));
         assert!(source.contains(
             "return __boltffiRaw == null ? null : (__boltffiRaw! as JSNumber).toDartInt;"
@@ -807,7 +757,7 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("abstract interface class Adder"));
-        assert!(source.contains("int add(int arg0, int arg1);"));
+        assert!(source.contains("int add(int a, int b);"));
         assert!(source.contains("@JSExport()"));
         assert!(source.contains("class _AdderJSAdapter"));
         assert!(source.contains("final class AdderJsWrapper implements Adder"));
@@ -816,14 +766,8 @@ mod tests {
         assert!(source.contains("boltffiCallbackToJSAdder"));
         assert!(source.contains("@JS('__boltffi_demo.callAdder')"));
 
-        // `new` is a Dart keyword, so the Dart-side method is escaped to
-        // `$new` (matching target::dart's own keyword-escaping convention)
-        // -- but target::typescript's callback invoker calls the
-        // unescaped JS property name (`new`), so the adapter must export
-        // under that name via a per-member @JSExport override rather than
-        // just inheriting the escaped Dart method name.
         assert!(source.contains("@JSExport('new')\n  JSAny? $new(JSAny? arg0)"));
-        assert!(source.contains("_js.callMethodVarArgs('new'.toJS, [(arg0).toJS])"));
+        assert!(source.contains("_AdderJSMethods(js)._call_new((a).toJS)"));
     }
 
     #[test]
@@ -835,9 +779,9 @@ mod tests {
             .expect("target renders");
         let source = source_of(&output);
 
-        assert!(source.contains("int applyClosure(int Function(int) arg0, int arg1)"));
+        assert!(source.contains("int applyClosure(int Function(int) callback, int value)"));
         assert!(source.contains("(JSAny? __jsArg0)"));
-        assert!(source.contains("arg0((__jsArg0 as JSNumber).toDartInt)"));
+        assert!(source.contains("callback((__jsArg0 as JSNumber).toDartInt)"));
         assert!(source.contains(".toJS,"));
     }
 
@@ -851,7 +795,7 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("abstract interface class AsyncGreeter"));
-        assert!(source.contains("Future<String> greet(String arg0);"));
+        assert!(source.contains("Future<String> greet(String name);"));
         // Adapter must stay sync + convert via .toJS: @JSExport doesn't
         // turn a Future return into a real Promise on its own.
         assert!(source.contains("JSPromise<JSAny?> greet(JSAny? arg0) {"));
@@ -861,7 +805,7 @@ mod tests {
         assert!(source.contains("as JSPromise<JSAny?>).toDart"));
         assert!(source.contains("@JS('__boltffi_demo.callAsyncGreeter')"));
         assert!(source.contains(
-            "Future<String> callAsyncGreeter(AsyncGreeter arg0, String arg1, \
+            "Future<String> callAsyncGreeter(AsyncGreeter greeter, String name, \
              { $$BoltCancellationToken? cancellationToken }) async"
         ));
     }
@@ -876,21 +820,21 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("extension EventBus$valuesStream on EventBus"));
-        assert!(source.contains("Stream<int> values() {"));
+        assert!(source.contains("Stream<int> values() =>"));
         assert!(source.contains(
             "(js).callMethodVarArgs('values'.toJS, []) as JSObject).callMethodVarArgs('consume'.toJS,"
         ));
         assert!(source.contains("extension EventBus$messagesStream on EventBus"));
-        assert!(source.contains("Stream<Message> messages() {"));
+        assert!(source.contains("$$BoltStreamPopBatchHandle<Message> messages() {"));
         assert!(source.contains("extension EventBus$countsStream on EventBus"));
-        assert!(source.contains("Stream<int> counts() {"));
-        assert!(source.contains("(js).callMethodVarArgs('counts'.toJS, [((JSAny? __boltffiItem)"));
+        assert!(source.contains("StreamSubscription<int> counts(void Function(int) callback)"));
+        assert!(source.contains("(js).callMethodVarArgs('counts'.toJS, [callback])"));
         assert!(source.contains("getProperty('done'.toJS) as JSPromise"));
-        assert!(source.contains("__boltffiCancellable?.callMethodVarArgs('cancel'.toJS, []);"));
+        assert!(source.contains("subscription?.callMethodVarArgs('cancel'.toJS, []);"));
         // A rejected `done` promise must reach the stream as an error, not
         // leave the controller open forever with an unhandled Future error.
-        assert!(source.contains("onError: (Object error, StackTrace stackTrace) {"));
-        assert!(source.contains("__boltffiController.addError(error, stackTrace);"));
+        assert!(source.contains("onError: (Object error, StackTrace stack) {"));
+        assert!(source.contains("controller.addError(error, stack);"));
     }
 
     #[test]
@@ -903,22 +847,12 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("class Point"));
-        // A plain record's fields are mutable (no `final`) and its
-        // constructor isn't `const`, matching target::dart's own Record --
-        // app code that assigns to a field after construction must keep
-        // working on the web half too.
         assert!(source.contains("double x;"));
         assert!(!source.contains("final double x;"));
         assert!(source.contains("static Point fromJS(JSObject js)"));
         assert!(source.contains("class User"));
         assert!(source.contains("String name;"));
-        assert!(source.contains("List<int> scores;"));
-        // `extension` is a Dart contextual keyword but not JS-reserved: the
-        // Dart field must be escaped (`$extension`, matching target::dart's
-        // own keyword-escaping convention), but the wire property key
-        // read/written on the JS side must stay unescaped -- it has to
-        // match target::typescript's PropertyKey, which only escapes
-        // JS-reserved names.
+        assert!(source.contains("Int32List scores;"));
         assert!(source.contains("bool $extension;"));
         assert!(!source.contains("final bool $extension;"));
         // Field references are `this.`-qualified so a field named e.g.
@@ -955,17 +889,12 @@ mod tests {
         assert!(source.contains("final int value1;"));
         assert!(source.contains("result.setProperty('value0'.toJS, (this.value0).toJS);"));
 
-        assert!(source.contains("Point echoPoint(Point arg0)"));
-        assert!(source.contains("(arg0).toJS()"));
+        assert!(source.contains("Point echoPoint(Point value)"));
+        assert!(source.contains("(value).toJS()"));
         assert!(source.contains("Point.fromJS("));
-        assert!(source.contains("Status echoStatus(Status arg0)"));
+        assert!(source.contains("Status echoStatus(Status value)"));
         assert!(source.contains("Status.fromJS("));
 
-        // A data enum's unit-variant default instantiates the variant's
-        // own subclass (`Filter$None()`) -- `Filter` has no static members,
-        // so `Filter.none` (the C-style-enum syntax) would not analyze.
-        // The constant name is lowerCamelCase and `const`, matching
-        // target::dart's own Constant convention.
         assert!(source.contains("const Filter defaultFilter = Filter$None();"));
     }
 
@@ -993,9 +922,6 @@ mod tests {
             .expect("target renders");
         let source = source_of(&output);
 
-        // toJS() declares `final result = JSObject();` -- a field literally
-        // named `result` must stay `this.`-qualified or the generated code
-        // writes the accumulator to itself instead of the field.
         assert!(source.contains("result.setProperty('result'.toJS, (this.result).toJS);"));
         assert!(source.contains("result: (js.getProperty('result'.toJS) as JSNumber).toDartInt"));
     }
@@ -1031,10 +957,10 @@ mod tests {
         let source = source_of(&output);
 
         assert!(source.contains("typedef Timestamp = int;"));
-        assert!(source.contains("Timestamp keepTimestamp(Timestamp arg0)"));
+        assert!(source.contains("Timestamp keepTimestamp(Timestamp value)"));
         // dart:js_interop has no BigInt.toJS/JSBigInt.toDartInt -- must
         // round-trip through the boltffiInt64ToJS/FromJS helpers instead.
-        assert!(source.contains("boltffiInt64ToJS(arg0)"));
+        assert!(source.contains("boltffiInt64ToJS(value)"));
         assert!(source.contains("boltffiInt64FromJS("));
     }
 
@@ -1051,7 +977,7 @@ mod tests {
         // name, `const` (not `final`).
         assert!(source.contains("const bool enabled = true;"));
         assert!(source.contains("const int answer = 42;"));
-        assert!(source.contains("const String label = 'boltffi';"));
+        assert!(source.contains("const String label = \"boltffi\";"));
     }
 
     #[test]
@@ -1065,41 +991,31 @@ mod tests {
         assert!(source.contains("@JS('__boltffi_demo.Counter')"));
         assert!(source.contains("external JSObject get _boltffiCounterClass;"));
         assert!(source.contains("class Counter"));
-        assert!(source.contains("_boltffiCounterClass.callMethodVarArgs('new'.toJS,"));
-        assert!(source.contains("(js).callMethodVarArgs('add'.toJS,"));
+        assert!(source.contains("_boltffiCounterClassMethods(_boltffiCounterClass)._call_new("));
+        assert!(source.contains("_boltffiCounterClassMethods(js)._call_add("));
         // Async initializer: returns Future<Counter> and awaits the JS Promise.
         assert!(source.contains(
-            "static Future<Counter> connect(int arg0, \
+            "static Future<Counter> connect(int initial, \
              { $$BoltCancellationToken? cancellationToken }) async {"
         ));
-        assert!(source.contains("as JSPromise<JSAny?>).toDart) as JSObject);"));
-        // Async instance method: `async` goes after the parameter list, not
-        // before the method name (`Future<int> async addAsync(...)` is
-        // invalid Dart).
+        assert!(source.contains("as JSPromise<JSAny?>).toDart, null)) as JSObject);"));
         assert!(source.contains(
-            "Future<int> addAsync(int arg0, { $$BoltCancellationToken? cancellationToken }) async {"
+            "Future<int> addAsync(int amount, { $$BoltCancellationToken? cancellationToken }) async {"
         ));
         assert!(!source.contains("async addAsync"));
-        // Without this, a class handle can only ever be released by
-        // nondeterministic JS finalization -- there's no way to call the
-        // JS wrapper's BoltFFIHandle.dispose() from Dart at all.
         assert!(source.contains("void dispose$() {"));
-        assert!(source.contains("js.callMethodVarArgs('dispose'.toJS, []);"));
+        assert!(source.contains("_boltffiCounterClassMethods(js).dispose();"));
     }
 
     #[test]
     fn renders_an_optional_class_return_as_a_nullable_dart_type() {
-        // `Option<Self>` crosses as a nullable handle -- the wrapped call
-        // can return JS `null` -- so the generated static method must stay
-        // nullable (`Counter?`) and null-check before decoding, instead of
-        // force-casting a possibly-null result.
         let output = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
             .render(&class_bindings())
             .expect("target renders");
         let source = source_of(&output);
-        assert!(source.contains("static Counter? tryNew(int arg0) =>"));
+        assert!(source.contains("static Counter? tryNew(int initial)"));
         assert!(source.contains("== null ? null :"));
         assert!(source.contains("Counter.fromJS(__boltffiRaw! as JSObject)"));
         assert!(!source.contains("static Counter tryNew"));
@@ -1115,14 +1031,9 @@ mod tests {
         let source = source_of(&output);
         assert!(source.contains("JSObject boltffiDurationToJS(Duration value) {"));
         assert!(source.contains("Duration boltffiDurationFromJS(JSObject value) {"));
-        // dart:js_interop's JSBigInt has no int/BigInt conversion members
-        // (no BigInt.toJS, no JSBigInt.toDartInt), which Duration's own
-        // helpers also depend on -- verified against a real Dart SDK that
-        // `BigInt.toJS`/`JSBigInt.toDartInt` don't analyze, and that this
-        // constructor/toString round-trip does.
-        assert!(source.contains("JSAny boltffiInt64ToJS(int value) {"));
+        assert!(source.contains("JSBigInt boltffiInt64ToJS(int value) {"));
         assert!(source.contains("int boltffiInt64FromJS(JSAny value) {"));
-        assert!(source.contains("globalContext.getProperty('BigInt'.toJS)"));
+        assert!(source.contains("external JSBigInt _boltffiBigInt(JSNumber value);"));
         assert!(!source.contains("BigInt.from(wholeSeconds).toJS"));
         assert!(!source.contains("as JSBigInt).toDartInt"));
     }
@@ -1143,16 +1054,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_direct_vector_of_non_bool_primitives() {
-        // target::typescript crosses this as a typed array (Int32Array),
-        // not a plain JS array; dart_web doesn't emit typed-array
-        // conversions yet, so this must be reported unsupported rather
-        // than silently emitting a broken JSArray cast.
+    fn renders_a_direct_vector_as_a_typed_array() {
         let result = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
             .render(&direct_vector_bindings());
-        assert!(result.is_err());
+        let output = result.expect("numeric vectors render");
+        assert!(source_of(&output).contains("as JSInt32Array).toDart"));
     }
 
     fn class_with_unsupported_method_bindings() -> Bindings<Wasm32> {
@@ -1167,7 +1075,7 @@ mod tests {
 
                     pub fn get(&self) -> i32 { self.0 }
 
-                    pub fn scores(&self) -> Vec<i32> { vec![self.0] }
+                    pub fn scores(&self) -> std::collections::HashMap<i32, i32> { todo!() }
 
                     pub fn add(&self, amount: i32) -> i32 { self.0 + amount }
                 }
@@ -1191,10 +1099,6 @@ mod tests {
 
     #[test]
     fn keeps_supported_class_members_when_one_method_is_unsupported_under_partial_coverage() {
-        // One unsupported method (here, a Vec<i32> direct-vector return)
-        // must not drop the whole class -- the constructor and every other
-        // supported method should still render, matching
-        // target::typescript's Class::from_declaration.
         let output = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
@@ -1204,10 +1108,10 @@ mod tests {
 
         // A sync initializer returning exactly `Self` renders as the
         // class's unnamed `factory` constructor, matching target::dart.
-        assert!(source.contains("factory Counter(int arg0) =>"));
-        assert!(source.contains("int $get() =>"));
-        assert!(source.contains("int add(int arg0) =>"));
-        assert!(!source.contains("scores("));
+        assert!(source.contains("factory Counter(int initial)"));
+        assert!(source.contains("int $get()"));
+        assert!(source.contains("int add(int amount)"));
+        assert!(!source.contains(" scores("));
     }
 
     fn associated_constant_bindings() -> Bindings<Wasm32> {
@@ -1233,22 +1137,10 @@ mod tests {
 
     #[test]
     fn rejects_an_associated_constant() {
-        // Silently emitting an empty declaration would report full
-        // coverage while dropping the constant from the generated API;
-        // an associated constant has no owning JS object member to bind
-        // to here, so this must surface as unsupported instead.
         let result = DartWebHost::new("demo")
             .expect("host constructs")
             .into_target()
             .render(&associated_constant_bindings());
         assert!(result.is_err());
     }
-
-    // A record with its own #[export] impl currently rejects at the scan
-    // stage (ConflictingDeclarations: the same name can't be both a
-    // `#[data]` record and an `#[export] impl` target), so a record with
-    // populated initializers()/methods() is not reachable through
-    // supported source syntax today. The defensive rejection in
-    // Record::from_declaration stays in place for when that changes, but
-    // is not covered by an end-to-end test here for the same reason.
 }

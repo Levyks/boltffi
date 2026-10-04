@@ -53,9 +53,18 @@ pub fn dart_type(ty: &TypeRef, context: &RenderContext<Wasm32>) -> Result<String
             .ok_or_else(|| unsupported("custom type reference"))?,
         TypeRef::Builtin(BuiltinType::Duration) => "Duration".to_owned(),
         TypeRef::Builtin(BuiltinType::SystemTime) => "DateTime".to_owned(),
-        TypeRef::Builtin(BuiltinType::Uuid | BuiltinType::Url) => "String".to_owned(),
+        TypeRef::Builtin(BuiltinType::Uuid) => "$$BoltUUIDValue".to_owned(),
+        TypeRef::Builtin(BuiltinType::Url) => "Uri".to_owned(),
         TypeRef::Optional(inner) => format!("{}?", dart_type(inner, context)?),
-        TypeRef::Sequence(inner) => format!("List<{}>", dart_type(inner, context)?),
+        TypeRef::Sequence(inner)
+            if matches!(inner.as_ref(), TypeRef::Primitive(Primitive::Bool)) =>
+        {
+            "$$BoltBoolList".to_owned()
+        }
+        TypeRef::Sequence(inner) => match typed_array(inner) {
+            Some((dart, _)) => dart.to_owned(),
+            None => format!("List<{}>", dart_type(inner, context)?),
+        },
         TypeRef::Map { key, value } => {
             format!(
                 "Map<{}, {}>",
@@ -111,17 +120,39 @@ pub fn to_js(expr: &str, ty: &TypeRef, context: &RenderContext<Wasm32>) -> Resul
             to_js(expr, custom.representation(), context)?
         }
         TypeRef::Builtin(BuiltinType::Duration) => format!("boltffiDurationToJS({expr})"),
-        TypeRef::Builtin(BuiltinType::Uuid | BuiltinType::Url) => format!("({expr}).toJS"),
+        TypeRef::Builtin(BuiltinType::Uuid | BuiltinType::Url) => {
+            format!("({expr}).toString().toJS")
+        }
+        TypeRef::Builtin(BuiltinType::SystemTime) => {
+            format!("_BoltDate(({expr}).millisecondsSinceEpoch.toJS)")
+        }
         TypeRef::Optional(inner) => {
-            // `expr` may be a call (a raw extern/JS invocation), not just a
-            // variable -- evaluate it once into a local instead of
-            // re-embedding it in both the null check and the non-null arm.
+            // Evaluate nullable expressions only once.
             let converted = to_js("__boltffiRaw!", inner, context)?;
             format!(
                 "(() {{ final __boltffiRaw = {expr}; return __boltffiRaw == null ? null : {converted}; }})()"
             )
         }
         TypeRef::Sequence(inner) => {
+            if matches!(inner.as_ref(), TypeRef::Primitive(Primitive::Bool)) {
+                return Ok(format!("boltffiBoolListToJS({expr})"));
+            }
+            if matches!(
+                inner.as_ref(),
+                TypeRef::Primitive(Primitive::I64 | Primitive::U64)
+            ) {
+                let constructor = if matches!(inner.as_ref(), TypeRef::Primitive(Primitive::I64)) {
+                    "_boltffiBigInt64Array"
+                } else {
+                    "_boltffiBigUint64Array"
+                };
+                return Ok(format!(
+                    "{constructor}(({expr}).map((value) => boltffiInt64ToJS(value)).toList().toJS)"
+                ));
+            }
+            if typed_array(inner).is_some() {
+                return Ok(format!("({expr}).toJS"));
+            }
             let converted = to_js("__boltffiElement", inner, context)?;
             format!("({expr}).map((__boltffiElement) => {converted}).toList().toJS")
         }
@@ -184,22 +215,54 @@ pub fn from_js(expr: &str, ty: &TypeRef, context: &RenderContext<Wasm32>) -> Res
         TypeRef::Builtin(BuiltinType::Duration) => {
             format!("boltffiDurationFromJS({expr} as JSObject)")
         }
-        TypeRef::Builtin(BuiltinType::Uuid | BuiltinType::Url) => {
-            format!("({expr} as JSString).toDart")
+        TypeRef::Builtin(BuiltinType::Uuid) => {
+            format!("$$BoltUUIDValue.parse(({expr} as JSString).toDart)")
         }
+        TypeRef::Builtin(BuiltinType::Url) => format!("Uri.parse(({expr} as JSString).toDart)"),
+        TypeRef::Builtin(BuiltinType::SystemTime) => format!(
+            "DateTime.fromMillisecondsSinceEpoch(_BoltDate._({expr} as JSObject).getTime().toDartInt, isUtc: true)"
+        ),
         TypeRef::Optional(inner) => {
-            // `expr` may be a call (a raw extern/JS invocation), not just a
-            // variable -- evaluate it once into a local instead of
-            // re-embedding it in both the null check and the non-null arm.
+            // Evaluate nullable expressions only once.
             let converted = from_js("__boltffiRaw!", inner, context)?;
             format!(
                 "(() {{ final __boltffiRaw = {expr}; return __boltffiRaw == null ? null : {converted}; }})()"
             )
         }
         TypeRef::Sequence(inner) => {
+            if matches!(inner.as_ref(), TypeRef::Primitive(Primitive::Bool)) {
+                return Ok(format!(
+                    "boltffiBoolListFromJS({expr} as JSArray<JSBoolean>)"
+                ));
+            }
+            if matches!(
+                inner.as_ref(),
+                TypeRef::Primitive(Primitive::I64 | Primitive::U64)
+            ) {
+                return Ok(format!(
+                    "_boltffiArrayFrom({expr} as JSAny).toDart.map((value) => boltffiInt64FromJS(value!)).toList()"
+                ));
+            }
+            if let Some((_, js)) = typed_array(inner) {
+                return Ok(format!("({expr} as {js}).toDart"));
+            }
             let converted = from_js("__boltffiElement", inner, context)?;
             format!("({expr} as JSArray).toDart.map((__boltffiElement) => {converted}).toList()")
         }
         _ => return Err(unsupported("dart_web from_js type")),
+    })
+}
+
+fn typed_array(ty: &TypeRef) -> Option<(&'static str, &'static str)> {
+    Some(match ty {
+        TypeRef::Primitive(Primitive::I8) => ("Int8List", "JSInt8Array"),
+        TypeRef::Primitive(Primitive::U8) => ("Uint8List", "JSUint8Array"),
+        TypeRef::Primitive(Primitive::I16) => ("Int16List", "JSInt16Array"),
+        TypeRef::Primitive(Primitive::U16) => ("Uint16List", "JSUint16Array"),
+        TypeRef::Primitive(Primitive::I32 | Primitive::ISize) => ("Int32List", "JSInt32Array"),
+        TypeRef::Primitive(Primitive::U32 | Primitive::USize) => ("Uint32List", "JSUint32Array"),
+        TypeRef::Primitive(Primitive::F32) => ("Float32List", "JSFloat32Array"),
+        TypeRef::Primitive(Primitive::F64) => ("Float64List", "JSFloat64Array"),
+        _ => return None,
     })
 }

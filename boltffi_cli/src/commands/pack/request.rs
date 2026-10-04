@@ -16,6 +16,7 @@ pub enum PackCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackExecutionOptions {
+    pub wasm_prepared: bool,
     pub release: bool,
     pub regenerate: bool,
     pub no_build: bool,

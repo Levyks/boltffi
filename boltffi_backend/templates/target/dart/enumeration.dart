@@ -7,14 +7,16 @@
   final int value;
   const {{ enumeration.name() }}(this.value);
 
-  static {{ enumeration.name() }} _m$fromDiscriminant(int value) => values.firstWhere(
-    (variant) => variant.value == value,
-    orElse: () => throw ArgumentError.value(
+  static {{ enumeration.name() }} _m$fromDiscriminant(int value) => switch (value) {
+{%- for variant in enumeration.c_style_body().variants() %}
+    {{ variant.discriminant() }} => {{ variant.name() }},
+{%- endfor %}
+    _ => throw ArgumentError.value(
       value,
       'value',
       'unknown {{ enumeration.name() }} discriminant',
     ),
-  );
+  };
 
   static {{ enumeration.name() }} _m$wireDecode(_$$BoltWireDecoder _p$reader) =>
       _m$fromDiscriminant(_p$reader.{{ enumeration.c_style_body().read_method() }}());

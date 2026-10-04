@@ -1,18 +1,13 @@
 #![allow(missing_docs)]
 
 mod codec;
-mod default_value;
-// dart_web shares these two modules so the web/js_interop target's generated
-// Dart syntax (identifier escaping, camelCase conventions) can never drift
-// from what this native/dart:ffi target already emits -- the unified
-// package's whole premise is that app code sees one Dart API regardless of
-// which half it's actually running against.
+pub(crate) mod default_value;
 pub(crate) mod name_style;
 mod native;
 mod render;
 pub(crate) mod syntax;
 mod type_name;
-mod value_semantics;
+pub(crate) mod value_semantics;
 
 use boltffi_binding::{
     Bindings, CallbackDecl, ClassDecl, ConstantDecl, CustomTypeDecl, EnumDecl, FunctionDecl,

@@ -665,6 +665,7 @@ mod tests {
 
     fn execution_options() -> PackExecutionOptions {
         PackExecutionOptions {
+            wasm_prepared: false,
             release: false,
             regenerate: false,
             no_build: false,

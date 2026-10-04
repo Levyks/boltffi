@@ -505,6 +505,13 @@ fn write_web_setup_doc(
          started loading — it doesn't load anything itself. On native (dart:ffi)\n\
          targets, `boltffiInit()` isn't part of the generated API at all; only the\n\
          web half needs it.\n\n\
+         ## Web value types\n\n\
+         Web `int` values are limited to -9007199254740991 through 9007199254740991.\n\
+         Wider Rust i64/u64 values fail with `RangeError` instead of losing precision.\n\
+         64-bit integer vectors use `List<int>` on web; native uses typed 64-bit lists.\n\
+         Pointer-sized vectors use 32-bit typed lists on the wasm32 target.\n\
+         UUID parsing and string conversion preserve all 128 bits. Reading a UUID's\n\
+         `highBits` or `lowBits` as an int requires that half to fit the exact web range.\n\n\
          ---\n\n\
          Why the manual copy: `pack dart` only ever runs in this package's own repo,\n\
          never in a consuming app's build — there's no hook it could use to place\n\

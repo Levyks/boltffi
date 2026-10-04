@@ -1623,16 +1623,9 @@ fn render_sync_call(
 }
 
 fn reserved_cancellation_token_name(parameters: &[Parameter]) -> Result<Identifier> {
-    const CANDIDATES: &[&str] = &["cancellationToken", "boltCancellationToken"];
-    for candidate in CANDIDATES {
-        if parameters
-            .iter()
-            .all(|parameter| parameter.name().as_str() != *candidate)
-        {
-            return Identifier::parse(*candidate);
-        }
-    }
-    Identifier::parse("boltCancellationToken$")
+    Identifier::parse(super::super::name_style::cancellation_token_name(
+        parameters.iter().map(|p| p.name().as_str()),
+    ))
 }
 
 fn render_async_call(

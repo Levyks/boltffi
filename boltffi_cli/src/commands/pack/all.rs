@@ -42,6 +42,7 @@ pub(super) fn pack_all(
         .transpose()?;
 
     let mut packed_any = false;
+    let mut dart_execution = options.execution.clone();
 
     if config.is_apple_enabled() {
         pack_apple(
@@ -91,6 +92,7 @@ pub(super) fn pack_all(
             reporter,
         )?;
         packed_any = true;
+        dart_execution.wasm_prepared = true;
     }
 
     if let Some(prepared_java_pack) = prepared_java_pack {
@@ -114,7 +116,7 @@ pub(super) fn pack_all(
         pack_dart(
             config,
             PackDartOptions {
-                execution: options.execution.clone(),
+                execution: dart_execution.clone(),
                 experimental: options.experimental,
             },
             reporter,
@@ -132,7 +134,7 @@ pub(super) fn pack_all(
         pack_dart_web(
             config,
             PackDartWebOptions {
-                execution: options.execution.clone(),
+                execution: dart_execution.clone(),
                 experimental: options.experimental,
             },
             reporter,

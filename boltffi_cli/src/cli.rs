@@ -737,6 +737,7 @@ fn pack_execution_options(
     cargo_args: Vec<String>,
 ) -> PackExecutionOptions {
     PackExecutionOptions {
+        wasm_prepared: false,
         release,
         regenerate,
         no_build,
@@ -1136,6 +1137,15 @@ fn release_pack_commands(
         }
     }
 
+    let mut wasm_prepared = false;
+    for command in &mut commands {
+        match command {
+            PackCommand::Wasm(_) => wasm_prepared = true,
+            PackCommand::Dart(options) => options.execution.wasm_prepared = wasm_prepared,
+            PackCommand::DartWeb(options) => options.execution.wasm_prepared = wasm_prepared,
+            _ => {}
+        }
+    }
     commands
 }
 
@@ -1399,6 +1409,17 @@ enabled = true
     }
 
     #[test]
+    fn release_dart_prepares_wasm_without_a_prior_wasm_pack() {
+        let config = parse_config(
+            "experimental = [\"dart\", \"dart_web\"]\n[package]\nname = \"mylib\"\n[targets.dart]\nenabled = true\n[targets.dart_web]\nenabled = true\n",
+        );
+        let commands = release_pack_commands(&config, Some(BuildPlatformArg::Dart), &[]);
+        assert!(
+            matches!(&commands[..], [PackCommand::Dart(options)] if !options.execution.wasm_prepared)
+        );
+    }
+
+    #[test]
     fn release_all_does_not_pack_dart_web_standalone_when_dart_is_also_enabled() {
         // `pack dart` already folds the web half in via
         // `unify_native_and_web` when both targets are enabled -- a
@@ -1424,7 +1445,7 @@ enabled = true
         assert!(
             commands
                 .iter()
-                .any(|command| matches!(command, PackCommand::Dart(_)))
+                .any(|command| matches!(command, PackCommand::Dart(options) if options.execution.wasm_prepared))
         );
         assert!(
             !commands
@@ -1452,7 +1473,7 @@ enabled = true
         assert!(
             commands
                 .iter()
-                .any(|command| matches!(command, PackCommand::DartWeb(_)))
+                .any(|command| matches!(command, PackCommand::DartWeb(options) if options.execution.wasm_prepared))
         );
     }
 
