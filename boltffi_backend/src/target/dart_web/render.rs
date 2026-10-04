@@ -192,22 +192,16 @@ impl CallSignature {
         }
     }
 
-    // The shared wasm/JS bridge's async calls take a trailing
-    // `(options?: { signal?: AbortSignal }, __boltffiCancelId?: number)` --
-    // dart_web never has a `signal` to offer (constructing a real JS
-    // AbortController from Dart would cost a JS interop round trip on every
-    // call), so `options` is always `null` here and cancellation instead
-    // goes through the plain int `__boltffiCallId` this call registers
-    // below, free to pass unlike a JS object.
+    // The WASM wrapper reads cancellation IDs from its trailing options bag.
     fn js_call_arguments_with_cancellation(&self) -> String {
         let arguments = self.js_call_arguments();
         if !self.asynchronous {
             return arguments;
         }
         if arguments.is_empty() {
-            "null, __boltffiCallId?.toJS".to_owned()
+            "_boltffiCancellationOptions(__boltffiCallId)".to_owned()
         } else {
-            format!("{arguments}, null, __boltffiCallId?.toJS")
+            format!("{arguments}, _boltffiCancellationOptions(__boltffiCallId)")
         }
     }
 
@@ -507,7 +501,7 @@ fn render_free_function(
         .chain(
             signature
                 .asynchronous
-                .then(|| ["JSAny? options".to_owned(), "JSAny? cancelId".to_owned()])
+                .then(|| ["JSAny? options".to_owned()])
                 .into_iter()
                 .flatten(),
         )
@@ -1441,6 +1435,10 @@ impl<'m> Module<'m> {
              Future<void> boltffiInit() => _boltffiReady.toDart.then((_) {{}});\n\n\
              @JS('{namespace}.__boltffiCancelById')\n\
              external void _boltffiCancelById(JSAny? callId);\n\n\
+             JSObject? _boltffiCancellationOptions(int? callId) {{\n\
+             \x20\x20if (callId == null) return null;\n\
+             \x20\x20return JSObject()..setProperty('cancelId'.toJS, callId.toJS);\n\
+             }}\n\n\
              // dart:js_interop's JSBigInt has no int/BigInt conversion members
              // (no BigInt.toJS, no JSBigInt.toDartInt) -- round-trip through the
              // JS BigInt constructor and its decimal string representation instead.\n\
@@ -1496,10 +1494,7 @@ impl<'m> Module<'m> {
              \x20\x20@override\n\
              \x20\x20String toString() => message;\n\
              }}\n\n\
-             // Named to match target::dart's own `$$BoltCancellationToken`.\n\
-             // Tracks plain ints instead of wrapping a real JS\n\
-             // AbortController -- constructing one from Dart would cost a JS\n\
-             // interop round trip on every call, unlike a bare int.\n\
+             // Cancellation IDs are shared with the WASM wrapper.\n\
              final class $$BoltCancellationToken {{\n\
              \x20\x20static int _nextCallId = 0;\n\n\
              \x20\x20bool _isCancelled = false;\n\

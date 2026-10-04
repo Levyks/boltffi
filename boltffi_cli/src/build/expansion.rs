@@ -27,19 +27,6 @@ pub struct BindingExpansion {
 }
 
 impl BindingExpansion {
-    pub fn resolve_for_commands(
-        config: &Config,
-        commands: &[&str],
-        cargo_args: &[String],
-    ) -> Result<Self> {
-        let resolved_cargo_args = config
-            .cargo_args_for_commands(commands)
-            .into_iter()
-            .chain(cargo_args.iter().cloned())
-            .collect::<Vec<_>>();
-        Self::resolve(config, &resolved_cargo_args)
-    }
-
     pub fn resolve(config: &Config, build_cargo_args: &[String]) -> Result<Self> {
         Self::resolve_for_surface(config, build_cargo_args, BindingMetadataSurface::Native)
     }
@@ -355,6 +342,13 @@ impl BindingExpansion {
 
     pub(crate) fn surface(&self) -> BindingMetadataSurface {
         self.surface
+    }
+
+    pub(crate) fn fixture_outputs(mut self, builds_staticlib: bool, builds_cdylib: bool) -> Self {
+        self.library = self
+            .library
+            .fixture_outputs(builds_staticlib, builds_cdylib);
+        self
     }
 }
 

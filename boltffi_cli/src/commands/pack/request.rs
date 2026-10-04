@@ -11,6 +11,7 @@ pub enum PackCommand {
     Dart(PackDartOptions),
     DartWeb(PackDartWebOptions),
     CSharp(PackCSharpOptions),
+    C(PackCOptions),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,4 +78,9 @@ pub struct PackDartWebOptions {
 
 pub struct PackCSharpOptions {
     pub execution: PackExecutionOptions,
+}
+
+pub struct PackCOptions {
+    pub execution: PackExecutionOptions,
+    pub experimental: bool,
 }

@@ -1,7 +1,10 @@
 use std::{fs, path::Path, process::Command, sync::Mutex, time::UNIX_EPOCH};
 
 use boltffi_ast::PackageInfo;
-use boltffi_backend::{GeneratedOutput, Target, bridge::c::CBridge, target::csharp::CSharpHost};
+use boltffi_backend::{
+    FilePath, GeneratedFile, GeneratedOutput, Target, bridge::c::CBridge,
+    target::csharp::CSharpHost,
+};
 use boltffi_binding::{Bindings, Native, lower};
 
 // NuGet first-run setup uses a process-global migration mutex.
@@ -21,6 +24,518 @@ fn target(host: CSharpHost) -> Target<CSharpHost, CBridge> {
 }
 
 const CUSTOM_TYPE_DEFAULT: &str = include_str!("fixtures/source/records/custom_type_default.rs");
+const PARAMETER_DEFAULTS: &str = include_str!("fixtures/source/exports/parameter_defaults.rs");
+
+#[test]
+fn csharp_parameter_defaults_use_optional_arguments_and_runtime_overloads() {
+    let output = target(CSharpHost::new().native_library("demo_native"))
+        .render(&bindings(PARAMETER_DEFAULTS))
+        .expect("parameter defaults render");
+    let sources = output
+        .files()
+        .iter()
+        .map(|file| file.contents())
+        .collect::<String>();
+    [
+        "string greeting = \"world\"",
+        "uint times = 3U",
+        "long offset = -1L",
+        "bool shout = true",
+        "float ratio = 0.5F",
+        "ushort? limit = (ushort)7",
+        "public Server(ushort port = (ushort)8080)",
+        "public DefaultCounter(int start = 10)",
+        "Offset(int step = 1)",
+        "DefaultParameterValue(20)] int start, int offset",
+        "AsyncDefault(uint value = 9U, global::System.Threading.CancellationToken",
+        "Span(long start = -9223372036854775808L, ulong end = 18446744073709551615UL)",
+        "DefaultAmount()\n            => DefaultAmount(new global::Demo.DefaultAmount(5));",
+    ]
+    .into_iter()
+    .for_each(|signature| assert!(sources.contains(signature), "missing {signature}"));
+    compile_csharp_with_dotnet_when_available(&output, "csharp-parameter-defaults");
+}
+
+#[test]
+fn csharp_rejects_runtime_defaults_with_identical_overload_signatures() {
+    [
+        r#"
+        #[export]
+        pub fn ambiguous(
+            #[boltffi::default(3)] first: AmountRust,
+            #[boltffi::default(4)] second: AmountRust,
+        ) {}
+        "#,
+        r#"
+        #[data]
+        pub enum Choice { Empty, Value(i32) }
+
+        #[export]
+        pub fn ambiguous(
+            #[boltffi::default(Choice::Empty)] first: Choice,
+            middle: Option<Choice>,
+            #[boltffi::default(Choice::Empty)] last: Choice,
+        ) {}
+        "#,
+    ]
+    .into_iter()
+    .for_each(|declaration| {
+        let source = format!("{PARAMETER_DEFAULTS}{declaration}");
+        let error = target(CSharpHost::new().native_library("demo_native"))
+            .render(&bindings(&source))
+            .expect_err("identical C# overload signatures must be rejected");
+        assert!(
+            error.to_string().contains("indistinguishable C# overloads"),
+            "{error}"
+        );
+    });
+}
+
+#[test]
+fn csharp_bounds_runtime_default_overloads_without_limiting_constant_defaults() {
+    [8, 9, 20].into_iter().for_each(|runtime_default_count| {
+        let records = (0..runtime_default_count)
+            .map(|index| {
+                format!(
+                    r#"
+                    #[data]
+                    pub struct Amount{index} {{ pub value: i32 }}
+
+                    custom_type!(
+                        pub CustomAmount{index},
+                        remote = AmountRust{index},
+                        repr = Amount{index},
+                        into_ffi = amount_into_ffi{index},
+                        try_from_ffi = amount_from_ffi{index}
+                    );
+                    "#
+                )
+            })
+            .collect::<String>();
+        let parameters = (0..runtime_default_count)
+            .map(|index| format!("#[boltffi::default(3)] amount{index}: AmountRust{index}"))
+            .chain((0..16).map(|index| format!("#[boltffi::default(7)] constant{index}: i32")))
+            .chain(["required: i32".to_owned()])
+            .collect::<Vec<_>>()
+            .join(",");
+        let source = format!("{records} #[export] pub fn many_defaults({parameters}) {{}}");
+        let result =
+            target(CSharpHost::new().native_library("demo_native")).render(&bindings(&source));
+        if runtime_default_count > 8 {
+            let error = result.expect_err("excessive runtime defaults must be rejected");
+            assert!(
+                error.to_string().contains("more than 8 runtime defaults"),
+                "{error}"
+            );
+            return;
+        }
+
+        let mut output = result.expect("eight runtime defaults should render");
+        let module = output
+            .files()
+            .iter()
+            .find(|file| file.path().as_path() == Path::new("Demo.cs"))
+            .map(|file| file.contents())
+            .expect("generated Demo.cs");
+        assert_eq!(
+            module.matches("public static void ManyDefaults(").count(),
+            256
+        );
+        output.append(GeneratedOutput::new(
+            vec![GeneratedFile::new(
+                FilePath::new("RuntimeDefaultCalls.cs").expect("call-site path"),
+                r#"
+                using Demo;
+                using static Demo.Demo;
+
+                public static class RuntimeDefaultCalls
+                {
+                    public static void Compile()
+                    {
+                        ManyDefaults(required: 1);
+                        ManyDefaults(required: 1, amount7: new Amount7(7));
+                        ManyDefaults(required: 1, amount0: new Amount0(5), constant15: 2);
+                    }
+                }
+                "#,
+            )],
+            Vec::new(),
+        ));
+        compile_csharp_with_dotnet_when_available(&output, "csharp-runtime-default-limit");
+    });
+}
+
+#[test]
+fn csharp_non_trailing_and_constructed_defaults_compile_at_call_sites() {
+    let source = format!(
+        "{PARAMETER_DEFAULTS}{}",
+        r#"
+        #[export]
+        pub fn non_trailing_defaults(
+            #[boltffi::default(-1)] signed_byte: i8,
+            #[boltffi::default(2)] byte: u8,
+            #[boltffi::default(-3)] short: i16,
+            #[boltffi::default(7)] limit: Option<u16>,
+            #[boltffi::default(0.5)] ratio: Option<f32>,
+            #[boltffi::default(DefaultMode::Quiet)] mode: DefaultMode,
+            #[boltffi::default(3)] native_signed: isize,
+            #[boltffi::default(4)] native_unsigned: usize,
+            required: i32,
+        ) {}
+
+        #[export]
+        pub fn native_boundaries(
+            #[boltffi::default(-9223372036854775808)] lower: isize,
+            #[boltffi::default(18446744073709551615)] upper: usize,
+            required: i32,
+        ) {}
+
+        #[export]
+        pub fn optional_closure(
+            #[boltffi::default(None)] callback: Option<Box<dyn Fn(i32) -> i32>>,
+            value: i32,
+        ) -> i32 { value }
+
+        pub struct RuntimeDefaults;
+
+        #[export]
+        impl RuntimeDefaults {
+            pub fn new(#[boltffi::default(5)] amount: AmountRust) -> Self { Self }
+
+            pub fn amount(&self, #[boltffi::default(5)] amount: AmountRust) -> i32 { 0 }
+
+            pub async fn start(#[boltffi::default(5)] amount: AmountRust) -> Self { Self }
+
+            pub async fn async_amount(&self, #[boltffi::default(5)] amount: AmountRust) -> i32 { 0 }
+        }
+
+        #[repr(u8)]
+        #[data]
+        pub enum RuntimeMode { Low, High }
+
+        #[data(impl)]
+        impl RuntimeMode {
+            pub fn amount(&self, #[boltffi::default(5)] amount: AmountRust) -> i32 { 0 }
+
+            pub async fn async_amount(&self, #[boltffi::default(5)] amount: AmountRust) -> i32 { 0 }
+        }
+
+        #[data]
+        pub enum Choice { Empty, Value(i32) }
+
+        #[export]
+        pub fn mixed_defaults(
+            #[boltffi::default(5)] amount: AmountRust,
+            #[boltffi::default(Choice::Empty)] choice: Choice,
+            #[boltffi::default(7)] limit: Option<u16>,
+            required: i32,
+        ) {}
+
+        #[export]
+        pub fn optional_record_defaults(
+            #[boltffi::default(5)] amount: AmountRust,
+            #[boltffi::default(6)] optional_amount: Option<AmountRust>,
+        ) {}
+        "#
+    );
+    let mut output = target(CSharpHost::new().native_library("demo_native"))
+        .render(&bindings(&source))
+        .expect("non-trailing and constructed defaults render");
+    output.append(GeneratedOutput::new(
+        vec![GeneratedFile::new(
+            FilePath::new("DefaultArguments.cs").expect("call-site path"),
+            include_str!("fixtures/csharp/default_arguments.cs"),
+        )],
+        Vec::new(),
+    ));
+    compile_csharp_with_dotnet_when_available(&output, "csharp-default-call-sites");
+}
+
+#[test]
+fn csharp_module_class_collides_with_exported_record() {
+    let source = r#"
+        #[data]
+        pub struct Demo {
+            pub value: i32,
+        }
+
+        #[export]
+        pub fn make_demo() -> Demo {
+            Demo { value: 1 }
+        }
+        "#;
+    let control = target(CSharpHost::new().native_library("demo_native"))
+        .render(&bindings(&source.replace("Demo", "Widget")))
+        .expect("noncolliding C# output should render");
+    compile_csharp_with_dotnet_when_available(&control, "csharp-module-record-control");
+
+    let bindings = bindings(source);
+    let error = target(CSharpHost::new()).render(&bindings).unwrap_err();
+    assert!(
+        matches!(error, boltffi_backend::BackendError::CSharpModuleClassCollision { ref name, .. } if name == "Demo")
+    );
+    assert!(error.to_string().contains("targets.csharp.module_class"));
+
+    let output = target(CSharpHost::new().module_class("DemoApi").unwrap())
+        .render(&bindings)
+        .expect("distinct module class should render");
+    let module = output
+        .files()
+        .iter()
+        .find(|file| file.path().as_path() == Path::new("DemoApi.cs"))
+        .expect("generated DemoApi.cs");
+    assert!(module.contents().contains("public static class DemoApi"));
+    assert!(
+        output
+            .files()
+            .iter()
+            .any(|file| file.path().as_path() == Path::new("Demo.cs"))
+    );
+    compile_csharp_with_dotnet_when_available(&output, "csharp-module-record-collision");
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_callback_companions() {
+    let bindings = bindings(
+        r#"
+        #[export]
+        pub trait Handler {
+            fn invoke(&self, value: String) -> String;
+        }
+        "#,
+    );
+    for name in ["HandlerProxy", "HandlerBridge", "BoltFFICallbackHandle"] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(output, Err(boltffi_backend::BackendError::CSharpModuleClassCollision { name: ref collision, .. }) if collision == name),
+            "module class {name} must not shadow a callback companion"
+        );
+    }
+    let output = target(CSharpHost::new().module_class("handlerProxy").unwrap())
+        .render(&bindings)
+        .expect("case-sensitive C# type names with distinct filenames should render");
+    compile_csharp_with_dotnet_when_available(&output, "csharp-module-callback-companions");
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_stream_companions() {
+    let bindings = bindings(include_str!("fixtures/source/stream/protocol_functions.rs"));
+    for name in [
+        "EnginePointsStreamRuntime",
+        "EnginePointsSubscription",
+        "EngineNamesStreamRuntime",
+        "EngineTicksStreamRuntime",
+        "EngineTicksCancellable",
+    ] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow a stream companion"
+        );
+    }
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_enum_companions() {
+    let bindings = bindings(include_str!("fixtures/source/constant/associated.rs"));
+    let methods = self::bindings(include_str!("fixtures/source/associated/enum_callables.rs"));
+    for (name, bindings) in [("ModeConstants", &bindings), ("ModeMethods", &methods)] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow an enum companion"
+        );
+    }
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_exception_types() {
+    let bindings = bindings(include_str!("fixtures/source/enums/error_message.rs"));
+    for name in ["ServiceErrorException", "RecordErrorException"] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow an exception type"
+        );
+    }
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_emitted_runtime_types() {
+    let bindings = bindings("#[export] pub async fn text(value: String) -> String { value }");
+    for name in [
+        "FfiStatus",
+        "FfiBuf",
+        "WireReader",
+        "WireWriter",
+        "BoltException",
+        "BoltFFIAsync",
+    ] {
+        let output = target(CSharpHost::new().module_class(name).unwrap()).render(&bindings);
+        assert!(
+            matches!(
+                output,
+                Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+            ),
+            "module class {name} must not shadow an emitted runtime type"
+        );
+    }
+    let closure = self::bindings(include_str!("fixtures/source/exports/closure_parameter.rs"));
+    let output = target(
+        CSharpHost::new()
+            .module_class("BoltFFIOwnedClosure")
+            .unwrap(),
+    )
+    .render(&closure);
+    assert!(matches!(
+        output,
+        Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+    ));
+    let output = target(CSharpHost::new().module_class("WireReader").unwrap())
+        .render(&self::bindings("#[export] pub fn ping() {}"))
+        .expect("a runtime name is available when that runtime is not emitted");
+    compile_csharp_with_dotnet_when_available(&output, "csharp-module-unused-runtime");
+}
+
+#[test]
+fn csharp_module_class_rejects_case_insensitive_output_collision() {
+    let output = target(CSharpHost::new().module_class("demo").unwrap())
+        .render(&bindings("#[data] pub struct Demo { pub value: i32 }"));
+    assert!(matches!(
+        output,
+        Err(boltffi_backend::BackendError::CSharpModuleClassCollision { .. })
+    ));
+}
+
+#[test]
+fn csharp_module_class_cannot_shadow_native_methods() {
+    let output = target(CSharpHost::new().module_class("NativeMethods").unwrap())
+        .render(&bindings("#[export] pub fn ping() {}"));
+    assert!(
+        matches!(output, Err(boltffi_backend::BackendError::CSharpModuleClassCollision { name, .. }) if name == "NativeMethods")
+    );
+}
+
+#[test]
+fn csharp_generated_helpers_do_not_shadow_exported_parameters() {
+    let bindings = bindings(
+        r#"
+        #[export]
+        pub fn notify(status: i32, boltffi_status: i32) {
+            let _ = (status, boltffi_status);
+        }
+
+        #[export]
+        pub fn notify_single(status: i32) {
+            let _ = status;
+        }
+
+        #[export]
+        pub fn notify_text(status: i32, boltffi_status: i32, value: String) {
+            let _ = (status, boltffi_status, value);
+        }
+
+        #[export]
+        pub async fn fetch(
+            cancellation_token: i32,
+            boltffi_cancellation_token: i32,
+            boltffi_status: i32,
+            boltffi_future: i32,
+            boltffi_result: i32,
+        ) -> i32 {
+            cancellation_token + boltffi_cancellation_token + boltffi_status
+                + boltffi_future + boltffi_result
+        }
+
+
+        #[export]
+        pub async fn fetch_single(cancellation_token: i32) -> i32 {
+            cancellation_token
+        }
+        "#,
+    );
+    let output = target(CSharpHost::new().native_library("demo_native"))
+        .render(&bindings)
+        .expect("colliding parameter names should render");
+    let module = output
+        .files()
+        .iter()
+        .find(|file| file.path().as_path() == Path::new("Demo.cs"))
+        .map(|file| file.contents())
+        .expect("generated Demo.cs");
+
+    assert!(
+        module.contains(
+            "FfiStatus boltffiStatus2 = NativeMethods.NativeNotify(status, boltffiStatus)"
+        ),
+        "{module}"
+    );
+    assert!(
+        module.contains("FfiStatus boltffiStatus = NativeMethods.NativeNotifySingle(status)"),
+        "{module}"
+    );
+    assert!(
+        module.contains(
+            "FfiStatus boltffiStatus2 = NativeMethods.NativeNotifyText(status, boltffiStatus"
+        ),
+        "{module}"
+    );
+    assert!(
+        module.contains("CancellationToken boltffiCancellationToken2 = default"),
+        "{module}"
+    );
+    assert!(
+        module.contains("CancellationToken boltffiCancellationToken = default"),
+        "{module}"
+    );
+    assert!(module.contains("boltffiFuture2 =>"), "{module}");
+    assert!(module.contains("out FfiStatus boltffiStatus2"), "{module}");
+    assert!(module.contains("return boltffiResult2;"), "{module}");
+    compile_csharp_with_dotnet_when_available(&output, "csharp-helper-name-collisions");
+}
+
+#[test]
+fn csharp_single_element_tuples_compile_and_use_item_one() {
+    let bindings = bindings(
+        r#"
+        #[export]
+        pub const ONLY: (u32,) = (1,);
+        #[data]
+        pub struct TupleRecord {
+            pub number: (u32,),
+            pub text: (String,),
+        }
+        #[export]
+        pub fn echo_only(value: (u32,)) -> (u32,) { value }
+        #[export]
+        pub fn echo_nested(value: ((u32,), String)) -> ((u32,), String) { value }
+    "#,
+    );
+    let output = target(CSharpHost::new().native_library("demo_native"))
+        .render(&bindings)
+        .expect("single-element tuples should render");
+    compile_csharp_with_dotnet_when_available(&output, "csharp-single-element-tuples");
+    let module = output
+        .files()
+        .iter()
+        .find(|file| file.path().as_path() == Path::new("Demo.cs"))
+        .map(|file| file.contents())
+        .expect("generated Demo.cs");
+    assert!(
+        module.contains("global::System.ValueTuple<uint>"),
+        "{module}"
+    );
+    assert!(module.contains("value.Item1.Item1"), "{module}");
+}
 
 #[test]
 fn csharp_target_compiles_a_regular_vec_u8_wire_api() {

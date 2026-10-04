@@ -146,15 +146,15 @@ class Counter internal constructor(internal val handle: Long) : AutoCloseable {
         }
     }
 
+    internal fun __boltffiTakeHandle(): Long {
+        check(__boltffi_closed.compareAndSet(false, true)) { "Counter is closed" }
+        return handle
+    }
+
     internal fun boltffiHandle(): Long {
         check(!__boltffi_closed.get()) { "Counter is closed" }
         return handle
     }
-
-    /**
-     * Creates a counter starting at `start`.
-     */
-    constructor(start: Long) : this(new(start).handle)
 
     /**
      * Returns a counter starting at zero.
@@ -171,7 +171,7 @@ class Counter internal constructor(internal val handle: Long) : AutoCloseable {
         /**
          * Returns a counter starting at zero.
          */
-        fun zeroed(): Counter {
+        private fun zeroed(): Counter {
             return Counter(Native.boltffi_init_class_demo_counter_zeroed())
         }
     }

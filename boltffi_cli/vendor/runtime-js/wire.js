@@ -685,9 +685,6 @@ const UNEXPECTED_CALLBACK_ERROR_VERSION = 1;
  * under `panic = "abort"` takes the whole module down. The envelope routes it
  * through `From<UnexpectedFfiCallbackError>` instead.
  *
- * The layout is the marker, a version byte, then the message as an ordinary
- * wire string. `boltffiEncodeUnexpectedCallbackError` in the Swift runtime
- * writes the same bytes.
  */
 export function writeUnexpectedCallbackError(allocator, error) {
     const message = error instanceof Error ? error.message : String(error);

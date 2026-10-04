@@ -16,6 +16,8 @@ public final class DemoTest {
     public static void main(String[] args) {
         try {
             System.out.println("Testing Java bindings...\n");
+            testClassOwnership();
+            testCallbackClassHandles();
             testBool();
             testI8();
             testU8();
@@ -39,6 +41,7 @@ public final class DemoTest {
             testPersonRecords();
             testUserProfileVecs();
             testRecordDefaultValues();
+            testParameterDefaults();
             testAssociatedConstants();
             testCStyleEnums();
             testDataEnums();
@@ -57,6 +60,7 @@ public final class DemoTest {
             testClosures();
             testSyncCallbacks();
             testAsyncCallbacks();
+            testCallbackErrors();
             testAsyncFunctions();
             testAsyncClassMethods();
             testSingleThreadedStateHolder();
@@ -68,6 +72,153 @@ public final class DemoTest {
             System.out.println("All tests passed!");
         } catch (Throwable error) {
             throw withDemoCase(error);
+        }
+    }
+
+    private static final class MessageCollector implements MessageReceiver, FallibleMessageReceiver {
+        OwnedMessage first;
+        OwnedMessage second;
+        boolean fail;
+
+        public void attach(OwnedMessage handle, int callback) {
+            assert callback == 42;
+            assert handle.length() == 9;
+            first = handle;
+        }
+
+        public void optional(OwnedMessage handle) {
+            first = handle;
+        }
+
+        public int pair(OwnedMessage first, String label, OwnedMessage second) {
+            assert label.equals("pair");
+            this.first = first;
+            this.second = second;
+            if (fail) throw new MathError.Exception(MathError.NEGATIVE_INPUT);
+            return first.length() + (second == null ? 0 : second.length());
+        }
+    }
+
+    private static void testCallbackClassHandles() throws Exception {
+        try (MessageDrops drops = new MessageDrops()) {
+            MessageCollector receiver = new MessageCollector();
+            demoCase("case:callbacks.class_handles.should_retain_after_return");
+            Demo.deliverMessage(receiver, drops);
+            assert drops.count() == 0;
+            assert receiver.first.length() == 9;
+            receiver.first.close();
+            receiver.first.close();
+            assert drops.count() == 1;
+
+            demoCase("case:callbacks.class_handles.should_deliver_multiple_and_optional");
+            assert Demo.deliverMessagePair(receiver, drops, true) == 11;
+            assert drops.count() == 1;
+            assert receiver.first.length() == 5;
+            assert receiver.second.length() == 6;
+            receiver.first.close();
+            assert drops.count() == 2;
+            receiver.second.close();
+            assert drops.count() == 3;
+            assert Demo.deliverMessagePair(receiver, drops, false) == 5;
+            assert receiver.second == null;
+            receiver.first.close();
+            assert drops.count() == 4;
+
+            demoCase("case:callbacks.class_handles.should_retain_after_error");
+            receiver.fail = true;
+            try {
+                Demo.deliverMessagePair(receiver, drops, true);
+                throw new AssertionError("callback error was lost");
+            } catch (MathError.Exception error) {
+                assert error.getError() == MathError.NEGATIVE_INPUT;
+            }
+            assert drops.count() == 4;
+            assert receiver.first.length() == 5;
+            assert receiver.second.length() == 6;
+            receiver.first.close();
+            receiver.second.close();
+            assert drops.count() == 6;
+
+            demoCase("case:callbacks.class_handles.should_consume_in_rust_callback");
+            MessageReceiver measuring = Demo.makeMessageReceiver();
+            OwnedMessage moved = new OwnedMessage("moved", drops);
+            measuring.attach(moved, 42);
+            moved.close();
+            assert drops.count() == 7;
+            try {
+                moved.length();
+                throw new AssertionError("moved wrapper stayed usable");
+            } catch (IllegalStateException expected) {
+            }
+            OwnedMessage optional = new OwnedMessage("optional", drops);
+            measuring.optional(optional);
+            optional.close();
+            measuring.optional(null);
+            assert drops.count() == 8;
+            ((AutoCloseable) measuring).close();
+        }
+    }
+
+    private static void testClassOwnership() {
+        try (MessageDrops drops = new MessageDrops()) {
+            OwnedMessage message = new OwnedMessage("hello", drops);
+            assert Demo.consumeMessage(message) == 5;
+            message.close();
+            assert drops.count() == 1;
+            try {
+                message.length();
+                throw new AssertionError("moved wrapper stayed usable");
+            } catch (IllegalStateException expected) {
+            }
+            OwnedMessage rejected = new OwnedMessage("", drops);
+            try {
+                Demo.consumeMessageResult(rejected);
+                throw new AssertionError("missing Rust error");
+            } catch (RuntimeException expected) {
+            }
+            rejected.close();
+            assert drops.count() == 2;
+            OwnedMessage first = new OwnedMessage("first", drops);
+            try {
+                Demo.consumeMessages(first, rejected);
+                throw new AssertionError("accepted a closed argument");
+            } catch (IllegalStateException expected) {
+            }
+            first.close();
+            assert drops.count() == 3;
+            OwnedMessage duplicate = new OwnedMessage("duplicate", drops);
+            try {
+                Demo.consumeMessages(duplicate, duplicate);
+                throw new AssertionError("accepted duplicate ownership");
+            } catch (IllegalStateException expected) {
+            }
+            duplicate.close();
+            assert drops.count() == 4;
+            try (MessageStore store = new MessageStore()) {
+                OwnedMessage stored = new OwnedMessage("stored", drops);
+                store.set(stored, Collections.singletonMap("trace", "context")).join();
+                stored.close();
+                assert store.count() == 7;
+                assert drops.count() == 5;
+            }
+            OwnedMessage retained = new OwnedMessage("retained", drops);
+            CompletableFuture<?> pending = Demo.holdMessage(retained);
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (drops.borrowCount() == 0 && System.nanoTime() < deadline) {
+                Thread.yield();
+            }
+            assert drops.borrowCount() == 1;
+            assert Demo.consumeMessage(retained) == 0;
+            retained.close();
+            assert drops.count() == 5;
+            assert pending.cancel(true);
+            while (drops.borrowCount() != 0 && System.nanoTime() < deadline) {
+                Thread.yield();
+            }
+            assert drops.borrowCount() == 0;
+            assert drops.count() == 6;
+            retained.close();
+            assert drops.count() == 6;
         }
     }
 
@@ -109,6 +260,8 @@ public final class DemoTest {
         assert Demo.echoI32(42) == 42 : "echoI32(42)";
         assert Demo.echoI32(-100) == -100 : "case:primitives.scalars.i32.should_roundtrip_negative_value echoI32(-100)";
         assert Demo.addI32(10, 20) == 30 : "case:primitives.scalars.i32.should_add_two_values addI32(10, 20)";
+        demoCase("case:primitives.scalars.named_status.should_accept_both_names");
+        Demo.notifyStatusCollision(7, 11);
         assert Demo.add(7, 9) == 16 : "case:primitives.scalars.i32.should_add_with_benchmark_alias add(7, 9)";
         System.out.println("  PASS\n");
     }
@@ -223,6 +376,30 @@ public final class DemoTest {
 
     private static void testCustomTypes() {
         System.out.println("Testing custom types...");
+        demoCase("case:custom_types.length.should_construct_in_meters");
+        Length length = Length._new(2.5);
+        assert length.value() == 2.5 : "Length meters";
+        demoCase("case:custom_types.length.should_convert_to_centimeters");
+        assert length.centimeters() == 250.0 : "Length centimeters";
+
+        demoCase("case:custom_types.length.should_roundtrip_wrapper");
+        Length returnedLength = Demo.echoLength(length);
+        assert returnedLength.value() == 2.5 : "echoLength meters";
+        assert returnedLength.centimeters() == 250.0 : "echoLength centimeters";
+        assert Demo.echoLength(new Length(-1.25)).centimeters() == -125.0 : "negative length";
+
+        demoCase("case:custom_types.length.should_write_back_in_meters");
+        Length updatedLength = returnedLength.setCentimeters(75.0);
+        assert updatedLength.value() == 0.75 : "updated length meters";
+        assert updatedLength.centimeters() == 75.0 : "updated length centimeters";
+        assert length.value() == 2.5 : "original length meters";
+        assert length.centimeters() == 250.0 : "original length centimeters";
+
+        demoCase("case:custom_types.length.should_roundtrip_nested_wrapper");
+        Fabric fabric = Demo.echoFabric(new Fabric(new Length(1.25)));
+        assert fabric.length().value() == 1.25 : "nested length meters";
+        assert fabric.length().centimeters() == 125.0 : "nested length centimeters";
+
         long timestamp = 1_710_000_000_000L;
         demoCase("case:custom_types.datetime.should_roundtrip_millis");
         assert Demo.echoDatetime(timestamp) == timestamp : "echoDatetime";
@@ -549,6 +726,147 @@ public final class DemoTest {
         demoCase("case:records.with_strings.person.should_roundtrip_value");
         Person echoedEmojiPerson = Demo.echoPerson(emojiPerson);
         assert echoedEmojiPerson.name().equals("🎉 Party") : "echoPerson(emoji)";
+        System.out.println("  PASS\n");
+    }
+
+    private static void testParameterDefaults() {
+        System.out.println("Testing parameter defaults...");
+        demoCase("case:primitives.default_arguments.should_apply_omitted_scalar_and_string_defaults");
+        assert Demo.repeatGreeting("ada").equals("hello ada, hello ada");
+        assert Demo.repeatGreeting("ada", "hi").equals("hi ada, hi ada");
+        assert Demo.repeatGreeting("ada", "hi", 1).equals("hi ada");
+        assert Demo.repeatGreeting("ada", "hello", 2, true).equals("HELLO ADA, HELLO ADA");
+
+        demoCase("case:primitives.default_arguments.should_apply_none_and_value_defaults_to_optionals");
+        assert Demo.describeLimit().equals("none:7");
+        assert Demo.describeLimit(Optional.of("jobs")).equals("jobs:7");
+        assert Demo.describeLimit(Optional.empty(), Optional.empty()).equals("none:unlimited");
+        assert Demo.describeLimit(Optional.of("jobs"), Optional.of((short) 2)).equals("jobs:2");
+
+        demoCase("case:primitives.default_arguments.should_default_an_optional_callback_to_none");
+        ValueCallback doubler = value -> value * 2;
+        assert Demo.applyOptionalCallback(5) == 5;
+        assert Demo.applyOptionalCallback(5, Optional.empty()) == 5;
+        assert Demo.applyOptionalCallback(5, Optional.of(doubler)) == 10;
+        assert Demo.applyOptionalClosure(5) == 5;
+        assert Demo.applyOptionalClosure(5, null) == 5;
+        assert Demo.applyOptionalClosure(5, value -> value * 2) == 10;
+
+        demoCase("case:primitives.default_arguments.defaulted_counter.should_apply_constructor_and_method_defaults");
+        try (DefaultedCounter counter = new DefaultedCounter()) {
+            assert counter.offset() == 11;
+            assert counter.offset(5) == 15;
+        }
+        try (DefaultedCounter counter = new DefaultedCounter(5)) {
+            assert counter.offset(3) == 8;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.fromText()) {
+            assert counter.offset() == 41;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.fromText("12")) {
+            assert counter.offset() == 13;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.withOffset(3)) {
+            assert counter.offset() == 24;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.withOffset(7, 3)) {
+            assert counter.offset() == 11;
+        }
+        try (DefaultedWideCounter counter = new DefaultedWideCounter()) {
+            assert counter.value() == 10L;
+            counter.close();
+            counter.close();
+            try {
+                counter.value();
+                throw new AssertionError("closed counter remained usable");
+            } catch (IllegalStateException expected) {
+                assert expected.getMessage().equals("DefaultedWideCounter is closed");
+            }
+        }
+        java.util.stream.LongStream.of(0L, 5L, Long.MIN_VALUE, Long.MAX_VALUE).forEach(value -> {
+            try (DefaultedWideCounter counter = new DefaultedWideCounter(value)) {
+                assert counter.value() == value;
+            }
+        });
+        try (DefaultedWideCounter original = new DefaultedWideCounter(20L);
+             DefaultedWideCounter adjusted = DefaultedWideCounter.withOffset(original)) {
+            assert adjusted.value() == 21L;
+            try {
+                original.value();
+                throw new AssertionError("transferred counter remained usable");
+            } catch (IllegalStateException expected) {
+                assert expected.getMessage().equals("DefaultedWideCounter is closed");
+            }
+        }
+        IntegerLimits limits = DefaultedCounter.integerLimits();
+        assert limits.lower() == Long.MIN_VALUE;
+        assert limits.upper() == -1L;
+        limits = DefaultedCounter.integerLimits(-5L);
+        assert limits.lower() == -5L;
+        assert limits.upper() == -1L;
+
+        demoCase("case:primitives.default_arguments.should_apply_float_and_enum_defaults");
+        assert Demo.scaleDefault() == 0.75;
+        assert Demo.scaleDefault(2.0f) == 3.0;
+        assert Demo.scaleDefault(2.0f, Optional.empty()) == 2.0;
+        assert Demo.scaleDefault(2.0f, Optional.of(4.0), DefaultMode.LOUD) == 16.0;
+        assert DefaultMode.QUIET.matches();
+        assert !DefaultMode.LOUD.matches();
+        assert Demo.defaultFloatBits() == Integer.MIN_VALUE;
+        assert Demo.defaultFloatBits(0.0f) == 0;
+        assert Demo.defaultDoubleBits() == Long.MIN_VALUE;
+        assert Demo.defaultDoubleBits(0.0) == 0L;
+        assert Demo.chooseDefault() == 0;
+        assert Demo.chooseDefault(new DefaultChoice.Value(7)) == 7;
+        assert Demo.chooseDefault(new DefaultChoice.Value(7), Optional.empty()) == 7;
+
+        demoCase("case:primitives.default_arguments.should_apply_async_defaults");
+        assert Demo.asyncDefault().join() == 9;
+        assert Demo.asyncDefault(12).join() == 12;
+        try (DefaultedCounter counter = new DefaultedCounter(4)) {
+            assert counter.asyncOffset().join() == 7;
+            assert counter.asyncOffset(2).join() == 6;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.start().join()) {
+            assert counter.offset() == 31;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.start(5).join()) {
+            assert counter.offset() == 6;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.start(30, Optional.of(doubler)).join()) {
+            assert counter.offset() == 61;
+        }
+        try (DefaultedCounter counter = DefaultedCounter.start(30, Optional.empty(), Optional.of(doubler)).join()) {
+            assert counter.offset() == 61;
+        }
+        assert NamedAmount.load().join().value() == 6;
+        assert NamedAmount.load(9).join().value() == 9;
+        assert DefaultMode.load().join() == DefaultMode.QUIET;
+        assert DefaultMode.load(DefaultMode.LOUD).join() == DefaultMode.LOUD;
+
+        demoCase("case:primitives.default_arguments.should_apply_record_defaults");
+        DefaultAmount amount = new DefaultAmount();
+        assert amount.value() == 3;
+        assert amount.offset() == 5;
+        assert amount.offset(4) == 7;
+        assert new DefaultAmount(5).value() == 5;
+        assert DefaultAmount.withScaledValue().value() == 4;
+        assert DefaultAmount.withScaledValue(3).value() == 6;
+        assert DefaultAmount.tryScaledValue().get().value() == 4;
+        assert !DefaultAmount.tryScaledValue(-1).isPresent();
+        assert NamedAmount.withValue().value() == 5;
+        assert NamedAmount.withValue(8).value() == 8;
+
+        demoCase("case:primitives.default_arguments.should_apply_custom_type_defaults");
+        assert Demo.defaultTimeoutSeconds() == 1.5;
+        assert Demo.defaultTimeoutSeconds(new TimeoutFFI(2.5)) == 2.5;
+        assert !Demo.defaultLimit().isPresent();
+        assert Demo.defaultLimit(Optional.of(9)).get() == 9;
+        assert Demo.defaultEmail().equals("mailto:ada@example.com");
+        assert Demo.defaultEmail("ada@other.example").equals("ada@other.example");
+        assert Demo.defaultOptionalEmail().get().equals("mailto:ada@example.com");
+        assert !Demo.defaultOptionalEmail(Optional.empty()).isPresent();
+        assert Demo.defaultOptionalEmail(Optional.of("ada@other.example")).get().equals("ada@other.example");
         System.out.println("  PASS\n");
     }
 
@@ -1167,6 +1485,17 @@ public final class DemoTest {
         assert lengths.length == 2 : "vecStringLengths size";
         assert lengths[0] == 2 : "vecStringLengths[0]";
         assert lengths[1] == 5 : "vecStringLengths[1] (utf8)";
+
+        demoCase("case:primitives.vecs.bytes.should_roundtrip_values");
+        List<byte[]> chunks = Demo.echoVecBytes(Arrays.asList(new byte[] {0, (byte) 0xff}, new byte[0], new byte[] {1, 2, 3}));
+        assert chunks.size() == 3 : "echoVecBytes size";
+        assert Arrays.equals(chunks.get(0), new byte[] {0, (byte) 0xff}) : "echoVecBytes[0]";
+        assert chunks.get(1).length == 0 : "echoVecBytes[1] empty";
+        assert Arrays.equals(chunks.get(2), new byte[] {1, 2, 3}) : "echoVecBytes[2]";
+
+        demoCase("case:primitives.vecs.bytes.should_report_lengths");
+        int[] chunkLengths = Demo.vecBytesLengths(Arrays.asList(new byte[] {1, 2}, new byte[] {3, 4, 5}, new byte[] {6}));
+        assert Arrays.equals(chunkLengths, new int[] {2, 3, 1}) : "vecBytesLengths";
 
         System.out.println("  PASS\n");
     }
@@ -1975,6 +2304,114 @@ public final class DemoTest {
         System.out.println("  PASS\n");
     }
 
+    private static void checkCallbackMode(int mode) {
+        if (mode == 1) throw new MathError.Exception(MathError.NEGATIVE_INPUT);
+        if (mode == 2) throw new IllegalStateException("unchecked callback failure 東京🦀");
+    }
+
+    private static void testCallbackErrors() throws Exception {
+        IllegalStateException exception = new IllegalStateException("unchecked callback failure 東京\u0000🦀");
+        AsyncMessageWorker failedFuture = () -> {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            future.completeExceptionally(new java.util.concurrent.CompletionException(exception));
+            return future;
+        };
+        assertAsyncCallbackMessage(failedFuture, exception.toString());
+        assertAsyncCallbackMessage(() -> { throw exception; }, exception.toString());
+        assertAsyncCallbackMessage(() -> null, "java.lang.NullPointerException: async callback returned null");
+        IllegalStateException brokenDescription = new IllegalStateException() {
+            @Override
+            public String toString() { throw new IllegalArgumentException("cannot describe exception"); }
+        };
+        assertAsyncCallbackMessage(() -> { throw brokenDescription; }, "foreign callback failed");
+        FallibleWorker worker = new FallibleWorker() {
+            public void run(int mode) { checkCallbackMode(mode); }
+            public int value(int mode) { checkCallbackMode(mode); return 42; }
+        };
+        AsyncFallibleWorker asyncWorker = new AsyncFallibleWorker() {
+            public CompletableFuture<Void> run(int mode) {
+                return CompletableFuture.runAsync(() -> checkCallbackMode(mode));
+            }
+            public CompletableFuture<Integer> value(int mode) {
+                return CompletableFuture.supplyAsync(() -> { checkCallbackMode(mode); return 42; });
+            }
+        };
+        demoCase("case:callbacks.errors.unit.should_report_success");
+        Demo.invokeUnitWorker(worker, 0);
+        try {
+            Demo.invokeUnitWorker(worker, 1);
+            throw new AssertionError("case:callbacks.errors.unit.should_report_declared_error");
+        } catch (MathError.Exception error) {
+            assert error.getError() == MathError.NEGATIVE_INPUT : "case:callbacks.errors.unit.should_report_declared_error";
+        }
+        try {
+            Demo.invokeUnitWorker(worker, 2);
+            throw new AssertionError("case:callbacks.errors.unit.should_report_unexpected_error");
+        } catch (MathError.Exception error) {
+            assert error.getError() == MathError.OVERFLOW : "case:callbacks.errors.unit.should_report_unexpected_error";
+        }
+        assert Demo.invokeValueWorker(worker, 0) == 42 : "case:callbacks.errors.value.should_report_success";
+        try {
+            Demo.invokeValueWorker(worker, 1);
+            throw new AssertionError("case:callbacks.errors.value.should_report_declared_error");
+        } catch (MathError.Exception error) {
+            assert error.getError() == MathError.NEGATIVE_INPUT : "case:callbacks.errors.value.should_report_declared_error";
+        }
+        try {
+            Demo.invokeValueWorker(worker, 2);
+            throw new AssertionError("case:callbacks.errors.value.should_report_unexpected_error");
+        } catch (MathError.Exception error) {
+            assert error.getError() == MathError.OVERFLOW : "case:callbacks.errors.value.should_report_unexpected_error";
+        }
+        demoCase("case:callbacks.errors.async_unit.should_report_success");
+        Demo.invokeAsyncUnitWorker(asyncWorker, 0).get(5, java.util.concurrent.TimeUnit.SECONDS);
+        try {
+            Demo.invokeAsyncUnitWorker(asyncWorker, 1).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            throw new AssertionError("case:callbacks.errors.async_unit.should_report_declared_error");
+        } catch (java.util.concurrent.ExecutionException error) {
+            assert error.getCause() instanceof MathError.Exception : "case:callbacks.errors.async_unit.should_report_declared_error";
+            assert ((MathError.Exception) error.getCause()).getError() == MathError.NEGATIVE_INPUT : "case:callbacks.errors.async_unit.should_report_declared_error";
+        }
+        try {
+            Demo.invokeAsyncUnitWorker(asyncWorker, 2).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            throw new AssertionError("case:callbacks.errors.async_unit.should_report_unexpected_error");
+        } catch (java.util.concurrent.ExecutionException error) {
+            assert error.getCause() instanceof MathError.Exception : "case:callbacks.errors.async_unit.should_report_unexpected_error";
+            assert ((MathError.Exception) error.getCause()).getError() == MathError.OVERFLOW : "case:callbacks.errors.async_unit.should_report_unexpected_error";
+        }
+        assert Demo.invokeAsyncValueWorker(asyncWorker, 0).get(5, java.util.concurrent.TimeUnit.SECONDS) == 42 : "case:callbacks.errors.async_value.should_report_success";
+        try {
+            Demo.invokeAsyncValueWorker(asyncWorker, 1).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            throw new AssertionError("case:callbacks.errors.async_value.should_report_declared_error");
+        } catch (java.util.concurrent.ExecutionException error) {
+            assert error.getCause() instanceof MathError.Exception : "case:callbacks.errors.async_value.should_report_declared_error";
+            assert ((MathError.Exception) error.getCause()).getError() == MathError.NEGATIVE_INPUT : "case:callbacks.errors.async_value.should_report_declared_error";
+        }
+        try {
+            Demo.invokeAsyncValueWorker(asyncWorker, 2).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            throw new AssertionError("case:callbacks.errors.async_value.should_report_unexpected_error");
+        } catch (java.util.concurrent.ExecutionException error) {
+            assert error.getCause() instanceof MathError.Exception : "case:callbacks.errors.async_value.should_report_unexpected_error";
+            assert ((MathError.Exception) error.getCause()).getError() == MathError.OVERFLOW : "case:callbacks.errors.async_value.should_report_unexpected_error";
+        }
+        try {
+            Demo.applyResultClosure(value -> { throw new IllegalStateException("unexpected closure error"); }, 0);
+            throw new AssertionError("unexpected closure error was reported as success");
+        } catch (MathError.Exception error) {
+            assert error.getError() == MathError.OVERFLOW;
+        }
+    }
+
+    private static void assertAsyncCallbackMessage(AsyncMessageWorker worker, String message) throws Exception {
+        try {
+            Demo.invokeAsyncMessageWorker(worker).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            throw new AssertionError("callback failure was reported as success");
+        } catch (java.util.concurrent.ExecutionException error) {
+            assert error.getCause() instanceof AppError;
+            assert ((AppError) error.getCause()).message.equals(message) : error.getCause();
+        }
+    }
+
     private static void testAsyncCallbacks() {
         System.out.println("Testing async callbacks...");
         try {
@@ -2126,6 +2563,8 @@ public final class DemoTest {
             CompletableFuture<Integer> addFuture = Demo.asyncAdd(3, 7);
             demoCase("case:async_fns.basic.add.should_return_sum");
             assert addFuture.get() == 10 : "asyncAdd(3, 7)";
+            demoCase("case:async_fns.named_cancellation_token.should_preserve_both_values");
+            assert Demo.asyncCancellationTokenCollision(7, 11).get() == 18;
 
             CompletableFuture<String> echoFuture = Demo.asyncEcho("hello async");
             demoCase("case:async_fns.basic.echo.should_prefix_message");
@@ -2160,6 +2599,10 @@ public final class DemoTest {
                 record.shape(),
                 record.parameters()
             ).get().equals(record) : "asyncMakeMixedRecord";
+
+            demoCase("case:async_fns.native_wake.resumed_thread.should_not_be_the_waking_thread");
+            String resumedThread = Demo.asyncResumedThreadName().get();
+            assert !resumedThread.equals("boltffi-demo-waker") : "asyncResumedThreadName resumed on the waking thread";
 
             demoCase("case:async_fns.basic.get_numbers.should_return_counting_sequence");
             int[] counting = Demo.asyncGetNumbers(4).get();
@@ -2465,6 +2908,26 @@ public final class DemoTest {
 
     private static void testResultEnumErrors() {
         System.out.println("Testing result enum errors...");
+
+        demoCase("case:results.error_enums.message.should_preserve_text");
+        Arrays.asList("", "service failed 東京\u0000🦀").forEach(message -> {
+            try {
+                Demo.failWithMessage(message);
+                throw new AssertionError("expected ServiceError.Failed");
+            } catch (ServiceError.Failed error) {
+                assert message.equals(error.message) : "error message payload";
+            }
+        });
+        demoCase("case:results.error_enums.message.should_preserve_optional_text");
+        Arrays.asList(null, "", "optional failure 東京\u0000🦀").forEach(message -> {
+            Optional<String> optionalMessage = Optional.ofNullable(message);
+            try {
+                Demo.failWithOptionalMessage(optionalMessage);
+                throw new AssertionError("expected ServiceError.Optional");
+            } catch (ServiceError.Optional error) {
+                assert optionalMessage.equals(error.message) : "nullable error message payload";
+            }
+        });
 
         demoCase("case:results.error_enums.checked_divide.should_return_quotient");
         assert Demo.checkedDivide(10, 2) == 5 : "checkedDivide ok";

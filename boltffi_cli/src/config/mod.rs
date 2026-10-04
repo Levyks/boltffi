@@ -5,6 +5,7 @@ use boltffi_backend::{CustomTypeMapping, target::python::PackageModule};
 use boltffi_bindgen::target::Target;
 use serde::{Deserialize, Serialize};
 
+use crate::cargo::{Cargo, CargoMetadataPackage};
 use crate::target::{Architecture, CSharpRuntimeIdentifier, JavaHostTarget, Platform, RustTarget};
 
 pub mod cargo;
@@ -19,8 +20,8 @@ pub use targets::{
     AndroidConfig, AndroidLinkConfig, AndroidPackConfig, AppleConfig, CConfig, CSharpConfig,
     DartConfig, DartWebConfig, HeaderConfig, JavaConfig, KotlinApiStyle, KotlinConfig,
     KotlinDesktopLoader, KotlinFactoryStyle, KotlinMultiplatformConfig, PythonConfig, SpmConfig,
-    SpmDistribution, SpmLayout, SwiftConfig, TargetsConfig, WasmConfig, WasmNpmTarget,
-    WasmOptimizeLevel, WasmOptimizeOnMissing, WasmProfile, XcframeworkConfig,
+    SpmDistribution, SpmLayout, SwiftConfig, TargetSection, TargetsConfig, WasmConfig,
+    WasmNpmTarget, WasmOptimizeLevel, WasmOptimizeOnMissing, WasmProfile, XcframeworkConfig,
 };
 #[cfg(test)]
 pub use targets::{CSharpNugetConfig, JavaJvmConfig, PythonWheelConfig};
@@ -280,6 +281,14 @@ impl Config {
                 return Err(ConfigError::Validation(format!(
                     "targets.csharp.namespace must be a dot-separated C# namespace, got '{}'",
                     namespace
+                )));
+            }
+
+            if let Some(name) = self.targets.csharp.module_class.as_deref()
+                && !is_valid_csharp_namespace_segment(name)
+            {
+                return Err(ConfigError::Validation(format!(
+                    "targets.csharp.module_class must be a C# identifier, got '{name}'"
                 )));
             }
 
@@ -781,21 +790,6 @@ impl Config {
                 || self.is_experimental_enabled(&Experimental::WholeTarget(target)))
     }
 
-    pub fn cargo_args_for_command(&self, command_name: &str) -> Vec<String> {
-        self.cargo
-            .global_args
-            .iter()
-            .chain(
-                self.cargo
-                    .command_args
-                    .get(command_name)
-                    .into_iter()
-                    .flat_map(|args| args.iter()),
-            )
-            .cloned()
-            .collect()
-    }
-
     pub fn cargo_args_for_commands(&self, command_names: &[&str]) -> Vec<String> {
         self.cargo
             .global_args
@@ -809,6 +803,17 @@ impl Config {
             }))
             .cloned()
             .collect()
+    }
+
+    /// `cargo_args_for_commands`, then the `[targets.<section>]` `cargo_args`.
+    pub fn cargo_args_for_target(
+        &self,
+        section: TargetSection,
+        command_names: &[&str],
+    ) -> Vec<String> {
+        let mut args = self.cargo_args_for_commands(command_names);
+        args.extend_from_slice(self.targets.cargo_args(section));
+        args
     }
 
     fn is_experimental_enabled(&self, exp: &Experimental) -> bool {
@@ -925,6 +930,10 @@ impl Config {
 
     pub fn c_output(&self) -> PathBuf {
         self.targets.c.output.clone()
+    }
+
+    pub fn csharp_module_class(&self) -> Option<&str> {
+        self.targets.csharp.module_class.as_deref()
     }
 
     pub fn csharp_namespace(&self) -> Option<&str> {
@@ -1099,10 +1108,11 @@ impl Config {
     }
 
     pub fn package_version(&self) -> Option<String> {
-        self.package
-            .version
-            .clone()
-            .or_else(|| cargo_package_field("version"))
+        self.package.version.clone().or_else(|| {
+            cargo_package_field(self, |package| {
+                Some(package.version.clone()).filter(|version| !version.is_empty())
+            })
+        })
     }
 
     pub fn wasm_npm_version(&self) -> Option<String> {
@@ -1118,7 +1128,7 @@ impl Config {
         self.package
             .license
             .clone()
-            .or_else(|| cargo_package_field("license"))
+            .or_else(|| cargo_package_field(self, |package| package.license.clone()))
     }
 
     pub fn wasm_npm_license(&self) -> Option<String> {
@@ -1134,7 +1144,7 @@ impl Config {
         self.package
             .repository
             .clone()
-            .or_else(|| cargo_package_field("repository"))
+            .or_else(|| cargo_package_field(self, |package| package.repository.clone()))
     }
 
     pub fn wasm_npm_repository(&self) -> Option<String> {
@@ -1315,22 +1325,30 @@ fn to_pascal_case(input: &str) -> String {
         .collect()
 }
 
-fn cargo_package_field(field_name: &str) -> Option<String> {
-    std::fs::read_to_string("Cargo.toml")
+fn cargo_package_field(
+    config: &Config,
+    field: impl FnOnce(&CargoMetadataPackage) -> Option<String>,
+) -> Option<String> {
+    std::env::current_dir()
         .ok()
-        .and_then(|content| {
-            content
-                .lines()
-                .find_map(|line| parse_key_value(line).filter(|(key, _)| key == field_name))
-        })
-        .map(|(_, value)| value)
+        .and_then(|working_directory| cargo_package_field_in(config, working_directory, field))
 }
 
-fn parse_key_value(line: &str) -> Option<(String, String)> {
-    let (raw_key, raw_value) = line.split_once('=')?;
-    let key = raw_key.trim().to_string();
-    let value = raw_value.trim().trim_matches('"').to_string();
-    Some((key, value))
+/// Reads a field of the package cargo resolves for this config, so
+/// workspace-inherited values like `version.workspace = true` are honoured.
+fn cargo_package_field_in(
+    config: &Config,
+    working_directory: PathBuf,
+    field: impl FnOnce(&CargoMetadataPackage) -> Option<String>,
+) -> Option<String> {
+    let cargo = Cargo::in_working_directory(working_directory, &[]);
+    let metadata = cargo.metadata().ok()?;
+    let manifest_path = cargo.manifest_path().ok()?;
+    let package_selector = cargo.effective_package_selector(config, &metadata, &manifest_path);
+    metadata
+        .find_package(&manifest_path, package_selector.as_deref())
+        .ok()
+        .and_then(field)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2049,7 +2067,7 @@ build = ["--features", "mobile"]
         );
 
         assert_eq!(
-            config.cargo_args_for_command("build"),
+            config.cargo_args_for_commands(&["build"]),
             vec![
                 "--locked".to_string(),
                 "--features".to_string(),
@@ -2099,9 +2117,122 @@ global_args = ["--frozen"]
         );
 
         assert_eq!(
-            config.cargo_args_for_command("test"),
+            config.cargo_args_for_commands(&["test"]),
             vec!["--frozen".to_string()]
         );
+    }
+
+    #[test]
+    fn appends_target_cargo_args_after_global_and_command_args() {
+        let config = parse_config(
+            r#"
+[package]
+name = "mylib"
+
+[cargo]
+global_args = ["--locked"]
+
+[cargo.command_args]
+build = ["--profile", "ffi"]
+
+[targets.python]
+enabled = true
+cargo_args = ["--no-default-features", "--features=python"]
+"#,
+        );
+
+        assert_eq!(
+            config.cargo_args_for_target(TargetSection::Python, &["build"]),
+            vec![
+                "--locked".to_string(),
+                "--profile".to_string(),
+                "ffi".to_string(),
+                "--no-default-features".to_string(),
+                "--features=python".to_string(),
+            ]
+        );
+        assert_eq!(
+            config.cargo_args_for_target(TargetSection::Android, &["build"]),
+            vec![
+                "--locked".to_string(),
+                "--profile".to_string(),
+                "ffi".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_cargo_args_from_every_target_table() {
+        let config = parse_config(
+            r#"
+[package]
+name = "mylib"
+
+[targets.apple]
+cargo_args = ["apple"]
+
+[targets.android]
+cargo_args = ["android"]
+
+[targets.kotlin_multiplatform]
+cargo_args = ["kotlin_multiplatform"]
+
+[targets.wasm]
+cargo_args = ["wasm"]
+
+[targets.java]
+cargo_args = ["java"]
+
+[targets.dart]
+cargo_args = ["dart"]
+
+[targets.python]
+cargo_args = ["python"]
+
+[targets.csharp]
+cargo_args = ["csharp"]
+
+[targets.c]
+cargo_args = ["c"]
+"#,
+        );
+
+        [
+            (TargetSection::Apple, "apple"),
+            (TargetSection::Android, "android"),
+            (TargetSection::KotlinMultiplatform, "kotlin_multiplatform"),
+            (TargetSection::Wasm, "wasm"),
+            (TargetSection::Java, "java"),
+            (TargetSection::Dart, "dart"),
+            (TargetSection::Python, "python"),
+            (TargetSection::CSharp, "csharp"),
+            (TargetSection::C, "c"),
+        ]
+        .into_iter()
+        .for_each(|(section, expected)| {
+            assert_eq!(
+                config.cargo_args_for_target(section, &["build", "generate"]),
+                vec![expected.to_string()],
+                "{section:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn omits_empty_target_cargo_args_when_serializing() {
+        let config = parse_config(
+            r#"
+[package]
+name = "mylib"
+
+[targets.android]
+cargo_args = ["--features=kotlin"]
+"#,
+        );
+
+        let serialized = toml::to_string(&config).expect("serialize config");
+
+        assert_eq!(serialized.matches("cargo_args").count(), 1, "{serialized}");
     }
 
     #[test]
@@ -2575,6 +2706,7 @@ enabled = true
         );
         assert_eq!(config.csharp_package_id(), "my-lib");
         assert_eq!(config.csharp_namespace(), None);
+        assert_eq!(config.csharp_module_class(), None);
         assert_eq!(config.csharp_target_framework(), "net10.0");
         assert_eq!(
             config.csharp_requested_runtime_identifiers(),
@@ -2596,6 +2728,7 @@ output = "artifacts/csharp"
 package_output = "artifacts/nuget"
 package_id = "Company.MyLib"
 namespace = "Company.MyLib.Bindings"
+module_class = "MyLibApi"
 target_framework = "net9.0"
 runtime_identifiers = ["current", "linux-x64", "windows-aarch64"]
 "#,
@@ -2608,6 +2741,7 @@ runtime_identifiers = ["current", "linux-x64", "windows-aarch64"]
         );
         assert_eq!(config.csharp_package_id(), "Company.MyLib");
         assert_eq!(config.csharp_namespace(), Some("Company.MyLib.Bindings"));
+        assert_eq!(config.csharp_module_class(), Some("MyLibApi"));
         assert_eq!(config.csharp_target_framework(), "net9.0");
         assert_eq!(
             config.csharp_requested_runtime_identifiers(),
@@ -2732,6 +2866,19 @@ runtime_identifiers = []
     }
 
     #[test]
+    fn rejects_invalid_csharp_module_class() {
+        for name in ["", "Demo.Api", "123Demo", "Demo Api"] {
+            let mut config = parse_config("[package]\nname = \"demo\"");
+            config.targets.csharp.enabled = true;
+            config.targets.csharp.module_class = Some(name.to_owned());
+            assert!(
+                matches!(config.validate(), Err(ConfigError::Validation(message))
+                if message.contains("targets.csharp.module_class must be a C# identifier"))
+            );
+        }
+    }
+
+    #[test]
     fn rejects_invalid_csharp_namespace() {
         let parsed: Config = toml::from_str(
             r#"
@@ -2819,5 +2966,123 @@ enabled = true
         );
         assert!(config.should_process(Target::C, false));
         assert_eq!(config.c_output(), PathBuf::from("dist/c"));
+    }
+
+    fn write_cargo_package(directory: &Path, manifest: &str) {
+        std::fs::create_dir_all(directory.join("src")).expect("package source directory");
+        std::fs::write(directory.join("Cargo.toml"), manifest).expect("cargo manifest");
+        std::fs::write(directory.join("src/lib.rs"), "").expect("package source");
+    }
+
+    fn write_inheriting_workspace(root: &Path) {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["crates/demo"]
+
+[workspace.package]
+version = "2.3.4"
+license = "MIT OR Apache-2.0"
+"#,
+        )
+        .expect("workspace manifest");
+        write_cargo_package(
+            &root.join("crates/demo"),
+            r#"[package]
+name = "demo"
+version.workspace = true
+license.workspace = true
+edition = "2021"
+"#,
+        );
+    }
+
+    #[test]
+    fn reads_workspace_inherited_package_fields_from_cargo_metadata() {
+        let workspace = tempfile::tempdir().expect("temporary cargo workspace");
+        write_inheriting_workspace(workspace.path());
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+"#,
+        );
+        let member = workspace.path().join("crates/demo");
+
+        assert_eq!(
+            cargo_package_field_in(&config, member.clone(), |package| Some(
+                package.version.clone()
+            )),
+            Some("2.3.4".to_string())
+        );
+        assert_eq!(
+            cargo_package_field_in(&config, member, |package| package.license.clone()),
+            Some("MIT OR Apache-2.0".to_string())
+        );
+    }
+
+    #[test]
+    fn selects_the_configured_member_from_a_workspace_root() {
+        let workspace = tempfile::tempdir().expect("temporary cargo workspace");
+        write_inheriting_workspace(workspace.path());
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+"#,
+        );
+
+        assert_eq!(
+            cargo_package_field_in(&config, workspace.path().to_path_buf(), |package| Some(
+                package.version.clone()
+            )),
+            Some("2.3.4".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_version_keys_outside_the_package_table() {
+        let project = tempfile::tempdir().expect("temporary cargo project");
+        write_cargo_package(
+            &project.path().join("dep"),
+            r#"[package]
+name = "dep"
+version = "9.9.9"
+edition = "2021"
+"#,
+        );
+        write_cargo_package(
+            project.path(),
+            r#"[workspace]
+
+[dependencies.dep]
+version = "9.9.9"
+path = "dep"
+
+[package]
+name = "demo"
+version = "1.2.3"
+edition = "2021"
+"#,
+        );
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+"#,
+        );
+
+        assert_eq!(
+            cargo_package_field_in(&config, project.path().to_path_buf(), |package| Some(
+                package.version.clone()
+            )),
+            Some("1.2.3".to_string())
+        );
+        assert_eq!(
+            cargo_package_field_in(&config, project.path().to_path_buf(), |package| package
+                .license
+                .clone()),
+            None
+        );
     }
 }

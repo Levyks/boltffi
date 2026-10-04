@@ -229,7 +229,7 @@ mod tests {
     use boltffi_ast::PackageInfo;
     use boltffi_binding::{Bindings, Native, lower};
 
-    use crate::{GeneratedOutput, Target, bridge::c::CBridge};
+    use crate::{GeneratedOutput, Target, bridge::c::CBridge, core::Error};
 
     use super::DartHost;
 
@@ -296,9 +296,193 @@ mod tests {
 
         assert!(source.contains("Length? maxRejoinDistance,"), "{source}");
         assert!(
-            source.contains("maxRejoinDistance = maxRejoinDistance ?? LengthFfi(meters: 1500)"),
+            source.contains("maxRejoinDistance = maxRejoinDistance ?? LengthFfi(meters: 1500.0)"),
             "{source}"
         );
+    }
+
+    #[test]
+    fn dart_target_renders_parameter_defaults_from_the_shared_fixture() {
+        let bindings = bindings(include_str!(
+            "../../../tests/fixtures/source/exports/parameter_defaults.rs"
+        ));
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("parameter defaults should render");
+        let source = file(&output, "demo/lib/demo.dart");
+
+        assert!(source.contains("String greet(String name, {String greeting = \"world\", int times = 3, int offset = -1, bool shout = true, double ratio = 0.5, Mode mode = Mode.slow, String? suffix = null, int? limit = 7})"));
+        assert!(source.contains("factory DefaultCounter({int start = 10})"));
+        assert!(source.contains("factory DefaultCounter.fromText({String value = \"40\"})"));
+        assert!(
+            source.contains(
+                "factory DefaultCounter.withOffset({int start = 20, required int offset})"
+            )
+        );
+        assert!(source.contains("int offset({int step = 1})"));
+        assert!(source.contains(
+            "Future<int> asyncOffset({int step = 3, $$BoltCancellationToken? cancellationToken})"
+        ));
+        assert!(source.contains(
+            "Future<int> asyncDefault({int value = 9, $$BoltCancellationToken? cancellationToken})"
+        ));
+        assert!(
+            source.contains(
+                "int applyOptionalClosure(int value, {int Function(int)? callback = null})"
+            )
+        );
+        assert!(source.contains("DefaultAmount({\n    this.value = 3,"));
+        assert!(source.contains("static DefaultAmount withScaledValue({int value = 2})"));
+        assert!(source.contains("static DefaultAmount? tryScaledValue({int value = 2})"));
+        assert!(source.contains("Amount defaultAmount({Amount? amount = null}) {\n  amount ??= DefaultAmount(value: 5);\n"));
+        assert!(source.contains("Limit throttle({Limit limit = null})"));
+        assert!(
+            source.contains(
+                "Email? defaultOptionalEmail({Email? email = \"mailto:ada@example.com\"})"
+            )
+        );
+        assert!(source.contains("int defaultFloatBits({double value = -0.0})"));
+        assert!(source.contains("int defaultDoubleBits({double value = -0.0})"));
+        assert!(source.contains(
+            "int span({int start = -9223372036854775808, int end = 0xffffffffffffffff})"
+        ));
+        assert!(source.contains("const int ceiling = 0xffffffffffffffff;"));
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn dart_target_preserves_string_contents_and_uuid_types_in_defaults() {
+        let bindings = bindings(
+            r#"
+            #[export]
+            pub fn echo_text(#[boltffi::default("$name ${greeting} \"quote\" \\ newline\n\0")] value: String) -> String { value }
+
+            #[export]
+            pub fn echo_uuid(#[boltffi::default("fedcba98-7654-3210-ffff-ffffffffffff")] value: uuid::Uuid) -> uuid::Uuid { value }
+
+            #[export]
+            pub fn echo_optional_uuid(#[boltffi::default("01234567-89ab-cdef-0123-456789abcdef")] value: Option<uuid::Uuid>) -> Option<uuid::Uuid> { value }
+
+            #[export]
+            pub fn echo_compact_uuid(#[boltffi::default("FEDCBA9876543210FFFFFFFFFFFFFFFF")] value: uuid::Uuid) -> uuid::Uuid { value }
+
+            #[export]
+            pub fn echo_large_float(#[boltffi::default(974192668992941184.0)] value: f64) -> f64 { value }
+
+            #[data]
+            pub enum Choice { Empty, Value(i32) }
+
+            #[export]
+            pub fn choose(#[boltffi::default(Choice::Empty)] choice: Choice) -> Choice { choice }
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("string and UUID defaults should render");
+        let source = file(&output, "demo/lib/demo.dart");
+
+        assert!(source.contains(
+            r#"String echoText({String value = "\$name \${greeting} \"quote\" \\ newline\n\u{0}"})"#
+        ));
+        assert!(source.contains("$$BoltUUIDValue echoUuid({$$BoltUUIDValue value = const $$BoltUUIDValue(0xfedcba9876543210, 0xffffffffffffffff)})"));
+        assert!(source.contains("$$BoltUUIDValue? echoOptionalUuid({$$BoltUUIDValue? value = const $$BoltUUIDValue(0x0123456789abcdef, 0x0123456789abcdef)})"));
+        assert!(source.contains("$$BoltUUIDValue echoCompactUuid({$$BoltUUIDValue value = const $$BoltUUIDValue(0xfedcba9876543210, 0xffffffffffffffff)})"));
+        assert!(source.contains("double echoLargeFloat({double value = 9.741926689929412e17})"));
+        assert!(source.contains("Choice choose({Choice choice = const Choice$Empty()})"));
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn dart_target_keeps_interleaved_required_parameters_required() {
+        let bindings = bindings(
+            r#"
+            #[export]
+            pub fn combine(
+                head: i32,
+                #[boltffi::default(1)] left: i32,
+                middle: i32,
+                #[boltffi::default(2)] right: i32,
+                tail: i32,
+            ) -> i32 { head + left + middle + right + tail }
+
+            #[export]
+            pub async fn collision(#[boltffi::default(3)] cancellation_token: u32) -> u32 { cancellation_token }
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("interleaved parameters should render");
+        let source = file(&output, "demo/lib/demo.dart");
+
+        assert!(source.contains("int combine(int head, {int left = 1, required int middle, int right = 2, required int tail})"));
+        assert!(source.contains("Future<int> collision({int cancellationToken = 3, $$BoltCancellationToken? boltCancellationToken})"));
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn dart_target_rejects_nullable_constructed_defaults_that_would_replace_null() {
+        let bindings = bindings(
+            r#"
+            #[data]
+            pub struct AmountFfi { pub value: i32 }
+
+            custom_type!(
+                pub Amount,
+                remote = AmountRust,
+                repr = AmountFfi,
+                into_ffi = into_ffi,
+                try_from_ffi = from_ffi
+            );
+
+            #[export]
+            pub fn amount(#[boltffi::default(3)] amount: Option<AmountRust>) -> Option<AmountRust> { amount }
+            "#,
+        );
+        let error = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect_err("nullable constructed defaults must preserve explicit null");
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedTarget {
+                target: "dart",
+                shape: "optional custom-record default",
+            }
+        ));
+    }
+
+    #[test]
+    fn dart_target_rejects_invalid_uuid_defaults_before_emitting_bindings() {
+        [
+            "fedc-ba987654-3210-ffff-ffffffffffff",
+            "+edcba9876543210ffffffffffffffff",
+            "fedcba9876543210+fffffffffffffff",
+            "+edcba98-7654-3210-ffff-ffffffffffff",
+            "fedcba98-7654-3210-+fff-ffffffffffff",
+        ]
+        .into_iter()
+        .for_each(|value| {
+            let bindings = bindings(&format!(
+                r#"
+                #[export]
+                pub fn identifier(#[boltffi::default("{value}")] value: uuid::Uuid) -> uuid::Uuid {{ value }}
+                "#,
+            ));
+            let error = target(DartHost::new().package("demo"))
+                .render(&bindings)
+                .expect_err("invalid UUID defaults must fail generation");
+
+            assert!(
+                matches!(
+                    error,
+                    Error::UnsupportedTarget {
+                        target: "dart",
+                        shape: "invalid UUID default",
+                    }
+                ),
+                "UUID default {value:?} must be rejected"
+            );
+        });
     }
 
     #[test]
@@ -337,6 +521,73 @@ mod tests {
         assert!(source.contains("Profile._m$wireDecode"));
         assert!(source.contains("profile._m$wireEncode"));
         assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn dart_target_writes_back_encoded_records_and_releases_the_buffer_on_error() {
+        let bindings = bindings(
+            r#"
+            #[data]
+            pub struct Profile {
+                pub name: String,
+                pub history: Vec<String>,
+            }
+
+            #[data(impl)]
+            impl Profile {
+                pub fn rename(&mut self, name: String) -> u32 {
+                    self.history.push(self.name.clone());
+                    self.name = name;
+                    self.history.len() as u32
+                }
+
+                pub fn try_rename(&mut self, name: String) -> Result<u32, String> {
+                    if name.is_empty() {
+                        Err("name is empty".to_owned())
+                    } else {
+                        Ok(self.rename(name))
+                    }
+                }
+            }
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("mutable encoded records should render");
+        let source = file(&output, "demo/lib/demo.dart");
+        let record_start = source
+            .find("final class Profile {")
+            .expect("Profile record");
+
+        insta::assert_snapshot!(&source[record_start..]);
+    }
+
+    #[test]
+    fn dart_target_rejects_async_encoded_record_writeback() {
+        let bindings = bindings(
+            r#"
+            #[data]
+            pub struct Profile {
+                pub name: String,
+            }
+
+            #[data(impl)]
+            impl Profile {
+                pub async fn rename(&mut self, name: String) {
+                    self.name = name;
+                }
+            }
+            "#,
+        );
+        let result = target(DartHost::new().package("demo")).render(&bindings);
+
+        assert!(matches!(
+            result,
+            Err(crate::Error::UnsupportedTarget {
+                target: "dart",
+                shape: "asynchronous mutable encoded record receiver",
+            })
+        ));
     }
 
     #[test]
@@ -452,7 +703,7 @@ mod tests {
         assert!(source.contains("abstract interface class Transformer"));
         assert!(source.contains("Future<int?> load(String key)"));
         assert!(source.contains("TransformerVTable extends $$ffi.Struct"));
-        assert!(source.contains("TransformerBridge.create(transformer)"));
+        assert!(source.contains("_TransformerBridge.create(transformer)"));
         assert!(
             source.contains("_$$boltTrackListener($$ffi.NativeCallable.listener(_m$load))"),
             "async callback slots must use listener, not isolateLocal"
@@ -627,7 +878,8 @@ mod tests {
         assert!(source.contains(".callPtr"));
         assert!(source.contains(".releasePtr"));
         assert!(source.contains(".insert("));
-        assert!(source.contains("(int Function(int))? callback"));
+        assert!(source.contains("int maybeApply(int Function(int)? callback, int value)"));
+        assert!(!source.contains("(int Function(int))"));
         assert!(source.contains("int tryApply(int Function(int) callback, int value)"));
         assert!(source.contains("on MathError catch"));
         assert!(output.diagnostics().is_empty());
@@ -645,6 +897,11 @@ mod tests {
             #[export]
             pub fn make_labeler(prefix: String) -> Box<dyn Fn(String) -> String> {
                 Box::new(move |value| format!("{prefix}{value}"))
+            }
+
+            #[export]
+            pub fn make_optional_adder(base: i32) -> Option<Box<dyn Fn(i32) -> i32>> {
+                Some(Box::new(move |value| base + value))
             }
 
             #[export]
@@ -672,6 +929,7 @@ mod tests {
         let source = file(&output, "demo/lib/demo.dart");
         assert!(source.contains("int Function(int) makeAdder(int $base)"));
         assert!(source.contains("String Function(String) makeLabeler(String prefix)"));
+        assert!(source.contains("int Function(int)? makeOptionalAdder(int $base)"));
         assert!(source.contains(
             "Future<int Function(int)> makeAsyncAdder(int $base, {$$BoltCancellationToken? cancellationToken})"
         ));
@@ -710,10 +968,7 @@ mod tests {
         assert!(source.contains("int? maybe(int? value)"));
         assert!(source.contains("List<Point> points(List<Point> values)"));
         assert!(source.contains("$$typed_data.Int64List offsets($$typed_data.Int64List values)"));
-        assert!(
-            source
-                .contains("ptr.cast<$$ffi.IntPtr>().elementAt(_l$index).value = values[_l$index]")
-        );
+        assert!(source.contains("ptr.cast<$$ffi.IntPtr>() + _l$index).value = values[_l$index]"));
         assert!(source.contains("List<int>.generate"));
         assert!(!source.contains("cast<$$ffi.IntPtr>().asTypedList"));
         assert!(source.contains("_m$writeStruct"));
@@ -787,9 +1042,9 @@ mod tests {
         let source = file(&output, "demo/lib/demo.dart");
         assert!(source.contains("$$BoltResult<int, $$BoltException> result;"));
         assert!(source.contains("Mode._m$fromDiscriminant(_p$reader.readU8())"));
-        assert!(source.contains("_p$writer.writeU8(mode.value);"));
+        assert!(source.contains("_p$writer.writeU8((mode).value);"));
         assert!(source.contains("WideMode._m$fromDiscriminant(_p$reader.readU64())"));
-        assert!(source.contains("_p$writer.writeU64(wideMode.value);"));
+        assert!(source.contains("_p$writer.writeU64((wideMode).value);"));
         assert!(source.contains("((endpoint).toString().length * 3)"));
         assert!(source.contains("$$BoltResult.err($$BoltException(_p$reader.readString()))"));
         assert!(source.contains(".writeString(_l$boltffiValue0.message);"));
@@ -932,6 +1187,93 @@ mod tests {
         assert!(source.contains("$$ffi.NativeCallable.listener(streamCallback)"));
         assert!(source.contains("unsubscribeFn(handle);"));
         assert!(source.contains("release();"));
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn dart_target_drops_dead_catch_after_object_error_binding() {
+        let bindings = bindings(
+            r#"
+            #[export]
+            pub trait MessageSink {
+                fn render(&self, key: i32) -> Result<String, String>;
+            }
+
+            #[export]
+            pub fn render_with(sink: impl MessageSink, key: i32) -> Result<String, String> {
+                sink.render(key)
+            }
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("string-error callback should render");
+
+        let source = file(&output, "demo/lib/demo.dart");
+        assert!(
+            source.contains("on Object catch"),
+            "string payloads bind `Object`, {source}"
+        );
+        assert!(
+            !source.contains("} catch (_l$unexpectedError)"),
+            "a `catch` after `on Object catch` is unreachable, {source}"
+        );
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn dart_target_skips_dead_binders_in_optional_codecs() {
+        let bindings = bindings(
+            r#"
+            #[data]
+            pub enum Shade { Light, Dark }
+
+            #[data]
+            pub struct Config {
+                pub endpoint: Option<String>,
+            }
+
+            #[export]
+            pub fn paint(
+                shade: Option<Shade>,
+                tags: Option<Vec<i32>>,
+                pairs: Vec<(i32, i32)>,
+                config: Config,
+            ) {}
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("optional parameters should render");
+
+        let source = file(&output, "demo/lib/demo.dart");
+        assert!(
+            source.contains("((shade) == null ? 0 : 4)"),
+            "constant-size optionals need no unwrap local, {source}"
+        );
+        assert!(
+            !source.contains("shade!"),
+            "null-checked values promote without `!`, {source}"
+        );
+        assert!(
+            source.contains("(_l$boltffiValue0).length * (4)"),
+            "constant element sizes collapse the fold, {source}"
+        );
+        assert!(!source.contains("= tags!;"), "{source}");
+        assert!(
+            source.contains("(pairs).length * (4 + 4)"),
+            "additive element sizes stay parenthesized, {source}"
+        );
+        assert!(
+            source.contains("if (endpoint case final _l$boltffiValue0?)"),
+            "nullable fields bind via a scoped null-check pattern, {source}"
+        );
+        assert!(
+            source.contains(
+                "final _l$boltffiValue0 = endpoint; return _l$boltffiValue0 == null ? 0 :"
+            ),
+            "size expressions null-check the bound local, {source}"
+        );
         assert!(output.diagnostics().is_empty());
     }
 }

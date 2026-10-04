@@ -224,6 +224,30 @@ void main() {
       reason: "case:primitives.vecs.string.should_report_utf8_byte_lengths",
     );
 
+    final chunks = echoVecBytes([
+      Uint8List.fromList([0, 255]),
+      Uint8List(0),
+      Uint8List.fromList([1, 2, 3]),
+    ]);
+    expect(
+      chunks,
+      [
+        [0, 255],
+        <int>[],
+        [1, 2, 3],
+      ],
+      reason: "case:primitives.vecs.bytes.should_roundtrip_values",
+    );
+    expect(
+      vecBytesLengths([
+        Uint8List.fromList([1, 2]),
+        Uint8List.fromList([3, 4, 5]),
+        Uint8List.fromList([6]),
+      ]),
+      [2, 3, 1],
+      reason: "case:primitives.vecs.bytes.should_report_lengths",
+    );
+
     final vvi = echoVecVecI32([
       Int32List.fromList([1, 2, 3]),
       Int32List.fromList([]),

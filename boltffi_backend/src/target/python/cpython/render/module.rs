@@ -25,6 +25,7 @@ use crate::{
 #[template(path = "target/python/native_module.c", escape = "none")]
 struct NativeModuleTemplate {
     module_name: String,
+    callback_error_storage: Identifier,
     method_table: Identifier,
     module_definition: Identifier,
     free_function: Identifier,
@@ -89,6 +90,7 @@ impl<'render, 'bindings> NativeModule<'render, 'bindings> {
         let methods = declarations.methods(bridge);
         let support = ModuleSupport::new(bridge, declarations.support())?;
         let source = NativeModuleTemplate {
+            callback_error_storage: self.bridge.callback_error()?.storage_name().clone(),
             module_name: bridge.module().as_str().to_owned(),
             method_table: bridge.symbols().method_table().clone(),
             module_definition: bridge.symbols().module_definition().clone(),
@@ -234,6 +236,11 @@ impl ModuleDeclarations {
                 self.enums
                     .iter()
                     .map(|enumeration| enumeration.declaration.cleanup()),
+            )
+            .chain(
+                self.classes
+                    .iter()
+                    .filter_map(|class| class.declaration.cleanup()),
             )
             .collect()
     }
@@ -435,6 +442,7 @@ impl<'module> SupportArtifacts<'module> {
                 result::OwnedBuffer::DirectVector(element) => Some((**element).clone()),
                 result::OwnedBuffer::RawWire
                 | result::OwnedBuffer::Utf8Text
+                | result::OwnedBuffer::Bytes
                 | result::OwnedBuffer::OptionalPrimitive(_)
                 | result::OwnedBuffer::Native(_) => None,
             })
@@ -589,6 +597,7 @@ impl<'module> SupportArtifacts<'module> {
                 result::OwnedBuffer::OptionalPrimitive(primitive) => Some(*primitive),
                 result::OwnedBuffer::RawWire
                 | result::OwnedBuffer::Utf8Text
+                | result::OwnedBuffer::Bytes
                 | result::OwnedBuffer::DirectVector(_)
                 | result::OwnedBuffer::Native(_) => None,
             })
@@ -683,10 +692,12 @@ struct ModuleSupport {
     raw_wire_arguments: bool,
     raw_wire_returns: bool,
     utf8_returns: bool,
+    bytes_returns: bool,
     native_record_types: bool,
     encoded_records: bool,
     data_enums: bool,
     record_types: bool,
+    class_types: bool,
     c_style_enums: bool,
     callback_handles: bool,
     async_functions: bool,
@@ -721,6 +732,7 @@ impl ModuleSupport {
             raw_wire_arguments,
             raw_wire_returns: owned_buffers.contains(&result::OwnedBuffer::RawWire),
             utf8_returns: owned_buffers.contains(&result::OwnedBuffer::Utf8Text),
+            bytes_returns: owned_buffers.contains(&result::OwnedBuffer::Bytes),
             native_record_types: artifacts
                 .records
                 .iter()
@@ -728,6 +740,10 @@ impl ModuleSupport {
             encoded_records,
             data_enums,
             record_types: !artifacts.records.is_empty(),
+            class_types: artifacts
+                .classes
+                .iter()
+                .any(|class| class.has_registered_type()),
             c_style_enums: !artifacts.enums.is_empty(),
             callback_handles: !artifacts.callbacks.is_empty(),
             async_functions,
@@ -768,6 +784,7 @@ impl ModuleSupport {
     fn uses_owned_buffers(&self) -> bool {
         self.raw_wire_returns
             || self.utf8_returns
+            || self.bytes_returns
             || !self.owned_primitives.is_empty()
             || !self.direct_vector_elements.is_empty()
             || !self.native_sequences.is_empty()
@@ -794,7 +811,7 @@ impl ModuleSupport {
     }
 
     fn uses_owned_bytes(&self) -> bool {
-        false
+        self.bytes_returns
     }
 
     fn uses_owned_raw_wire(&self) -> bool {
@@ -810,7 +827,7 @@ impl ModuleSupport {
     }
 
     fn uses_registered_types(&self) -> bool {
-        self.record_types || self.c_style_enums
+        self.record_types || self.c_style_enums || self.class_types
     }
 
     fn uses_native_record_types(&self) -> bool {

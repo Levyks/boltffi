@@ -33,6 +33,11 @@ class Engine internal constructor(internal val handle: Long) : AutoCloseable {
         }
     }
 
+    internal fun __boltffiTakeHandle(): Long {
+        check(__boltffi_closed.compareAndSet(false, true)) { "Engine is closed" }
+        return handle
+    }
+
     internal fun boltffiHandle(): Long {
         check(!__boltffi_closed.get()) { "Engine is closed" }
         return handle
@@ -41,7 +46,7 @@ class Engine internal constructor(internal val handle: Long) : AutoCloseable {
     constructor() : this(new().handle)
 
     companion object {
-        fun new(): Engine {
+        private fun new(): Engine {
             return Engine(Native.boltffi_init_class_demo_engine_new())
         }
     }

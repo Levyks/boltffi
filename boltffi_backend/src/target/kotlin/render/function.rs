@@ -1,7 +1,7 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::{
-    CallbackId, ClassId, ClosureReturn, DirectValueType, DirectVectorElementType, Direction,
-    DocComment, EnumId, ErrorChannel, ErrorPlacement, ExecutionDecl, ExportedCallable,
+    CallbackId, ClassId, ClosureReturn, DefaultValue, DirectValueType, DirectVectorElementType,
+    Direction, DocComment, EnumId, ErrorChannel, ErrorPlacement, ExecutionDecl, ExportedCallable,
     FunctionDecl, HandlePresence, HandleTarget, IncomingParam, IntoRust, Native, NativeSymbol,
     OutOfRust, ParamDecl, ParamPlan, ParamPlanRender, Primitive, Receive, RecordId,
     ReturnPlanRender, ReturnValueSlot, Surface, TypeRef, native,
@@ -18,8 +18,9 @@ use crate::{
         render::{
             Documentation,
             callback::CallbackHandle,
-            class::ClassHandle,
+            class::{ClassHandle, OwnedCallTemplate, OwnedClassArgument},
             closure::Closure,
+            default_value::DefaultExpression,
             direct_vector::DirectVector,
             enumeration::Enumeration,
             native::NativeCall,
@@ -76,7 +77,11 @@ pub struct ReceiverCarrier {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportedParameter {
+    owned_class: Option<OwnedClassArgument>,
     signature: signature::Parameter,
+    /// `#[boltffi::default(..)]` on the Rust parameter, as a Kotlin default
+    /// argument: callers may leave the parameter out.
+    default: Option<Expression>,
     native_arguments: Vec<Expression>,
     mutation: Option<ParameterMutation>,
     setup: Vec<Statement>,
@@ -84,6 +89,7 @@ pub struct ExportedParameter {
 }
 
 struct NativeArgument {
+    owned_class: Option<OwnedClassArgument>,
     expressions: Vec<Expression>,
     mutation: Option<ParameterMutation>,
     setup: Vec<Statement>,
@@ -401,10 +407,15 @@ impl<'render> ExportedCallRenderer<'render> {
                     .flat_map(|parameter| parameter.native_arguments().iter().cloned()),
             )
             .collect::<Vec<_>>();
-        let native_call = NativeCall::new(
+        let owned = parameters
+            .iter()
+            .filter_map(|parameter| parameter.owned_class.as_ref())
+            .collect::<Vec<_>>();
+        let native_call = OwnedCallTemplate::expression(
             Identifier::escape(symbol.name().as_str())?,
             native_arguments,
-        );
+            owned,
+        )?;
         let error_conversion = ErrorConversion::from_channel(callable.error().channel())?;
         let setup = receiver_setup
             .into_iter()
@@ -428,7 +439,7 @@ impl<'render> ExportedCallRenderer<'render> {
                 returns,
                 setup,
                 call: function_return.return_statements(
-                    error_conversion.wrap(native_call.expression(), self.host, self.context)?,
+                    error_conversion.wrap(native_call.clone(), self.host, self.context)?,
                     self.host,
                     self.context,
                 )?,
@@ -450,7 +461,7 @@ impl<'render> ExportedCallRenderer<'render> {
                 call: Vec::new(),
                 cleanup: Vec::new(),
                 async_call: Some(AsyncCall::new(
-                    AsyncStart::new(native_call.expression(), setup, cleanup),
+                    AsyncStart::new(native_call, setup, cleanup),
                     AsyncProtocolFunctions::new(poll, complete, cancel, free)?,
                     function_return,
                     error_conversion,
@@ -569,6 +580,7 @@ impl ExportedParameter {
     ) -> Result<Self> {
         let source_name = Name::new(parameter.name());
         let name = source_name.parameter()?;
+        let default = Self::default_for(parameter, context)?;
         let (ty, native_argument) = match parameter.payload() {
             IncomingParam::Value(plan) => (
                 Self::type_name(plan, package, context)?,
@@ -584,9 +596,11 @@ impl ExportedParameter {
             ),
         };
         Ok(Self {
+            owned_class: native_argument.owned_class,
             native_arguments: native_argument.expressions,
             mutation: native_argument.mutation,
             signature: signature::Parameter::new(name, ty),
+            default,
             setup: native_argument.setup,
             cleanup: native_argument.cleanup,
         })
@@ -598,6 +612,40 @@ impl ExportedParameter {
 
     pub fn ty(&self) -> &TypeName {
         self.signature.ty()
+    }
+
+    pub fn has_default(&self) -> bool {
+        self.default.is_some()
+    }
+
+    /// `name: Type`, and ` = default` when the Rust parameter declares one:
+    /// the parameter as the exported call's signature spells it.
+    pub fn declaration(&self) -> String {
+        match &self.default {
+            Some(default) => format!("{}: {} = {default}", self.name(), self.ty()),
+            None => format!("{}: {}", self.name(), self.ty()),
+        }
+    }
+
+    /// The Kotlin spelling of the parameter's default, rendered against the
+    /// value type the parameter crosses as. A closure has none: its only
+    /// default is `null`, which lowering admits on an optional one alone.
+    fn default_for(
+        parameter: &ParamDecl<Native, IntoRust>,
+        context: &RenderContext<Native>,
+    ) -> Result<Option<Expression>> {
+        let Some(value) = parameter.meta().default() else {
+            return Ok(None);
+        };
+        let ty = match parameter.payload() {
+            IncomingParam::Value(plan) => plan.value_type(),
+            IncomingParam::Closure(_) if matches!(value, DefaultValue::Null) => {
+                return Ok(Some(Expression::null()));
+            }
+            IncomingParam::Closure(_) => None,
+        }
+        .ok_or_else(|| KotlinHost::unsupported("default value for this parameter type"))?;
+        DefaultExpression::render(&ty, value, context).map(Some)
     }
 
     fn native_arguments(&self) -> &[Expression] {
@@ -652,6 +700,7 @@ struct NativeArgumentRender<'context> {
 impl NativeArgument {
     fn direct(expression: Expression) -> Self {
         Self {
+            owned_class: None,
             expressions: vec![expression],
             mutation: None,
             setup: Vec::new(),
@@ -662,6 +711,7 @@ impl NativeArgument {
     fn encoded(write: EncodedWrite, mutation: Option<ParameterMutation>) -> Self {
         let (setup, expressions, cleanup) = write.into_direct_parts();
         Self {
+            owned_class: None,
             expressions,
             mutation,
             setup,
@@ -971,9 +1021,23 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
         target: &'plan HandleTarget,
         _carrier: <Native as Surface>::HandleCarrier,
         presence: HandlePresence,
-        _receive: <IntoRust as Direction>::Receive,
+        receive: <IntoRust as Direction>::Receive,
     ) -> Self::Output {
         match target {
+            HandleTarget::Class(class) if receive == Receive::ByValue => {
+                let declaration = self.context.class(*class).ok_or_else(|| {
+                    KotlinHost::unsupported("missing class declaration for ownership transfer")
+                })?;
+                let local = self.source_name.generated("owned_handle")?;
+                let mut argument = NativeArgument::direct(Expression::identifier(local.clone()));
+                argument.owned_class = Some(OwnedClassArgument {
+                    parameter: self.name.clone(),
+                    local,
+                    release: Identifier::escape(declaration.release().name().as_str())?,
+                    presence,
+                });
+                Ok(argument)
+            }
             HandleTarget::Class(class) => ClassHandle::new(*class, presence, self.context)
                 .and_then(|handle| {
                     handle

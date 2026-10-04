@@ -1,5 +1,9 @@
+#[cfg(target_os = "macos")]
+use std::{env, fs, process::Command, time::UNIX_EPOCH};
+
 use boltffi_ast::PackageInfo;
 use boltffi_backend::{
+    Error,
     core::{GeneratedFile, GeneratedOutput},
     target::swift::{SwiftCustomMapping, SwiftHost},
 };
@@ -388,13 +392,16 @@ fn swift_target_renders_async_callback_return_shapes() {
 }
 
 #[test]
-fn swift_target_emits_strict_unexpected_callback_error_payload_helper() {
+fn swift_target_uses_the_native_unexpected_callback_error_encoder() {
     let rendered =
         rendered_swift_runtime(SourceFixture::one("callback/async_callback_return_shapes"));
 
-    assert!(rendered.contains("func boltffiEncodeUnexpectedCallbackError(_ error: Error)"));
-    assert!(rendered.contains("boltffiUnexpectedCallbackErrorMarker"));
-    assert!(rendered.contains("boltffiUnexpectedCallbackErrorVersion"));
+    assert!(
+        rendered.contains("func boltffiEncodeUnexpectedCallbackError(_ error: Error) -> FfiBuf_u8")
+    );
+    assert!(rendered.contains(
+        "boltffi_callback_error(message.bindMemory(to: UInt8.self).baseAddress!, UInt(message.count - 1))"
+    ));
 }
 
 #[test]
@@ -416,6 +423,22 @@ fn swift_target_renders_async_callback_handle_returns() {
 #[test]
 fn swift_target_renders_fallible_functions_as_throwing_functions() {
     insta::assert_snapshot!(rendered_fixture("exports/fallible_returns"));
+}
+
+#[test]
+fn swift_target_propagates_errors_through_unit_vector_calls() {
+    let rendered = rendered_fixture("exports/fallible_unit_vectors");
+
+    [
+        "_ = try ids.withUnsafeBufferPointer",
+        "_ = try weights.withUnsafeBufferPointer",
+        "_ = try boltffiPointsStorage.withUnsafeBytes",
+        "_ = try ids.withUnsafeMutableBufferPointer",
+    ]
+    .into_iter()
+    .for_each(|expected| assert!(rendered.contains(expected), "missing `{expected}`"));
+
+    insta::assert_snapshot!(rendered);
 }
 
 #[test]
@@ -533,6 +556,114 @@ fn swift_target_renders_custom_types_through_representations() {
 #[test]
 fn swift_target_renders_custom_type_defaults_through_representations() {
     insta::assert_snapshot!(rendered_fixture("records/custom_type_default"));
+}
+
+#[test]
+fn swift_target_renders_parameter_defaults() {
+    insta::assert_snapshot!(rendered_fixture("exports/parameter_defaults"));
+}
+
+#[test]
+fn swift_defaults_preserve_negative_zero_bits() {
+    let rendered = rendered_fixture("exports/parameter_defaults");
+
+    assert!(rendered.contains("value: Float = Float(bitPattern: 0x80000000)"));
+    assert!(rendered.contains("value: Double = Double(bitPattern: 0x8000000000000000)"));
+    assert!(rendered.contains("single: Float = Float(bitPattern: 0x80000000)"));
+    assert!(rendered.contains("double: Double = Double(bitPattern: 0x8000000000000000)"));
+}
+
+#[test]
+fn swift_defaults_use_mapped_custom_types() {
+    let host = SwiftHost::new("DemoFFI")
+        .expect("Swift host")
+        .custom_mapping("Email", SwiftCustomMapping::url_string("URL"))
+        .custom_mapping("Identifier", SwiftCustomMapping::uuid_string("UUID"));
+    let rendered = rendered_fixture_with_host("exports/parameter_defaults", host);
+
+    assert!(rendered.contains("email: URL = URL(string: \"mailto:ada@example.com\")!"));
+    assert!(rendered.contains("email: URL? = URL(string: \"mailto:ada@example.com\")!"));
+    assert!(rendered.contains("optionalEmail: URL? = nil"));
+    assert!(rendered.contains(
+        "identifier: UUID = UUID(uuidString: \"01234567-89ab-cdef-0123-456789abcdef\")!"
+    ));
+}
+
+#[test]
+fn swift_target_rejects_defaults_on_inout_parameters() {
+    let bindings = bindings(
+        r#"
+        #[export]
+        pub fn rename(#[boltffi::default("hello")] name: &mut String) {
+            name.push_str("!");
+        }
+        "#,
+    );
+    let error = SwiftHost::new("DemoFFI")
+        .expect("Swift host")
+        .into_target()
+        .expect("Swift target")
+        .render(&bindings)
+        .expect_err("Swift cannot default an inout parameter");
+
+    assert!(matches!(
+        error,
+        Error::UnsupportedTarget {
+            target: "swift",
+            shape: "default value for an inout parameter"
+        }
+    ));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn swift_parameter_defaults_compile_at_call_sites() {
+    let directory = env::temp_dir().join(format!(
+        "boltffi-swift-defaults-{}-{}",
+        std::process::id(),
+        UNIX_EPOCH.elapsed().expect("system clock").as_nanos()
+    ));
+    fs::create_dir_all(&directory).expect("create Swift compilation directory");
+    [
+        SwiftHost::new("DemoFFI").expect("Swift host"),
+        SwiftHost::new("DemoFFI")
+            .expect("Swift host")
+            .custom_mapping("Email", SwiftCustomMapping::url_string("URL"))
+            .custom_mapping("Identifier", SwiftCustomMapping::uuid_string("UUID")),
+    ]
+    .into_iter()
+    .for_each(|host| {
+        let output =
+            rendered_output_with_host(SourceFixture::one("exports/parameter_defaults"), host);
+        output.files().iter().for_each(|file| {
+            let path = directory.join(file.path().as_path());
+            fs::create_dir_all(path.parent().expect("generated file directory"))
+                .expect("create generated file directory");
+            fs::write(path, file.contents()).expect("write generated file");
+        });
+        fs::write(
+            directory.join("module.modulemap"),
+            "module DemoFFI { header \"boltffi.h\" export * }\n",
+        )
+        .expect("write C module map");
+        let compilation = Command::new("swiftc")
+            .args(["-typecheck", "-I"])
+            .arg(&directory)
+            .arg(directory.join(swift_file(&output).path().as_path()))
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/swift/default_arguments.swift"
+            ))
+            .output()
+            .expect("run Swift compiler");
+        assert!(
+            compilation.status.success(),
+            "generated Swift failed to compile:\n{}\n{}",
+            String::from_utf8_lossy(&compilation.stdout),
+            String::from_utf8_lossy(&compilation.stderr)
+        );
+    });
+    fs::remove_dir_all(directory).expect("remove Swift compilation directory");
 }
 
 #[test]

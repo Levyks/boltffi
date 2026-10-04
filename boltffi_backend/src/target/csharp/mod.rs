@@ -1,6 +1,7 @@
 //! C# target rendered through .NET P/Invoke over the C ABI bridge.
 
 mod codec;
+mod lexical;
 mod name_style;
 mod render;
 mod syntax;
@@ -33,6 +34,7 @@ pub use syntax::{ArgumentList, Expression, Identifier, Statement, Syntax, TypeFr
 #[non_exhaustive]
 pub struct CSharpHost {
     namespace: Option<Namespace>,
+    module_class: Option<Identifier>,
     library: Option<String>,
     custom_mappings: crate::core::CustomTypeMappingSet,
 }
@@ -46,6 +48,12 @@ impl CSharpHost {
     /// Selects the namespace used by generated C# source.
     pub fn namespace(mut self, namespace: impl AsRef<str>) -> Result<Self> {
         self.namespace = Some(Namespace::parse(namespace.as_ref())?);
+        Ok(self)
+    }
+
+    /// Selects the class containing generated free functions and constants.
+    pub fn module_class(mut self, name: impl AsRef<str>) -> Result<Self> {
+        self.module_class = Some(Identifier::escape(name.as_ref())?);
         Ok(self)
     }
 
@@ -81,6 +89,32 @@ impl CSharpHost {
         self.library
             .clone()
             .unwrap_or_else(|| Name::new(bindings.package().name()).snake())
+    }
+
+    fn module_class_for(&self, bindings: &Bindings<Native>) -> Result<Identifier> {
+        self.module_class
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| Name::new(bindings.package().name()).pascal())
+    }
+
+    fn validate_module_class(
+        &self,
+        bindings: &Bindings<Native>,
+        names: Vec<Identifier>,
+    ) -> Result<()> {
+        let module_class = self.module_class_for(bindings)?;
+        for name in names {
+            if name.as_str().trim_start_matches('@')
+                == module_class.as_str().trim_start_matches('@')
+            {
+                return Err(Error::CSharpModuleClassCollision {
+                    name: module_class.to_string(),
+                    declaration: format!("generated type `{name}`"),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -128,13 +162,14 @@ impl host::HostBackend for CSharpHost {
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::Record::from_declaration(
+        let record = render::Record::from_declaration(
             decl,
             self.namespace_for(context.bindings())?,
             bridge,
             context,
-        )?
-        .render()
+        )?;
+        self.validate_module_class(context.bindings(), record.namespace_type_names()?)?;
+        record.render()
     }
 
     fn enumeration(
@@ -143,13 +178,14 @@ impl host::HostBackend for CSharpHost {
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::Enumeration::from_declaration(
+        let enumeration = render::Enumeration::from_declaration(
             decl,
             self.namespace_for(context.bindings())?,
             bridge,
             context,
-        )?
-        .render()
+        )?;
+        self.validate_module_class(context.bindings(), enumeration.namespace_type_names()?)?;
+        enumeration.render()
     }
 
     fn function(
@@ -183,13 +219,14 @@ impl host::HostBackend for CSharpHost {
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::Callback::from_declaration(
+        let callback = render::Callback::from_declaration(
             decl,
             self.namespace_for(context.bindings())?,
             bridge,
             context,
-        )?
-        .render()
+        )?;
+        self.validate_module_class(context.bindings(), callback.namespace_type_names()?)?;
+        callback.render()
     }
 
     fn stream(
@@ -198,7 +235,9 @@ impl host::HostBackend for CSharpHost {
         bridge: &Self::Bridge,
         context: &RenderContext<Self::Surface>,
     ) -> Result<Emitted> {
-        render::Stream::from_declaration(decl, bridge, context)?.render()
+        let stream = render::Stream::from_declaration(decl, bridge, context)?;
+        self.validate_module_class(context.bindings(), stream.namespace_type_names()?)?;
+        stream.render()
     }
 
     fn constant(
@@ -238,7 +277,7 @@ impl host::HostBackend for CSharpHost {
         let namespace = self.namespace_for(bindings)?;
         render::Module::new(
             &namespace,
-            Name::new(bindings.package().name()).pascal()?,
+            self.module_class_for(bindings)?,
             Literal::string(&self.library_for(bindings)),
             Literal::string(bridge.support().buffer_from_bytes()?.name()),
         )
@@ -740,7 +779,7 @@ mod tests {
         assert!(source.contains("public static int Apply(global::System.Func<int, int> f"));
         assert!(source.contains("public static void Notify(global::System.Action<bool> f"));
         assert!(source.contains("global::System.Func<Mode, Mode> f"));
-        assert!(source.contains("GCHandle.Alloc(f)"));
+        assert!(source.contains("new BoltFFIOwnedClosure(f)"));
         assert!(source.contains("GCHandle.FromIntPtr(context).Target!"));
         assert!(source.contains("GCHandle.FromIntPtr(context).Free();"));
         assert!(output.diagnostics().is_empty());
@@ -993,12 +1032,8 @@ mod tests {
         assert!(source.contains(
             "public static readonly global::Demo.State DefaultState = new global::Demo.State.Idle();"
         ));
-        assert!(
-            source.contains("public static readonly nint NativeOffset = unchecked((nint)-7L);")
-        );
-        assert!(
-            source.contains("public static readonly nuint NativeLimit = unchecked((nuint)9UL);")
-        );
+        assert!(source.contains("public static readonly nint NativeOffset = -7;"));
+        assert!(source.contains("public static readonly nuint NativeLimit = 9U;"));
         assert!(source.contains("public static byte[] Magic"));
         assert!(source.contains("get"));
         assert!(source.contains("NativeMethods.NativeMagic"));
@@ -1066,13 +1101,13 @@ mod tests {
         let palette = file(&output, "Palette.cs");
 
         assert!(source.contains("public static Color Black"));
-        assert!(source.contains("public const byte ChannelCount = 4;"));
+        assert!(source.contains("public const byte ChannelCount = (byte)4;"));
         assert!(!mode.contains("Default = Fast"));
         assert!(mode.contains("public static class ModeConstants"));
         assert!(mode.contains("public const global::Demo.Mode Default = global::Demo.Mode.Fast;"));
         assert!(mode.contains("public static Mode Fallback"));
-        assert!(mode.contains("public const byte VariantCount = 2;"));
-        assert!(palette.contains("public const byte MaxColors = 16;"));
+        assert!(mode.contains("public const byte VariantCount = (byte)2;"));
+        assert!(palette.contains("public const byte MaxColors = (byte)16;"));
         assert!(!palette.contains("UnexportedAssociated"));
         assert!(output.diagnostics().is_empty());
     }

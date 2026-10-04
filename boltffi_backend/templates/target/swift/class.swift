@@ -1,12 +1,22 @@
 {{ class.documentation() }}public final class {{ class.name() }} {
-    @usableFromInline let handle: {{ class.handle_type() }}
+    private var __boltffiHandle: UInt64 = 0
+
+    @usableFromInline var handle: {{ class.handle_type() }} {
+        get { withUnsafeMutablePointer(to: &__boltffiHandle) { {{ class.handle_type() }}(boltffi_atomic_u64_load($0)) } }
+        set { __boltffiHandle = UInt64(newValue) }
+    }
 
     @usableFromInline init(handle: {{ class.handle_type() }}) {
         self.handle = handle
     }
 
+    @usableFromInline func __boltffiTakeHandle() -> {{ class.handle_type() }} {
+        withUnsafeMutablePointer(to: &__boltffiHandle) { {{ class.handle_type() }}(boltffi_atomic_u64_exchange($0, 0)) }
+    }
+
     deinit {
-        {{ class.release() }}(handle)
+        let handle = __boltffiTakeHandle()
+        if handle != 0 { {{ class.release() }}(handle) }
     }
 {%- for constant in constants %}
 
@@ -14,8 +24,8 @@
 {%- endfor %}
 {%- for initializer in class.initializers() %}
 
-{{ initializer.documentation() }}{% if initializer.factory() %}    public static func {{ initializer.name() }}({{ initializer.parameter_list() }}){{ initializer.throwing_keyword() }} -> {{ initializer.factory_return() }} {
-{% else %}    public init({{ initializer.parameter_list() }}){{ initializer.throwing_keyword() }} {
+{{ initializer.documentation() }}{% if initializer.factory() %}    public static func {{ initializer.name() }}({{ initializer.parameter_list() }}){{ initializer.effect_keywords() }} -> {{ initializer.factory_return() }} {
+{% else %}    public init({{ initializer.parameter_list() }}){{ initializer.effect_keywords() }} {
 {% endif -%}
 {{ initializer.body() }}
     }

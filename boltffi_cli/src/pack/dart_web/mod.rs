@@ -45,6 +45,10 @@ const RUNTIME_SOURCES: &[(&str, &str)] = &[
         "wire.js",
         include_str!("../../../vendor/runtime-js/wire.js"),
     ),
+    (
+        "wasm-bindgen.js",
+        include_str!("../../../vendor/runtime-js/wasm-bindgen.js"),
+    ),
 ];
 
 pub(crate) fn pack_dart_web(
@@ -167,20 +171,18 @@ fn vendor_web_assets(config: &Config, output_directory: &Path, reporter: &Report
         fs::copy(&from, &to).map_err(|source| CliError::CopyFailed { from, to, source })?;
     }
 
-    let bindings_file_name = format!("{wasm_module_name}.js");
-    let bindings_source = fs::read_to_string(npm_output_directory.join(&bindings_file_name))
-        .map_err(|source| CliError::ReadFailed {
-            path: npm_output_directory.join(&bindings_file_name),
-            source,
-        })?;
     let runtime_import = format!("\"{}\"", config.wasm_runtime_package());
-    let rewritten_bindings =
-        bindings_source.replace(&runtime_import, "\"./boltffi_runtime/index.js\"");
-    let bindings_dest = web_directory.join(&bindings_file_name);
-    fs::write(&bindings_dest, rewritten_bindings).map_err(|source| CliError::WriteFailed {
-        path: bindings_dest,
-        source,
-    })?;
+    for file_name in [
+        format!("{wasm_module_name}.js"),
+        format!("{wasm_module_name}_imports.js"),
+    ] {
+        let path = npm_output_directory.join(&file_name);
+        let source =
+            fs::read_to_string(&path).map_err(|source| CliError::ReadFailed { path, source })?;
+        let rewritten = source.replace(&runtime_import, "\"./boltffi_runtime/index.js\"");
+        let path = web_directory.join(&file_name);
+        fs::write(&path, rewritten).map_err(|source| CliError::WriteFailed { path, source })?;
+    }
 
     let runtime_directory = web_directory.join("boltffi_runtime");
     fs::create_dir_all(&runtime_directory).map_err(|source| CliError::CreateDirectoryFailed {
@@ -215,10 +217,40 @@ fn render_loader_script(namespace: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{pack_dart_web, render_loader_script};
+    use super::{pack_dart_web, render_loader_script, vendor_web_assets};
     use crate::commands::pack::{PackDartWebOptions, PackExecutionOptions};
     use crate::config::Config;
     use crate::reporter::{Reporter, Verbosity};
+
+    #[test]
+    fn vendors_the_imports_module_and_its_runtime_dependencies() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let npm_output = directory.path().join("npm");
+        let output = directory.path().join("dart");
+        std::fs::create_dir_all(&npm_output).expect("create npm output");
+        let mut config: Config =
+            toml::from_str("[package]\nname = \"demo\"\n").expect("parse config");
+        config.targets.wasm.npm.output = Some(npm_output.clone());
+        for (name, source) in [
+            ("demo_bg.wasm", ""),
+            ("web.js", "export * from './demo.js';"),
+            ("demo.js", "import './demo_imports.js';"),
+            (
+                "demo_imports.js",
+                "import { wasmBindgenImports } from \"@boltffi/runtime\";",
+            ),
+        ] {
+            std::fs::write(npm_output.join(name), source).expect("write fixture");
+        }
+
+        vendor_web_assets(&config, &output, &Reporter::new(Verbosity::Quiet))
+            .expect("vendor assets");
+
+        let imports =
+            std::fs::read_to_string(output.join("web/demo_imports.js")).expect("vendored imports");
+        assert!(imports.contains("\"./boltffi_runtime/index.js\""));
+        assert!(output.join("web/boltffi_runtime/wasm-bindgen.js").is_file());
+    }
 
     #[test]
     fn loader_publishes_the_namespace_and_ready_globals() {

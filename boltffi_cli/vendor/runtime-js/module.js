@@ -47,6 +47,8 @@ export class AsyncFutureManager {
         this._module = module;
     }
     wake(handle) {
+        if (this.failure)
+            return;
         this.wokenHandles.add(handle);
         if (!this.drainScheduled) {
             this.drainScheduled = true;
@@ -65,36 +67,47 @@ export class AsyncFutureManager {
         const entry = this.pendingFutures.get(handle);
         if (!entry)
             return;
-        const status = entry.pollSync(handle);
-        if (status === 1 /* WasmPollStatus.Ready */) {
-            this.pendingFutures.delete(handle);
-            entry.resolve(handle);
+        try {
+            const status = entry.pollSync(handle);
+            if (this.failure)
+                return;
+            if (status === 1 /* WasmPollStatus.Ready */) {
+                this.pendingFutures.delete(handle);
+                entry.resolve(handle);
+            }
+            else if (status < 0) {
+                const error = this.extractAsyncError(handle, status, entry.panicMessage, entry.free);
+                this.pendingFutures.delete(handle);
+                entry.reject(error);
+            }
         }
-        else if (status < 0) {
-            this.pendingFutures.delete(handle);
-            entry.reject(this.extractAsyncError(handle, status, entry.panicMessage, entry.free));
+        catch (error) {
+            this.fail(error);
         }
     }
-    // Cancelling only marks the future's state; it doesn't itself trigger a
-    // wake, so this forces a repoll rather than waiting on one that may never
-    // come. Deferred rather than immediate: `cancel` can be reached from an
-    // `abort` event fired synchronously by a Rust future's own poll (e.g. one
-    // whose poll implementation calls a JS callback that in turn aborts its
-    // own signal) -- repolling right here would reenter the Rust future while
-    // it's still on the stack. A no-op if `handle` already settled by the
-    // time the deferred repoll runs.
+    // Cancelling only marks the future's state, so this forces a repoll --
+    // deferred rather than immediate, since `cancel` can fire synchronously
+    // from within a Rust future's own poll (e.g. a callback that aborts its
+    // own signal), and repolling right here would reenter it mid-poll.
     cancel(handle) {
         const entry = this.pendingFutures.get(handle);
         if (!entry)
             return;
-        entry.cancel(handle);
-        queueMicrotask(() => this.repollHandle(handle));
+        try {
+            entry.cancel(handle);
+            if (!this.failure)
+                queueMicrotask(() => this.repollHandle(handle));
+        }
+        catch (error) {
+            this.fail(error);
+        }
     }
-    // dart_web's counterpart to a real AbortController: constructing one from
-    // Dart costs a JS interop round trip on every call, so dart_web instead
-    // passes pollAsync a plain int (`cancelId`) it generated itself -- free to
-    // marshal, unlike a JS object -- and cancels through this directly instead
-    // of via `signal`.
+    // Lower-level counterpart to `options.signal` for callers that can pass a
+    // plain int but not cheaply build a real AbortController (dart-web / KMP).
+    // `callId` must be unique among in-flight calls: reusing an id while the
+    // first call is still pending overwrites the mapping, and settling either
+    // call removes the key for both. Prefer an autoincrement or thread-local
+    // counter when the id is produced by another language's codegen.
     cancelById(callId) {
         const handle = this.cancelIds.get(callId);
         if (handle === undefined)
@@ -117,28 +130,55 @@ export class AsyncFutureManager {
         return new Error(`Unknown poll status: ${status}`);
     }
     pollAsync(handle, pollSync, panicMessage, free, cancel, signal, cancelId) {
-        // Poll before registering. An async fn that never yields — the common
-        // case, and the whole of `async_add` — was paying a Map insert, a Map
-        // delete, a five-field entry object and a `new Promise` executor to
-        // discover on the very next line that it was already done. `wake()` only
-        // adds to a set and queues a microtask, so a wake raised from inside
-        // `pollSync` cannot observe the window where the entry is absent.
-        const status = pollSync(handle);
-        if (status === 1 /* WasmPollStatus.Ready */) {
-            return Promise.resolve(handle);
+        if (this.failure)
+            return Promise.reject(this.failure);
+        try {
+            // Poll before registering. An async fn that never yields — the common
+            // case, and the whole of `async_add` — was paying a Map insert, a Map
+            // delete, a five-field entry object and a `new Promise` executor to
+            // discover on the very next line that it was already done. `wake()` only
+            // adds to a set and queues a microtask, so a wake raised from inside
+            // `pollSync` cannot observe the window where the entry is absent.
+            const status = pollSync(handle);
+            if (this.failure)
+                return Promise.reject(this.failure);
+            if (status === 1 /* WasmPollStatus.Ready */) {
+                return Promise.resolve(handle);
+            }
+            if (status < 0) {
+                return Promise.reject(this.extractAsyncError(handle, status, panicMessage, free));
+            }
+            // The signal may have aborted before this poll returned, or reentrantly
+            // during it -- AbortSignal never replays a past event, so a listener
+            // registered only below would miss it and leave the future running.
+            if (signal?.aborted) {
+                cancel(handle);
+                if (this.failure)
+                    return Promise.reject(this.failure);
+                const cancelledStatus = pollSync(handle);
+                if (this.failure)
+                    return Promise.reject(this.failure);
+                return Promise.reject(this.extractAsyncError(handle, cancelledStatus, panicMessage, free));
+            }
         }
-        if (status < 0) {
-            return Promise.reject(this.extractAsyncError(handle, status, panicMessage, free));
-        }
-        // The signal may have aborted before this poll returned, or reentrantly
-        // during it -- AbortSignal never replays a past event, so a listener
-        // registered only below would miss it and leave the future running.
-        if (signal?.aborted) {
-            cancel(handle);
-            const cancelledStatus = pollSync(handle);
-            return Promise.reject(this.extractAsyncError(handle, cancelledStatus, panicMessage, free));
+        catch (error) {
+            return Promise.reject(this.fail(error));
         }
         return new Promise((resolve, reject) => {
+            // Most suspended calls never cancel. Skip the three extra closures and
+            // the abort listener setup unless the caller asked for cancellation.
+            const wantsCancel = signal !== undefined || cancelId !== undefined;
+            if (!wantsCancel) {
+                this.pendingFutures.set(handle, {
+                    resolve,
+                    reject,
+                    pollSync,
+                    panicMessage,
+                    free,
+                    cancel,
+                });
+                return;
+            }
             let onAbort;
             if (signal) {
                 onAbort = () => this.cancel(handle);
@@ -171,6 +211,17 @@ export class AsyncFutureManager {
                 cancel,
             });
         });
+    }
+    fail(reason) {
+        if (this.failure)
+            return this.failure;
+        const error = reason instanceof Error ? reason : new Error(String(reason));
+        this.failure = error;
+        this.pendingFutures.forEach((entry) => entry.reject(error));
+        this.pendingFutures.clear();
+        this.cancelIds.clear();
+        this.wokenHandles.clear();
+        return error;
     }
 }
 // 3: byte buffers returned from an exported callable cross unframed. Checked
@@ -486,6 +537,10 @@ export class BoltFFIModule {
     borrowBoolArray(ptr, len) {
         return toBoolArray(this.getBytes().subarray(ptr, ptr + len));
     }
+    /** Lends a `&[u8]` / `&mut [u8]` parameter buffer without copying it. */
+    borrowU8Array(ptr, len) {
+        return this.getBytes().subarray(ptr, ptr + len);
+    }
     borrowI8Array(ptr, len) {
         return this.getI8().subarray(ptr, ptr + len);
     }
@@ -516,6 +571,12 @@ export class BoltFFIModule {
     allocU8Array(value) {
         const len = value.length;
         const ptr = this.exports.boltffi_wasm_alloc(len);
+        // A failed allocation returns zero, and copying there would write the
+        // payload over the start of linear memory and then hand the callee a
+        // pointer it reads as empty. Neither is recoverable, and neither is loud.
+        if (ptr === 0 && len > 0) {
+            throw new Error("Failed to allocate memory for a byte-slice parameter");
+        }
         this.getBytes().set(value, ptr);
         return { ptr, len, allocationSize: len };
     }
@@ -626,6 +687,11 @@ export class BoltFFIModule {
     copyPrimitiveBufferInto(allocation, target, elementType) {
         const { ptr, len } = allocation;
         switch (elementType) {
+            // `u8` only reaches this path from a `&mut [u8]` parameter. Every other
+            // shape of bytes crosses as a byte buffer, which has no way back.
+            case "u8":
+                target.set(this.getBytes().subarray(ptr, ptr + len));
+                return;
             case "i8":
                 target.set(this.getI8().subarray(ptr, ptr + len));
                 return;
@@ -1428,62 +1494,70 @@ export class BoltFFIModule {
         }
     }
 }
-function createUnimplementedImport(importName) {
-    return () => {
-        throw new Error(`Unimplemented wasm import: ${importName}`);
-    };
-}
-function createImportModuleProxy(moduleName) {
-    return new Proxy({}, {
-        get: (_target, propertyName) => createUnimplementedImport(`${moduleName}.${String(propertyName)}`),
-    });
-}
 export async function instantiateBoltFFI(source, expectedVersion, imports) {
+    imports?.wasmBindgen?.acquire();
     const asyncManager = new AsyncFutureManager();
     const streamManager = new StreamPollManager();
     const importObject = {
+        ...imports?.wasmBindgen?.imports,
         env: {
             __boltffi_wake: (handle) => asyncManager.wake(handle),
             __boltffi_stream_wake: (handle, result) => streamManager.wake(handle, result),
             ...(imports?.env ?? {}),
         },
-        __wbindgen_placeholder__: createImportModuleProxy("__wbindgen_placeholder__"),
-        __wbindgen_externref_xform__: createImportModuleProxy("__wbindgen_externref_xform__"),
     };
-    let instance;
-    if (source instanceof WebAssembly.Module) {
-        instance = await WebAssembly.instantiate(source, importObject);
+    try {
+        let instance;
+        if (source instanceof WebAssembly.Module) {
+            instance = await WebAssembly.instantiate(source, importObject);
+        }
+        else {
+            const wasmSource = source instanceof Response ? await source.arrayBuffer() : source;
+            ({ instance } = await WebAssembly.instantiate(wasmSource, importObject));
+        }
+        const exports = instance.exports;
+        const actualVersion = exports.boltffi_wasm_abi_version();
+        if (actualVersion !== expectedVersion) {
+            throw new Error(`BoltFFI ABI version mismatch: expected ${expectedVersion}, got ${actualVersion}`);
+        }
+        const module = new BoltFFIModule(instance, asyncManager, streamManager);
+        imports?.bind?.(module);
+        imports?.wasmBindgen?.initialize(instance.exports);
+        return module;
     }
-    else {
-        const wasmSource = source instanceof Response ? await source.arrayBuffer() : source;
-        ({ instance } = await WebAssembly.instantiate(wasmSource, importObject));
+    catch (error) {
+        imports?.wasmBindgen?.release();
+        throw error;
     }
-    const module = new BoltFFIModule(instance, asyncManager, streamManager);
-    const actualVersion = module.exports.boltffi_wasm_abi_version();
-    if (actualVersion !== expectedVersion) {
-        throw new Error(`BoltFFI ABI version mismatch: expected ${expectedVersion}, got ${actualVersion}`);
-    }
-    return module;
 }
 export function instantiateBoltFFISync(source, expectedVersion, imports) {
+    imports?.wasmBindgen?.acquire();
     const asyncManager = new AsyncFutureManager();
     const streamManager = new StreamPollManager();
     const importObject = {
+        ...imports?.wasmBindgen?.imports,
         env: {
             __boltffi_wake: (handle) => asyncManager.wake(handle),
             __boltffi_stream_wake: (handle, result) => streamManager.wake(handle, result),
             ...(imports?.env ?? {}),
         },
-        __wbindgen_placeholder__: createImportModuleProxy("__wbindgen_placeholder__"),
-        __wbindgen_externref_xform__: createImportModuleProxy("__wbindgen_externref_xform__"),
     };
-    const wasmModule = new WebAssembly.Module(source);
-    const instance = new WebAssembly.Instance(wasmModule, importObject);
-    const module = new BoltFFIModule(instance, asyncManager, streamManager);
-    const actualVersion = module.exports.boltffi_wasm_abi_version();
-    if (actualVersion !== expectedVersion) {
-        throw new Error(`BoltFFI ABI version mismatch: expected ${expectedVersion}, got ${actualVersion}`);
+    try {
+        const wasmModule = new WebAssembly.Module(source);
+        const instance = new WebAssembly.Instance(wasmModule, importObject);
+        const exports = instance.exports;
+        const actualVersion = exports.boltffi_wasm_abi_version();
+        if (actualVersion !== expectedVersion) {
+            throw new Error(`BoltFFI ABI version mismatch: expected ${expectedVersion}, got ${actualVersion}`);
+        }
+        const module = new BoltFFIModule(instance, asyncManager, streamManager);
+        imports?.bind?.(module);
+        imports?.wasmBindgen?.initialize(instance.exports);
+        return module;
     }
-    return module;
+    catch (error) {
+        imports?.wasmBindgen?.release();
+        throw error;
+    }
 }
 //# sourceMappingURL=module.js.map

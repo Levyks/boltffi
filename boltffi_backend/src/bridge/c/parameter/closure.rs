@@ -1,8 +1,8 @@
 use crate::core::{Error, Result};
 
-use boltffi_binding::ClosureSignature;
+use boltffi_binding::{ClosureSignature, HandlePresence};
 
-use super::super::{C_BRIDGE_CONTRACT, Identifier};
+use super::super::{C_BRIDGE_CONTRACT, Identifier, ReturnChannel};
 use super::{Parameter, ParameterGroup, ParameterIndex};
 
 /// C ABI parameters that carry one closure argument.
@@ -11,14 +11,24 @@ use super::{Parameter, ParameterGroup, ParameterIndex};
 pub struct ClosureParameter {
     name: Identifier,
     signature: ClosureSignature,
+    presence: HandlePresence,
     call: ParameterIndex,
     context: ParameterIndex,
     release: ParameterIndex,
     parameters: Vec<Parameter>,
+    return_channel: ReturnChannel,
     parameter_groups: Vec<ParameterGroup>,
 }
 
 impl ClosureParameter {
+    pub(crate) fn presence(&self) -> HandlePresence {
+        self.presence
+    }
+
+    pub(crate) fn return_channel(&self) -> ReturnChannel {
+        self.return_channel
+    }
+
     /// Returns the source parameter name.
     pub fn name(&self) -> &str {
         self.name.as_str()
@@ -59,7 +69,9 @@ impl ClosureParameter {
         call: usize,
         name: &Identifier,
         signature: &ClosureSignature,
+        presence: HandlePresence,
         parameters: &[Parameter],
+        return_channel: ReturnChannel,
     ) -> Result<Self> {
         let context = call + 1;
         let release = call + 2;
@@ -86,10 +98,12 @@ impl ClosureParameter {
         Ok(Self {
             name: name.clone(),
             signature: signature.clone(),
+            presence,
             call: ParameterIndex::new(call),
             context: ParameterIndex::new(context),
             release: ParameterIndex::new(release),
             parameters: parameters.to_vec(),
+            return_channel,
             parameter_groups: ParameterGroup::from_params(parameters)?,
         })
     }

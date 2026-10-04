@@ -706,7 +706,17 @@ mod tests {
         // Zero-parameter async free function: the token is the sole
         // parameter, no leading ", " from an empty parameter list.
         assert!(source.contains("ping({ $$BoltCancellationToken? cancellationToken }) async"));
-        assert!(source.contains("null, __boltffiCallId?.toJS)"));
+        assert!(
+            source.contains("_boltffiExtern_ping(_boltffiCancellationOptions(__boltffiCallId))")
+        );
+        assert!(source.contains("external JSPromise<JSAny?> _boltffiExtern_ping(JSAny? options);"));
+        assert!(source.contains("'cancelId'.toJS, callId.toJS"));
+        assert!(source.contains(
+            "callMethodVarArgs('connect'.toJS, [_boltffiCancellationOptions(__boltffiCallId)])"
+        ));
+        assert!(source.contains(
+            "callMethodVarArgs('tick'.toJS, [_boltffiCancellationOptions(__boltffiCallId)])"
+        ));
         assert!(source.contains("if (cancellationToken?.isCancelled ?? false)"));
         assert!(source.contains("final __boltffiCallId = cancellationToken?._registerCall();"));
         assert!(source.contains("cancellationToken!._unregisterCall(__boltffiCallId);"));

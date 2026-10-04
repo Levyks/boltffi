@@ -76,6 +76,19 @@ class PrimitiveVecsTests(DemoTestCase):
         self.demo_case("case:primitives.vecs.string.should_report_utf8_byte_lengths")
         self.assertEqual(demo.vec_string_lengths(["hi", "café"]), [2, 5])
 
+    def test_echo_vec_bytes(self) -> None:
+        self.demo_case("case:primitives.vecs.bytes.should_roundtrip_values")
+        self.assertEqual(
+            demo.echo_vec_bytes([b"\x00\xff", b"", bytes(range(256))]),
+            [b"\x00\xff", b"", bytes(range(256))],
+        )
+        self.assertEqual(demo.echo_vec_bytes([]), [])
+        self.demo_case("case:primitives.vecs.bytes.should_report_lengths")
+        self.assertEqual(
+            demo.vec_bytes_lengths([b"ab", bytearray(b"xyz"), memoryview(b"q")]),
+            [2, 3, 1],
+        )
+
     def test_nested_vecs(self) -> None:
         self.demo_case("case:primitives.vecs.nested_i32.should_roundtrip_values")
         self.assertEqual(demo.echo_vec_vec_i32([[1, 2], [], [-3]]), [[1, 2], [], [-3]])

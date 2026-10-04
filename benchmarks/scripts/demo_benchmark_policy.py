@@ -97,7 +97,8 @@ BENCHMARK_FAMILIES: tuple[BenchmarkFamily, ...] = (
             "make_bytes",
             "reverse_bytes",
             "generate_bytes",
-        ),
+        )
+        + _fns("primitives::vecs", "echo_vec_bytes", "vec_bytes_lengths"),
         represented_exports=_fns("primitives::vecs", "echo_vec_u8"),
     ),
     BenchmarkFamily(

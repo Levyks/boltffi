@@ -330,7 +330,10 @@ final class RustSwiftSurfaceContractTests: DemoTestCase {
             return nil
         }
 
+        // a parameter attribute such as `#[boltffi::default(10)]` is not a
+        // label, and its `::` would otherwise match as one
         return parameterList
+            .replacingOccurrences(of: #"#\[[^\]]*\]"#, with: "", options: .regularExpression)
             .captures(pattern: #"([A-Za-z0-9_]+)\s*:"#)
             .compactMap { $0.first }
             .first(where: { $0 != "self" })
@@ -554,7 +557,9 @@ private let typeMemberCoverageGaps: Set<String> = [
 
 private let featureScopedRustFiles: Set<String> = [
     "callbacks/csharp_closures.rs",
-    "classes/async_factory.rs"
+    "classes/async_factory.rs",
+    "records/mutable.rs",
+    "wasm_interop.rs"
 ]
 
 private func typeMemberCoverageKey(_ rustTypeMember: RustTypeMember) -> String {
@@ -567,18 +572,22 @@ private let rustToSwiftCoverageFile: [String: String] = [
     "bytes/mod.rs": "bytes/BytesTests.swift",
     "callbacks/async_traits.rs": "callbacks/AsyncTraitsTests.swift",
     "callbacks/closures.rs": "callbacks/ClosuresTests.swift",
+    "callbacks/errors.rs": "callbacks/CallbackErrorTests.swift",
     "callbacks/sync_traits.rs": "callbacks/SyncTraitsTests.swift",
+    "callbacks/class_handles.rs": "callbacks/ClassHandlesTests.swift",
     "classes/async_methods.rs": "classes/AsyncMethodsTests.swift",
     "classes/borrowed.rs": "classes/BorrowedTests.swift",
     "classes/constructor_matrix.rs": "classes/ConstructorCoverageMatrixTests.swift",
     "classes/constructors.rs": "classes/ConstructorsTests.swift",
     "classes/methods.rs": "classes/MethodsTests.swift",
+    "classes/ownership.rs": "classes/OwnershipTests.swift",
     "classes/static_methods.rs": "classes/StaticMethodsTests.swift",
     "classes/streams.rs": "classes/StreamsTests.swift",
     "classes/thread_safe.rs": "classes/ThreadSafeTests.swift",
     "classes/unsafe_single_threaded.rs": "classes/UnsafeSingleThreadedTests.swift",
     "collections/mod.rs": "collections/CollectionsTests.swift",
     "custom_types/mod.rs": "custom_types/CustomTypesTests.swift",
+    "custom_types/length.rs": "custom_types/CustomTypesTests.swift",
     "enums/c_style.rs": "enums/CStyleEnumsTests.swift",
     "enums/complex_variants.rs": "enums/ComplexVariantsEnumsTests.swift",
     "enums/data_enum.rs": "enums/DataEnumTests.swift",
@@ -586,6 +595,7 @@ private let rustToSwiftCoverageFile: [String: String] = [
     "multicrate/mod.rs": "multicrate/MultiCrateTests.swift",
     "options/complex.rs": "options/ComplexOptionsTests.swift",
     "options/primitives.rs": "options/PrimitivesOptionsTests.swift",
+    "primitives/default_arguments.rs": "primitives/DefaultArgumentsTests.swift",
     "primitives/scalars.rs": "primitives/ScalarsTests.swift",
     "primitives/strings.rs": "primitives/StringsTests.swift",
     "primitives/vecs.rs": "primitives/VecsTests.swift",

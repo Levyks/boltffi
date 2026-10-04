@@ -11,6 +11,7 @@ csharp_dir="$repo_root/examples/platforms/csharp"
 wasm_dir="$repo_root/examples/platforms/wasm"
 python_dir="$repo_root/examples/platforms/python"
 dart_dir="$repo_root/examples/platforms/dart"
+c_dir="$repo_root/examples/platforms/c"
 workspace_manifest="$repo_root/Cargo.toml"
 
 selected_platforms=()
@@ -79,17 +80,17 @@ pack_host_dart() {
     local overlay
     overlay="$(mktemp "${TMPDIR:-/tmp}/boltffi-dart-host.toml.XXXXXX")"
     printf '[targets.dart]\nnative_targets = ["%s"]\n' "$(host_dart_native_target)" >"$overlay"
-    run_boltffi --overlay "$overlay" pack dart --release
+    run_boltffi --cargo-arg=--features --cargo-arg=async-initializers --overlay "$overlay" pack dart --release
     rm -f "$overlay"
 }
 
 host_default_platforms() {
     case "$(uname -s)" in
         Darwin)
-            printf '%s\n' apple kotlin java csharp wasm python dart
+            printf '%s\n' apple kotlin java csharp wasm python dart c
             ;;
         Linux|MINGW*|MSYS*|CYGWIN*)
-            printf '%s\n' java csharp wasm python dart
+            printf '%s\n' java csharp wasm python dart c
             ;;
         *)
             printf 'unsupported host for demo verification: %s\n' "$(uname -s)" >&2
@@ -147,7 +148,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             printf 'Unknown argument: %s\n' "$1" >&2
-            printf 'Usage: %s [--platform <apple|kotlin|java|csharp|wasm|python|dart>] [--python <interpreter>] [--host-defaults]\n' "$0" >&2
+            printf 'Usage: %s [--platform <apple|kotlin|java|csharp|wasm|python|dart|c>] [--python <interpreter>] [--host-defaults]\n' "$0" >&2
             exit 2
             ;;
     esac
@@ -162,7 +163,7 @@ prepare_selected_platforms
 for selected_platform in "${selected_platforms[@]}"; do
     case "$selected_platform" in
         apple)
-            run_step "pack apple" run_boltffi pack apple --release
+            run_step "pack apple" run_boltffi --cargo-arg=--features --cargo-arg=async-initializers pack apple --release
             run_step "swift test" swift test --package-path "$apple_dir"
             run_step "xcodebuild xcframework modulemap smoke" bash "$apple_dir/verify-xcframework-modulemap-collision.sh"
             run_step "xcodebuild static library symbolication" bash "$apple_dir/verify-static-library-symbolication.sh"
@@ -171,28 +172,32 @@ for selected_platform in "${selected_platforms[@]}"; do
             run_step "kotlin test" gradle -p "$kotlin_dir" test
             ;;
         java)
-            run_step "pack java" run_boltffi pack java
+            run_step "pack java" run_boltffi --cargo-arg=--features --cargo-arg=async-initializers pack java
             run_step "java demo" "$java_dir/test-demo.sh" --auto
             ;;
         csharp)
             run_step "csharp demo" "$csharp_dir/test-demo.sh"
             ;;
         wasm)
-            run_step "pack wasm" run_boltffi pack wasm
+            run_step "prepare wasm demo" "$wasm_dir/test-demo.sh" --prepare
+            run_step "pack wasm" run_boltffi --cargo-arg=--features --cargo-arg=wasm-interop pack wasm
             run_step "wasm demo" "$wasm_dir/test-demo.sh"
             ;;
         python)
             if [[ -n "$python_interpreter" ]]; then
-                run_step "pack python" run_boltffi pack python --release --python "$python_interpreter"
+                run_step "pack python" run_boltffi --cargo-arg=--features --cargo-arg=async-initializers pack python --release --python "$python_interpreter"
                 run_step "python demo" "$python_dir/test-demo.sh" --python "$python_interpreter"
             else
-                run_step "pack python" run_boltffi pack python --release
+                run_step "pack python" run_boltffi --cargo-arg=--features --cargo-arg=async-initializers pack python --release
                 run_step "python demo" "$python_dir/test-demo.sh"
             fi
             ;;
         dart)
             run_step "pack dart" pack_host_dart
             run_step "dart demo" "$dart_dir/test-demo.sh"
+            ;;
+        c)
+            run_step "c demo" "$c_dir/test-demo.sh"
             ;;
         *)
             printf 'Unsupported demo platform: %s\n' "$selected_platform" >&2

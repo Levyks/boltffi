@@ -9,10 +9,10 @@ use boltffi_ast::FnTraitKind;
 
 use crate::{
     AsyncProtocolIntrospect, BindingError, BindingErrorKind, BufferShapeRules, BuiltinType,
-    CallableScope, CanonicalName, ClosureRegistrationIntrospect, ClosureSignature, DeclarationId,
-    DirectValueType, DirectVectorElementType, Direction, ElementMeta, ForeignBody, HandlePresence,
-    HandleTarget, IntegerRepr, IntoRust, NativeSymbol, OutOfRust, Primitive, RustBody, Surface,
-    TypeRef,
+    CallableScope, CanonicalName, ClassId, ClosureRegistrationIntrospect, ClosureSignature,
+    DeclarationId, DirectValueType, DirectVectorElementType, Direction, ElementMeta, ForeignBody,
+    HandlePresence, HandleTarget, IntegerRepr, IntoRust, NativeSymbol, OutOfRust, Primitive,
+    RustBody, Surface, TypeRef,
 };
 
 /// One call shape ready to be turned into target code.
@@ -309,6 +309,17 @@ impl<S: Surface> OutgoingParam<S> {
         match self {
             Self::Value(plan) => Some(plan),
             Self::Closure(_) => None,
+        }
+    }
+
+    /// Returns the class whose ownership this parameter transfers, if any.
+    pub fn class_handle(&self) -> Option<ClassId> {
+        match self {
+            Self::Value(ParamPlan::Handle {
+                target: HandleTarget::Class(class),
+                ..
+            }) => Some(*class),
+            _ => None,
         }
     }
 
@@ -970,6 +981,43 @@ impl<S: Surface, D: Direction> ParamPlan<S, D> {
             } => renderer.handle(target, *carrier, *presence, *receive),
             Self::ScalarOption { primitive } => renderer.scalar_option(*primitive),
             Self::DirectVec { element, receive } => renderer.direct_vector(element, *receive),
+        }
+    }
+
+    /// The foreign-side value type this plan carries, as the [`TypeRef`] a
+    /// default-value renderer reads.
+    ///
+    /// `None` for a stream handle, which has no value type of its own.
+    pub fn value_type(&self) -> Option<TypeRef> {
+        match self {
+            Self::Direct { ty, .. } => Some(match ty {
+                DirectValueType::Primitive(primitive) => TypeRef::Primitive(*primitive),
+                DirectValueType::Record(id) => TypeRef::Record(*id),
+                DirectValueType::Enum(id) => TypeRef::Enum(*id),
+            }),
+            Self::Encoded { ty, .. } => Some(ty.clone()),
+            Self::Handle {
+                target, presence, ..
+            } => {
+                let ty = match target {
+                    HandleTarget::Class(id) => TypeRef::Class(*id),
+                    HandleTarget::Callback(id) => TypeRef::Callback(*id),
+                    HandleTarget::Stream(_) => return None,
+                };
+                Some(match presence {
+                    HandlePresence::Required => ty,
+                    HandlePresence::Nullable => TypeRef::Optional(Box::new(ty)),
+                })
+            }
+            Self::ScalarOption { primitive } => {
+                Some(TypeRef::Optional(Box::new(TypeRef::Primitive(*primitive))))
+            }
+            Self::DirectVec { element, .. } => Some(TypeRef::Sequence(Box::new(match element {
+                DirectVectorElementType::Primitive(primitive) => {
+                    TypeRef::Primitive(primitive.primitive())
+                }
+                DirectVectorElementType::Record(id) => TypeRef::Record(*id),
+            }))),
         }
     }
 

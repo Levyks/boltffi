@@ -15,6 +15,7 @@ use crate::{
         render::{
             AssociatedConstants, Documentation,
             function::{ExportedCall, ExportedCallRenderer, ReceiverCarrier},
+            native::NativeCall,
             signature::validate_reserved_members,
         },
         syntax::{ArgumentList, Expression, Identifier, Statement, TypeName},
@@ -237,8 +238,12 @@ impl Initializer {
     }
 
     fn dedupe_constructors(initializers: Vec<Self>) -> Vec<Self> {
-        let (_, initializers) = initializers.into_iter().fold(
-            (BTreeSet::new(), Vec::new()),
+        // The class's own `internal constructor(handle: Long)` takes the
+        // `(J)` JVM signature: an initializer erasing to it, a `ULong` one
+        // included, stays a companion factory rather than a clashing overload.
+        let reserved = BTreeSet::from([ConstructorSignature::handle()]);
+        let (_, mut initializers) = initializers.into_iter().fold(
+            (reserved, Vec::new()),
             |(mut signatures, mut initializers), mut initializer| {
                 if initializer.constructor {
                     initializer.constructor =
@@ -248,7 +253,30 @@ impl Initializer {
                 (signatures, initializers)
             },
         );
+        let default_initializer = initializers
+            .iter()
+            .enumerate()
+            .filter(|(_, initializer)| initializer.accepts_empty_call())
+            .min_by_key(|(_, initializer)| initializer.call.name().as_str() != "new")
+            .map(|(index, _)| index);
         initializers
+            .iter_mut()
+            .enumerate()
+            .for_each(|(index, initializer)| {
+                if initializer.accepts_empty_call() && Some(index) != default_initializer {
+                    initializer.constructor = false;
+                }
+            });
+        initializers
+    }
+
+    fn accepts_empty_call(&self) -> bool {
+        self.constructor
+            && self
+                .call
+                .parameters()
+                .iter()
+                .all(|parameter| parameter.has_default())
     }
 
     fn companion_method(mut self) -> Self {
@@ -258,11 +286,15 @@ impl Initializer {
 }
 
 impl ConstructorSignature {
+    fn handle() -> Self {
+        Self(vec![TypeName::long().jvm_erasure().to_string()])
+    }
+
     fn from_call(call: &ExportedCall) -> Self {
         Self(
             call.parameters()
                 .iter()
-                .map(|parameter| parameter.ty().to_string())
+                .map(|parameter| parameter.ty().jvm_erasure().to_string())
                 .collect(),
         )
     }
@@ -329,5 +361,60 @@ impl ClassHandle {
             }
             _ => Err(KotlinHost::unsupported("unknown class handle presence")),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedClassArgument {
+    pub parameter: Identifier,
+    pub local: Identifier,
+    pub release: Identifier,
+    pub presence: HandlePresence,
+}
+
+#[derive(AskamaTemplate)]
+#[template(path = "target/kotlin/owned_call.kt", escape = "none")]
+pub struct OwnedCallTemplate<'call> {
+    pub owned: Vec<&'call OwnedClassArgument>,
+    pub arguments: Vec<(Identifier, Expression)>,
+    pub invocation: Expression,
+}
+
+impl<'call> OwnedCallTemplate<'call> {
+    pub fn expression(
+        method: Identifier,
+        native_arguments: Vec<Expression>,
+        owned: Vec<&'call OwnedClassArgument>,
+    ) -> Result<Expression> {
+        if owned.is_empty() {
+            return Ok(NativeCall::new(method, native_arguments).expression());
+        }
+        let arguments = native_arguments
+            .into_iter()
+            .enumerate()
+            .map(|(index, argument)| {
+                Ok((
+                    Identifier::parse(format!("__boltffiArgument{index}"))?,
+                    argument,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let invocation = NativeCall::new(
+            method,
+            arguments
+                .iter()
+                .map(|(name, _)| Expression::identifier(name.clone()))
+                .collect(),
+        )
+        .expression();
+        Ok(Expression::invoke(
+            Self {
+                owned,
+                arguments,
+                invocation,
+            }
+            .render()?,
+            ArgumentList::default(),
+        ))
     }
 }

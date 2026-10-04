@@ -11,7 +11,7 @@ use crate::cargo::Cargo;
 use crate::cli::{CliError, Result};
 use crate::commands::generate::run_generate_csharp_with_output_from_source_dir;
 use crate::commands::pack::PackCSharpOptions;
-use crate::config::Config;
+use crate::config::{Config, TargetSection};
 use crate::pack::{PackError, format_command_for_log, print_cargo_line, resolve_build_cargo_args};
 use crate::reporter::{Reporter, Step};
 use crate::target::{CSharpRuntimeIdentifier, NativeHostPlatform};
@@ -42,7 +42,11 @@ pub(crate) fn pack_csharp(
         .then(|| {
             BindingExpansion::resolve(
                 config,
-                &resolve_build_cargo_args(config, &options.execution.cargo_args),
+                &resolve_build_cargo_args(
+                    config,
+                    TargetSection::CSharp,
+                    &options.execution.cargo_args,
+                ),
             )
         })
         .transpose()?;
@@ -155,7 +159,7 @@ impl CSharpPackagingPlan {
         cargo_args: &[String],
         no_build: bool,
     ) -> Result<Self> {
-        let build_cargo_args = resolve_build_cargo_args(config, cargo_args);
+        let build_cargo_args = resolve_build_cargo_args(config, TargetSection::CSharp, cargo_args);
         let cargo = Cargo::current(&build_cargo_args)?;
         ensure_csharp_pack_cargo_args_supported(&cargo)?;
         let metadata = cargo.metadata()?;
@@ -740,6 +744,7 @@ mod tests {
     use crate::reporter::{Reporter, Verbosity};
     use crate::target::{CSharpRuntimeIdentifier, NativeHostPlatform};
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct CargoManifestBuilder {
@@ -838,11 +843,13 @@ mod tests {
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
+        static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_nanos();
-        std::env::temp_dir().join(format!("{prefix}-{unique}"))
+        let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("{prefix}-{unique}-{sequence}"))
     }
 
     fn temp_cdylib_project() -> PathBuf {

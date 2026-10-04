@@ -139,7 +139,7 @@ impl TypeAnnotation {
     }
 
     pub(crate) fn uuid() -> Self {
-        Self::new("uuid.UUID")
+        Self::new("_UUID")
     }
 
     pub(crate) fn bytes() -> Self {
@@ -260,10 +260,6 @@ impl Expression {
         Self(format!("await {value}"))
     }
 
-    pub(crate) fn is_none(value: Expression) -> Self {
-        Self(format!("{value} is None"))
-    }
-
     pub(crate) fn empty_list() -> Self {
         Self::new("[]")
     }
@@ -289,6 +285,17 @@ impl fmt::Display for Statement {
 }
 
 impl Statement {
+    pub(crate) fn if_identical(left: Expression, right: Expression, statement: Self) -> [Self; 2] {
+        [
+            Self(format!("if {left} is {right}:")),
+            Self(format!("    {statement}")),
+        ]
+    }
+
+    pub(crate) fn raise_type_error(message: Literal) -> Self {
+        Self(format!("raise TypeError({message})"))
+    }
+
     /// Creates a return statement.
     pub fn return_value(value: Expression) -> Self {
         Self(format!("return {value}"))
@@ -321,6 +328,10 @@ impl fmt::Display for Literal {
 impl Literal {
     fn new(literal: impl Into<String>) -> Self {
         Self(literal.into())
+    }
+
+    pub(crate) fn ellipsis() -> Self {
+        Self::new("...")
     }
 
     pub(crate) fn integer(value: i128) -> Self {

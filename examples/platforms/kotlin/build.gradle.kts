@@ -13,7 +13,7 @@ dependencies {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }
 
 sourceSets {
@@ -53,6 +53,8 @@ val generateKotlinBindings = tasks.register<Exec>("generateKotlinBindings") {
         "-p",
         "boltffi_cli",
         "--",
+        "--cargo-arg=--features",
+        "--cargo-arg=async-initializers",
         "generate",
         "kotlin",
         "--experimental",
@@ -61,7 +63,7 @@ val generateKotlinBindings = tasks.register<Exec>("generateKotlinBindings") {
 
 val buildDemoLibrary = tasks.register<Exec>("buildDemoLibrary") {
     workingDir = demoDir
-    commandLine("cargo", "build", "-q")
+    commandLine("cargo", "build", "-q", "--features", "async-initializers")
     environment("BOLTFFI_BINDING_EXPANSION", "1")
     environment("BOLTFFI_BINDING_EXPANSION_ROOT", demoDir.absolutePath)
     environment("BOLTFFI_BINDING_EXPANSION_SOURCE", demoSource.absolutePath)
@@ -104,8 +106,29 @@ tasks.named<JavaExec>("run") {
     jvmArgs("-Djava.library.path=${nativeBuildDir.get().asFile.absolutePath}")
 }
 
-tasks.named<Test>("test") {
+val buildCallbackFaultTests = tasks.register<Exec>("buildCallbackFaultTests") {
     dependsOn(buildJvmJniBridge)
+    commandLine(
+        "clang",
+        "-dynamiclib",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-I$javaHome/include",
+        "-I$javaHome/include/darwin",
+        "-I${generatedJniDir.absolutePath}",
+        projectDir.resolve("src/test/c/callback_class_handles.c").absolutePath,
+        "-L${nativeBuildDir.get().asFile.absolutePath}",
+        "-ldemo",
+        "-Wl,-rpath,@loader_path",
+        "-o",
+        nativeBuildDir.get().file("libcallback_class_handles.dylib").asFile.absolutePath,
+    )
+}
+
+tasks.named<Test>("test") {
+    dependsOn(buildCallbackFaultTests)
+    inputs.dir(nativeBuildDir)
     useJUnitPlatform()
     jvmArgs("-Djava.library.path=${nativeBuildDir.get().asFile.absolutePath}")
 }

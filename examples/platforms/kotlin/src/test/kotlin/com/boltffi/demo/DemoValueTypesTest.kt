@@ -17,6 +17,33 @@ import kotlin.test.assertTrue
 
 class DemoValueTypesTest {
     @Test
+    fun wrappedLengthPreservesUnitsAndValueSemantics() {
+        demoCase("case:custom_types.length.should_construct_in_meters")
+        val length = Length.new(2.5)
+        assertEquals(2.5, length.value)
+        demoCase("case:custom_types.length.should_convert_to_centimeters")
+        assertEquals(250.0, length.centimeters())
+
+        demoCase("case:custom_types.length.should_roundtrip_wrapper")
+        val returned = echoLength(length)
+        assertEquals(2.5, returned.value)
+        assertEquals(250.0, returned.centimeters())
+        assertEquals(-125.0, echoLength(Length(-1.25)).centimeters())
+
+        demoCase("case:custom_types.length.should_write_back_in_meters")
+        val updated = returned.setCentimeters(75.0)
+        assertEquals(0.75, updated.value)
+        assertEquals(75.0, updated.centimeters())
+        assertEquals(2.5, length.value)
+        assertEquals(250.0, length.centimeters())
+
+        demoCase("case:custom_types.length.should_roundtrip_nested_wrapper")
+        val fabric = echoFabric(Fabric(Length(1.25)))
+        assertEquals(1.25, fabric.length.value)
+        assertEquals(125.0, fabric.length.centimeters())
+    }
+
+    @Test
     fun builtinsAndCustomTypesRoundTrip() {
         val duration = Duration.ofSeconds(2).plusMillis(500)
         demoCase("case:builtins.duration.should_roundtrip_value")
@@ -90,6 +117,8 @@ class DemoValueTypesTest {
         assertEquals(55_000u.toUShort(), echoU16(55_000u.toUShort()), "case:primitives.scalars.u16.should_roundtrip_large_value")
         assertEquals(-42, echoI32(-42), "case:primitives.scalars.i32.should_roundtrip_negative_value")
         assertEquals(30, addI32(10, 20), "case:primitives.scalars.i32.should_add_two_values")
+        demoCase("case:primitives.scalars.named_status.should_accept_both_names")
+        notifyStatusCollision(7, 11)
         assertEquals(4_000_000_000u, echoU32(4_000_000_000u), "case:primitives.scalars.u32.should_roundtrip_large_value")
         assertEquals(-9_999_999_999L, echoI64(-9_999_999_999L), "case:primitives.scalars.i64.should_roundtrip_large_negative_value")
         assertEquals(9_999_999_999uL, echoU64(9_999_999_999uL), "case:primitives.scalars.u64.should_roundtrip_large_value")
@@ -140,6 +169,12 @@ class DemoValueTypesTest {
         assertContentEquals(booleanArrayOf(true, false, true), echoVecBool(booleanArrayOf(true, false, true)), "case:primitives.vecs.bool.should_roundtrip_values")
         assertContentEquals(listOf("hello", "world"), echoVecString(listOf("hello", "world")), "case:primitives.vecs.string.should_roundtrip_values")
         assertContentEquals(uintArrayOf(2u, 5u), vecStringLengths(listOf("hi", "café")), "case:primitives.vecs.string.should_report_utf8_byte_lengths")
+        val chunks = echoVecBytes(listOf(byteArrayOf(0, -1), byteArrayOf(), byteArrayOf(1, 2, 3)))
+        assertEquals(3, chunks.size, "case:primitives.vecs.bytes.should_roundtrip_values")
+        assertContentEquals(byteArrayOf(0, -1), chunks[0])
+        assertContentEquals(byteArrayOf(), chunks[1])
+        assertContentEquals(byteArrayOf(1, 2, 3), chunks[2])
+        assertContentEquals(uintArrayOf(2u, 3u, 1u), vecBytesLengths(listOf(byteArrayOf(1, 2), byteArrayOf(3, 4, 5), byteArrayOf(6))), "case:primitives.vecs.bytes.should_report_lengths")
         assertEquals(60L, sumVecI32(intArrayOf(10, 20, 30)), "case:primitives.vecs.i32.should_sum_values")
         assertContentEquals(intArrayOf(0, 1, 2, 3, 4), makeRange(0, 5), "case:primitives.vecs.i32.should_make_range")
         assertContentEquals(intArrayOf(3, 2, 1), reverseVecI32(intArrayOf(1, 2, 3)), "case:primitives.vecs.i32.should_reverse_values")

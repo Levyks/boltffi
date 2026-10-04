@@ -37,6 +37,15 @@ def case_to_source_exports(case_name: str) -> tuple[str, ...]:
     if case_name == "generate_bytes_64k":
         return ("bytes::generate_bytes",)
 
+    if case_name in {"echo_bytes_64", "echo_bytes_64k"}:
+        return ("bytes::echo_bytes",)
+
+    if case_name == "echo_vec_string_100":
+        return ("primitives::vecs::echo_vec_string",)
+
+    if case_name == "echo_vec_bytes_100":
+        return ("primitives::vecs::echo_vec_bytes",)
+
     if case_name == "inc_u64":
         return ("primitives::vecs::inc_u64",)
 

@@ -7,6 +7,11 @@
         }
     }
 
+    internal fun __boltffiTakeHandle(): Long {
+        check(__boltffi_closed.compareAndSet(false, true)) { "{{ class.name() }} is closed" }
+        return handle
+    }
+
     internal fun boltffiHandle(): Long {
         check(!__boltffi_closed.get()) { "{{ class.name() }} is closed" }
         return handle
@@ -14,7 +19,7 @@
 {%- for initializer in class.initializers() %}
 {%- if initializer.constructor() %}
 
-{{ initializer.call().documentation().indented("    ") }}    constructor({% for parameter in initializer.call().parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}) : this({{ initializer.call().name() }}({% for parameter in initializer.call().parameters() %}{{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}).handle)
+{{ initializer.call().documentation().indented("    ") }}    constructor({% for parameter in initializer.call().parameters() %}{{ parameter.declaration() }}{% if !loop.last %}, {% endif %}{% endfor %}) : this({{ initializer.call().name() }}({% for parameter in initializer.call().parameters() %}{{ parameter.name() }}{% if !loop.last %}, {% endif %}{% endfor %}).handle)
 {%- endif %}
 {%- endfor %}
 {%- if !class.initializers().is_empty() || !class.static_methods().is_empty() || !constants.is_empty() %}
@@ -25,7 +30,7 @@
 {{ constant }}
 {%- endfor %}
 {%- for initializer in class.initializers() %}
-{{ initializer.call().documentation().indented("        ") }}        {% if initializer.call().async_call().is_some() %}suspend {% endif %}fun {{ initializer.call().name() }}({% for parameter in initializer.call().parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = initializer.call().returns() %}: {{ return_type }}{% endif %} {
+{{ initializer.call().documentation().indented("        ") }}        {% if initializer.constructor() %}private {% endif %}{% if initializer.call().async_call().is_some() %}suspend {% endif %}fun {{ initializer.call().name() }}({% for parameter in initializer.call().parameters() %}{% if initializer.constructor() %}{{ parameter.name() }}: {{ parameter.ty() }}{% else %}{{ parameter.declaration() }}{% endif %}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = initializer.call().returns() %}: {{ return_type }}{% endif %} {
 {%- if let Some(async_call) = initializer.call().async_call() %}
 {%- if async_call.returns_value() %}
             return boltffiCallAsync(
@@ -80,7 +85,7 @@
         }
 {%- endfor %}
 {%- for method in class.static_methods() %}
-{{ method.documentation().indented("        ") }}        {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
+{{ method.documentation().indented("        ") }}        {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.declaration() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
 {%- if let Some(async_call) = method.async_call() %}
 {%- if async_call.returns_value() %}
             return boltffiCallAsync(
@@ -138,7 +143,7 @@
 {%- endif %}
 {%- for method in class.instance_methods() %}
 
-{{ method.documentation().indented("    ") }}    {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
+{{ method.documentation().indented("    ") }}    {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.declaration() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
 {%- if let Some(async_call) = method.async_call() %}
 {%- if async_call.returns_value() %}
         return boltffiCallAsync(

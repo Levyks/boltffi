@@ -46,6 +46,7 @@ pub struct Generation {
     python_package_version: Option<String>,
     python_native_library: Option<String>,
     csharp_namespace: Option<String>,
+    csharp_module_class: Option<String>,
     csharp_native_library: Option<String>,
     dart_package: Option<String>,
     dart_native_artifact: Option<String>,
@@ -101,6 +102,7 @@ impl Generation {
             python_package_version: None,
             python_native_library: None,
             csharp_namespace: None,
+            csharp_module_class: None,
             csharp_native_library: None,
             dart_package: None,
             dart_native_artifact: None,
@@ -409,6 +411,12 @@ impl Generation {
     /// Sets the namespace used by generated C# source.
     pub fn csharp_namespace(mut self, namespace: Option<String>) -> Self {
         self.csharp_namespace = namespace;
+        self
+    }
+
+    /// Sets the class containing generated C# free functions and constants.
+    pub fn csharp_module_class(mut self, module_class: Option<String>) -> Self {
+        self.csharp_module_class = module_class;
         self
     }
 
@@ -817,6 +825,10 @@ impl Generation {
             .transpose()
             .map_err(GenerationError::Render)?
             .unwrap_or_default();
+        let host = match self.csharp_module_class.as_deref() {
+            Some(name) => host.module_class(name).map_err(GenerationError::Render)?,
+            None => host,
+        };
         Ok(self
             .csharp_native_library
             .iter()
@@ -1148,7 +1160,10 @@ mod tests {
                 "primitive TypeScript bindings should render through the production target route",
             );
 
-        assert_eq!(output_paths(&output), vec!["demo.ts", "demo_node.ts"]);
+        assert_eq!(
+            output_paths(&output),
+            vec!["demo.ts", "demo_node.ts", "demo_imports.ts"]
+        );
         assert!(file(&output, "demo.ts").contains("from \"@example/runtime\""));
         assert!(
             file(&output, "demo.ts")
@@ -1275,7 +1290,7 @@ mod tests {
         ));
         assert!(jvm_jni.contains("boltffi_function_demo_add(left, right)"));
 
-        assert!(build_gradle.contains("kotlin(\"multiplatform\") version \"2.4.0\""));
+        assert!(build_gradle.contains("kotlin(\"multiplatform\") version \"2.4.20\""));
         assert!(build_gradle.contains("id(\"com.android.library\") version \"8.5.2\""));
         assert!(build_gradle.contains("jvm {"));
         assert!(build_gradle.contains("androidTarget {"));

@@ -20,6 +20,8 @@ final class VecsTests: DemoTestCase {
         XCTAssertEqual(echoVecBool(v: [true, false, true]), [true, false, true], "case:primitives.vecs.bool.should_roundtrip_values")
         XCTAssertEqual(echoVecString(v: ["hello", "world"]), ["hello", "world"], "case:primitives.vecs.string.should_roundtrip_values")
         XCTAssertEqual(vecStringLengths(v: ["hi", "café"]), [2, 5], "case:primitives.vecs.string.should_report_utf8_byte_lengths")
+        XCTAssertEqual(echoVecBytes(v: [Data([0x00, 0xff]), Data(), Data([1, 2, 3])]), [Data([0x00, 0xff]), Data(), Data([1, 2, 3])], "case:primitives.vecs.bytes.should_roundtrip_values")
+        XCTAssertEqual(vecBytesLengths(v: [Data([1, 2]), Data([3, 4, 5]), Data([6])]), [2, 3, 1], "case:primitives.vecs.bytes.should_report_lengths")
         XCTAssertEqual(sumVecI32(v: [10, 20, 30]), 60, "case:primitives.vecs.i32.should_sum_values")
         XCTAssertEqual(makeRange(start: 0, end: 5), [0, 1, 2, 3, 4], "case:primitives.vecs.i32.should_make_range")
         XCTAssertEqual(reverseVecI32(v: [1, 2, 3]), [3, 2, 1], "case:primitives.vecs.i32.should_reverse_values")

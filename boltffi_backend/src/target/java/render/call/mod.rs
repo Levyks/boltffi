@@ -22,10 +22,12 @@ use crate::{
         render::{
             ClosureHandle, DirectVector, Enumeration,
             callback::CallbackHandle,
-            class::ClassHandle,
+            class::{ClassHandle, OwnedCallTemplate, OwnedClassArgument},
             native::Method,
             record::Record,
-            signature::{CallSignature, Parameter, ReturnType, ValueType},
+            signature::{
+                CallSignature, DefaultOverload, ErasedSignature, Parameter, ReturnType, ValueType,
+            },
             type_name::JavaType,
         },
         syntax::{
@@ -36,7 +38,7 @@ use crate::{
 };
 
 #[derive(AskamaTemplate)]
-#[template(path = "target/java/function.java", escape = "none")]
+#[template(path = "target/java/call/static_method.java", escape = "none")]
 struct FunctionTemplate<'call> {
     call: &'call Call,
 }
@@ -44,6 +46,7 @@ struct FunctionTemplate<'call> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Call {
     signature: CallSignature,
+    overloads: Vec<DefaultOverload<ValueType>>,
     doc: Option<Javadoc>,
     execution: CallExecution,
     runtime: RuntimeRequirement,
@@ -56,6 +59,7 @@ enum CallExecution {
         body: Vec<Statement>,
     },
     Asynchronous(AsyncCall),
+    Forwarding(Vec<Statement>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +109,7 @@ pub struct BoundParameter {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct NativeArgument {
+    owned_class: Option<OwnedClassArgument>,
     acquire: Vec<Statement>,
     prepare: Vec<Statement>,
     expressions: Vec<Expression>,
@@ -323,6 +328,51 @@ impl Call {
         &self.signature
     }
 
+    pub fn signatures(&self) -> impl Iterator<Item = ErasedSignature> + '_ {
+        std::iter::once(self.signature.erased()).chain(
+            self.overloads
+                .iter()
+                .map(|overload| overload.erased_signature(self.name())),
+        )
+    }
+
+    pub fn overloads(&self) -> &[DefaultOverload<ValueType>] {
+        &self.overloads
+    }
+
+    pub fn without_default_overloads(mut self) -> Self {
+        self.overloads.clear();
+        self
+    }
+
+    pub fn forward(&self, overload: &DefaultOverload<ValueType>) -> Statement {
+        self.returns().forward(Expression::invoke(
+            self.name().clone(),
+            overload.arguments().clone(),
+        ))
+    }
+
+    pub fn constructor_factory(&self, name: Identifier, class: TypeIdentifier) -> Result<Self> {
+        let arguments = self
+            .parameters()
+            .iter()
+            .map(|parameter| Expression::identifier(parameter.name().clone()))
+            .collect();
+        Ok(Self {
+            signature: CallSignature::new(
+                name,
+                self.parameters().to_vec(),
+                ReturnType::Value(ValueType::Reference(TypeName::named(class.clone()))),
+            )?,
+            overloads: self.overloads.clone(),
+            doc: self.doc.clone(),
+            execution: CallExecution::Forwarding(vec![Statement::return_value(
+                Expression::construct(TypeName::named(class), arguments),
+            )]),
+            runtime: RuntimeRequirement::None,
+        })
+    }
+
     pub fn name(&self) -> &Identifier {
         self.signature.name()
     }
@@ -341,14 +391,14 @@ impl Call {
 
     pub fn body(&self) -> &[Statement] {
         match &self.execution {
-            CallExecution::Synchronous { body, .. } => body,
+            CallExecution::Synchronous { body, .. } | CallExecution::Forwarding(body) => body,
             CallExecution::Asynchronous(_) => &[],
         }
     }
 
     pub fn async_call(&self) -> Option<&AsyncCall> {
         match &self.execution {
-            CallExecution::Synchronous { .. } => None,
+            CallExecution::Synchronous { .. } | CallExecution::Forwarding(_) => None,
             CallExecution::Asynchronous(call) => Some(call),
         }
     }
@@ -371,7 +421,9 @@ impl Call {
         receiver_support: ReceiverSupport,
         scope: CallScope<'_, '_>,
     ) -> Result<Self> {
-        if declaration.callable().execution().uses_async_execution() {
+        if declaration.callable().execution().uses_async_execution()
+            && matches!(scope.return_context, ReturnContext::ClassInitializer(_))
+        {
             return Err(JavaHost::unsupported("asynchronous initializer"));
         }
         FunctionShape::classify_callable(declaration.callable(), receiver_support)
@@ -423,10 +475,19 @@ impl Call {
         let parameter_arguments = parameters
             .iter()
             .flat_map(|parameter| parameter.native.expressions.iter().cloned());
-        let native_call = native.call(
-            scope.native_owner,
-            receiver_arguments.chain(parameter_arguments),
-        )?;
+        let owned = parameters
+            .iter()
+            .filter_map(|parameter| parameter.native.owned_class.as_ref())
+            .collect::<Vec<_>>();
+        let arguments = receiver_arguments
+            .chain(parameter_arguments)
+            .collect::<Vec<_>>();
+        let (bindings, arguments) = if owned.is_empty() {
+            (Vec::new(), arguments)
+        } else {
+            native.bind_arguments(arguments, scope.version)?
+        };
+        let native_call = native.call(scope.native_owner, arguments)?;
         let error = ErrorConversion::from_channel(callable.error().channel())?;
         let runtime = receiver
             .iter()
@@ -441,18 +502,20 @@ impl Call {
                 native_call,
                 &declared_return,
                 &error,
-                BoundArguments::new(receiver.as_ref(), &parameters),
+                BoundArguments::new(receiver.as_ref(), &parameters, bindings),
                 scope,
             )?;
+            let signature = CallSignature::new(
+                name,
+                parameters
+                    .into_iter()
+                    .map(|parameter| parameter.signature)
+                    .collect(),
+                declared_return.ty.future(scope.version),
+            )?;
             return Ok(Self {
-                signature: CallSignature::new(
-                    name,
-                    parameters
-                        .into_iter()
-                        .map(|parameter| parameter.signature)
-                        .collect(),
-                    declared_return.ty.future(scope.version),
-                )?,
+                overloads: DefaultOverload::from_parameters(signature.parameters()),
+                signature,
                 doc,
                 execution: CallExecution::Asynchronous(asynchronous),
                 runtime,
@@ -521,6 +584,16 @@ impl Call {
             scope.package,
             scope.return_context,
         )?;
+        let success = if owned.is_empty() {
+            success
+        } else {
+            vec![Statement::from_template(&OwnedCallTemplate {
+                native_owner: scope.native_owner,
+                owned,
+                bindings: &bindings,
+                body: &success,
+            })?]
+        };
         let protected = receiver
             .iter()
             .flat_map(|receiver| receiver.native.prepare.iter().cloned())
@@ -554,15 +627,17 @@ impl Call {
             )
             .chain(protected)
             .collect();
+        let signature = CallSignature::new(
+            name,
+            parameters
+                .into_iter()
+                .map(|parameter| parameter.signature)
+                .collect(),
+            returns,
+        )?;
         Ok(Self {
-            signature: CallSignature::new(
-                name,
-                parameters
-                    .into_iter()
-                    .map(|parameter| parameter.signature)
-                    .collect(),
-                returns,
-            )?,
+            overloads: DefaultOverload::from_parameters(signature.parameters()),
+            signature,
             doc,
             execution: CallExecution::Synchronous { native, body },
             runtime,
@@ -575,6 +650,7 @@ impl CallExecution {
         let methods = match self {
             Self::Synchronous { native, .. } => std::slice::from_ref(native),
             Self::Asynchronous(call) => call.native_methods(),
+            Self::Forwarding(_) => &[],
         };
         methods
             .iter()
@@ -830,6 +906,7 @@ impl BoundParameter {
 impl NativeArgument {
     fn direct(expression: Expression) -> Self {
         Self {
+            owned_class: None,
             acquire: Vec::new(),
             prepare: Vec::new(),
             expressions: vec![expression],
@@ -841,6 +918,7 @@ impl NativeArgument {
     fn encoded(write: crate::target::java::codec::EncodedWrite) -> Self {
         let (acquire, prepare, expressions, cleanup) = write.into_parts();
         Self {
+            owned_class: None,
             acquire,
             prepare,
             expressions,
@@ -919,9 +997,28 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
         target: &'plan HandleTarget,
         carrier: native::HandleCarrier,
         presence: HandlePresence,
-        _receive: Receive,
+        receive: Receive,
     ) -> Self::Output {
         match target {
+            HandleTarget::Class(class) if receive == Receive::ByValue => {
+                let declaration = self.context.class(*class).ok_or_else(|| {
+                    JavaHost::broken_bridge_contract(
+                        "missing class declaration for ownership transfer",
+                    )
+                })?;
+                let local = self.source.generated("owned_handle", self.version)?;
+                let mut argument = NativeArgument::direct(Expression::identifier(local.clone()));
+                argument.owned_class = Some(OwnedClassArgument {
+                    parameter: self.name.clone(),
+                    local,
+                    release: Identifier::parse_for(
+                        declaration.release().name().as_str(),
+                        self.version,
+                    )?,
+                    presence,
+                });
+                Ok(argument)
+            }
             HandleTarget::Class(class) => {
                 ClassHandle::new(*class, carrier, presence, self.version, self.context, None)
                     .and_then(|handle| {
@@ -992,6 +1089,7 @@ impl<'plan> ParamPlanRender<'plan, Native, IntoRust> for NativeArgumentRender<'_
     ) -> Self::Output {
         let vector = DirectVector::from_element(element, self.version, self.context)?;
         Ok(NativeArgument {
+            owned_class: None,
             acquire: Vec::new(),
             prepare: Vec::new(),
             expressions: vec![vector.native_argument(Expression::identifier(self.name.clone()))],
@@ -1431,6 +1529,7 @@ impl Receiver {
                 Ok(Self {
                     ty,
                     native: NativeArgument {
+                        owned_class: None,
                         expressions: vec![Expression::identifier(buffer.clone())],
                         acquire: Vec::new(),
                         prepare: vec![Statement::value(

@@ -13,6 +13,7 @@ pub enum BufferedArgument {
     RegisteredObject(RegisteredObject),
     RawWire,
     Utf8Text,
+    Bytes,
     DirectVector(direct_vector::Element),
     Native(codec::NativeCodec),
 }
@@ -24,6 +25,7 @@ impl BufferedArgument {
             Self::RegisteredObject(registered) => Ok(registered.parser.clone()),
             Self::RawWire => Identifier::parse("boltffi_python_wire_raw"),
             Self::Utf8Text => Identifier::parse("boltffi_python_wire_string"),
+            Self::Bytes => Identifier::parse("boltffi_python_wire_bytes"),
             Self::DirectVector(element) => Ok(element.argument_parser().clone()),
             Self::Native(codec) => Ok(codec.encoder().clone()),
         }
@@ -56,6 +58,7 @@ impl BufferedArgument {
             | Self::RegisteredObject(_)
             | Self::RawWire
             | Self::Utf8Text
+            | Self::Bytes
             | Self::Native(_) => Ok([pointer, length]
                 .into_iter()
                 .cloned()
@@ -93,6 +96,7 @@ impl BufferedArgument {
             )),
             Self::OptionalPrimitive(_)
             | Self::Utf8Text
+            | Self::Bytes
             | Self::DirectVector(_)
             | Self::Native(_) => Err(Error::UnsupportedTarget {
                 target: "python",
@@ -107,6 +111,7 @@ impl BufferedArgument {
             Self::RegisteredObject(_)
             | Self::RawWire
             | Self::Utf8Text
+            | Self::Bytes
             | Self::DirectVector(_)
             | Self::Native(_) => None,
         }
@@ -119,6 +124,7 @@ impl BufferedArgument {
             | Self::RegisteredObject(_)
             | Self::RawWire
             | Self::Utf8Text
+            | Self::Bytes
             | Self::Native(_) => None,
         }
     }
@@ -130,6 +136,7 @@ impl BufferedArgument {
             | Self::RegisteredObject(_)
             | Self::RawWire
             | Self::Utf8Text
+            | Self::Bytes
             | Self::DirectVector(_) => None,
         }
     }
@@ -140,6 +147,10 @@ impl BufferedArgument {
 
     pub fn is_utf8_text(&self) -> bool {
         matches!(self, Self::Utf8Text)
+    }
+
+    pub fn is_bytes(&self) -> bool {
+        matches!(self, Self::Bytes)
     }
 }
 

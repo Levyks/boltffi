@@ -1,3 +1,4 @@
+{%- import "target/kotlin/function.kt" as functions %}
 {%- if record.empty() %}
 {{ record.documentation() }}object {{ record.name() }}{% if record.error() %} : Exception(){% endif %} {
 {%- if record.encoded() %}
@@ -33,88 +34,21 @@
 {%- endfor %}
 {%- for initializer in record.initializers() %}
 
-{{ initializer.documentation().indented("    ") }}    fun {{ initializer.name() }}({% for parameter in initializer.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = initializer.returns() %}: {{ return_type }}{% endif %} {
-{%- for statement in initializer.setup() %}
-        {{ statement }}
-{%- endfor %}
-{%- if initializer.has_cleanup() %}
-        try {
-{%- for statement in initializer.call() %}
-            {{ statement }}
-{%- endfor %}
-        } finally {
-{%- for statement in initializer.cleanup() %}
-            {{ statement }}
-{%- endfor %}
-        }
-{%- else %}
-{%- for statement in initializer.call() %}
-        {{ statement }}
-{%- endfor %}
-{%- endif %}
-    }
+{% call functions::exported_call(initializer, "    ") %}{% endcall %}
 {%- endfor %}
 {%- for method in record.static_methods() %}
 
-{{ method.documentation().indented("    ") }}    {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
-{%- if let Some(async_call) = method.async_call() %}
-{%- if async_call.returns_value() %}
-        return boltffiCallAsync(
-{%- else %}
-        boltffiCallAsync(
-{%- endif %}
-            createFuture = {
-{%- for statement in async_call.create_setup() %}
-                {{ statement }}
+{% call functions::exported_call(method, "    ") %}{% endcall %}
 {%- endfor %}
-{%- if async_call.has_create_cleanup() %}
-                try {
-                    {{ async_call.create() }}
-                } finally {
-{%- for statement in async_call.create_cleanup() %}
-                    {{ statement }}
-{%- endfor %}
-                }
-{%- else %}
-                {{ async_call.create() }}
-{%- endif %}
-            },
-            poll = { future, contHandle -> Native.{{ async_call.poll() }}(future, contHandle) },
-            complete = { future ->
-{%- for statement in async_call.complete_body() %}
-                {{ statement }}
-{%- endfor %}
-            },
-            free = { future -> Native.{{ async_call.free() }}(future) },
-            cancel = { future -> Native.{{ async_call.cancel() }}(future) },
-        )
-{%- else %}
-{%- for statement in method.setup() %}
-        {{ statement }}
-{%- endfor %}
-{%- if method.has_cleanup() %}
-        try {
-{%- for statement in method.call() %}
-            {{ statement }}
-{%- endfor %}
-        } finally {
-{%- for statement in method.cleanup() %}
-            {{ statement }}
-{%- endfor %}
-        }
-{%- else %}
-{%- for statement in method.call() %}
-        {{ statement }}
-{%- endfor %}
-{%- endif %}
-{%- endif %}
-    }
+{%- for method in record.instance_methods() %}
+
+{% call functions::exported_call(method, "    ") %}{% endcall %}
 {%- endfor %}
 }
 {%- else if record.encoded() %}
 {{ record.documentation() }}data class {{ record.name() }}(
 {%- for field in record.fields() %}
-{{ field.documentation().indented("    ") }}    {% if record.error() && field.is_string_message() %}override {% endif %}val {{ field.name() }}: {{ field.ty() }}{% if let Some(default) = field.default() %} = {{ default }}{% endif %}{% if !loop.last %},{% endif %}
+{{ field.documentation().indented("    ") }}    {% if record.overrides_message(field.name()) %}override {% endif %}val {{ field.name() }}: {{ field.ty() }}{% if let Some(default) = field.default() %} = {{ default }}{% endif %}{% if !loop.last %},{% endif %}
 {%- endfor %}
 ){% if record.error() %} : Exception({% if let Some(message) = record.error_message() %}{{ message }}{% endif %}){% endif %} {
 {%- if let Some(wire_size) = record.wire_size() %}
@@ -159,112 +93,22 @@
 {%- endfor %}
 {%- for initializer in record.initializers() %}
 
-{{ initializer.documentation().indented("        ") }}        fun {{ initializer.name() }}({% for parameter in initializer.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = initializer.returns() %}: {{ return_type }}{% endif %} {
-{%- for statement in initializer.setup() %}
-            {{ statement }}
-{%- endfor %}
-{%- if initializer.has_cleanup() %}
-            try {
-{%- for statement in initializer.call() %}
-                {{ statement }}
-{%- endfor %}
-            } finally {
-{%- for statement in initializer.cleanup() %}
-                {{ statement }}
-{%- endfor %}
-            }
-{%- else %}
-{%- for statement in initializer.call() %}
-            {{ statement }}
-{%- endfor %}
-{%- endif %}
-        }
+{% call functions::exported_call(initializer, "        ") %}{% endcall %}
 {%- endfor %}
 {%- for method in record.static_methods() %}
 
-{{ method.documentation().indented("        ") }}        {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
-{%- if let Some(async_call) = method.async_call() %}
-{%- if async_call.returns_value() %}
-            return boltffiCallAsync(
-{%- else %}
-            boltffiCallAsync(
-{%- endif %}
-                createFuture = {
-{%- for statement in async_call.create_setup() %}
-                    {{ statement }}
-{%- endfor %}
-{%- if async_call.has_create_cleanup() %}
-                    try {
-                        {{ async_call.create() }}
-                    } finally {
-{%- for statement in async_call.create_cleanup() %}
-                        {{ statement }}
-{%- endfor %}
-                    }
-{%- else %}
-                    {{ async_call.create() }}
-{%- endif %}
-                },
-                poll = { future, contHandle -> Native.{{ async_call.poll() }}(future, contHandle) },
-                complete = { future ->
-{%- for statement in async_call.complete_body() %}
-                    {{ statement }}
-{%- endfor %}
-                },
-                free = { future -> Native.{{ async_call.free() }}(future) },
-                cancel = { future -> Native.{{ async_call.cancel() }}(future) },
-            )
-{%- else %}
-{%- for statement in method.setup() %}
-            {{ statement }}
-{%- endfor %}
-{%- if method.has_cleanup() %}
-            try {
-{%- for statement in method.call() %}
-                {{ statement }}
-{%- endfor %}
-            } finally {
-{%- for statement in method.cleanup() %}
-                {{ statement }}
-{%- endfor %}
-            }
-{%- else %}
-{%- for statement in method.call() %}
-            {{ statement }}
-{%- endfor %}
-{%- endif %}
-{%- endif %}
-        }
+{% call functions::exported_call(method, "        ") %}{% endcall %}
 {%- endfor %}
     }
 {%- for method in record.instance_methods() %}
 
-{{ method.documentation().indented("    ") }}    {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
-{%- for statement in method.setup() %}
-        {{ statement }}
-{%- endfor %}
-{%- if method.has_cleanup() %}
-        try {
-{%- for statement in method.call() %}
-            {{ statement }}
-{%- endfor %}
-        } finally {
-{%- for statement in method.cleanup() %}
-            {{ statement }}
-{%- endfor %}
-        }
-{%- else %}
-{%- for statement in method.call() %}
-        {{ statement }}
-{%- endfor %}
-{%- endif %}
-    }
+{% call functions::exported_call(method, "    ") %}{% endcall %}
 {%- endfor %}
 }
 {%- else %}
 {{ record.documentation() }}data class {{ record.name() }}(
 {%- for field in record.fields() %}
-{{ field.documentation().indented("    ") }}    {% if record.error() && field.is_string_message() %}override {% endif %}val {{ field.name() }}: {{ field.ty() }}{% if let Some(default) = field.default() %} = {{ default }}{% endif %}{% if !loop.last %},{% endif %}
+{{ field.documentation().indented("    ") }}    {% if record.overrides_message(field.name()) %}override {% endif %}val {{ field.name() }}: {{ field.ty() }}{% if let Some(default) = field.default() %} = {{ default }}{% endif %}{% if !loop.last %},{% endif %}
 {%- endfor %}
 ){% if record.error() %} : Exception({% if let Some(message) = record.error_message() %}{{ message }}{% endif %}){% endif %} {
 {%- if let Some(wire_size) = record.wire_size() %}
@@ -276,6 +120,9 @@
 {%- for field in record.fields() %}
         {{ field.write() }}
 {%- endfor %}
+{%- if let Some(padding) = record.trailing_padding() %}
+        writer.pad({{ padding }})
+{%- endif %}
     }
 {%- endif %}
     internal fun toByteArray(): ByteArray {
@@ -309,7 +156,7 @@
 {%- for field in record.fields() %}
                 {{ field.read() }}{% if !loop.last %},{% endif %}
 {%- endfor %}
-            )
+            ){% if let Some(padding) = record.trailing_padding() %}.also { reader.skip({{ padding }}) }{% endif %}
         }
 {%- endif %}
 
@@ -334,106 +181,16 @@
 {%- endfor %}
 {%- for initializer in record.initializers() %}
 
-{{ initializer.documentation().indented("        ") }}        fun {{ initializer.name() }}({% for parameter in initializer.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = initializer.returns() %}: {{ return_type }}{% endif %} {
-{%- for statement in initializer.setup() %}
-            {{ statement }}
-{%- endfor %}
-{%- if initializer.has_cleanup() %}
-            try {
-{%- for statement in initializer.call() %}
-                {{ statement }}
-{%- endfor %}
-            } finally {
-{%- for statement in initializer.cleanup() %}
-                {{ statement }}
-{%- endfor %}
-            }
-{%- else %}
-{%- for statement in initializer.call() %}
-            {{ statement }}
-{%- endfor %}
-{%- endif %}
-        }
+{% call functions::exported_call(initializer, "        ") %}{% endcall %}
 {%- endfor %}
 {%- for method in record.static_methods() %}
 
-{{ method.documentation().indented("        ") }}        {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
-{%- if let Some(async_call) = method.async_call() %}
-{%- if async_call.returns_value() %}
-            return boltffiCallAsync(
-{%- else %}
-            boltffiCallAsync(
-{%- endif %}
-                createFuture = {
-{%- for statement in async_call.create_setup() %}
-                    {{ statement }}
-{%- endfor %}
-{%- if async_call.has_create_cleanup() %}
-                    try {
-                        {{ async_call.create() }}
-                    } finally {
-{%- for statement in async_call.create_cleanup() %}
-                        {{ statement }}
-{%- endfor %}
-                    }
-{%- else %}
-                    {{ async_call.create() }}
-{%- endif %}
-                },
-                poll = { future, contHandle -> Native.{{ async_call.poll() }}(future, contHandle) },
-                complete = { future ->
-{%- for statement in async_call.complete_body() %}
-                    {{ statement }}
-{%- endfor %}
-                },
-                free = { future -> Native.{{ async_call.free() }}(future) },
-                cancel = { future -> Native.{{ async_call.cancel() }}(future) },
-            )
-{%- else %}
-{%- for statement in method.setup() %}
-            {{ statement }}
-{%- endfor %}
-{%- if method.has_cleanup() %}
-            try {
-{%- for statement in method.call() %}
-                {{ statement }}
-{%- endfor %}
-            } finally {
-{%- for statement in method.cleanup() %}
-                {{ statement }}
-{%- endfor %}
-            }
-{%- else %}
-{%- for statement in method.call() %}
-            {{ statement }}
-{%- endfor %}
-{%- endif %}
-{%- endif %}
-        }
+{% call functions::exported_call(method, "        ") %}{% endcall %}
 {%- endfor %}
     }
 {%- for method in record.instance_methods() %}
 
-{{ method.documentation().indented("    ") }}    {% if method.async_call().is_some() %}suspend {% endif %}fun {{ method.name() }}({% for parameter in method.parameters() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = method.returns() %}: {{ return_type }}{% endif %} {
-{%- for statement in method.setup() %}
-        {{ statement }}
-{%- endfor %}
-{%- if method.has_cleanup() %}
-        try {
-{%- for statement in method.call() %}
-            {{ statement }}
-{%- endfor %}
-        } finally {
-{%- for statement in method.cleanup() %}
-            {{ statement }}
-{%- endfor %}
-        }
-{%- else %}
-{%- for statement in method.call() %}
-        {{ statement }}
-{%- endfor %}
-{%- endif %}
-    }
+{% call functions::exported_call(method, "    ") %}{% endcall %}
 {%- endfor %}
 }
 {%- endif %}

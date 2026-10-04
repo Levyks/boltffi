@@ -81,7 +81,11 @@ static {{ returns.c_type }} {{ invoke }}(void *context{% for param in params %}{
 {%- endif %}
 done:
     if (PyErr_Occurred()) {
+{%- if let Some(fallible) = fallible_return %}
+        {{ fallible.error.value }} = boltffi_python_callback_error();
+{%- else %}
         PyErr_Print();
+{%- endif %}
     }
 {%- for param in params %}
     Py_XDECREF({{ param.object }});
@@ -104,6 +108,14 @@ static void {{ release }}(void *context) {
 }
 
 static int {{ parser }}(PyObject *value, {{ call_output_declaration }}, {{ context_output_declaration }}, {{ release_output_declaration }}) {
+{%- if nullable %}
+    if (value == Py_None) {
+        *out_call = NULL;
+        *out_context = NULL;
+        *out_release = NULL;
+        return 1;
+    }
+{%- endif %}
     if (!PyCallable_Check(value)) {
         PyErr_SetString(PyExc_TypeError, "expected callable");
         return 0;

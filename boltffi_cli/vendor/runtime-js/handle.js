@@ -40,6 +40,16 @@ export class BoltFFIHandle {
         }
     }
     /** Null maps to the zero handle, matching the wasm-side convention. */
+    static _takeHandle(value) {
+        if (value === null)
+            return 0;
+        value._assertNotDisposed();
+        const handle = value._handle;
+        value._unregister();
+        value._disposed = true;
+        value._handle = 0;
+        return handle;
+    }
     static _toHandle(value) {
         return value === null ? 0 : value._borrowHandle();
     }

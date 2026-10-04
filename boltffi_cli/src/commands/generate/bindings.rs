@@ -20,7 +20,7 @@ use crate::build::BindingExpansion;
 use crate::cargo::Cargo;
 use crate::cli::{CliError, Result};
 use crate::config::{
-    Config, KotlinFactoryStyle, SpmLayout,
+    Config, KotlinFactoryStyle, SpmLayout, TargetSection,
     targets::kotlin::{KotlinApiStyle, KotlinDesktopLoader},
 };
 use crate::toolchain::{AndroidToolchain, NativeHostToolchain};
@@ -81,6 +81,22 @@ impl RenderedJava {
     }
 }
 
+/// Config args for `build` and `generate` (plus `section`'s), then the CLI `--cargo-arg`s.
+pub(crate) fn generation_cargo_args(
+    config: &Config,
+    section: Option<TargetSection>,
+    options: &GenerateOptions,
+) -> Vec<String> {
+    let config_args = match section {
+        Some(section) => config.cargo_args_for_target(section, &["build", "generate"]),
+        None => config.cargo_args_for_commands(&["build", "generate"]),
+    };
+    config_args
+        .into_iter()
+        .chain(options.cargo_args.iter().cloned())
+        .collect()
+}
+
 pub fn run_generation(config: &Config, options: &GenerateOptions) -> Result<()> {
     match &options.target {
         GenerateTarget::Swift => generate_swift(config, options),
@@ -109,11 +125,8 @@ fn generate_header(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
-        config,
-        &["build", "generate"],
-        &options.cargo_args,
-    )?;
+    let expansion =
+        BindingExpansion::resolve(config, &generation_cargo_args(config, None, options))?;
     let output_directory = options.output.clone().unwrap_or_else(|| {
         if config.is_apple_enabled() {
             config.apple_header_output()
@@ -139,10 +152,9 @@ fn generate_dart(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::Dart), options),
     )?;
     let output_directory = options
         .output
@@ -171,10 +183,9 @@ fn generate_dart_web(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::Wasm), options),
     )?;
     let output_directory = options
         .output
@@ -204,10 +215,9 @@ fn generate_typescript(config: &Config, options: &GenerateOptions) -> Result<()>
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::Wasm), options),
     )?;
     let output_directory = options
         .output
@@ -232,11 +242,7 @@ fn generate_typescript(config: &Config, options: &GenerateOptions) -> Result<()>
 
 fn generate_java(config: &Config, options: &GenerateOptions) -> Result<()> {
     let plan = JavaPlan::resolve(config, options.output.clone())?;
-    let cargo_args = config
-        .cargo_args_for_commands(&["build", "generate"])
-        .into_iter()
-        .chain(options.cargo_args.iter().cloned())
-        .collect::<Vec<_>>();
+    let cargo_args = generation_cargo_args(config, Some(TargetSection::Java), options);
     ensure_java_cargo_target_unset(&cargo_args, plan.platform())?;
     let expansion = BindingExpansion::resolve(config, &cargo_args)?;
     let generations = resolve_java_generations(config, &plan, &expansion)?;
@@ -397,10 +403,9 @@ fn generate_swift(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::Apple), options),
     )?;
     let output_directory = swift_output_directory(config, options);
     let ffi_module = config
@@ -441,10 +446,9 @@ fn generate_csharp(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::CSharp), options),
     )?;
     let output_directory = options
         .output
@@ -455,6 +459,7 @@ fn generate_csharp(config: &Config, options: &GenerateOptions) -> Result<()> {
         .generation()
         .coverage_mode(CoverageMode::Partial)
         .csharp_namespace(config.csharp_namespace().map(str::to_owned))
+        .csharp_module_class(config.csharp_module_class().map(str::to_owned))
         .csharp_native_library(expansion.artifact_name())
         .render(Target::CSharp)
         .map_err(|error| generation_error(Target::CSharp.name(), error))
@@ -474,10 +479,9 @@ fn generate_python(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::Python), options),
     )?;
     let output_directory = options
         .output
@@ -514,10 +518,9 @@ fn generate_c(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::C), options),
     )?;
     let output_directory = options.output.clone().unwrap_or_else(|| config.c_output());
 
@@ -545,10 +548,9 @@ fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let expansion = BindingExpansion::resolve_for_commands(
+    let expansion = BindingExpansion::resolve(
         config,
-        &["build", "generate"],
-        &options.cargo_args,
+        &generation_cargo_args(config, Some(TargetSection::Android), options),
     )?;
     let output_directory = options
         .output
@@ -562,6 +564,7 @@ fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {
 
     expansion
         .generation()
+        .coverage_mode(CoverageMode::Partial)
         .kotlin_package(config.android_kotlin_package())
         .kotlin_file(config.android_kotlin_module_name())
         .kotlin_api_style(kotlin_api_style(config.android_kotlin_api_style()))
@@ -603,11 +606,8 @@ fn generate_kmp(config: &Config, options: &GenerateOptions) -> Result<()> {
         });
     }
 
-    let cargo_args = config
-        .cargo_args_for_commands(&["build", "generate"])
-        .into_iter()
-        .chain(options.cargo_args.iter().cloned())
-        .collect::<Vec<_>>();
+    let cargo_args =
+        generation_cargo_args(config, Some(TargetSection::KotlinMultiplatform), options);
     let cargo = Cargo::current(&cargo_args)?;
     let metadata = cargo.metadata()?;
     let cargo_manifest_path = cargo.manifest_path()?;
@@ -704,6 +704,7 @@ pub fn run_csharp_generation(
         .cargo_toolchain_selector(toolchain_selector)
         .coverage_mode(CoverageMode::Partial)
         .csharp_namespace(config.csharp_namespace().map(str::to_owned))
+        .csharp_module_class(config.csharp_module_class().map(str::to_owned))
         .csharp_native_library(artifact_name)
         .render(Target::CSharp)
         .map_err(|error| generation_error(Target::CSharp.name(), error))
@@ -940,10 +941,13 @@ fn target_label(target: &GenerateTarget) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        GenerateOptions, GenerateTarget, prepare_kmp_output_directory, run_generation,
-        run_java_generations, write_kmp_output,
+        GenerateOptions, GenerateTarget, generation_cargo_args, prepare_kmp_output_directory,
+        run_generation, run_java_generations, write_kmp_output,
     };
-    use crate::{cli::CliError, config::Config};
+    use crate::{
+        cli::CliError,
+        config::{Config, TargetSection},
+    };
     use boltffi_backend::{FilePath, GeneratedFile, GeneratedOutput};
     use boltffi_bindgen::generate::Generation;
     use std::fs;
@@ -999,6 +1003,42 @@ enabled = true
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn generation_cargo_args_put_target_args_between_config_and_cli_args() {
+        let config = parse_config(
+            r#"
+[package]
+name = "demo"
+
+[cargo.command_args]
+generate = ["--locked"]
+
+[targets.android]
+cargo_args = ["--features=kotlin"]
+"#,
+        );
+        let options = GenerateOptions {
+            target: GenerateTarget::Kotlin,
+            output: None,
+            experimental: false,
+            cargo_args: vec!["--features=extra".to_string()],
+            deny_skipped: false,
+        };
+
+        assert_eq!(
+            generation_cargo_args(&config, Some(TargetSection::Android), &options),
+            vec![
+                "--locked".to_string(),
+                "--features=kotlin".to_string(),
+                "--features=extra".to_string(),
+            ]
+        );
+        assert_eq!(
+            generation_cargo_args(&config, None, &options),
+            vec!["--locked".to_string(), "--features=extra".to_string()]
+        );
     }
 
     #[test]
