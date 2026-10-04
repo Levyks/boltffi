@@ -231,6 +231,19 @@ impl Function {
                 let default_value = parameter.meta().default();
                 let (dart_parameter, default) = match parameter.payload() {
                     IncomingParam::Value(plan) => {
+                        if completion.is_some()
+                            && matches!(
+                                plan,
+                                ParamPlan::Direct {
+                                    ty: DirectValueType::Record(_),
+                                    receive: Receive::ByMutRef,
+                                }
+                            )
+                        {
+                            return super::super::unsupported(
+                                "asynchronous mutable direct record parameter",
+                            );
+                        }
                         let dart_parameter = render_parameter(
                             Name::new(parameter.name()).lower_camel()?,
                             plan,
@@ -1131,6 +1144,25 @@ fn render_direct_argument(
                         }
                         _ => broken("borrowed direct record disagrees with its C parameter type"),
                     }
+                }
+                (Receive::ByMutRef, ParameterGroup::Value(index)) => {
+                    let CBridgeType::MutPointer(inner) = function.parameter(*index).ty() else {
+                        return broken("mutable direct record disagrees with its C parameter type");
+                    };
+                    let native = dart_native::NativeType::from_c(inner)?;
+                    let storage = format!("_l${}Storage", value.trim_start_matches("this"));
+                    Ok(DartArgument::with_cleanup(
+                        vec![
+                            format!(
+                                "final {storage} = _$$BoltCallocPtr<{}>.alloc($$ffi.sizeOf<{}>());",
+                                native.native(),
+                                native.native(),
+                            ),
+                            format!("{recv}_m$writeStruct({storage}.ptr);"),
+                        ],
+                        vec![format!("{storage}.ptr")],
+                        vec![format!("{recv}_m$updateFromStruct({storage}.ptr.ref);")],
+                    ))
                 }
                 (Receive::ByMutRef, ParameterGroup::DirectWriteback(writeback)) => {
                     let output = OutPointer::from_index(writeback.output(), function)?;

@@ -280,6 +280,56 @@ mod tests {
     }
 
     #[test]
+    fn dart_target_passes_mutable_direct_records_by_pointer() {
+        let bindings = bindings(
+            r#"
+            #[data]
+            pub struct Point { pub x: f64, pub y: f64 }
+            #[export]
+            pub fn update(value: &mut Point) {}
+            #[export]
+            pub fn update_then_fail(value: &mut Point) -> Result<(), String> { Ok(()) }
+            "#,
+        );
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("mutable direct records should render");
+        let source = file(&output, "demo/lib/demo.dart");
+        assert!(source.contains("value._m$writeStruct(_l$valueStorage.ptr);"));
+        assert_eq!(
+            source
+                .matches("value._m$updateFromStruct(_l$valueStorage.ptr.ref);")
+                .count(),
+            2
+        );
+        let fallible = source
+            .split("void updateThenFail(Point value)")
+            .nth(1)
+            .unwrap();
+        assert!(fallible.contains("finally {\n    value._m$updateFromStruct"));
+    }
+
+    #[test]
+    fn dart_target_rejects_async_mutable_direct_record_parameters() {
+        let bindings = bindings(
+            r#"
+            #[data]
+            pub struct Point { pub x: f64, pub y: f64 }
+            #[export]
+            pub async fn update(value: &mut Point) {}
+            "#,
+        );
+        let result = target(DartHost::new().package("demo")).render(&bindings);
+        assert!(matches!(
+            result,
+            Err(crate::Error::UnsupportedTarget {
+                target: "dart",
+                shape: "asynchronous mutable direct record parameter",
+            })
+        ));
+    }
+
+    #[test]
     fn dart_target_expands_shared_runtime_fragments() {
         let bindings = bindings("");
         let output = target(DartHost::new().package("demo"))
