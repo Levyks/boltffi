@@ -280,6 +280,22 @@ mod tests {
     }
 
     #[test]
+    fn dart_target_expands_shared_runtime_fragments() {
+        let bindings = bindings("");
+        let output = target(DartHost::new().package("demo"))
+            .render(&bindings)
+            .expect("runtime should render");
+        let source = file(&output, "demo/lib/demo.dart");
+
+        assert!(!source.contains("{%"));
+        assert!(source.contains("class $$BoltBoolList"));
+        assert!(source.contains("class $$BoltResult"));
+        assert!(source.contains("static bool listCompare<T>"));
+        assert!(source.contains("static int listHash<T>"));
+        assert!(source.contains("static bool nullableCompare<T>"));
+    }
+
+    #[test]
     fn dart_target_renders_custom_type_defaults_through_representations() {
         let bindings = bindings(include_str!(
             "../../../tests/fixtures/source/records/custom_type_default.rs"

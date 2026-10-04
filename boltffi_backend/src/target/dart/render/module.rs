@@ -53,7 +53,16 @@ impl<'host, 'bridge, 'decl> Module<'host, 'bridge, 'decl> {
             .map(native::declaration)
             .collect::<Result<Vec<_>>>()?
             .join("\n");
-        let mut preamble = PRELUDE.trim_end().to_owned();
+        let mut preamble = PRELUDE
+            .trim_end()
+            .replace(
+                "{% include \"target/dart/shared_values.dart\" %}",
+                include_str!("../../../../templates/target/dart/shared_values.dart"),
+            )
+            .replace(
+                "{% include \"target/dart/shared_compare.dart\" %}",
+                include_str!("../../../../templates/target/dart/shared_compare.dart"),
+            );
         preamble.push_str("\n\n");
         preamble.push_str(&native_functions);
         preamble.push('\n');
