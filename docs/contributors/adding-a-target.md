@@ -58,18 +58,15 @@ The render code builds generated source from typed fragments, not plain `String`
 `LanguageSyntax` in `boltffi_backend/src/core/syntax.rs` defines fragments for identifiers, types, expressions, statements, literals, and argument lists.
 An identifier field cannot accept an expression.
 Each fragment owns its casing and escaping, and the template prints the fragment.
-`LanguageSyntax::keyword` checks reserved names.
-A language can supply `KEYWORDS` for the default predicate or override `keyword` with a parser.
+`LanguageSyntax::keyword` checks reserved names against the `KEYWORDS` table.
+Each language owns one static table in its `syntax.rs` file.
 
-Ruby uses `ruby-prism` for keyword checks.
-Backend builds require a C compiler and `libclang` for `bindgen`.
-The crate supplies Prism's C source.
-Prism runs in the generator, not in generated Ruby extensions.
-Update `ruby-prism` when the supported Ruby grammar changes.
-
-The `ruby-prism` 1.9.0 Rust `parse` API uses Ruby 4.1 grammar by default.
-That API has no version parameter.
-The current check classifies candidate names, not complete generated Ruby programs.
+Ruby copies its table from the Prism 1.9 keyword tokens, the Ruby 4.1 grammar.
+The `ruby-prism` Rust API exposes only `parse`, not a keyword table.
+A parse per candidate name costs about 0.26 microseconds per name on a laptop.
+The parse path also forces a `bindgen` build step on every backend user.
+The static table avoids both costs and matches the other targets.
+Update the Ruby table when BoltFFI raises the supported Ruby version.
 
 `HostBackend`, `BridgeBackend`, `BridgeContract`, and `LanguageSyntax` are all sealed inside `boltffi_backend`. An in-crate target implements the matching `sealed` marker alongside the public trait, otherwise the first build fails with a private-bound error that reads like the trait does not exist. One line per impl settles it.
 

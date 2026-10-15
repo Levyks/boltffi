@@ -1,7 +1,5 @@
 use std::fmt;
 
-use ruby_prism::Node;
-
 use crate::{
     bridge::c,
     core::{LanguageSyntax, syntax::sealed},
@@ -26,39 +24,64 @@ pub struct Identifier(String);
 pub struct Literal(String);
 
 impl LanguageSyntax for Syntax {
+    // The table lists the keyword tokens from Prism 1.9, the Ruby 4.1 grammar.
+    // The `ruby-prism` Rust API exposes only `parse`, not a keyword table.
+    // A parse per candidate name also adds a `bindgen` build step for all users.
+    // `__END__` is not a keyword, but Ruby treats the marker as end of source.
+    // The table rejects `__END__` as an identifier name for that reason.
+    // Ruby adds keywords rarely, because a new keyword breaks valid programs.
+    // Update this table when BoltFFI raises the supported Ruby version.
+    const KEYWORDS: &'static [&'static str] = &[
+        "BEGIN",
+        "END",
+        "__ENCODING__",
+        "__END__",
+        "__FILE__",
+        "__LINE__",
+        "alias",
+        "and",
+        "begin",
+        "break",
+        "case",
+        "class",
+        "def",
+        "defined?",
+        "do",
+        "else",
+        "elsif",
+        "end",
+        "ensure",
+        "false",
+        "for",
+        "if",
+        "in",
+        "module",
+        "next",
+        "nil",
+        "not",
+        "or",
+        "redo",
+        "rescue",
+        "retry",
+        "return",
+        "self",
+        "super",
+        "then",
+        "true",
+        "undef",
+        "unless",
+        "until",
+        "when",
+        "while",
+        "yield",
+    ];
+
     type Identifier = Identifier;
     type Type = c::TypeFragment;
     type Expr = c::Expression;
     type Stmt = c::Statement;
     type Literal = Literal;
     type Arguments = c::ArgumentList;
-
-    fn keyword(identifier: &str) -> bool {
-        let word = identifier.strip_suffix('?').unwrap_or(identifier);
-        let mut characters = word.chars();
-        if !characters
-            .next()
-            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
-            || !characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-        {
-            return false;
-        }
-
-        let parsed = ruby_prism::parse(identifier.as_bytes());
-        if parsed.errors().next().is_some() {
-            return true;
-        }
-
-        // Bare names produce calls or constant reads. Keywords produce other nodes.
-        let program = parsed
-            .node()
-            .as_program_node()
-            .expect("Prism parses a program");
-        !matches!(
-            program.statements().body().iter().next(),
-            Some(Node::CallNode { .. } | Node::ConstantReadNode { .. })
-        )
-    }
 }
 
 impl sealed::LanguageSyntax for Syntax {}
