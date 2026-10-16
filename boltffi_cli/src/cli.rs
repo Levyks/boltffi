@@ -384,7 +384,7 @@ pub(crate) enum PackTargetArg {
     },
     #[command(
         about = "Build + package Ruby gem sources (experimental)",
-        long_about = "Build + package Ruby gem sources.\n\nOutputs:\n  - Gem sources: {targets.ruby.output}\n  - Static library: {targets.ruby.output}/ext/<gem>/lib<library>.a\n\nRun `gem build <gem>.gemspec` in the output directory to build the gem.\n"
+        long_about = "Build + package Ruby gem sources.\n\nOutputs:\n  - Gem sources: {targets.ruby.output}\n  - Static library: {targets.ruby.output}/ext/<stem>/lib<library>.a\n\nRun `gem build <gem>.gemspec` in the output directory to build the gem.\n"
     )]
     Ruby {
         #[arg(long)]

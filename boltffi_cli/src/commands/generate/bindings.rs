@@ -569,6 +569,7 @@ pub(crate) fn ruby_host(config: &Config, expansion: &BindingExpansion) -> Result
     let host = RubyCExtHost::new()
         .native_library(expansion.artifact_name())
         .cargo_features(expansion.features(), expansion.feature_args())
+        .cargo_toolchain_selector(expansion.toolchain_selector().map(str::to_owned))
         .version(ruby.version.clone());
     let host = match &ruby.module_name {
         Some(module) => host.module_name(module).map_err(|error| {

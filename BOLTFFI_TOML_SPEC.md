@@ -40,6 +40,7 @@ experimental = ["typescript.async_streams"]
 Experimental targets:
 - `dart`
 - `kotlin_multiplatform`
+- `ruby`
 
 Experimental features:
 - `typescript.async_streams`
@@ -597,6 +598,8 @@ remaining API restrictions.
 
 Enable Ruby with `--experimental` or `experimental = ["ruby"]` at the top level.
 
+The generated gem requires Ruby 3.3 or later.
+
 - `enabled` (bool): Whether Ruby generation and packaging are active.
   - Default: `false`
 - `output` (path): Gem source root.
@@ -609,6 +612,7 @@ Enable Ruby with `--experimental` or `experimental = ["ruby"]` at the top level.
   - Default: the Cargo package name.
   - The extension stem `<stem>` is the gem name in `snake_case`. It names
     `lib/<stem>.rb`, `ext/<stem>/`, and the `Init_<stem>` entry point.
+  - Packaging selects only the current stem, even when the output contains an earlier gem.
 - `module_name` (string, optional): Ruby module that holds the functions and
   records, such as `MyLib::Native`.
   - Default: the Cargo package name in `UpperCamelCase`.
@@ -621,6 +625,7 @@ Enable Ruby with `--experimental` or `experimental = ["ruby"]` at the top level.
     library exists. The build replays the cargo feature arguments that
     `boltffi generate` used, so the library exports every function the
     extension calls.
+  - The build also uses the explicit Rust toolchain that `boltffi generate` selected.
   - A `.gem` file holds the generated files but not the crate. So the path
     works only when `extconf.rb` runs in a checkout that holds the crate,
     such as a Bundler `git:` gem.

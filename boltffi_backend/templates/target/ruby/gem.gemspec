@@ -9,8 +9,9 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.3"
   spec.require_paths = ["lib"]
   spec.extensions = [{{ extconf }}]
+  stem = {{ stem }}
   spec.files = Dir.chdir(__dir__) do
-    Dir["lib/**/*.rb", "ext/**/*.{c,h,rb}", "ext/**/*.a", "ext/**/*.boltffi-link.json"]
+    Dir["lib/#{stem}.rb", "lib/#{stem}/**/*.rb", "ext/#{stem}/**/*.{c,h,rb}", "ext/#{stem}/**/*.a", "ext/#{stem}/**/*.boltffi-link.json"]
   end
   # A vendored static library runs only on the platform that built it, so the
   # gem names that platform. The tag leaves out the Darwin version. That

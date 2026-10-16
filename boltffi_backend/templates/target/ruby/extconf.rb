@@ -23,6 +23,7 @@ module BoltFFIExtconf
   ARTIFACT = {{ artifact }}
   EXTENSION = {{ extension }}
   DEFAULT_MANIFEST = {% if let Some(manifest) = manifest %}File.expand_path({{ manifest }}, __dir__){% else %}nil{% endif %}
+  CARGO_TOOLCHAIN = {% if let Some(selector) = toolchain_selector %}{{ selector }}{% else %}nil{% endif %}
   # The cargo feature selection that `boltffi generate` used, and the active
   # features it produced. A cargo build replays the selection, so the library
   # exports every function this extension calls.
@@ -66,8 +67,9 @@ module BoltFFIExtconf
     # binding expansion switched on, so the library exports the C functions
     # this extension calls.
     def cargo_build(manifest)
-      cargo = ENV.fetch("BOLTFFI_RUBY_CARGO", "cargo")
-      metadata, status = Open3.capture2(cargo, "metadata", "--format-version", "1", "--no-deps", "--manifest-path", manifest)
+      cargo = [ENV.fetch("BOLTFFI_RUBY_CARGO", "cargo")]
+      cargo << CARGO_TOOLCHAIN if CARGO_TOOLCHAIN
+      metadata, status = Open3.capture2(*cargo, "metadata", "--format-version", "1", "--no-deps", "--manifest-path", manifest)
       abort("boltffi: cargo metadata failed for #{manifest}") unless status.success?
 
       metadata = JSON.parse(metadata)
@@ -85,7 +87,7 @@ module BoltFFIExtconf
         "BOLTFFI_BINDING_METADATA_FEATURES" => ACTIVE_FEATURES,
       }
       command = [
-        cargo, "rustc", "--lib", "--release", "--crate-type", "staticlib", *CARGO_FEATURE_ARGS,
+        *cargo, "rustc", "--lib", "--release", "--crate-type", "staticlib", *CARGO_FEATURE_ARGS,
         "--manifest-path", manifest, "--message-format", "json-render-diagnostics",
       ]
       command << "--locked" if File.exist?(File.join(metadata["workspace_root"], "Cargo.lock"))

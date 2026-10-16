@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use boltffi_backend::target::ruby::name_style::extension_stem;
 use boltffi_bindgen::target::Target;
 
 use crate::{
@@ -83,7 +84,13 @@ pub(crate) fn pack_ruby(
     let profile_dir = binding_expansion
         .target_directory()
         .join(build_profile.output_directory_name());
-    let extension_dir = extension_dir(&config.ruby_output())?;
+    let gem = config
+        .targets
+        .ruby
+        .gem_name
+        .as_deref()
+        .unwrap_or_else(|| binding_expansion.selected_library().package_name());
+    let extension_dir = extension_dir(&config.ruby_output(), gem)?;
     let vendored = extension_dir.join(&static_library);
     let link_metadata = extension_dir.join(format!("{static_library}.boltffi-link.json"));
 
@@ -163,28 +170,16 @@ fn write_link_metadata(
     })
 }
 
-/// Returns the one `ext/<stem>` directory that holds a generated `extconf.rb`.
-fn extension_dir(output: &Path) -> Result<PathBuf> {
-    let ext = output.join("ext");
-    let mut candidates = std::fs::read_dir(&ext)
-        .map_err(|source| CliError::ReadFailed {
-            path: ext.clone(),
-            source,
-        })?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.join("extconf.rb").is_file())
-        .collect::<Vec<_>>();
-    match candidates.len() {
-        1 => Ok(candidates.remove(0)),
-        0 => Err(failed(&format!(
-            "no generated Ruby extension under {}; run generate ruby first",
-            ext.display()
-        ))),
-        _ => Err(failed(&format!(
-            "more than one generated Ruby extension under {}",
-            ext.display()
-        ))),
+/// Returns the generated extension directory for the current gem.
+fn extension_dir(output: &Path, gem: &str) -> Result<PathBuf> {
+    let directory = output.join("ext").join(extension_stem(gem));
+    if !directory.join("extconf.rb").is_file() {
+        return Err(failed(&format!(
+            "no generated Ruby extension at {}; run generate ruby first",
+            directory.display()
+        )));
     }
+    Ok(directory)
 }
 
 fn failed(command: &str) -> CliError {

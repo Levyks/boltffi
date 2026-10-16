@@ -267,7 +267,7 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: 3.10.8
-      - if: matrix.python-version == '3.13' && runner.os != 'Windows'
+      - if: runner.os != 'Windows'
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '4.0'

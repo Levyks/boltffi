@@ -44,6 +44,7 @@ pub struct RubyCExtHost {
     version: Option<String>,
     library: Option<String>,
     cargo_manifest: Option<String>,
+    toolchain_selector: Option<String>,
     active_features: String,
     feature_args: Vec<String>,
 }
@@ -94,6 +95,12 @@ impl RubyCExtHost {
     pub fn cargo_features(mut self, active: impl Into<String>, arguments: Vec<String>) -> Self {
         self.active_features = active.into();
         self.feature_args = arguments;
+        self
+    }
+
+    /// Selects the Rust toolchain for the generated Cargo fallback.
+    pub fn cargo_toolchain_selector(mut self, selector: Option<String>) -> Self {
+        self.toolchain_selector = selector;
         self
     }
 
@@ -274,6 +281,7 @@ impl host::HostBackend for RubyCExtHost {
             module: &module,
             artifact: &artifact,
             cargo_manifest: self.cargo_manifest.as_deref(),
+            toolchain_selector: self.toolchain_selector.as_deref(),
             active_features: &self.active_features,
             feature_args: &self.feature_args,
             crate_name: &crate_name,
