@@ -3,8 +3,7 @@
 use std::collections::HashSet;
 
 use boltffi_ast::{
-    BaseTrait, ConstantOwner, FnSig, MethodDef, ParameterDef, ReturnDef, SourceContract, TypeExpr,
-    VariantPayload,
+    BaseTrait, FnSig, MethodDef, ParameterDef, ReturnDef, SourceContract, TypeExpr, VariantPayload,
 };
 
 /// Keeps every declaration of the `seed_crates` and every declaration they reach through
@@ -155,7 +154,7 @@ impl Reached {
             .for_each(|constant| {
                 self.ty(&constant.type_expr);
                 if let Some(owner) = &constant.owner {
-                    self.pending.push(owner_id(owner).to_owned());
+                    self.pending.push(owner.as_str().to_owned());
                 }
             });
         contract
@@ -165,7 +164,7 @@ impl Reached {
                 constant
                     .owner
                     .as_ref()
-                    .is_some_and(|owner| owner_id(owner) == id)
+                    .is_some_and(|owner| owner.as_str() == id)
             })
             .for_each(|constant| self.pending.push(constant.id.as_str().to_owned()));
     }
@@ -219,14 +218,6 @@ impl Reached {
             },
             _ => {}
         }
-    }
-}
-
-fn owner_id(owner: &ConstantOwner) -> &str {
-    match owner {
-        ConstantOwner::Record(id) => id.as_str(),
-        ConstantOwner::Enum(id) => id.as_str(),
-        ConstantOwner::Class(id) => id.as_str(),
     }
 }
 

@@ -925,16 +925,8 @@ pub enum GenerationError {
     /// The metadata build or artifact read failed.
     #[error(transparent)]
     Metadata(#[from] BindingMetadataBuildError),
-    /// The compiled crate embedded no metadata for the requested surface.
-    #[error("compiled crate embeds no binding metadata for the {surface:?} surface")]
-    MissingSurface {
-        /// Surface selected from the target triple.
-        surface: BindingMetadataSurface,
-    },
     /// The compiled crate carried no per-invocation source records.
-    #[error(
-        "compiled crate carries no BoltFFI source records; is `boltffi::scaffolding!()` at its root?"
-    )]
+    #[error("compiled crate carries no BoltFFI source records; does it export anything?")]
     NoSourceRecords,
     /// Per-invocation source records did not aggregate into one contract.
     #[error("aggregate per-invocation source records: {0}")]

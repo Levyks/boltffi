@@ -18,9 +18,9 @@ pub const SOURCE_RECORDS_ENV: &str = "BOLTFFI_SOURCE_RECORDS";
 
 /// A Cargo library build that reads the BoltFFI source records its artifacts embed.
 ///
-/// The build enables the `boltffi_metadata` cfg, sets [`SOURCE_RECORDS_ENV`] so every
-/// crate emits its records, and reads Cargo's JSON artifact stream. Artifact decoding
-/// is delegated to [`BindingMetadataReader`].
+/// The build sets [`SOURCE_RECORDS_ENV`] so every crate emits its records, and reads
+/// Cargo's JSON artifact stream. Artifact decoding is delegated to
+/// [`BindingMetadataReader`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BindingMetadataBuild {
     manifest_path: PathBuf,
@@ -518,10 +518,10 @@ impl<'build> CargoBuild<'build> {
         }
     }
 
-    /// Target directory for the metadata build: `<target>/boltffi-metadata`.
+    /// Target directory for the metadata build: `<target>/boltffi-source-records`.
     ///
-    /// Cargo records `cargo rustc -- --cfg …` and tracked env in a unit's
-    /// fingerprint but not in its hash, so this build and an ordinary
+    /// Cargo records the build script's tracked env in a unit's fingerprint
+    /// but not in its hash, so this build and an ordinary
     /// `cargo build` of the same crate and features write the *same* artifact
     /// slot and dirty each other — alternating them recompiles the crate every
     /// time. A directory of its own keeps both caches warm.
@@ -539,7 +539,7 @@ impl<'build> CargoBuild<'build> {
         {
             return None;
         }
-        Some(self.target_directory?.join("boltffi-metadata"))
+        Some(self.target_directory?.join("boltffi-source-records"))
     }
 
     fn plain_output(self) -> Result<CargoOutput, BindingMetadataBuildError> {
@@ -552,26 +552,9 @@ impl<'build> CargoBuild<'build> {
     fn plain_command(self) -> Command {
         let mut command = self.base_command();
         if let Some(target_dir) = self.metadata_target_dir() {
-            command
-                .arg("--target-dir")
-                .arg(target_dir.with_file_name("boltffi-source-records"));
+            command.arg("--target-dir").arg(target_dir);
         }
-        self.metadata_cfgs(&mut command);
         command
-    }
-
-    /// Both builds compile the root crate with the metadata cfgs, so cfg-gated
-    /// exports surface identically; only the env gates separate them.
-    fn metadata_cfgs(&self, command: &mut Command) {
-        let surface = self.build.surface.unwrap_or_else(|| {
-            BindingMetadataSurface::from_target_triple(self.build.target.as_deref())
-        });
-        command
-            .arg("--")
-            .arg("--cfg")
-            .arg("boltffi_metadata")
-            .arg("--cfg")
-            .arg(format!("boltffi_binding_surface_{}", surface.as_str()));
     }
 
     fn base_command(&self) -> Command {
@@ -910,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn cargo_build_selects_wasm_bindings_without_cross_compiling_the_metadata_artifact() {
+    fn wasm_bindings_build_the_metadata_artifact_for_the_host() {
         let build = BindingMetadataBuild::new("/workspace/ffi/Cargo.toml")
             .surface(BindingMetadataSurface::Wasm32);
         let cargo_args = build.cargo_args.as_ref().unwrap();
@@ -930,11 +913,6 @@ mod tests {
             arguments
                 .windows(2)
                 .any(|arguments| arguments == ["--target", "aarch64-apple-darwin"])
-        );
-        assert!(
-            arguments
-                .iter()
-                .any(|argument| argument == "boltffi_binding_surface_wasm32")
         );
     }
 

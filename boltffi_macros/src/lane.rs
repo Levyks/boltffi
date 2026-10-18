@@ -160,7 +160,13 @@ pub(crate) fn start(kind: Kind, attribute: TokenStream, item: TokenStream) -> To
     };
     let pending = lane_paths(&fragments);
     let chain = step(kind, &attribute, &item, Vec::new(), pending);
+    let scaffolded = (kind != Kind::Pool).then(|| {
+        quote! {
+            const _: ::core::marker::PhantomData<crate::__BoltffiTag> = ::core::marker::PhantomData;
+        }
+    });
     quote! {
+        #scaffolded
         #lane
         #chain
     }

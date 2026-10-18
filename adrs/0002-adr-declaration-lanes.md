@@ -265,13 +265,17 @@ walks one crate through every expansion.
   200-deep record chain build 55% and 51% slower. Pre-lowered summaries (D2) are the next
   lever. Measured with [`0002-bench.py`](0002-bench.py), median of 5 runs, on `main` at
   `196a06b9` and the branch at `d1426da7`, on an Apple M4 Pro with rustc 1.95.0.
+- **Recursion depth.** Each distinct type an invocation names adds two nested expansions,
+  so one item naming 64 or more distinct types exceeds rustc's default `recursion_limit` of
+  128. rustc's error suggests raising it, and `#![recursion_limit = "256"]` fixes it.
 - **Dependencies.** A path dependency the library never uses is not linked, so `generate`
   fails until the root names it (D11).
 - **Binary size.** Records are `#[used]` statics that survive dead-stripping, and grew the
   demo's release dylib from 1.82 to 2.43 MB. They are now emitted only in bindgen's own
   build, which sets `BOLTFFI_SOURCE_RECORDS`, so a shipped binary carries none.
 - **Diagnostics.** Misuse surfaces as `cannot find macro`, and a missing
-  `scaffolding!()` as ``cannot find type `__BoltffiTag` ``; both need friendlier errors.
+  `scaffolding!()` as ``cannot find type `__BoltffiTag` `` in every build; both need
+  friendlier errors.
 
 ### Not yet verified
 
