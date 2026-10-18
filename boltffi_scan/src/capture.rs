@@ -68,33 +68,18 @@ pub fn capture_function(item: &syn::ItemFn) -> Result<CapturedItem<FunctionDef>,
     captured(|scope, declared_types| items::function::scan_item(item, scope, declared_types))
 }
 
-/// Captures an `#[export] impl` block as a class definition.
+/// Captures an `#[export]` struct as the class it declares, without members.
 ///
 /// The `marker_args` parameter is the export marker's argument tokens, which carry the
 /// class thread-safety choice.
 pub fn capture_class(
-    item: &syn::ItemImpl,
+    item: &syn::ItemStruct,
     marker_args: proc_macro2::TokenStream,
 ) -> Result<CapturedItem<ClassDef>, ScanError> {
     let thread_safety = crate::marker::export_marker_from_args(marker_args)?.class_thread_safety();
     captured(|scope, declared_types| {
-        items::class::scan_item(item, scope, declared_types, thread_safety)
+        items::class::scan_struct(item, scope, declared_types, thread_safety)
     })
-}
-
-/// Captures the associated constants of an `#[export] impl` block as constant definitions.
-pub fn capture_class_constants(
-    item: &syn::ItemImpl,
-) -> Result<CapturedItem<Vec<ConstantDef>>, ScanError> {
-    captured(|scope, declared_types| {
-        let owner = ConstantOwner::Class(items::class::resolve_id(item, scope, declared_types)?);
-        items::constant::scan_associated_in_impl(item, &owner, scope, declared_types)
-    })
-}
-
-/// Captures the `#[ffi_stream]` methods of an `#[export] impl` block as stream definitions.
-pub fn capture_streams(item: &syn::ItemImpl) -> Result<CapturedItem<Vec<StreamDef>>, ScanError> {
-    captured(|scope, declared_types| items::stream::scan_item(item, scope, declared_types))
 }
 
 /// Captures an `#[export]` constant as a constant definition.
@@ -142,7 +127,7 @@ pub fn capture_interned_string_pool(
     })
 }
 
-/// Methods captured from one `#[data(impl)]` or `#[export(methods)]` block, targeting a
+/// Methods captured from one `#[data(impl)]` or `#[export] impl` block, targeting a
 /// slot-deferred type.
 pub struct CapturedMethods {
     /// The impl target as a slot-deferred type expression.
@@ -165,7 +150,7 @@ pub fn capture_methods(item: &syn::ItemImpl) -> Result<CapturedMethods, ScanErro
     methods_block(item, MethodsTarget::Data)
 }
 
-/// Captures an `#[export(methods)]` block against its slot-deferred class.
+/// Captures an `#[export] impl` block against its slot-deferred class.
 pub fn capture_class_methods(item: &syn::ItemImpl) -> Result<CapturedMethods, ScanError> {
     methods_block(item, MethodsTarget::Class)
 }
@@ -422,28 +407,29 @@ mod tests {
     }
 
     #[test]
-    fn captures_a_class_impl_with_methods() {
-        let item: syn::ItemImpl = syn::parse_quote! {
-            impl Counter {
-                pub fn new(initial: i32) -> Self {
-                    unimplemented!()
-                }
-
-                pub fn add(&self, amount: i32) -> i32 {
-                    unimplemented!()
-                }
+    fn captures_a_class_from_its_struct_without_members() {
+        let item: syn::ItemStruct = syn::parse_quote! {
+            /// Counts things.
+            pub struct Counter {
+                value: std::sync::atomic::AtomicI32,
             }
         };
 
         let captured =
-            capture_class(&item, proc_macro2::TokenStream::new()).expect("class impl captures");
+            capture_class(&item, proc_macro2::TokenStream::new()).expect("class struct captures");
 
         assert_eq!(captured.def.id.as_str(), "$self::Counter");
-        assert_eq!(captured.def.methods.len(), 2);
+        assert!(
+            captured.def.methods.is_empty(),
+            "members come from the impl blocks"
+        );
+        assert!(
+            captured.slots.is_empty(),
+            "private fields never cross, so they take no slots"
+        );
         assert_eq!(
-            captured.def.methods[0].id.as_str(),
-            "$self::Counter::new",
-            "method ids nest under the class placeholder"
+            captured.def.doc.as_ref().map(|doc| doc.as_str()),
+            Some("Counts things.")
         );
         assert_eq!(
             captured.def.thread_safety,
@@ -453,14 +439,12 @@ mod tests {
 
     #[test]
     fn captures_single_threaded_class_thread_safety() {
-        let item: syn::ItemImpl = syn::parse_quote! {
-            impl Counter {
-                pub fn bump(&mut self) {}
-            }
+        let item: syn::ItemStruct = syn::parse_quote! {
+            pub struct Counter;
         };
 
         let captured =
-            capture_class(&item, quote::quote!(single_threaded)).expect("class impl captures");
+            capture_class(&item, quote::quote!(single_threaded)).expect("class struct captures");
 
         assert_eq!(
             captured.def.thread_safety,
@@ -482,26 +466,26 @@ mod tests {
             }
         };
 
-        let captured = capture_streams(&item).expect("streams capture");
+        let captured = capture_class_methods(&item).expect("class methods block captures");
 
-        assert_eq!(captured.def.len(), 1, "only stream methods produce streams");
-        assert_eq!(captured.def[0].id.as_str(), "$self::Engine::points");
         assert_eq!(
-            captured.def[0].owner.as_ref().map(|owner| owner.as_str()),
-            Some("$self::Engine")
+            captured.streams.len(),
+            1,
+            "only stream methods produce streams"
         );
-        assert_eq!(captured.def[0].mode, boltffi_ast::StreamMode::Batch);
+        assert_eq!(captured.streams[0].id.as_str(), "$slot:0::points");
+        assert_eq!(captured.streams[0].mode, boltffi_ast::StreamMode::Batch);
         assert!(
             matches!(
-                &captured.def[0].item_type,
-                TypeExpr::Record { id, .. } if id.as_str() == "$slot:0"
+                &captured.streams[0].item_type,
+                TypeExpr::Record { id, .. } if id.as_str() == "$slot:1"
             ),
             "the item type defers to its slot"
         );
         assert_eq!(
             captured.slots.len(),
-            1,
-            "the runtime wrapper types never take slots"
+            2,
+            "the class and the item take slots, the runtime wrapper types never do"
         );
     }
 
@@ -516,10 +500,13 @@ mod tests {
             }
         };
 
-        let captured = capture_streams(&item).expect("streams capture");
+        let captured = capture_class_methods(&item).expect("class methods block captures");
 
-        assert_eq!(captured.def.len(), 1);
-        assert!(matches!(&captured.def[0].item_type, TypeExpr::Primitive(_)));
+        assert_eq!(captured.streams.len(), 1);
+        assert!(matches!(
+            &captured.streams[0].item_type,
+            TypeExpr::Primitive(_)
+        ));
     }
 
     #[test]
@@ -534,7 +521,7 @@ mod tests {
         };
 
         assert!(
-            capture_streams(&item).is_err(),
+            capture_class_methods(&item).is_err(),
             "the subscription return shape stays required"
         );
     }
@@ -634,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn captures_class_constants_with_the_class_owner() {
+    fn captures_class_constants_under_the_class_slot() {
         let item: syn::ItemImpl = syn::parse_quote! {
             impl Counter {
                 pub const MAX: i32 = 9;
@@ -645,16 +632,13 @@ mod tests {
             }
         };
 
-        let captured = capture_class_constants(&item).expect("class constants capture");
+        let captured = capture_class_methods(&item).expect("class methods block captures");
 
-        assert_eq!(captured.def.len(), 1);
-        assert_eq!(captured.def[0].id.as_str(), "$self::Counter::MAX");
+        assert_eq!(captured.constants.len(), 1);
+        assert_eq!(captured.constants[0].id.as_str(), "$slot:0::MAX");
         assert!(
-            matches!(
-                &captured.def[0].owner,
-                Some(ConstantOwner::Class(id)) if id.as_str() == "$self::Counter"
-            ),
-            "the owner carries the class placeholder for minting"
+            captured.constants[0].owner.is_some(),
+            "the owner defers to the class's slot until aggregation"
         );
     }
 
@@ -725,22 +709,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_qualified_class_impl_targets_loudly() {
-        let item: syn::ItemImpl = syn::parse_quote! {
-            impl crate::runtime::Engine {
-                pub const LIMIT: u32 = 4;
-
-                pub fn start(&self) {}
+    fn rejects_generic_class_structs_loudly() {
+        let item: syn::ItemStruct = syn::parse_quote! {
+            pub struct Engine<T> {
+                inner: T,
             }
         };
 
-        let Err(error) = capture_class(&item, proc_macro2::TokenStream::new()) else {
-            panic!("the invocation module cannot mint another module's class id");
-        };
-        assert!(error.to_string().contains("crate::runtime::Engine"));
         assert!(
-            capture_class_constants(&item).is_err(),
-            "constants refuse the same target"
+            capture_class(&item, proc_macro2::TokenStream::new()).is_err(),
+            "generic classes stay unsupported"
         );
     }
 }

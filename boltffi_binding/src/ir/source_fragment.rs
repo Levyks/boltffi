@@ -53,7 +53,7 @@ pub enum SourceFragment {
         /// Static values addressable by wire id, in declaration order.
         values: Vec<String>,
     },
-    /// A `#[data(impl)]` or `#[export(methods)]` block, merged into its target declaration.
+    /// A `#[data(impl)]` or `#[export] impl` block, merged into its target declaration.
     Methods {
         /// The impl target, as a slot-deferred reference until resolution.
         target: TypeExpr,

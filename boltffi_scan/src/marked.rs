@@ -9,6 +9,7 @@ pub(super) struct MarkedItems<'source> {
     functions: Vec<Marked<'source, syn::ItemFn>>,
     traits: Vec<Marked<'source, syn::ItemTrait>>,
     classes: Vec<Marked<'source, syn::ItemImpl>>,
+    class_structs: Vec<Marked<'source, syn::ItemStruct>>,
     constants: Vec<Marked<'source, syn::ItemConst>>,
     customs: Vec<MarkedCustom<'source>>,
     interned_string_pools: Vec<MarkedInternedStringPool<'source>>,
@@ -38,6 +39,7 @@ impl<'source> MarkedItems<'source> {
             functions: Vec::new(),
             traits: Vec::new(),
             classes: Vec::new(),
+            class_structs: Vec::new(),
             constants: Vec::new(),
             customs: Vec::new(),
             interned_string_pools: Vec::new(),
@@ -63,6 +65,10 @@ impl<'source> MarkedItems<'source> {
 
     pub(super) fn classes(&self) -> &[Marked<'source, syn::ItemImpl>] {
         &self.classes
+    }
+
+    pub(super) fn class_structs(&self) -> &[Marked<'source, syn::ItemStruct>] {
+        &self.class_structs
     }
 
     pub(super) fn constants(&self) -> &[Marked<'source, syn::ItemConst>] {
@@ -141,6 +147,10 @@ impl<'source> MarkedItems<'source> {
             }
             (Marker::Export(_), syn::Item::Impl(item)) => {
                 self.classes.push(Marked::new(scope, marker, item));
+                Ok(())
+            }
+            (Marker::Export(_), syn::Item::Struct(item)) => {
+                self.class_structs.push(Marked::new(scope, marker, item));
                 Ok(())
             }
             (Marker::Export(export), syn::Item::Const(item)) if !export.requires_class_impl() => {
@@ -380,7 +390,7 @@ mod tests {
 
     #[test]
     fn rejects_marker_on_wrong_item_kind() {
-        let tree = tree("#[export] struct Point { x: i32 }");
+        let tree = tree("#[export] enum Mode { Fast }");
 
         let error = match MarkedItems::collect(&tree) {
             Ok(_) => panic!("wrong marker placement must reject"),
@@ -391,7 +401,7 @@ mod tests {
             error,
             ScanError::InvalidMarkerPlacement {
                 marker: "export".to_owned(),
-                item: "struct".to_owned()
+                item: "enum".to_owned()
             }
         );
     }

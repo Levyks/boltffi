@@ -22,7 +22,7 @@ use quote::{ToTokens, format_ident, quote};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use crate::capture::{self, Fragments, ImplCapture};
+use crate::capture::{self, Capture, Fragments};
 use crate::expansion::{contract::Expansion, expander::Expander};
 
 /// Numbers lane macros, method-block modules and configuration probes apart. A lane is only ever
@@ -102,11 +102,12 @@ impl Kind {
         .find(|kind| kind.keyword() == keyword)
     }
 
-    fn impl_capture(self, attribute: &TokenStream) -> ImplCapture {
+    pub(crate) fn capture(self, attribute: &TokenStream) -> Capture {
         match self {
-            Self::DataImpl => ImplCapture::Methods,
-            Self::ExportMethods => ImplCapture::ClassMethods,
-            _ => ImplCapture::Class(attribute.clone()),
+            Self::Export => Capture::Class(attribute.clone()),
+            Self::DataImpl => Capture::Methods,
+            Self::ExportMethods => Capture::ClassMethods,
+            _ => Capture::Item,
         }
     }
 }
@@ -138,7 +139,7 @@ fn fragments(kind: Kind, attribute: &TokenStream, item: &TokenStream) -> Result<
         _ => {
             let parsed =
                 syn::parse2::<syn::Item>(item.clone()).map_err(|error| error.to_string())?;
-            capture::fragments(&parsed, &kind.impl_capture(attribute), kind == Kind::Error)
+            capture::fragments(&parsed, &kind.capture(attribute), kind == Kind::Error)
         }
     }
 }
@@ -486,12 +487,12 @@ fn check_methods_target(
     );
     match (kind, class) {
         (Kind::ExportMethods, false) => Err(format!(
-            "`#[export(methods)]` extends a class declared by an `#[export] impl` block, and \
+            "`#[export] impl` adds methods to a class declared by an `#[export]` struct, and \
              `{spelling}` is not one; use `#[data(impl)]` on a `#[data]` type"
         )),
         (Kind::DataImpl, true) => Err(format!(
-            "`#[data(impl)]` extends a `#[data]` type, and `{spelling}` is an exported class; \
-             use `#[export(methods)]`"
+            "`#[data(impl)]` adds methods to a `#[data]` type, and `{spelling}` is an exported \
+             class; use `#[export] impl`"
         )),
         _ => Ok(()),
     }
@@ -683,16 +684,12 @@ fn invocation_module(kind: Kind, item: &syn::Item) -> Option<syn::Ident> {
         (Kind::Export, syn::Item::Fn(item)) => ("fn", item.sig.ident.to_string()),
         (Kind::Export, syn::Item::Const(item)) => ("const", item.ident.to_string()),
         (Kind::Export, syn::Item::Trait(item)) => ("trait", item.ident.to_string()),
-        (Kind::Export | Kind::ExportMethods | Kind::DataImpl, syn::Item::Impl(item)) => {
+        (Kind::Export, syn::Item::Struct(item)) => ("class", item.ident.to_string()),
+        (Kind::ExportMethods | Kind::DataImpl, syn::Item::Impl(item)) => {
             let syn::Type::Path(path) = &*item.self_ty else {
                 return None;
             };
-            let family = if kind == Kind::Export {
-                "class"
-            } else {
-                "methods"
-            };
-            (family, path.path.segments.last()?.ident.to_string())
+            ("methods", path.path.segments.last()?.ident.to_string())
         }
         _ => return None,
     };

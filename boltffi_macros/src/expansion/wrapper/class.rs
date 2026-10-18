@@ -377,7 +377,7 @@ impl<'expansion, 'lowered, S: boltffi_binding::SurfaceLower> Class<'expansion, '
                 #[diagnostic::on_unimplemented(
                     message = "BoltFFI: `{Self}` must be thread-safe (Send + Sync)",
                     note = "exported types can be accessed from any thread in the foreign language",
-                    note = "add #[export(single_threaded)] if you guarantee single-threaded access"
+                    note = "add #[export(single_threaded)] to the struct if you guarantee single-threaded access"
                 )]
                 trait BoltFFIThreadSafe: Send + Sync {}
                 impl<T: Send + Sync> BoltFFIThreadSafe for T {}

@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{DeriveInput, parse_macro_input};
 
 mod capture;
@@ -78,51 +78,31 @@ pub fn error(attribute: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
-    let methods = match export_methods(attribute.clone().into()) {
-        Ok(methods) => methods,
-        Err(error) => return error.to_compile_error().into(),
-    };
     match syn::parse::<syn::Item>(item.clone()) {
-        Ok(syn::Item::Impl(block)) if methods && block.trait_.is_none() => {
-            invocation(lane::Kind::ExportMethods, attribute, item)
+        Ok(syn::Item::Impl(block)) if !attribute.is_empty() => {
+            let attribute = proc_macro2::TokenStream::from(attribute);
+            let name = block.self_ty.to_token_stream();
+            syn::Error::new_spanned(
+                &attribute,
+                format!(
+                    "`#[export] impl` takes no arguments; write `#[export({attribute})]` on \
+                     `struct {name}`, which declares the class"
+                ),
+            )
+            .to_compile_error()
+            .into()
         }
-        Ok(item) if methods => syn::Error::new_spanned(
-            item,
-            "export(methods) can only be applied to an inherent impl block",
-        )
-        .to_compile_error()
-        .into(),
-        Ok(syn::Item::Const(_) | syn::Item::Fn(_) | syn::Item::Impl(_) | syn::Item::Trait(_)) => {
+        Ok(syn::Item::Impl(_)) => invocation(lane::Kind::ExportMethods, attribute, item),
+        Ok(syn::Item::Const(_) | syn::Item::Fn(_) | syn::Item::Struct(_) | syn::Item::Trait(_)) => {
             invocation(lane::Kind::Export, attribute, item)
         }
         Ok(item) => syn::Error::new_spanned(
             item,
-            "export can only be applied to const, fn, impl, or trait",
+            "export can only be applied to const, fn, impl, struct, or trait",
         )
         .to_compile_error()
         .into(),
         Err(error) => error.to_compile_error().into(),
-    }
-}
-
-/// Whether an export marker's arguments name a block that extends an existing class.
-fn export_methods(attribute: proc_macro2::TokenStream) -> syn::Result<bool> {
-    let Ok(arguments) = syn::parse::Parser::parse2(
-        syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
-        attribute,
-    ) else {
-        return Ok(false);
-    };
-    let methods = arguments.iter().any(|argument| argument == "methods");
-    match arguments.iter().find(|argument| *argument != "methods") {
-        Some(other) if methods => Err(syn::Error::new_spanned(
-            other,
-            format!(
-                "export(methods) takes no other arguments; `{other}` belongs on the \
-                 `#[export] impl` block that declares the class"
-            ),
-        )),
-        _ => Ok(methods),
     }
 }
 
@@ -179,22 +159,12 @@ fn records(
     item: TokenStream,
 ) -> proc_macro2::TokenStream {
     match kind {
-        lane::Kind::Data => capture::item_tokens(
-            item,
-            capture::ImplCapture::Class(proc_macro2::TokenStream::new()),
-            false,
-        ),
-        lane::Kind::Error => capture::item_tokens(
-            item,
-            capture::ImplCapture::Class(proc_macro2::TokenStream::new()),
-            true,
-        ),
-        lane::Kind::Export => {
-            capture::item_tokens(item, capture::ImplCapture::Class(attribute.clone()), false)
-        }
-        lane::Kind::DataImpl => capture::item_tokens(item, capture::ImplCapture::Methods, false),
-        lane::Kind::ExportMethods => {
-            capture::item_tokens(item, capture::ImplCapture::ClassMethods, false)
+        lane::Kind::Data
+        | lane::Kind::Error
+        | lane::Kind::Export
+        | lane::Kind::DataImpl
+        | lane::Kind::ExportMethods => {
+            capture::item_tokens(item, kind.capture(attribute), kind == lane::Kind::Error)
         }
         lane::Kind::CustomFfi => capture::custom_ffi_tokens(item),
         lane::Kind::CustomType => capture::custom_type_tokens(item),

@@ -26,11 +26,11 @@ pub trait TypeDesc<Tag> {
     const DESC: DescBuf;
 }
 
-/// Descriptor of an exported class, implemented by the `#[export] impl` that declares it.
+/// Descriptor of an exported class, implemented by the `#[export]` struct that declares it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an exported class",
-    label = "no `#[export] impl {Self}` block declares this class",
-    note = "`#[export(methods)]` adds to a class that one `#[export] impl {Self}` block declares"
+    label = "an `#[export] impl` block adds methods to an exported class",
+    note = "declare the class with `#[export]` on `struct {Self}`"
 )]
 pub trait ClassDesc<Tag> {
     /// One JSON type node naming the class.
