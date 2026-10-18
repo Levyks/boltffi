@@ -1057,6 +1057,7 @@ mod tests {
             Source {
                 code: r#"
 boltffi::scaffolding!();
+#[boltffi::export]
 pub struct Engine;
 #[boltffi::export]
 impl Engine {
@@ -1104,6 +1105,7 @@ boltffi::scaffolding!();
 #[boltffi::export]
 pub fn plain_add(a: i32, b: i32) -> i32 { a + b }
 
+#[boltffi::export]
 pub struct Counter;
 
 #[boltffi::data]
@@ -1295,6 +1297,7 @@ pub mod geo {
     }
 }
 
+#[boltffi::export]
 pub struct Counter { value: u32 }
 
 #[boltffi::export]
@@ -1438,6 +1441,7 @@ pub enum Mode {
     Boosted(OnlyExtra),
 }
 
+#[boltffi::export]
 pub struct Engine;
 
 #[boltffi::export]
@@ -1930,7 +1934,11 @@ pub fn captured_value() -> u32 { 42 }
             boltffi_binding::aggregate_records(&source.source_records, source.package.clone())
                 .expect("records aggregate");
 
-        assert_eq!(contract.classes.len(), 1, "both blocks declare one class");
+        assert_eq!(
+            contract.classes.len(),
+            1,
+            "the struct declares one class for both blocks"
+        );
         let methods = contract.classes[0]
             .methods
             .iter()
@@ -1939,17 +1947,19 @@ pub fn captured_value() -> u32 { 42 }
         assert_eq!(
             methods,
             [
+                "metadata_fixture::Session::label",
                 "metadata_fixture::Session::new",
                 "metadata_fixture::Session::shift",
+                "metadata_fixture::Session::width",
                 "metadata_fixture::Session::restored",
                 "metadata_fixture::Session::reset",
             ],
-            "the methods block's members follow the declaring block's"
+            "blocks merge by module, then by member names, whichever side of the struct they sit"
         );
         assert_eq!(
             contract.classes[0].thread_safety,
             boltffi_ast::ClassThreadSafety::UnsafeSingleThreaded,
-            "thread safety is the declaring block's"
+            "thread safety is the struct's"
         );
         let owned_by_session = |owner: Option<&str>| owner == Some("metadata_fixture::Session");
         assert_eq!(
@@ -2560,11 +2570,12 @@ pub mod api {
         }
     }
 
+    #[export(single_threaded)]
     pub struct Session {
         origin: Point,
     }
 
-    #[export(single_threaded)]
+    #[export]
     impl Session {
         pub const MAX_SHIFT: f64 = 9.0;
 
@@ -2602,11 +2613,19 @@ pub struct Point {
     pub x: f64,
 }
 
+#[export]
+impl Session {
+    pub fn label(&self) -> String {
+        "session".to_owned()
+    }
+}
+
+#[export(single_threaded)]
 pub struct Session {
     origin: Point,
 }
 
-#[export(single_threaded)]
+#[export]
 impl Session {
     pub const MAX_SHIFT: f64 = 9.0;
 
@@ -2631,7 +2650,7 @@ pub mod recovery {
 
     use crate::{Point, Session};
 
-    #[export(methods)]
+    #[export]
     impl Session {
         pub const MIN_SHIFT: f64 = -9.0;
 
@@ -2646,6 +2665,27 @@ pub mod recovery {
         #[boltffi::ffi_stream(item = Point)]
         pub fn resets(&self) -> Arc<EventSubscription<Point>> {
             todo!()
+        }
+    }
+}
+
+pub mod aliased {
+    use boltffi::export;
+
+    use crate::Session as Desk;
+
+    #[export]
+    impl Desk {
+        pub fn width(&self) -> f64 {
+            self.origin.x
+        }
+    }
+
+    #[cfg(any())]
+    #[export]
+    impl Desk {
+        pub fn absent(&self) -> Missing {
+            unreachable!()
         }
     }
 }

@@ -46,6 +46,7 @@ pub fn shapes_origin() -> Point {
     Point { x: 0.0, y: 0.0 }
 }
 
+#[export]
 pub struct Widget {
     pub n: u32,
 }
@@ -76,6 +77,7 @@ pub fn other_hello() -> u32 {
     7
 }
 
+#[export]
 pub struct Gadget {
     pub n: u32,
 }

@@ -21,7 +21,7 @@ fn check(configuration: &str, arguments: &[&str]) -> Output {
 }
 
 #[test]
-fn methods_blocks_extend_the_class_one_block_declares() {
+fn methods_blocks_extend_the_class_its_struct_declares() {
     let output = check("declared", &[]);
 
     assert!(
@@ -33,7 +33,7 @@ fn methods_blocks_extend_the_class_one_block_declares() {
 }
 
 #[test]
-fn a_methods_block_without_a_declaring_block_names_the_missing_class() {
+fn a_methods_block_without_an_exported_struct_names_the_missing_class() {
     let output = check("undeclared", &["--features", "undeclared"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -43,7 +43,7 @@ fn a_methods_block_without_a_declaring_block_names_the_missing_class() {
     );
     assert!(
         stderr.contains("`Orphan` is not an exported class")
-            && stderr.contains("no `#[export] impl Orphan` block declares this class"),
+            && stderr.contains("declare the class with `#[export]` on `struct Orphan`"),
         "undeclared class fixture failed for another reason\nstderr\n{stderr}"
     );
     assert!(
@@ -77,7 +77,44 @@ fn a_data_methods_block_on_a_class_names_the_export_marker() {
         "a data methods block compiled on a class\nstderr\n{stderr}"
     );
     assert!(
-        stderr.contains("`Counter` is an exported class; use `#[export(methods)]`"),
+        stderr.contains("`Counter` is an exported class; use `#[export] impl`"),
         "data impl on class fixture failed for another reason\nstderr\n{stderr}"
+    );
+}
+
+#[test]
+fn thread_safety_on_a_methods_block_points_at_the_struct() {
+    let output = check(
+        "misplaced-thread-safety",
+        &["--features", "misplaced_thread_safety"],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a methods block took a thread-safety argument\nstderr\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "`#[export] impl` takes no arguments; write `#[export(single_threaded)]` on \
+             `struct Cursor`"
+        ),
+        "misplaced thread safety fixture failed for another reason\nstderr\n{stderr}"
+    );
+}
+
+#[test]
+fn a_class_that_is_not_sync_is_reported_at_its_struct() {
+    let output = check("unsync", &["--features", "unsync"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a class holding a Cell compiled as thread safe\nstderr\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`Cell<u32>` cannot be shared between threads safely")
+            && stderr.contains("src/unsync.rs:5:1"),
+        "unsync fixture failed for another reason\nstderr\n{stderr}"
     );
 }

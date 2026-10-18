@@ -2,7 +2,7 @@ use boltffi::export;
 
 pub struct Orphan;
 
-#[export(methods)]
+#[export]
 impl Orphan {
     pub fn value(&self) -> u32 {
         0

@@ -17,6 +17,7 @@ fn add(a: Point, b: Point) -> Point {
     }
 }
 
+#[export]
 struct ConditionalClass;
 
 #[export]

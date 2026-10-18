@@ -1,7 +1,7 @@
 pub mod by_path {
     use boltffi::export;
 
-    #[export(methods)]
+    #[export]
     impl crate::Counter {
         pub async fn settled(&self) -> i32 {
             self.get()
@@ -20,7 +20,7 @@ pub mod by_import {
 
     use crate::Counter;
 
-    #[export(methods)]
+    #[export]
     impl Counter {
         pub fn reset(&self) {
             *self.value.lock().expect("counter lock") = 0;

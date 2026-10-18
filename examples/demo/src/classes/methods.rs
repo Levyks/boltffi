@@ -19,6 +19,7 @@ use boltffi::*;
 /// A simple thread-safe counter that demonstrates various
 /// method return types: plain values, Option, Result, and
 /// records.
+#[export]
 #[benchmark_candidate(object, uniffi)]
 pub struct Counter {
     count: Mutex<i32>,
@@ -84,11 +85,11 @@ impl Counter {
 }
 
 #[cfg(not(feature = "uniffi"))]
-#[export(methods)]
+#[export]
 impl Counter {
     #[demo_bench_macros::demo_case(
         "classes.methods.counter.decrement.should_call_a_method_declared_in_a_methods_block",
-        justification = "Ensure a method written in an `#[export(methods)]` block joins the class that its `#[export] impl` block declares.",
+        justification = "Ensure a method written in a second `#[export] impl` block joins the class that its `#[export]` struct declares.",
         directions = "Construct `classes::methods::Counter` through the generated binding, call `decrement`, and assert the count dropped by one."
     )]
     pub fn decrement(&self) {
@@ -122,6 +123,7 @@ impl Counter {
     }
 }
 
+#[export]
 pub struct MixedRecordService {
     label: String,
     pub(crate) stored_count: AtomicU32,
