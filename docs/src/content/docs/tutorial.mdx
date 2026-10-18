@@ -42,6 +42,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 boltffi::scaffolding!();
 
+#[export]
 pub struct Counter {
     value: AtomicI64,
 }
@@ -182,6 +183,7 @@ pub struct CounterError {
     pub message: String,
 }
 
+#[export]
 pub struct Counter {
     value: AtomicI64,
     min: i64,
@@ -276,6 +278,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 boltffi::scaffolding!();
 use std::path::PathBuf;
 
+#[export]
 pub struct PersistentCounter {
     value: AtomicI64,
     path: PathBuf,

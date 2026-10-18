@@ -54,7 +54,7 @@ cargo add boltffi
 Two attributes do most of the work:
 
 - `#[data]` marks a struct or enum as a record (value type, copied across the boundary)
-- `#[export]` exposes a function or impl block to the target language
+- `#[export]` exposes a function, or a class through its struct and impl blocks, to the target language
 
 Replace `src/lib.rs`:
 
