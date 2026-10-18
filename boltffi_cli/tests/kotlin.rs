@@ -450,7 +450,7 @@ fn android_bindings_load_desktop_natives_from_application_resources() {
     .expect("shared class fixture");
     fs::write(
         source_directory.join("lib.rs"),
-        format!("use boltffi::export;\n{source}"),
+        format!("use boltffi::export;\nboltffi::scaffolding!();\n{source}"),
     )
     .unwrap();
     let manifest = serde_json::json!({
