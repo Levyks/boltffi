@@ -86,9 +86,7 @@ pub struct Pace {
 
 #[export]
 #[rustfmt::data]
-pub struct Gauge {
-    total: Mutex<i32>,
-}
+pub struct Gauge;
 
 #[export(single_threaded)]
 pub struct Cursor {
