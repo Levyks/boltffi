@@ -13,7 +13,6 @@ use crate::{
     },
 };
 
-#[cfg(not(feature = "uniffi"))]
 use boltffi::*;
 
 /// A simple thread-safe counter that demonstrates various
