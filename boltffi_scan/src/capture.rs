@@ -5,8 +5,8 @@
 //! to project through the compiler at the invocation site.
 
 use boltffi_ast::{
-    ClassDef, ClassId, ConstantDef, ConstantOwner, CustomTypeDef, EnumDef, FunctionDef, MethodDef,
-    RecordDef, RecordId, StreamDef, TraitDef, TypeExpr,
+    ClassDef, ClassId, ConstantDef, ConstantOwner, CustomTypeDef, DocComment, EnumDef, FunctionDef,
+    MethodDef, RecordDef, RecordId, StreamDef, TraitDef, TypeExpr,
 };
 
 use crate::declared_types::DeclaredTypes;
@@ -141,6 +141,8 @@ pub struct CapturedMethods {
     pub constants: Vec<ConstantDef>,
     /// The block's `#[ffi_stream]` methods, owned by the target's slot placeholder.
     pub streams: Vec<StreamDef>,
+    /// A class block's doc comment, which documents a class whose struct has none.
+    pub doc: Option<DocComment>,
     /// Written references, in slot-index order.
     pub slots: Vec<SlotSource>,
 }
@@ -173,10 +175,11 @@ fn methods_block(item: &syn::ItemImpl, kind: MethodsTarget) -> Result<CapturedMe
         TypeExpr::Record { id, .. } => id.as_str().to_owned(),
         _ => return Err(ScanError::unsupported_type(&item.self_ty)),
     };
-    let (methods, streams) = match kind {
+    let (methods, streams, doc) = match kind {
         MethodsTarget::Data => (
             items::impl_methods::scan_value_methods(item, &parent, &scope, &declared_types)?,
             Vec::new(),
+            None,
         ),
         MethodsTarget::Class => (
             items::impl_methods::class_methods(item, &parent, &scope, &declared_types)?,
@@ -186,6 +189,7 @@ fn methods_block(item: &syn::ItemImpl, kind: MethodsTarget) -> Result<CapturedMe
                 &scope,
                 &declared_types,
             )?,
+            crate::attributes::Attributes::new(&item.attrs, &scanner).doc(),
         ),
     };
     let owner = ConstantOwner::Record(RecordId::new(parent));
@@ -201,6 +205,7 @@ fn methods_block(item: &syn::ItemImpl, kind: MethodsTarget) -> Result<CapturedMe
         methods,
         constants,
         streams,
+        doc,
         slots: declared_types.take_slots(),
     })
 }
@@ -722,6 +727,32 @@ mod tests {
         assert!(
             capture_class(&item, proc_macro2::TokenStream::new()).is_err(),
             "generic classes stay unsupported"
+        );
+    }
+
+    #[test]
+    fn a_class_methods_block_carries_its_doc_and_a_data_block_does_not() {
+        let item: syn::ItemImpl = syn::parse_quote! {
+            #[doc = "Old impl docs."]
+            impl Engine {
+                pub fn start(&self) {}
+            }
+        };
+
+        assert_eq!(
+            capture_class_methods(&item)
+                .expect("class methods block captures")
+                .doc
+                .as_ref()
+                .map(|doc| doc.as_str()),
+            Some("Old impl docs.")
+        );
+        assert!(
+            capture_methods(&item)
+                .expect("data methods block captures")
+                .doc
+                .is_none(),
+            "a data type's docs stay on its struct"
         );
     }
 

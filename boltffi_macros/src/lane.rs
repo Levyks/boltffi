@@ -474,11 +474,13 @@ fn check_methods_target(
         .and_then(|path| paths.iter().position(|candidate| *candidate == path))
         .and_then(|index| lanes[index].entries.first())
         .ok_or("lane continuation lost a methods target")?;
-    let class = matches!(
-        serde_json::from_str::<SourceFragment>(target.json.get()),
-        Ok(SourceFragment::Class(_))
-    );
+    let target = serde_json::from_str::<SourceFragment>(target.json.get()).ok();
+    let class = matches!(target, Some(SourceFragment::Class(_)));
     match (kind, class) {
+        _ if matches!(target, Some(SourceFragment::Custom(_))) => Err(format!(
+            "`{spelling}` is a custom type, and a custom type takes no methods blocks; \
+             its methods stay in Rust"
+        )),
         (Kind::ExportMethods, false) => Err(format!(
             "`#[export] impl` adds methods to a class declared by an `#[export]` struct, and \
              `{spelling}` is not one; use `#[data(impl)]` on a `#[data]` type"
@@ -632,10 +634,12 @@ fn render(
     let Some(module) = item.and_then(|item| invocation_module(kind, item)) else {
         return Ok(quote! {
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+            #[allow(deprecated)]
             const _: () = {
                 #native
             };
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            #[allow(deprecated)]
             const _: () = {
                 #wasm32
             };
@@ -648,7 +652,7 @@ fn render(
         .and_then(|(item, target)| methods_target_import(kind, item, target));
     Ok(quote! {
         #[doc(hidden)]
-        #[allow(non_snake_case, unused_imports)]
+        #[allow(non_snake_case, unused_imports, deprecated)]
         #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         pub mod #module {
             use super::*;
@@ -656,7 +660,7 @@ fn render(
             #native
         }
         #[doc(hidden)]
-        #[allow(non_snake_case, unused_imports)]
+        #[allow(non_snake_case, unused_imports, deprecated)]
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         pub mod #module {
             use super::*;

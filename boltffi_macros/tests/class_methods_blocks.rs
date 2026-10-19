@@ -118,3 +118,81 @@ fn a_class_that_is_not_sync_is_reported_at_its_struct() {
         "unsync fixture failed for another reason\nstderr\n{stderr}"
     );
 }
+
+#[test]
+fn an_argument_on_a_methods_block_is_moved_only_when_the_struct_takes_it() {
+    let output = check("impl-arguments", &["--features", "impl_arguments"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a methods block took an argument\nstderr\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "`#[export] impl` takes no arguments; every `#[export] impl` adds methods to the \
+             class that `#[export]` on `struct Cursor` declares"
+        ) && stderr.contains("error: `#[export] impl` takes no arguments\n"),
+        "impl arguments fixture failed for another reason\nstderr\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("write `#[export(sideways)]`")
+            && !stderr.contains("write `#[export(methods)]`"),
+        "an argument the struct does not take was suggested for it\nstderr\n{stderr}"
+    );
+}
+
+#[test]
+fn a_struct_that_is_both_data_and_a_class_is_refused_once_either_way() {
+    let output = check("data-and-export", &["--features", "data_and_export"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let refusal = "a struct is either a `#[data]` record or an `#[export]` class, not both";
+
+    assert!(
+        !output.status.success(),
+        "a struct compiled as both data and a class\nstderr\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches(refusal).count(),
+        2,
+        "data and export fixture failed for another reason\nstderr\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("defined multiple times")
+            && !stderr.contains("conflicting implementations"),
+        "the refusal came with the raw duplicate-declaration errors\nstderr\n{stderr}"
+    );
+}
+
+#[test]
+fn a_methods_block_on_a_custom_type_says_custom_types_take_none() {
+    let output = check("custom-methods", &["--features", "custom_methods"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a class methods block compiled on a custom type\nstderr\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`Email` is a custom type, and a custom type takes no methods blocks")
+            && !stderr.contains("use `#[data(impl)]`"),
+        "custom methods fixture failed for another reason\nstderr\n{stderr}"
+    );
+}
+
+#[test]
+fn a_mutable_receiver_on_a_thread_safe_class_points_at_the_struct() {
+    let output = check("mutable-receiver", &["--features", "mutable_receiver"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a &mut self method compiled on a thread-safe class\nstderr\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "a `&mut self` method needs `#[export(single_threaded)]` on its class's struct"
+        ),
+        "mutable receiver fixture failed for another reason\nstderr\n{stderr}"
+    );
+}

@@ -66,9 +66,35 @@ pub fn interned_string_pool(item: TokenStream) -> TokenStream {
 pub fn data(attribute: TokenStream, item: TokenStream) -> TokenStream {
     if attribute.to_string().trim() == "impl" {
         invocation(lane::Kind::DataImpl, attribute, item)
+    } else if let Some((error, item)) = data_and_export(&item, "export") {
+        let expanded =
+            proc_macro2::TokenStream::from(invocation(lane::Kind::Data, attribute, item));
+        quote! { #error #expanded }.into()
     } else {
         invocation(lane::Kind::Data, attribute, item)
     }
+}
+
+/// Refuses a struct carrying both `#[data]` and `#[export]`, and drops `other`, the marker
+/// that has not expanded yet, so the item still expands once.
+fn data_and_export(
+    item: &TokenStream,
+    other: &str,
+) -> Option<(proc_macro2::TokenStream, TokenStream)> {
+    let mut parsed = syn::parse::<syn::ItemStruct>(item.clone()).ok()?;
+    let position = parsed.attrs.iter().position(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == other)
+    })?;
+    let marker = parsed.attrs.remove(position);
+    let error = syn::Error::new_spanned(
+        marker,
+        "a struct is either a `#[data]` record or an `#[export]` class, not both",
+    )
+    .to_compile_error();
+    Some((error, parsed.to_token_stream().into()))
 }
 
 #[proc_macro_attribute]
@@ -78,6 +104,11 @@ pub fn error(attribute: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    if let Some((error, item)) = data_and_export(&item, "data") {
+        let expanded =
+            proc_macro2::TokenStream::from(invocation(lane::Kind::Export, attribute, item));
+        return quote! { #error #expanded }.into();
+    }
     match syn::parse::<syn::Item>(item.clone()) {
         Ok(syn::Item::Impl(block)) if !attribute.is_empty() => {
             let attribute = proc_macro2::TokenStream::from(attribute);
@@ -90,12 +121,20 @@ pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
                 _ => None,
             }
             .unwrap_or_else(|| block.self_ty.to_token_stream().to_string());
+            let advice = match syn::parse2::<syn::Ident>(attribute.clone()) {
+                Ok(argument) if argument == "single_threaded" => format!(
+                    "; write `#[export(single_threaded)]` on `struct {name}`, which declares \
+                     the class"
+                ),
+                Ok(argument) if argument == "methods" => format!(
+                    "; every `#[export] impl` adds methods to the class that `#[export]` on \
+                     `struct {name}` declares"
+                ),
+                _ => String::new(),
+            };
             syn::Error::new_spanned(
                 &attribute,
-                format!(
-                    "`#[export] impl` takes no arguments; write `#[export({attribute})]` on \
-                     `struct {name}`, which declares the class"
-                ),
+                format!("`#[export] impl` takes no arguments{advice}"),
             )
             .to_compile_error()
             .into()

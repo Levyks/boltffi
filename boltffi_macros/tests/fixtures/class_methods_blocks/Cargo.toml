@@ -12,6 +12,10 @@ methods_on_data = []
 data_impl_on_class = []
 misplaced_thread_safety = []
 unsync = []
+impl_arguments = []
+data_and_export = []
+custom_methods = []
+mutable_receiver = []
 
 [dependencies]
 boltffi = { path = "../../../../boltffi" }

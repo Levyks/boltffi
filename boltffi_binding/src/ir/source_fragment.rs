@@ -11,10 +11,10 @@ use std::collections::{HashMap, HashSet};
 
 use boltffi_ast::{
     BuiltinType, ClassDef, ClassId, ConstantDef, ConstantId, ConstantOwner, CustomRemotePath,
-    CustomRemoteType, CustomTypeConverter, CustomTypeDef, CustomTypeId, EnumDef, EnumId, FieldDef,
-    FunctionDef, FunctionId, MethodDef, NamePart, PackageInfo, Path, PathRoot, PathSegment,
-    Primitive, RecordDef, RecordId, ReturnDef, SourceContract, StreamDef, StreamId, TraitDef,
-    TraitId, TypeExpr, VariantPayload,
+    CustomRemoteType, CustomTypeConverter, CustomTypeDef, CustomTypeId, DocComment, EnumDef,
+    EnumId, FieldDef, FunctionDef, FunctionId, MethodDef, NamePart, PackageInfo, Path, PathRoot,
+    PathSegment, Primitive, RecordDef, RecordId, ReturnDef, SourceContract, StreamDef, StreamId,
+    TraitDef, TraitId, TypeExpr, VariantPayload,
 };
 use serde::{Deserialize, Serialize};
 
@@ -67,6 +67,9 @@ pub enum SourceFragment {
         /// Streams of a class block, owned by the target once it resolves.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         streams: Vec<StreamDef>,
+        /// A class block's doc comment, for a class whose struct has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        doc: Option<DocComment>,
     },
     /// An invocation the per-invocation capture cannot describe yet.
     ///
@@ -231,6 +234,7 @@ fn aggregate(
                 methods,
                 constants,
                 streams,
+                doc,
             } => method_blocks.push(MethodsBlock {
                 order: (module, id),
                 target,
@@ -238,6 +242,7 @@ fn aggregate(
                 methods,
                 constants,
                 streams,
+                doc,
             }),
             SourceFragment::InternedStringPool { .. } | SourceFragment::Unsupported { .. } => {}
         }
@@ -278,6 +283,7 @@ struct MethodsBlock {
     methods: Vec<MethodDef>,
     constants: Vec<ConstantDef>,
     streams: Vec<StreamDef>,
+    doc: Option<DocComment>,
 }
 
 /// Merges a block into its target.
@@ -292,6 +298,7 @@ fn merge_methods(
         methods,
         constants,
         streams,
+        doc,
     } = block;
     let (target_id, owner, target_methods) = match &target {
         TypeExpr::Record { id, .. } => (
@@ -319,7 +326,10 @@ fn merge_methods(
                 .classes
                 .iter_mut()
                 .find(|class| &class.id == id)
-                .map(|class| &mut class.methods),
+                .map(|class| {
+                    class.doc = class.doc.take().or(doc);
+                    &mut class.methods
+                }),
         ),
         _ => return Err(SourceFragmentError::MethodsTargetNotDeclared { spelling }),
     };
@@ -1471,6 +1481,7 @@ mod tests {
                 methods: Vec::new(),
                 constants: vec![constant],
                 streams: Vec::new(),
+                doc: None,
             })
             .expect("fragment serializes"),
         );
@@ -1547,6 +1558,7 @@ mod tests {
                 )],
                 constants: vec![limit],
                 streams: vec![changes],
+                doc: None,
             })
             .expect("fragment serializes"),
         )
@@ -1630,6 +1642,7 @@ mod tests {
                     )],
                     constants: Vec::new(),
                     streams: Vec::new(),
+                    doc: None,
                 })
                 .expect("fragment serializes"),
             )
@@ -1658,6 +1671,62 @@ mod tests {
 
         assert_eq!(forward, ["demo::Counter::reset", "demo::Counter::bump"]);
         assert_eq!(reversed, forward, "a parent module's block merges first");
+    }
+
+    #[test]
+    fn a_class_without_struct_docs_takes_the_first_documented_block_in_merge_order() {
+        let block = |module: &str, method: &str, doc: Option<&str>| {
+            raw(
+                module,
+                &[r#"{"id":"demo::Counter"}"#],
+                serde_json::to_vec(&SourceFragment::Methods {
+                    target: slot_leaf(0, "Counter"),
+                    spelling: "Counter".to_owned(),
+                    methods: vec![class_method(
+                        format!("{SLOT_ID_PREFIX}0::{method}"),
+                        method,
+                        None,
+                    )],
+                    constants: Vec::new(),
+                    streams: Vec::new(),
+                    doc: doc.map(DocComment::new),
+                })
+                .expect("fragment serializes"),
+            )
+        };
+        let documented = |struct_doc: Option<&str>| {
+            let mut class =
+                ClassDef::new(ClassId::new(format!("{SELF_ID}::Counter")), name("Counter"));
+            class.doc = struct_doc.map(DocComment::new);
+            raw(
+                "demo",
+                &[],
+                serde_json::to_vec(&SourceFragment::Class(class)).expect("fragment serializes"),
+            )
+        };
+        let doc = |struct_doc: Option<&str>| {
+            aggregate_records(
+                &[
+                    block("demo::extras", "bump", Some("Extras docs.")),
+                    block("demo", "new", None),
+                    block("demo", "reset", Some("Counter docs.")),
+                    documented(struct_doc),
+                ],
+                PackageInfo::new("demo", None),
+            )
+            .expect("records aggregate")
+            .classes[0]
+                .doc
+                .as_ref()
+                .map(|doc| doc.as_str().to_owned())
+        };
+
+        assert_eq!(doc(None).as_deref(), Some("Counter docs."));
+        assert_eq!(
+            doc(Some("Struct docs.")).as_deref(),
+            Some("Struct docs."),
+            "the struct's own doc wins over every block"
+        );
     }
 
     #[test]

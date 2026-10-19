@@ -109,6 +109,12 @@ impl fmt::Display for LowerError {
             LowerErrorKind::UnsupportedDeclaration(family) => {
                 write!(formatter, "{} lowering is not implemented", family)
             }
+            LowerErrorKind::UnsupportedType(
+                UnsupportedType::MutableClassReceiverRequiresUnsafeSingleThreaded,
+            ) => formatter.write_str(
+                "a `&mut self` method needs `#[export(single_threaded)]` on its class's struct, \
+                 since a thread-safe class can be borrowed from many threads at once",
+            ),
             LowerErrorKind::UnsupportedType(unsupported) => {
                 write!(
                     formatter,

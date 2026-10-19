@@ -133,6 +133,7 @@ pub(crate) fn fragments(
                     methods: captured.methods,
                     constants: captured.constants,
                     streams: captured.streams,
+                    doc: captured.doc,
                 },
                 captured.slots,
             )])
@@ -242,6 +243,7 @@ fn record_tokens(fragment: &SourceFragment, slots: &[boltffi_scan::SlotSource]) 
         .collect::<Vec<_>>();
 
     let record = quote! {
+        #[allow(deprecated)]
         const _: () = {
             #(#descs)*
             const MODULE: &[u8] = ::core::module_path!().as_bytes();
@@ -315,6 +317,7 @@ pub(crate) fn custom_type_tokens(item: proc_macro::TokenStream) -> TokenStream {
     };
     let facade = facade();
     quote! {
+        #[allow(deprecated)]
         const _: () = {
             impl #facade::__private::capture::TypeInfo<crate::__BoltffiTag> for #remote {
                 const MODULE: &'static str = ::core::module_path!();
@@ -367,6 +370,7 @@ pub(crate) fn trait_marker(trait_ident: &syn::Ident) -> syn::Ident {
 fn local_identity_tokens<T: quote::ToTokens>(self_ty: &T, name: &str) -> TokenStream {
     let facade = facade();
     quote! {
+        #[allow(deprecated)]
         const _: () = {
             impl<__BoltffiAnyTag> #facade::__private::capture::TypeInfo<__BoltffiAnyTag> for #self_ty {
                 const MODULE: &'static str = ::core::module_path!();
@@ -389,6 +393,7 @@ fn local_identity_tokens<T: quote::ToTokens>(self_ty: &T, name: &str) -> TokenSt
 fn class_identity_tokens<T: quote::ToTokens>(self_ty: &T) -> TokenStream {
     let facade = facade();
     quote! {
+        #[allow(deprecated)]
         const _: () = {
             impl<__BoltffiAnyTag> #facade::__private::capture::ClassDesc<__BoltffiAnyTag> for #self_ty {
                 const DESC: #facade::__private::capture::DescBuf =
@@ -403,6 +408,7 @@ fn class_identity_tokens<T: quote::ToTokens>(self_ty: &T) -> TokenStream {
 fn exported_class_tokens(self_ty: &syn::Type) -> TokenStream {
     let facade = facade();
     quote! {
+        #[allow(deprecated)]
         const _: fn() = || {
             fn exported<Class: ?::core::marker::Sized + #facade::__private::capture::ClassDesc<()>>() {}
             exported::<#self_ty>();

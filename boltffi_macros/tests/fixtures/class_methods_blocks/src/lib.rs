@@ -4,7 +4,13 @@ use boltffi::{EventSubscription, StreamProducer, data, export};
 
 boltffi::scaffolding!();
 
+#[cfg(feature = "custom_methods")]
+mod custom_methods;
+#[cfg(feature = "data_and_export")]
+mod data_and_export;
 pub mod extras;
+#[cfg(feature = "impl_arguments")]
+mod impl_arguments;
 pub mod layouts;
 #[cfg(feature = "data_impl_on_class")]
 mod data_impl_on_class;
@@ -12,6 +18,9 @@ mod data_impl_on_class;
 mod methods_on_data;
 #[cfg(feature = "misplaced_thread_safety")]
 mod misplaced_thread_safety;
+#[cfg(feature = "mutable_receiver")]
+mod mutable_receiver;
+pub mod retired;
 #[cfg(feature = "undeclared")]
 mod undeclared;
 #[cfg(feature = "unsync")]

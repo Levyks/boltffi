@@ -145,7 +145,7 @@ mod mutation {
 }
 ```
 
-Thread safety belongs to the struct, so `#[export(single_threaded)]` goes there and an `#[export] impl` block takes no arguments. The class's doc comment and `#[deprecated]` come from the struct too.
+Thread safety belongs to the struct, so `#[export(single_threaded)]` goes there and an `#[export] impl` block takes no arguments. `#[deprecated]` goes on the struct too. The class's doc comment comes from the struct, or, when the struct has none, from the first documented `#[export] impl` block.
 
 A block cannot implement a trait or take generic parameters.
 
