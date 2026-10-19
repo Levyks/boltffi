@@ -132,7 +132,10 @@ fn an_argument_on_a_methods_block_is_moved_only_when_the_struct_takes_it() {
         stderr.contains(
             "`#[export] impl` takes no arguments; every `#[export] impl` adds methods to the \
              class that `#[export]` on `struct Cursor` declares"
-        ) && stderr.contains("error: `#[export] impl` takes no arguments\n"),
+        ) && stderr
+            .matches("`#[export] impl` takes no arguments")
+            .count()
+            == 2,
         "impl arguments fixture failed for another reason\nstderr\n{stderr}"
     );
     assert!(

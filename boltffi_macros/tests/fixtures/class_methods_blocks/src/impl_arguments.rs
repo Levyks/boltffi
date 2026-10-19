@@ -1,16 +1,14 @@
 use boltffi::export;
 
-use crate::Cursor;
-
 #[export(methods)]
-impl Cursor {
+impl crate::Cursor {
     pub fn skip(&mut self) {
         self.position += 1;
     }
 }
 
 #[export(sideways)]
-impl Cursor {
+impl crate::Cursor {
     pub fn back(&mut self) {
         self.position -= 1;
     }
