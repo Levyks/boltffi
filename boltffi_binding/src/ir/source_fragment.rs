@@ -167,6 +167,11 @@ fn aggregate(
                 reason: reason.clone(),
             });
         }
+        if matches!(&fragment, SourceFragment::Methods { methods, constants, streams, .. }
+            if methods.is_empty() && constants.is_empty() && streams.is_empty())
+        {
+            continue;
+        }
         let slots = record
             .slots
             .iter()
@@ -1727,6 +1732,48 @@ mod tests {
             Some("Struct docs."),
             "the struct's own doc wins over every block"
         );
+    }
+
+    #[test]
+    fn a_methods_block_that_exports_nothing_contributes_nothing() {
+        let empty = |doc: Option<&str>| {
+            raw(
+                "demo",
+                &[r#"{"id":"demo::Counter"}"#],
+                serde_json::to_vec(&SourceFragment::Methods {
+                    target: slot_leaf(0, "Counter"),
+                    spelling: "Counter".to_owned(),
+                    methods: Vec::new(),
+                    constants: Vec::new(),
+                    streams: Vec::new(),
+                    doc: doc.map(DocComment::new),
+                })
+                .expect("fragment serializes"),
+            )
+        };
+        let class = raw(
+            "demo",
+            &[],
+            serde_json::to_vec(&SourceFragment::Class(ClassDef::new(
+                ClassId::new(format!("{SELF_ID}::Counter")),
+                name("Counter"),
+            )))
+            .expect("fragment serializes"),
+        );
+
+        let contract = aggregate_records(
+            &[
+                empty(Some("Helpers.")),
+                empty(Some("More helpers.")),
+                empty(None),
+                class,
+            ],
+            PackageInfo::new("demo", None),
+        )
+        .expect("empty blocks with different docs do not collide");
+
+        assert_eq!(contract.classes[0].doc, None);
+        assert!(contract.classes[0].methods.is_empty());
     }
 
     #[test]

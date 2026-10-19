@@ -77,6 +77,19 @@ impl Counter {
     }
 }
 
+#[data]
+#[rustfmt::export]
+#[derive(Clone, Copy)]
+pub struct Pace {
+    pub by: i32,
+}
+
+#[export]
+#[rustfmt::data]
+pub struct Gauge {
+    total: Mutex<i32>,
+}
+
 #[export(single_threaded)]
 pub struct Cursor {
     position: u32,

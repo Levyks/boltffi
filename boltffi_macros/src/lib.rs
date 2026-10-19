@@ -83,10 +83,12 @@ fn data_and_export(
 ) -> Option<(proc_macro2::TokenStream, TokenStream)> {
     let mut parsed = syn::parse::<syn::ItemStruct>(item.clone()).ok()?;
     let position = parsed.attrs.iter().position(|attr| {
-        attr.path()
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == other)
+        is_boltffi_helper_path(attr.path())
+            && attr
+                .path()
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == other)
     })?;
     let marker = parsed.attrs.remove(position);
     let error = syn::Error::new_spanned(
