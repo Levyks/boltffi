@@ -57,8 +57,8 @@ pub fn scan(
         {
             Some(existing) => {
                 existing.thread_safety = declared.thread_safety;
-                existing.doc = declared.doc.or(existing.doc.take());
-                existing.deprecated = declared.deprecated.or(existing.deprecated.take());
+                existing.doc = declared.doc;
+                existing.deprecated = declared.deprecated;
             }
             None => classes.push(declared),
         }

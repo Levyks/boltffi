@@ -81,7 +81,15 @@ pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
     match syn::parse::<syn::Item>(item.clone()) {
         Ok(syn::Item::Impl(block)) if !attribute.is_empty() => {
             let attribute = proc_macro2::TokenStream::from(attribute);
-            let name = block.self_ty.to_token_stream();
+            let name = match &*block.self_ty {
+                syn::Type::Path(path) => path
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident.to_string()),
+                _ => None,
+            }
+            .unwrap_or_else(|| block.self_ty.to_token_stream().to_string());
             syn::Error::new_spanned(
                 &attribute,
                 format!(

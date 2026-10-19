@@ -162,6 +162,9 @@ enum MethodsTarget {
 }
 
 fn methods_block(item: &syn::ItemImpl, kind: MethodsTarget) -> Result<CapturedMethods, ScanError> {
+    if let MethodsTarget::Class = kind {
+        crate::impl_target::Target::class(item)?;
+    }
     let scope = ModuleScope::with_spans(ModulePath::root("$self"), &[], None);
     let mut declared_types = DeclaredTypes::deferred();
     let scanner = crate::type_expr::Scanner::new(&declared_types, &scope);
@@ -719,6 +722,39 @@ mod tests {
         assert!(
             capture_class(&item, proc_macro2::TokenStream::new()).is_err(),
             "generic classes stay unsupported"
+        );
+    }
+
+    #[test]
+    fn rejects_trait_and_generic_class_methods_blocks_loudly() {
+        let trait_impl: syn::ItemImpl = syn::parse_quote! {
+            impl Default for Engine {
+                fn default() -> Self {
+                    unimplemented!()
+                }
+            }
+        };
+        let generic_impl: syn::ItemImpl = syn::parse_quote! {
+            impl<'a> Engine {
+                pub fn named(&self, name: &'a str) -> u32 {
+                    unimplemented!()
+                }
+            }
+        };
+
+        assert!(
+            matches!(
+                capture_class_methods(&trait_impl),
+                Err(ScanError::UnsupportedClassImplShape { .. })
+            ),
+            "a trait impl exports nothing, so it fails instead"
+        );
+        assert!(
+            matches!(
+                capture_class_methods(&generic_impl),
+                Err(ScanError::UnsupportedGenerics { .. })
+            ),
+            "generic blocks stay unsupported"
         );
     }
 }

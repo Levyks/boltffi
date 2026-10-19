@@ -2,7 +2,7 @@ use boltffi_ast::SourceName;
 use boltffi_binding::NativeSymbol;
 use proc_macro2::Span;
 use quote::format_ident;
-use syn::{Ident, Type, parse_str};
+use syn::{Ident, parse_str};
 
 use crate::expansion::error::Error;
 
@@ -108,7 +108,7 @@ impl Class {
     }
 
     /// The handle type as any invocation reaches it, through the class's own path.
-    pub fn handle_of(class: &Type) -> proc_macro2::TokenStream {
+    pub fn handle_of(class: &impl quote::ToTokens) -> proc_macro2::TokenStream {
         quote::quote! { <#class as ::boltffi::__private::ClassHandle>::Handle }
     }
 

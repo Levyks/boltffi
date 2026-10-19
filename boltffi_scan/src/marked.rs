@@ -137,11 +137,15 @@ impl<'source> MarkedItems<'source> {
                 self.customs.push(MarkedCustom::trait_impl(scope, item));
                 Ok(())
             }
-            (Marker::Export(export), syn::Item::Fn(item)) if !export.requires_class_impl() => {
+            (Marker::Export(export), syn::Item::Fn(item))
+                if !export.declares_class_thread_safety() =>
+            {
                 self.functions.push(Marked::new(scope, marker, item));
                 Ok(())
             }
-            (Marker::Export(export), syn::Item::Trait(item)) if !export.requires_class_impl() => {
+            (Marker::Export(export), syn::Item::Trait(item))
+                if !export.declares_class_thread_safety() =>
+            {
                 self.traits.push(Marked::new(scope, marker, item));
                 Ok(())
             }
@@ -153,7 +157,9 @@ impl<'source> MarkedItems<'source> {
                 self.class_structs.push(Marked::new(scope, marker, item));
                 Ok(())
             }
-            (Marker::Export(export), syn::Item::Const(item)) if !export.requires_class_impl() => {
+            (Marker::Export(export), syn::Item::Const(item))
+                if !export.declares_class_thread_safety() =>
+            {
                 self.constants.push(Marked::new(scope, marker, item));
                 Ok(())
             }

@@ -181,8 +181,7 @@ const fn chains_before_lane(kind: Kind) -> bool {
     matches!(kind, Kind::CustomType | Kind::CustomFfi)
 }
 
-/// The lane a declaration defines before its chain runs. A class's streams and constants
-/// stay out, since only the blocks that declare them expand them.
+/// The lane a declaration defines before its chain runs.
 fn immediate_lane(
     kind: Kind,
     fragments: &Fragments,
@@ -198,12 +197,6 @@ fn immediate_lane(
     let krate = crate_name()?;
     let entries = fragments
         .iter()
-        .filter(|(fragment, _)| {
-            !matches!(
-                fragment,
-                SourceFragment::Stream(_) | SourceFragment::Constant(_)
-            )
-        })
         .map(|(fragment, _)| {
             Ok(Entry {
                 module: krate.clone(),
@@ -937,14 +930,6 @@ fn lane_target(
     tokens: &TokenStream,
 ) -> Option<(syn::Visibility, syn::Ident)> {
     let public = || syn::Visibility::Public(Default::default());
-    let impl_target = |item: &syn::ItemImpl| match &*item.self_ty {
-        syn::Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .map(|segment| segment.ident.clone()),
-        _ => None,
-    };
     match (kind, item) {
         (Kind::CustomType, _) => crate::custom::r#type::parse_spec(tokens.clone().into())
             .ok()
@@ -962,7 +947,14 @@ fn lane_target(
         (_, Some(syn::Item::Struct(item))) => Some((item.vis.clone(), item.ident.clone())),
         (_, Some(syn::Item::Enum(item))) => Some((item.vis.clone(), item.ident.clone())),
         (_, Some(syn::Item::Trait(item))) => Some((item.vis.clone(), item.ident.clone())),
-        (_, Some(syn::Item::Impl(item))) => impl_target(item).map(|name| (public(), name)),
+        (Kind::CustomFfi, Some(syn::Item::Impl(item))) => match &*item.self_ty {
+            syn::Type::Path(path) => path
+                .path
+                .segments
+                .last()
+                .map(|segment| (public(), segment.ident.clone())),
+            _ => None,
+        },
         _ => None,
     }
 }

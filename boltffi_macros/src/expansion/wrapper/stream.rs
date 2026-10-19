@@ -225,9 +225,7 @@ impl<'expansion, 'lowered> Stream<'expansion, 'lowered, Native> {
                 }
             }),
             Subscription::Method { owner, rust_type } => {
-                let handle_type = quote! {
-                    <#rust_type as ::boltffi::__private::ClassHandle>::Handle
-                };
+                let handle_type = names::Class::handle_of(rust_type);
                 let receiver_handle = names::Parameter::new(&receiver).handle();
                 let carrier = wrapper::handle::CarrierTokens::native(owner.binding().handle())?;
                 let ffi_type = carrier.ty();
@@ -513,9 +511,7 @@ impl<'expansion, 'lowered> Stream<'expansion, 'lowered, Wasm32> {
                 }
             }),
             Subscription::Method { owner, rust_type } => {
-                let handle_type = quote! {
-                    <#rust_type as ::boltffi::__private::ClassHandle>::Handle
-                };
+                let handle_type = names::Class::handle_of(rust_type);
                 let receiver_handle = names::Parameter::new(&receiver).handle();
                 let carrier = wrapper::handle::CarrierTokens::wasm32(owner.binding().handle())?;
                 let ffi_type = carrier.ty();

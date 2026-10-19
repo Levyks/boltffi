@@ -208,14 +208,10 @@ fn aggregate(
     let mut contract = SourceContract::new(package);
     let mut seen = HashMap::new();
     let mut method_blocks = Vec::new();
-    let mut lookup_classes = HashSet::new();
     for (mut fragment, slots, module, is_lookup) in fragments {
         let id = fragment_id(&fragment, &module);
         if seen.insert(id.clone(), ()).is_some() {
             continue;
-        }
-        if is_lookup && matches!(fragment, SourceFragment::Class(_)) {
-            lookup_classes.insert(id.clone());
         }
         if !is_lookup {
             resolve_fragment(&mut fragment, &slots, &declared)?;
@@ -249,7 +245,7 @@ fn aggregate(
 
     method_blocks.sort_by(|a, b| a.order.cmp(&b.order));
     for block in method_blocks {
-        merge_methods(&mut contract, block, &mut lookup_classes)?;
+        merge_methods(&mut contract, block)?;
     }
 
     contract.records.sort_by(|a, b| a.id.cmp(&b.id));
@@ -284,12 +280,10 @@ struct MethodsBlock {
     streams: Vec<StreamDef>,
 }
 
-/// Merges a block into its target. A class that arrived lookup-only keeps just the
-/// block's methods, since its own are another invocation's and stay unresolved.
+/// Merges a block into its target.
 fn merge_methods(
     contract: &mut SourceContract,
     block: MethodsBlock,
-    lookup_classes: &mut HashSet<String>,
 ) -> Result<(), SourceFragmentError> {
     let MethodsBlock {
         order: _,
@@ -325,12 +319,7 @@ fn merge_methods(
                 .classes
                 .iter_mut()
                 .find(|class| &class.id == id)
-                .map(|class| {
-                    if lookup_classes.remove(id.as_str()) {
-                        class.methods.clear();
-                    }
-                    &mut class.methods
-                }),
+                .map(|class| &mut class.methods),
         ),
         _ => return Err(SourceFragmentError::MethodsTargetNotDeclared { spelling }),
     };
@@ -1622,37 +1611,6 @@ mod tests {
                 TypeExpr::Record { id, .. } if id == &RecordId::new("demo::Point")
             ),
             "the stream item resolves through the block's slots"
-        );
-    }
-
-    #[test]
-    fn a_lookup_class_keeps_only_the_methods_block_being_expanded() {
-        let class = raw(
-            "demo",
-            &[],
-            counter_class(vec![class_method(
-                format!("{SELF_ID}::Counter::scaled"),
-                "scaled",
-                Some(slot_leaf(0, "Factor")),
-            )]),
-        );
-
-        let contract = aggregate_invocation(
-            &[counter_methods_block()],
-            &[class, point_record()],
-            PackageInfo::new("demo", None),
-        )
-        .expect("invocation aggregates");
-
-        let methods = contract.classes[0]
-            .methods
-            .iter()
-            .map(|method| method.id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            methods,
-            ["demo::Counter::moved"],
-            "the declaring block's unresolved methods stay with their own invocation"
         );
     }
 

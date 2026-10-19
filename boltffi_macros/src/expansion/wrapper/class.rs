@@ -57,7 +57,7 @@ impl<'expansion, 'lowered> Class<'expansion, 'lowered, Native> {
         let handle_type = class_names.handle();
         let retained_handle_type = class_names.retained_handle();
         let owner_handle = match self.extending {
-            true => quote! { <#class_type as ::boltffi::__private::ClassHandle>::Handle },
+            true => names::Class::handle_of(&class_type),
             false => quote! { #handle_type },
         };
         let exports = associated_fn::AssociatedFunctions::new(
@@ -122,7 +122,7 @@ impl<'expansion, 'lowered> Class<'expansion, 'lowered, Wasm32> {
         let handle_type = class_names.handle();
         let retained_handle_type = class_names.retained_handle();
         let owner_handle = match self.extending {
-            true => quote! { <#class_type as ::boltffi::__private::ClassHandle>::Handle },
+            true => names::Class::handle_of(&class_type),
             false => quote! { #handle_type },
         };
         let exports = associated_fn::AssociatedFunctions::new(
