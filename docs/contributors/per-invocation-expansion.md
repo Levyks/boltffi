@@ -314,8 +314,8 @@ the item from them, then writes its record and starts its lane chain.
 
 - A `custom_type!` type is written by its declared name in signatures. The macro defines
   that name as an alias of the remote type.
-- A class is declared by `#[export]` on its struct, which defines its lane, handle and
-  identity once. No `#[export] impl` block can do that, since several blocks may exist and
+- A class is declared by `#[export]` on its struct or enum, which defines its lane, handle
+  and identity once. No `#[export] impl` block can do that, since several blocks may exist and
   none can tell it is the first.
 - A `type` alias names only the type, so a signature cannot name a declared type through
   one. `use … as` renames the type and its lane together.
