@@ -27,6 +27,13 @@ bool test_class_handles(void) {
           "case:classes.constructors.inventory.try_new.should_return_inventory_for_positive_capacity");
     demo_inventory_try_new_result_free(&valid);
 
+    DemoTrafficLight red = demo_traffic_light_new();
+    DemoTrafficLight green = demo_traffic_light_turn_green(&red, 30);
+    CHECK(demo_traffic_light_seconds_left(&red) == 0 && demo_traffic_light_seconds_left(&green) == 30,
+          "case:classes.enum_backed.traffic_light.seconds_left.should_match_on_the_variant_behind_the_handle");
+    demo_traffic_light_free(&green);
+    demo_traffic_light_free(&red);
+
     DemoCounter counter = demo_counter_new(5);
     DemoCounterTryResetIfPositiveResult reset = demo_counter_try_reset_if_positive(&counter);
     CHECK(reset.ok && demo_counter_get(&counter) == 0, "a result with unit success resets the counter");

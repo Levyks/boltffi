@@ -2893,6 +2893,12 @@ public final class DemoTest {
     private static void testResultClassMethods() {
         System.out.println("Testing result class methods...");
 
+        demoCase("case:classes.enum_backed.traffic_light.seconds_left.should_match_on_the_variant_behind_the_handle");
+        try (TrafficLight red = new TrafficLight(); TrafficLight green = red.turnGreen(30)) {
+            assert red.secondsLeft() == 0 : "TrafficLight.secondsLeft on the red variant";
+            assert green.secondsLeft() == 30 : "TrafficLight.secondsLeft on the green variant";
+        }
+
         demoCase("case:classes.methods.counter.decrement.should_call_a_method_declared_in_a_methods_block");
         try (Counter counter = new Counter(5)) {
             counter.decrement();
