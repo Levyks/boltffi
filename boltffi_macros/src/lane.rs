@@ -681,8 +681,11 @@ fn invocation_module(kind: Kind, item: &syn::Item) -> Option<syn::Ident> {
         (Kind::Export, syn::Item::Fn(item)) => ("fn", item.sig.ident.to_string()),
         (Kind::Export, syn::Item::Const(item)) => ("const", item.ident.to_string()),
         (Kind::Export, syn::Item::Trait(item)) => ("trait", item.ident.to_string()),
-        (Kind::Export, syn::Item::Struct(item)) => ("class", item.ident.to_string()),
-        (Kind::Export, syn::Item::Enum(item)) => ("class", item.ident.to_string()),
+        (
+            Kind::Export,
+            syn::Item::Struct(syn::ItemStruct { ident, .. })
+            | syn::Item::Enum(syn::ItemEnum { ident, .. }),
+        ) => ("class", ident.to_string()),
         (Kind::ExportMethods | Kind::DataImpl, syn::Item::Impl(item)) => {
             let syn::Type::Path(path) = &*item.self_ty else {
                 return None;

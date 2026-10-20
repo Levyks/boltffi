@@ -5,8 +5,9 @@
 
 use boltffi_binding::SourceFragment;
 use boltffi_scan::{
-    capture_class, capture_class_methods, capture_constant, capture_enum, capture_error_enum,
-    capture_error_struct, capture_function, capture_methods, capture_struct, capture_trait,
+    ClassDeclaration, capture_class, capture_class_methods, capture_constant, capture_enum,
+    capture_error_enum, capture_error_struct, capture_function, capture_methods, capture_struct,
+    capture_trait,
 };
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
@@ -97,10 +98,9 @@ pub(crate) fn fragments(
     error: bool,
 ) -> Result<Fragments, String> {
     let failed = |error: boltffi_scan::ScanError| error.to_string();
-    if let (syn::Item::Struct(_) | syn::Item::Enum(_), Capture::Class(marker_args)) =
-        (item, capture)
+    if let (Some(declaration), Capture::Class(marker_args)) = (ClassDeclaration::of(item), capture)
     {
-        return capture_class(item, marker_args.clone())
+        return capture_class(declaration, marker_args.clone())
             .map(|captured| vec![(SourceFragment::Class(captured.def), captured.slots)])
             .map_err(failed);
     }
