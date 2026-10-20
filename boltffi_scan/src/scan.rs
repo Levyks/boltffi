@@ -237,7 +237,7 @@ fn scan_marked_with_declarations(
     declared_types: &DeclaredTypes,
     package: PackageInfo,
 ) -> Result<SourceContract, ScanError> {
-    let classes = items::class::scan(marked.classes(), declared_types)?;
+    let classes = items::class::scan(marked.classes(), marked.class_structs(), declared_types)?;
     let mut records = scan_each(marked.records(), declared_types, items::record::scan)?;
     let mut enums = scan_each(marked.enums(), declared_types, items::enumeration::scan)?;
     let traits = scan_each(marked.traits(), declared_types, items::callback::scan)?;
@@ -2301,14 +2301,14 @@ mod tests {
 
     #[test]
     fn marker_on_wrong_item_kind_is_rejected() {
-        let error = try_scan("#[export] pub struct Point { pub x: f64 }")
+        let error = try_scan("#[export] pub enum Mode { Fast }")
             .expect_err("wrong marker placement must reject");
 
         assert_eq!(
             error,
             ScanError::InvalidMarkerPlacement {
                 marker: "export".to_owned(),
-                item: "struct".to_owned()
+                item: "enum".to_owned()
             }
         );
     }

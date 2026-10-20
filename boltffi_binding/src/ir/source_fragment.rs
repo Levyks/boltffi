@@ -11,10 +11,10 @@ use std::collections::{HashMap, HashSet};
 
 use boltffi_ast::{
     BuiltinType, ClassDef, ClassId, ConstantDef, ConstantId, ConstantOwner, CustomRemotePath,
-    CustomRemoteType, CustomTypeConverter, CustomTypeDef, CustomTypeId, EnumDef, EnumId, FieldDef,
-    FunctionDef, FunctionId, MethodDef, NamePart, PackageInfo, Path, PathRoot, PathSegment,
-    Primitive, RecordDef, RecordId, ReturnDef, SourceContract, StreamDef, StreamId, TraitDef,
-    TraitId, TypeExpr, VariantPayload,
+    CustomRemoteType, CustomTypeConverter, CustomTypeDef, CustomTypeId, DocComment, EnumDef,
+    EnumId, FieldDef, FunctionDef, FunctionId, MethodDef, NamePart, PackageInfo, Path, PathRoot,
+    PathSegment, Primitive, RecordDef, RecordId, ReturnDef, SourceContract, StreamDef, StreamId,
+    TraitDef, TraitId, TypeExpr, VariantPayload,
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +53,7 @@ pub enum SourceFragment {
         /// Static values addressable by wire id, in declaration order.
         values: Vec<String>,
     },
-    /// A `#[data(impl)]` methods block, merged into its target declaration.
+    /// A `#[data(impl)]` or `#[export] impl` block, merged into its target declaration.
     Methods {
         /// The impl target, as a slot-deferred reference until resolution.
         target: TypeExpr,
@@ -64,6 +64,12 @@ pub enum SourceFragment {
         /// Associated constants, owned by the target once it resolves.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         constants: Vec<ConstantDef>,
+        /// Streams of a class block, owned by the target once it resolves.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        streams: Vec<StreamDef>,
+        /// A class block's doc comment, for a class whose struct has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        doc: Option<DocComment>,
     },
     /// An invocation the per-invocation capture cannot describe yet.
     ///
@@ -161,6 +167,11 @@ fn aggregate(
                 reason: reason.clone(),
             });
         }
+        if matches!(&fragment, SourceFragment::Methods { methods, constants, streams, .. }
+            if methods.is_empty() && constants.is_empty() && streams.is_empty())
+        {
+            continue;
+        }
         let slots = record
             .slots
             .iter()
@@ -207,7 +218,7 @@ fn aggregate(
     let mut method_blocks = Vec::new();
     for (mut fragment, slots, module, is_lookup) in fragments {
         let id = fragment_id(&fragment, &module);
-        if seen.insert(id, ()).is_some() {
+        if seen.insert(id.clone(), ()).is_some() {
             continue;
         }
         if !is_lookup {
@@ -227,13 +238,24 @@ fn aggregate(
                 spelling,
                 methods,
                 constants,
-            } => method_blocks.push((target, spelling, methods, constants)),
+                streams,
+                doc,
+            } => method_blocks.push(MethodsBlock {
+                order: (module, id),
+                target,
+                spelling,
+                methods,
+                constants,
+                streams,
+                doc,
+            }),
             SourceFragment::InternedStringPool { .. } | SourceFragment::Unsupported { .. } => {}
         }
     }
 
-    for (target, spelling, methods, constants) in method_blocks {
-        merge_methods(&mut contract, target, &spelling, methods, constants)?;
+    method_blocks.sort_by(|a, b| a.order.cmp(&b.order));
+    for block in method_blocks {
+        merge_methods(&mut contract, block)?;
     }
 
     contract.records.sort_by(|a, b| a.id.cmp(&b.id));
@@ -258,13 +280,31 @@ fn same_declaration(
     }
 }
 
-fn merge_methods(
-    contract: &mut SourceContract,
+struct MethodsBlock {
+    /// The block's module and id, so blocks merge in an order no build layout changes.
+    order: (String, String),
     target: TypeExpr,
-    spelling: &str,
+    spelling: String,
     methods: Vec<MethodDef>,
     constants: Vec<ConstantDef>,
+    streams: Vec<StreamDef>,
+    doc: Option<DocComment>,
+}
+
+/// Merges a block into its target.
+fn merge_methods(
+    contract: &mut SourceContract,
+    block: MethodsBlock,
 ) -> Result<(), SourceFragmentError> {
+    let MethodsBlock {
+        order: _,
+        target,
+        spelling,
+        methods,
+        constants,
+        streams,
+        doc,
+    } = block;
     let (target_id, owner, target_methods) = match &target {
         TypeExpr::Record { id, .. } => (
             id.as_str().to_owned(),
@@ -284,12 +324,23 @@ fn merge_methods(
                 .find(|declared| &declared.id == id)
                 .map(|declared| &mut declared.methods),
         ),
-        _ => {
-            return Err(SourceFragmentError::MethodsTargetNotData {
-                spelling: spelling.to_owned(),
-            });
-        }
+        TypeExpr::Class { id, .. } => (
+            id.as_str().to_owned(),
+            ConstantOwner::Class(id.clone()),
+            contract
+                .classes
+                .iter_mut()
+                .find(|class| &class.id == id)
+                .map(|class| {
+                    class.doc = class.doc.take().or(doc);
+                    &mut class.methods
+                }),
+        ),
+        _ => return Err(SourceFragmentError::MethodsTargetNotDeclared { spelling }),
     };
+    if !streams.is_empty() && !matches!(owner, ConstantOwner::Class(_)) {
+        return Err(SourceFragmentError::MethodsTargetNotDeclared { spelling });
+    }
     let Some(target_methods) = target_methods else {
         return Err(SourceFragmentError::UnresolvedReference { id: target_id });
     };
@@ -309,6 +360,15 @@ fn merge_methods(
         }
         constant.owner = Some(owner.clone());
         contract.constants.push(constant);
+    }
+    for mut stream in streams {
+        if let Some(rest) = stream.id.as_str().strip_prefix(SLOT_ID_PREFIX)
+            && let Some((_, tail)) = rest.split_once("::")
+        {
+            stream.id = StreamId::new(format!("{target_id}::{tail}"));
+        }
+        stream.owner = Some(ClassId::new(target_id.clone()));
+        contract.streams.push(stream);
     }
     Ok(())
 }
@@ -389,12 +449,14 @@ fn fragment_id(fragment: &SourceFragment, module: &str) -> String {
             spelling,
             methods,
             constants,
+            streams,
             ..
         } => {
             let names = methods
                 .iter()
                 .map(|method| method.name.spelling())
                 .chain(constants.iter().map(|constant| constant.name.spelling()))
+                .chain(streams.iter().map(|stream| stream.name.spelling()))
                 .collect::<Vec<_>>()
                 .join(",");
             format!("{module}::impl {spelling}::{{{names}}}")
@@ -553,12 +615,16 @@ fn resolve_fragment(
             target,
             methods,
             constants,
+            streams,
             ..
         } => {
             resolve(target)?;
             resolve_methods(methods, &mut resolve)?;
             for constant in constants {
                 resolve(&mut constant.type_expr)?;
+            }
+            for stream in streams {
+                resolve(&mut stream.item_type)?;
             }
             Ok(())
         }
@@ -916,8 +982,8 @@ pub enum SourceFragmentError {
         /// Actual argument count.
         actual: usize,
     },
-    /// A methods block targets a declaration that is not a record or enum.
-    MethodsTargetNotData {
+    /// A methods block targets something other than a record, enum, or class.
+    MethodsTargetNotDeclared {
         /// The impl target's written spelling.
         spelling: String,
     },
@@ -990,9 +1056,10 @@ impl std::fmt::Display for SourceFragmentError {
                 formatter,
                 "slot shape `{shape}` expects {expected} arguments, found {actual}"
             ),
-            Self::MethodsTargetNotData { spelling } => write!(
+            Self::MethodsTargetNotDeclared { spelling } => write!(
                 formatter,
-                "a methods block targets `{spelling}`, which is not a data record or enum"
+                "a methods block targets `{spelling}`, which is not a data record, data enum, \
+                 or exported class"
             ),
             Self::DuplicateDeclaration { id } => write!(
                 formatter,
@@ -1418,6 +1485,8 @@ mod tests {
                 spelling: "Point".to_owned(),
                 methods: Vec::new(),
                 constants: vec![constant],
+                streams: Vec::new(),
+                doc: None,
             })
             .expect("fragment serializes"),
         );
@@ -1444,6 +1513,299 @@ mod tests {
             ),
             "the declared type resolves through its slot"
         );
+    }
+
+    fn class_method(id: String, spelling: &str, parameter: Option<TypeExpr>) -> MethodDef {
+        let mut method = MethodDef::new(
+            boltffi_ast::MethodId::new(id),
+            name(spelling),
+            boltffi_ast::Receiver::Shared,
+        );
+        method.parameters = parameter
+            .into_iter()
+            .map(|type_expr| boltffi_ast::ParameterDef::value(name("value"), type_expr))
+            .collect();
+        method
+    }
+
+    fn counter_class(methods: Vec<MethodDef>) -> Vec<u8> {
+        let mut class = ClassDef::new(ClassId::new(format!("{SELF_ID}::Counter")), name("Counter"));
+        class.methods = methods;
+        serde_json::to_vec(&SourceFragment::Class(class)).expect("fragment serializes")
+    }
+
+    fn counter_methods_block() -> RawSourceRecord {
+        let mut limit = ConstantDef::new(
+            ConstantId::new(format!("{SLOT_ID_PREFIX}0::LIMIT")),
+            name("LIMIT"),
+            TypeExpr::Primitive(Primitive::I32),
+            boltffi_ast::ConstExpr::Raw("9".to_owned()),
+        );
+        limit.owner = Some(ConstantOwner::Record(RecordId::new(format!(
+            "{SLOT_ID_PREFIX}0"
+        ))));
+        let mut changes = StreamDef::new(
+            StreamId::new(format!("{SLOT_ID_PREFIX}0::changes")),
+            name("changes"),
+            slot_leaf(1, "Point"),
+        );
+        changes.owner = Some(ClassId::new(format!("{SLOT_ID_PREFIX}0")));
+        raw(
+            "demo::extras",
+            &[r#"{"id":"demo::Counter"}"#, r#"{"id":"demo::Point"}"#],
+            serde_json::to_vec(&SourceFragment::Methods {
+                target: slot_leaf(0, "Counter"),
+                spelling: "Counter".to_owned(),
+                methods: vec![class_method(
+                    format!("{SLOT_ID_PREFIX}0::moved"),
+                    "moved",
+                    Some(slot_leaf(1, "Point")),
+                )],
+                constants: vec![limit],
+                streams: vec![changes],
+                doc: None,
+            })
+            .expect("fragment serializes"),
+        )
+    }
+
+    #[test]
+    fn merges_a_methods_block_into_its_class() {
+        let class = raw(
+            "demo",
+            &[],
+            counter_class(vec![class_method(
+                format!("{SELF_ID}::Counter::get"),
+                "get",
+                None,
+            )]),
+        );
+
+        let contract = aggregate_records(
+            &[counter_methods_block(), class, point_record()],
+            PackageInfo::new("demo", None),
+        )
+        .expect("records aggregate");
+
+        let methods = contract.classes[0]
+            .methods
+            .iter()
+            .map(|method| method.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            methods,
+            ["demo::Counter::get", "demo::Counter::moved"],
+            "the block's methods follow the class's own under the class id"
+        );
+        assert!(
+            matches!(
+                &contract.classes[0].methods[1].parameters[0].type_expr,
+                TypeExpr::Record { id, .. } if id == &RecordId::new("demo::Point")
+            ),
+            "the block's signatures resolve through its own slots"
+        );
+        assert_eq!(
+            contract.constants[0].id,
+            ConstantId::new("demo::Counter::LIMIT")
+        );
+        assert_eq!(
+            contract.constants[0].owner,
+            Some(ConstantOwner::Class(ClassId::new("demo::Counter"))),
+            "the provisional owner becomes the class"
+        );
+        assert_eq!(
+            contract.streams[0].id,
+            StreamId::new("demo::Counter::changes")
+        );
+        assert_eq!(
+            contract.streams[0].owner,
+            Some(ClassId::new("demo::Counter")),
+            "the stream is owned by the class it extends"
+        );
+        assert!(
+            matches!(
+                &contract.streams[0].item_type,
+                TypeExpr::Record { id, .. } if id == &RecordId::new("demo::Point")
+            ),
+            "the stream item resolves through the block's slots"
+        );
+    }
+
+    #[test]
+    fn merges_methods_blocks_in_module_order_whatever_order_they_arrive_in() {
+        let block = |module: &str, method: &str| {
+            raw(
+                module,
+                &[r#"{"id":"demo::Counter"}"#],
+                serde_json::to_vec(&SourceFragment::Methods {
+                    target: slot_leaf(0, "Counter"),
+                    spelling: "Counter".to_owned(),
+                    methods: vec![class_method(
+                        format!("{SLOT_ID_PREFIX}0::{method}"),
+                        method,
+                        None,
+                    )],
+                    constants: Vec::new(),
+                    streams: Vec::new(),
+                    doc: None,
+                })
+                .expect("fragment serializes"),
+            )
+        };
+        let class = || raw("demo", &[], counter_class(Vec::new()));
+        let merged = |records: &[RawSourceRecord]| {
+            aggregate_records(records, PackageInfo::new("demo", None))
+                .expect("records aggregate")
+                .classes[0]
+                .methods
+                .iter()
+                .map(|method| method.id.as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+
+        let forward = merged(&[
+            class(),
+            block("demo", "reset"),
+            block("demo::extras", "bump"),
+        ]);
+        let reversed = merged(&[
+            block("demo::extras", "bump"),
+            block("demo", "reset"),
+            class(),
+        ]);
+
+        assert_eq!(forward, ["demo::Counter::reset", "demo::Counter::bump"]);
+        assert_eq!(reversed, forward, "a parent module's block merges first");
+    }
+
+    #[test]
+    fn a_class_without_struct_docs_takes_the_first_documented_block_in_merge_order() {
+        let block = |module: &str, method: &str, doc: Option<&str>| {
+            raw(
+                module,
+                &[r#"{"id":"demo::Counter"}"#],
+                serde_json::to_vec(&SourceFragment::Methods {
+                    target: slot_leaf(0, "Counter"),
+                    spelling: "Counter".to_owned(),
+                    methods: vec![class_method(
+                        format!("{SLOT_ID_PREFIX}0::{method}"),
+                        method,
+                        None,
+                    )],
+                    constants: Vec::new(),
+                    streams: Vec::new(),
+                    doc: doc.map(DocComment::new),
+                })
+                .expect("fragment serializes"),
+            )
+        };
+        let documented = |struct_doc: Option<&str>| {
+            let mut class =
+                ClassDef::new(ClassId::new(format!("{SELF_ID}::Counter")), name("Counter"));
+            class.doc = struct_doc.map(DocComment::new);
+            raw(
+                "demo",
+                &[],
+                serde_json::to_vec(&SourceFragment::Class(class)).expect("fragment serializes"),
+            )
+        };
+        let doc = |struct_doc: Option<&str>| {
+            aggregate_records(
+                &[
+                    block("demo::extras", "bump", Some("Extras docs.")),
+                    block("demo", "new", None),
+                    block("demo", "reset", Some("Counter docs.")),
+                    documented(struct_doc),
+                ],
+                PackageInfo::new("demo", None),
+            )
+            .expect("records aggregate")
+            .classes[0]
+                .doc
+                .as_ref()
+                .map(|doc| doc.as_str().to_owned())
+        };
+
+        assert_eq!(doc(None).as_deref(), Some("Counter docs."));
+        assert_eq!(
+            doc(Some("Struct docs.")).as_deref(),
+            Some("Struct docs."),
+            "the struct's own doc wins over every block"
+        );
+    }
+
+    #[test]
+    fn a_methods_block_that_exports_nothing_contributes_nothing() {
+        let empty = |doc: Option<&str>| {
+            raw(
+                "demo",
+                &[r#"{"id":"demo::Counter"}"#],
+                serde_json::to_vec(&SourceFragment::Methods {
+                    target: slot_leaf(0, "Counter"),
+                    spelling: "Counter".to_owned(),
+                    methods: Vec::new(),
+                    constants: Vec::new(),
+                    streams: Vec::new(),
+                    doc: doc.map(DocComment::new),
+                })
+                .expect("fragment serializes"),
+            )
+        };
+        let class = raw(
+            "demo",
+            &[],
+            serde_json::to_vec(&SourceFragment::Class(ClassDef::new(
+                ClassId::new(format!("{SELF_ID}::Counter")),
+                name("Counter"),
+            )))
+            .expect("fragment serializes"),
+        );
+
+        let contract = aggregate_records(
+            &[
+                empty(Some("Helpers.")),
+                empty(Some("More helpers.")),
+                empty(None),
+                class,
+            ],
+            PackageInfo::new("demo", None),
+        )
+        .expect("empty blocks with different docs do not collide");
+
+        assert_eq!(contract.classes[0].doc, None);
+        assert!(contract.classes[0].methods.is_empty());
+    }
+
+    #[test]
+    fn rejects_a_methods_block_on_a_custom_type() {
+        let converter = || CustomTypeConverter::path(boltffi_ast::Path::single("convert"));
+        let custom = CustomTypeDef::new(
+            CustomTypeId::new(format!("{SELF_ID}::Counter")),
+            name("Counter"),
+            CustomRemoteType::path(boltffi_ast::CustomRemotePath::new(
+                boltffi_ast::PathRoot::Relative,
+                vec![boltffi_ast::CustomRemotePathSegment::new("Counter")],
+            )),
+            TypeExpr::Primitive(Primitive::I64),
+            None,
+            boltffi_ast::CustomTypeConverters::new(converter(), converter()),
+        );
+        let custom = raw(
+            "demo",
+            &[],
+            serde_json::to_vec(&SourceFragment::Custom(custom)).expect("fragment serializes"),
+        );
+
+        let error = aggregate_records(
+            &[counter_methods_block(), custom, point_record()],
+            PackageInfo::new("demo", None),
+        )
+        .expect_err("a custom type takes no methods block");
+
+        assert!(matches!(
+            error,
+            SourceFragmentError::MethodsTargetNotDeclared { spelling } if spelling == "Counter"
+        ));
     }
 
     #[test]

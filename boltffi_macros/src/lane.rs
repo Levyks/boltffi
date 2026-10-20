@@ -22,7 +22,7 @@ use quote::{ToTokens, format_ident, quote};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use crate::capture::{self, Fragments, ImplCapture};
+use crate::capture::{self, Capture, Fragments};
 use crate::expansion::{contract::Expansion, expander::Expander};
 
 /// Numbers lane macros, method-block modules and configuration probes apart. A lane is only ever
@@ -66,6 +66,7 @@ pub(crate) enum Kind {
     Data,
     Error,
     Export,
+    ExportMethods,
     DataImpl,
     CustomFfi,
     CustomType,
@@ -78,6 +79,7 @@ impl Kind {
             Self::Data => "data",
             Self::Error => "error",
             Self::Export => "export",
+            Self::ExportMethods => "export_methods",
             Self::DataImpl => "data_impl",
             Self::CustomFfi => "custom_ffi",
             Self::CustomType => "custom_type",
@@ -90,6 +92,7 @@ impl Kind {
             Self::Data,
             Self::Error,
             Self::Export,
+            Self::ExportMethods,
             Self::DataImpl,
             Self::CustomFfi,
             Self::CustomType,
@@ -99,10 +102,12 @@ impl Kind {
         .find(|kind| kind.keyword() == keyword)
     }
 
-    fn impl_capture(self, attribute: &TokenStream) -> ImplCapture {
+    pub(crate) fn capture(self, attribute: &TokenStream) -> Capture {
         match self {
-            Self::DataImpl => ImplCapture::Methods,
-            _ => ImplCapture::Class(attribute.clone()),
+            Self::Export => Capture::Class(attribute.clone()),
+            Self::DataImpl => Capture::Methods,
+            Self::ExportMethods => Capture::ClassMethods,
+            _ => Capture::Item,
         }
     }
 }
@@ -134,7 +139,7 @@ fn fragments(kind: Kind, attribute: &TokenStream, item: &TokenStream) -> Result<
         _ => {
             let parsed =
                 syn::parse2::<syn::Item>(item.clone()).map_err(|error| error.to_string())?;
-            capture::fragments(&parsed, &kind.impl_capture(attribute), kind == Kind::Error)
+            capture::fragments(&parsed, &kind.capture(attribute), kind == Kind::Error)
         }
     }
 }
@@ -176,6 +181,7 @@ const fn chains_before_lane(kind: Kind) -> bool {
     matches!(kind, Kind::CustomType | Kind::CustomFfi)
 }
 
+/// The lane a declaration defines before its chain runs.
 fn immediate_lane(
     kind: Kind,
     fragments: &Fragments,
@@ -355,6 +361,7 @@ fn finish(
         .map(|path| path.to_string())
         .collect::<Vec<_>>();
     let krate = crate_name()?;
+    check_methods_target(kind, &fragments, &paths, &lanes)?;
     let own = fragments
         .iter()
         .map(|(fragment, slots)| {
@@ -397,7 +404,19 @@ fn finish(
                 let index = paths.iter().position(|candidate| *candidate == path)?;
                 Some(lanes[index].id.clone())
             })?;
-            Some((id, matches!(fragment, SourceFragment::Methods { .. })))
+            Some((id, fragment))
+        })
+        .flat_map(|(id, fragment)| {
+            let streams = match fragment {
+                SourceFragment::Methods { streams, .. } => streams.as_slice(),
+                _ => &[],
+            };
+            let streams = streams
+                .iter()
+                .map(|stream| (format!("{id}::{}", stream.name.spelling()), false))
+                .collect::<Vec<_>>();
+            let methods = matches!(fragment, SourceFragment::Methods { .. });
+            std::iter::once((id, methods)).chain(streams)
         })
         .collect::<Vec<_>>();
     let selected = selections
@@ -437,6 +456,41 @@ fn finish(
         #lane
         #repr_tag
     })
+}
+
+/// Refuses a methods block written with the marker of the other kind of declaration.
+fn check_methods_target(
+    kind: Kind,
+    fragments: &Fragments,
+    paths: &[String],
+    lanes: &[Lane],
+) -> Result<(), String> {
+    let Some((SourceFragment::Methods { spelling, .. }, slots)) = fragments.first() else {
+        return Ok(());
+    };
+    let target = slots
+        .first()
+        .map(|slot| lane_path(slot).to_string())
+        .and_then(|path| paths.iter().position(|candidate| *candidate == path))
+        .and_then(|index| lanes[index].entries.first())
+        .ok_or("lane continuation lost a methods target")?;
+    let target = serde_json::from_str::<SourceFragment>(target.json.get()).ok();
+    let class = matches!(target, Some(SourceFragment::Class(_)));
+    match (kind, class) {
+        _ if matches!(target, Some(SourceFragment::Custom(_))) => Err(format!(
+            "`{spelling}` is a custom type, and a custom type takes no methods blocks; \
+             its methods stay in Rust"
+        )),
+        (Kind::ExportMethods, false) => Err(format!(
+            "`#[export] impl` adds methods to a class declared by an `#[export]` struct, and \
+             `{spelling}` is not one; use `#[data(impl)]` on a `#[data]` type"
+        )),
+        (Kind::DataImpl, true) => Err(format!(
+            "`#[data(impl)]` adds methods to a `#[data]` type, and `{spelling}` is an exported \
+             class; use `#[export] impl`"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Names the tag a custom's representation converts under, when that representation is
@@ -580,10 +634,12 @@ fn render(
     let Some(module) = item.and_then(|item| invocation_module(kind, item)) else {
         return Ok(quote! {
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+            #[allow(deprecated)]
             const _: () = {
                 #native
             };
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            #[allow(deprecated)]
             const _: () = {
                 #wasm32
             };
@@ -596,7 +652,7 @@ fn render(
         .and_then(|(item, target)| methods_target_import(kind, item, target));
     Ok(quote! {
         #[doc(hidden)]
-        #[allow(non_snake_case, unused_imports)]
+        #[allow(non_snake_case, unused_imports, deprecated)]
         #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         pub mod #module {
             use super::*;
@@ -604,7 +660,7 @@ fn render(
             #native
         }
         #[doc(hidden)]
-        #[allow(non_snake_case, unused_imports)]
+        #[allow(non_snake_case, unused_imports, deprecated)]
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         pub mod #module {
             use super::*;
@@ -625,22 +681,18 @@ fn invocation_module(kind: Kind, item: &syn::Item) -> Option<syn::Ident> {
         (Kind::Export, syn::Item::Fn(item)) => ("fn", item.sig.ident.to_string()),
         (Kind::Export, syn::Item::Const(item)) => ("const", item.ident.to_string()),
         (Kind::Export, syn::Item::Trait(item)) => ("trait", item.ident.to_string()),
-        (Kind::Export | Kind::DataImpl, syn::Item::Impl(item)) => {
+        (Kind::Export, syn::Item::Struct(item)) => ("class", item.ident.to_string()),
+        (Kind::ExportMethods | Kind::DataImpl, syn::Item::Impl(item)) => {
             let syn::Type::Path(path) = &*item.self_ty else {
                 return None;
             };
-            let family = if kind == Kind::Export {
-                "class"
-            } else {
-                "methods"
-            };
-            (family, path.path.segments.last()?.ident.to_string())
+            ("methods", path.path.segments.last()?.ident.to_string())
         }
         _ => return None,
     };
     let name = name.trim_start_matches("r#");
     Some(match kind {
-        Kind::DataImpl => format_ident!(
+        Kind::DataImpl | Kind::ExportMethods => format_ident!(
             "__boltffi_{family}_{name}_{}",
             LANES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ),
@@ -651,7 +703,7 @@ fn invocation_module(kind: Kind, item: &syn::Item) -> Option<syn::Ident> {
 /// Brings a method block's target into its wrapper module under its declared name,
 /// through the path the block wrote, since the wrappers name the type bare.
 fn methods_target_import(kind: Kind, item: &syn::Item, target: &str) -> Option<TokenStream> {
-    let (Kind::DataImpl, syn::Item::Impl(item)) = (kind, item) else {
+    let (Kind::DataImpl | Kind::ExportMethods, syn::Item::Impl(item)) = (kind, item) else {
         return None;
     };
     let syn::Type::Path(path) = &*item.self_ty else {
@@ -730,6 +782,10 @@ where
         lower_invocation::<S>(contract, &selection, shallow).map_err(|error| error.to_string())?;
     let expansion = Expansion::invocation(&lowered).with_lookup_traits(contract);
     let expander = Expander::invocation(contract, selected.iter().cloned());
+    let expander = match kind {
+        Kind::ExportMethods => expander.extending_classes(),
+        _ => expander,
+    };
     match kind {
         Kind::Data | Kind::Error => selected
             .iter()
@@ -746,7 +802,7 @@ where
                 runtime.map_err(|error| error.to_string())
             })
             .collect(),
-        Kind::Export | Kind::DataImpl => expander
+        Kind::Export | Kind::ExportMethods | Kind::DataImpl => expander
             .surface(&expansion)
             .map_err(|error| error.to_string()),
         Kind::CustomFfi | Kind::CustomType | Kind::Pool => Ok(TokenStream::new()),
@@ -878,14 +934,6 @@ fn lane_target(
     tokens: &TokenStream,
 ) -> Option<(syn::Visibility, syn::Ident)> {
     let public = || syn::Visibility::Public(Default::default());
-    let impl_target = |item: &syn::ItemImpl| match &*item.self_ty {
-        syn::Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .map(|segment| segment.ident.clone()),
-        _ => None,
-    };
     match (kind, item) {
         (Kind::CustomType, _) => crate::custom::r#type::parse_spec(tokens.clone().into())
             .ok()
@@ -899,11 +947,18 @@ fn lane_target(
         (Kind::Pool, _) => syn::parse2::<crate::interned_string::PoolSpec>(tokens.clone())
             .ok()
             .map(|spec| (spec.visibility, spec.name)),
-        (Kind::DataImpl, _) => None,
+        (Kind::DataImpl | Kind::ExportMethods, _) => None,
         (_, Some(syn::Item::Struct(item))) => Some((item.vis.clone(), item.ident.clone())),
         (_, Some(syn::Item::Enum(item))) => Some((item.vis.clone(), item.ident.clone())),
         (_, Some(syn::Item::Trait(item))) => Some((item.vis.clone(), item.ident.clone())),
-        (_, Some(syn::Item::Impl(item))) => impl_target(item).map(|name| (public(), name)),
+        (Kind::CustomFfi, Some(syn::Item::Impl(item))) => match &*item.self_ty {
+            syn::Type::Path(path) => path
+                .path
+                .segments
+                .last()
+                .map(|segment| (public(), segment.ident.clone())),
+            _ => None,
+        },
         _ => None,
     }
 }

@@ -13,6 +13,7 @@ impl Scale {
     }
 }
 
+#[boltffi::export]
 pub struct Balance {
     total: u32,
 }

@@ -5,9 +5,8 @@
 
 use boltffi_binding::SourceFragment;
 use boltffi_scan::{
-    capture_class, capture_class_constants, capture_constant, capture_enum, capture_error_enum,
-    capture_error_struct, capture_function, capture_methods, capture_streams, capture_struct,
-    capture_trait,
+    capture_class, capture_class_methods, capture_constant, capture_enum, capture_error_enum,
+    capture_error_struct, capture_function, capture_methods, capture_struct, capture_trait,
 };
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
@@ -23,26 +22,35 @@ pub(crate) fn facade() -> TokenStream {
     }
 }
 
-/// How an impl block relates to type identity at this entry point.
-pub(crate) enum ImplCapture {
-    /// `#[export] impl` declares a class; the self type gets its identity here. Carries
-    /// the export marker's argument tokens for the thread-safety choice.
+/// What an invocation declares, where its item's syntax alone does not say.
+pub(crate) enum Capture {
+    /// The item declares what its syntax says: a record, enum, function, trait or constant.
+    Item,
+    /// `#[export]` on a struct declares a class. Carries the export marker's argument
+    /// tokens for the thread-safety choice.
     Class(TokenStream),
     /// `#[data(impl)]` adds methods to a type whose identity the `#[data]` site owns.
     Methods,
+    /// `#[export] impl` adds methods to a class its struct declares.
+    ClassMethods,
 }
 
 /// The source records `item` contributes, rendered from its [`fragments`] alongside the
 /// identity of the type it declares.
 pub(crate) fn item_tokens(
     item: proc_macro::TokenStream,
-    impl_capture: ImplCapture,
+    capture: Capture,
     error: bool,
 ) -> TokenStream {
     let Ok(item) = syn::parse::<syn::Item>(item) else {
         return TokenStream::new();
     };
-    let (name, identity) = match (&item, &impl_capture) {
+    let (name, identity) = match (&item, &capture) {
+        (syn::Item::Struct(item), Capture::Class(_)) => {
+            let identity = local_identity_tokens(&item.ident, &item.ident.to_string());
+            let class = class_identity_tokens(&item.ident);
+            (item.ident.to_string(), Some(quote! { #identity #class }))
+        }
         (syn::Item::Struct(item), _) => (
             item.ident.to_string(),
             Some(local_identity_tokens(&item.ident, &item.ident.to_string())),
@@ -53,8 +61,8 @@ pub(crate) fn item_tokens(
         ),
         (syn::Item::Impl(item), capture) => {
             let name = type_leaf_name(&item.self_ty).unwrap_or_else(|| "impl".to_owned());
-            let identity = matches!(capture, ImplCapture::Class(_))
-                .then(|| local_identity_tokens(&item.self_ty, &name));
+            let identity = matches!(capture, Capture::ClassMethods)
+                .then(|| exported_class_tokens(&item.self_ty));
             (name, identity)
         }
         (syn::Item::Fn(item), _) => (item.sig.ident.to_string(), None),
@@ -62,7 +70,7 @@ pub(crate) fn item_tokens(
         (syn::Item::Const(item), _) => (item.ident.to_string(), None),
         _ => return TokenStream::new(),
     };
-    let records = match fragments(&item, &impl_capture, error) {
+    let records = match fragments(&item, &capture, error) {
         Ok(fragments) => fragments
             .iter()
             .map(|(fragment, slots)| record_tokens(fragment, slots))
@@ -81,7 +89,7 @@ pub(crate) type Fragments = Vec<(SourceFragment, Vec<boltffi_scan::SlotSource>)>
 /// The fragments `item` contributes, the same ones its source record carries.
 pub(crate) fn fragments(
     item: &syn::Item,
-    impl_capture: &ImplCapture,
+    capture: &Capture,
     error: bool,
 ) -> Result<Fragments, String> {
     let failed = |error: boltffi_scan::ScanError| error.to_string();
@@ -92,9 +100,14 @@ pub(crate) fn fragments(
         syn::Item::Enum(item) if error => capture_error_enum(item)
             .map(|captured| vec![(SourceFragment::Enum(captured.def), captured.slots)])
             .map_err(failed),
-        syn::Item::Struct(item) => capture_struct(item)
-            .map(|captured| vec![(SourceFragment::Record(captured.def), captured.slots)])
-            .map_err(failed),
+        syn::Item::Struct(item) => match capture {
+            Capture::Class(marker_args) => capture_class(item, marker_args.clone())
+                .map(|captured| vec![(SourceFragment::Class(captured.def), captured.slots)])
+                .map_err(failed),
+            _ => capture_struct(item)
+                .map(|captured| vec![(SourceFragment::Record(captured.def), captured.slots)])
+                .map_err(failed),
+        },
         syn::Item::Enum(item) => capture_enum(item)
             .map(|captured| vec![(SourceFragment::Enum(captured.def), captured.slots)])
             .map_err(failed),
@@ -108,53 +121,25 @@ pub(crate) fn fragments(
             .map(|captured| vec![(SourceFragment::Constant(captured.def), captured.slots)])
             .map_err(failed),
         syn::Item::Impl(item) => {
-            match impl_capture {
-                ImplCapture::Class(marker_args) => {
-                    let class = capture_class(item, marker_args.clone()).map_err(failed)?;
-                    let streams = capture_streams(item).map_err(failed)?;
-                    let constants = capture_class_constants(item).map_err(failed)?;
-                    let mut fragments = vec![(SourceFragment::Class(class.def), class.slots)];
-                    let stream_slots = streams.slots;
-                    fragments.extend(streams.def.into_iter().map(|stream| {
-                        (SourceFragment::Stream(stream), clone_slots(&stream_slots))
-                    }));
-                    let constant_slots = constants.slots;
-                    fragments.extend(constants.def.into_iter().map(|constant| {
-                        (
-                            SourceFragment::Constant(constant),
-                            clone_slots(&constant_slots),
-                        )
-                    }));
-                    Ok(fragments)
-                }
-                ImplCapture::Methods => {
-                    let captured = capture_methods(item).map_err(failed)?;
-                    Ok(vec![(
-                        SourceFragment::Methods {
-                            target: captured.target,
-                            spelling: captured.spelling,
-                            methods: captured.methods,
-                            constants: captured.constants,
-                        },
-                        captured.slots,
-                    )])
-                }
+            let captured = match capture {
+                Capture::ClassMethods => capture_class_methods(item),
+                _ => capture_methods(item),
             }
+            .map_err(failed)?;
+            Ok(vec![(
+                SourceFragment::Methods {
+                    target: captured.target,
+                    spelling: captured.spelling,
+                    methods: captured.methods,
+                    constants: captured.constants,
+                    streams: captured.streams,
+                    doc: captured.doc,
+                },
+                captured.slots,
+            )])
         }
         _ => Ok(Vec::new()),
     }
-}
-
-fn clone_slots(slots: &[boltffi_scan::SlotSource]) -> Vec<boltffi_scan::SlotSource> {
-    slots
-        .iter()
-        .map(|slot| match slot {
-            boltffi_scan::SlotSource::Type(ty) => boltffi_scan::SlotSource::Type(ty.clone()),
-            boltffi_scan::SlotSource::TraitValue(path) => {
-                boltffi_scan::SlotSource::TraitValue(path.clone())
-            }
-        })
-        .collect()
 }
 
 pub(crate) fn interned_string_pool_tokens(item: proc_macro::TokenStream) -> TokenStream {
@@ -258,6 +243,7 @@ fn record_tokens(fragment: &SourceFragment, slots: &[boltffi_scan::SlotSource]) 
         .collect::<Vec<_>>();
 
     let record = quote! {
+        #[allow(deprecated)]
         const _: () = {
             #(#descs)*
             const MODULE: &[u8] = ::core::module_path!().as_bytes();
@@ -331,6 +317,7 @@ pub(crate) fn custom_type_tokens(item: proc_macro::TokenStream) -> TokenStream {
     };
     let facade = facade();
     quote! {
+        #[allow(deprecated)]
         const _: () = {
             impl #facade::__private::capture::TypeInfo<crate::__BoltffiTag> for #remote {
                 const MODULE: &'static str = ::core::module_path!();
@@ -383,6 +370,7 @@ pub(crate) fn trait_marker(trait_ident: &syn::Ident) -> syn::Ident {
 fn local_identity_tokens<T: quote::ToTokens>(self_ty: &T, name: &str) -> TokenStream {
     let facade = facade();
     quote! {
+        #[allow(deprecated)]
         const _: () = {
             impl<__BoltffiAnyTag> #facade::__private::capture::TypeInfo<__BoltffiAnyTag> for #self_ty {
                 const MODULE: &'static str = ::core::module_path!();
@@ -396,6 +384,34 @@ fn local_identity_tokens<T: quote::ToTokens>(self_ty: &T, name: &str) -> TokenSt
                         <#self_ty as #facade::__private::capture::TypeInfo<__BoltffiAnyTag>>::NAME,
                     );
             }
+        };
+    }
+}
+
+/// Marks a type as a class at the struct that declares it, which is what an
+/// `#[export] impl` block requires of its target.
+fn class_identity_tokens<T: quote::ToTokens>(self_ty: &T) -> TokenStream {
+    let facade = facade();
+    quote! {
+        #[allow(deprecated)]
+        const _: () = {
+            impl<__BoltffiAnyTag> #facade::__private::capture::ClassDesc<__BoltffiAnyTag> for #self_ty {
+                const DESC: #facade::__private::capture::DescBuf =
+                    <#self_ty as #facade::__private::capture::TypeDesc<__BoltffiAnyTag>>::DESC;
+            }
+        };
+    }
+}
+
+/// Requires an `#[export] impl` block's target to be a declared class, in every build, so a
+/// struct without `#[export]` is reported as such next to its missing lane.
+fn exported_class_tokens(self_ty: &syn::Type) -> TokenStream {
+    let facade = facade();
+    quote! {
+        #[allow(deprecated)]
+        const _: fn() = || {
+            fn exported<Class: ?::core::marker::Sized + #facade::__private::capture::ClassDesc<()>>() {}
+            exported::<#self_ty>();
         };
     }
 }

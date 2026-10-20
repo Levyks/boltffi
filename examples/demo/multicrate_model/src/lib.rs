@@ -63,6 +63,7 @@ impl CustomFfiConvertible for ForeignCode {
     }
 }
 
+#[export]
 pub struct ForeignCounter {
     value: AtomicI32,
 }

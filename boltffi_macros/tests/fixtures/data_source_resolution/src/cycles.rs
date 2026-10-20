@@ -28,10 +28,12 @@ pub mod path {
     }
 }
 
+#[boltffi::export]
 pub struct Library {
     pub shelves: u32,
 }
 
+#[boltffi::export]
 pub struct Book {
     pub shelf: u32,
 }

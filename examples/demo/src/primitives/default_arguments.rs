@@ -86,10 +86,12 @@ pub fn apply_optional_closure(
 }
 
 /// A counter whose start and step both have defaults.
+#[export]
 pub struct DefaultedCounter {
     start: i32,
 }
 
+#[export]
 pub struct DefaultedWideCounter {
     value: i64,
 }

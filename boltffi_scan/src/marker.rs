@@ -125,7 +125,7 @@ impl ExportMarker {
         self.class_thread_safety.unwrap_or_default()
     }
 
-    pub fn requires_class_impl(self) -> bool {
+    pub fn declares_class_thread_safety(self) -> bool {
         self.class_thread_safety.is_some()
     }
 

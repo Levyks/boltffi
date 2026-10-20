@@ -12,9 +12,10 @@ use super::impl_methods;
 
 pub fn scan(
     marked: &[Marked<'_, syn::ItemImpl>],
+    structs: &[Marked<'_, syn::ItemStruct>],
     declared_types: &DeclaredTypes,
 ) -> Result<Vec<ClassDef>, ScanError> {
-    marked
+    let classes = marked
         .iter()
         .try_fold(Vec::<ClassDef>::new(), |mut classes, marked| {
             let class = build(
@@ -38,16 +39,53 @@ pub fn scan(
                 None => classes.push(class),
             }
             Ok(classes)
-        })
+        })?;
+    structs.iter().try_fold(classes, |mut classes, marked| {
+        let declared = scan_struct(
+            marked.item(),
+            marked.scope(),
+            declared_types,
+            marked
+                .marker()
+                .export()
+                .expect("class scanner only receives export markers")
+                .class_thread_safety(),
+        )?;
+        match classes
+            .iter_mut()
+            .find(|candidate| candidate.id == declared.id)
+        {
+            Some(existing) => {
+                existing.thread_safety = declared.thread_safety;
+                existing.doc = declared.doc.or(existing.doc.take());
+                existing.deprecated = declared.deprecated;
+            }
+            None => classes.push(declared),
+        }
+        Ok(classes)
+    })
 }
 
-pub(crate) fn scan_item(
-    item: &syn::ItemImpl,
+/// The class an `#[export]` struct declares, with no members: its `#[export] impl`
+/// blocks add those.
+pub(crate) fn scan_struct(
+    item: &syn::ItemStruct,
     scope: &ModuleScope,
     declared_types: &DeclaredTypes,
     thread_safety: ClassThreadSafety,
 ) -> Result<ClassDef, ScanError> {
-    build(item, scope, declared_types, thread_safety)
+    crate::unsupported::generics(&item.generics, &format!("class {}", item.ident))?;
+    let id = ClassId::new(scope.path().qualified(&item.ident.to_string()));
+    let mut class = ClassDef::new(id, name::source(&item.ident));
+    let scanner = Scanner::new(declared_types, scope);
+    let attrs = Attributes::new(&item.attrs, &scanner);
+    class.source = attributes::source(&item.vis, scope, item.span());
+    class.source_span = class.source.span.clone();
+    class.doc = attrs.doc();
+    class.deprecated = attrs.deprecated()?;
+    class.user_attrs = attrs.user_attrs();
+    class.thread_safety = thread_safety;
+    Ok(class)
 }
 
 fn build(
@@ -87,18 +125,6 @@ fn resolve_target_id(
     scope: &ModuleScope,
     declared_types: &DeclaredTypes,
 ) -> Result<ClassId, ScanError> {
-    if declared_types.is_deferred() {
-        let bare = target
-            .path()
-            .filter(|path| path.leading_colon.is_none() && path.segments.len() == 1);
-        let Some(path) = bare else {
-            return Err(ScanError::UnsupportedCapturedClassImpl {
-                target: target.spelling().to_owned(),
-            });
-        };
-        let leaf = path.segments[0].ident.to_string();
-        return Ok(ClassId::new(scope.path().qualified(&leaf)));
-    }
     let path = declared_types
         .resolve_impl_target(scope, target)?
         .ok_or_else(|| ScanError::UnsupportedClassImpl {
@@ -267,7 +293,8 @@ mod tests {
         let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
         let declared_types =
             DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
-        let classes = super::scan(marked.classes(), &declared_types).expect("scan");
+        let classes =
+            super::scan(marked.classes(), marked.class_structs(), &declared_types).expect("scan");
 
         assert_eq!(classes.len(), 1);
         assert_eq!(classes[0].id, ClassId::new("demo::Engine"));
@@ -276,6 +303,47 @@ mod tests {
         assert_eq!(
             classes[0].methods[1].id,
             MethodId::new("demo::Engine::start")
+        );
+    }
+
+    #[test]
+    fn an_exported_struct_declares_its_class_and_thread_safety() {
+        let source_tree = crate::source_tree::SourceTree::in_memory(
+            "demo",
+            syn::parse_str::<syn::File>(
+                "#[doc = \"Drives things.\"] \
+                 #[export(single_threaded)] pub struct Engine; \
+                 #[export] impl Engine { pub fn new() -> Self { todo!() } } \
+                 #[export] impl Engine { pub fn start(&self) {} } \
+                 #[export] pub struct Idle;",
+            )
+            .expect("valid source")
+            .items,
+        )
+        .expect("source tree");
+        let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
+        let declared_types =
+            DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
+        let classes =
+            super::scan(marked.classes(), marked.class_structs(), &declared_types).expect("scan");
+
+        assert_eq!(
+            classes
+                .iter()
+                .map(|class| class.id.as_str())
+                .collect::<Vec<_>>(),
+            ["demo::Engine", "demo::Idle"],
+            "a struct with no impl blocks still declares a class"
+        );
+        assert_eq!(classes[0].methods.len(), 2);
+        assert_eq!(
+            classes[0].thread_safety,
+            ClassThreadSafety::UnsafeSingleThreaded,
+            "the struct's marker decides, whatever the blocks say"
+        );
+        assert_eq!(
+            classes[0].doc.as_ref().map(|doc| doc.as_str()),
+            Some("Drives things.")
         );
     }
 }

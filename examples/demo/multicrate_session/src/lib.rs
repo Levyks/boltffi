@@ -32,6 +32,7 @@ pub enum SessionEvent {
     Stopped,
 }
 
+#[export]
 pub struct SessionBook {
     sessions: Mutex<Vec<ForeignSession>>,
 }

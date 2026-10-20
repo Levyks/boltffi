@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{DeriveInput, parse_macro_input};
 
 mod capture;
@@ -66,9 +66,37 @@ pub fn interned_string_pool(item: TokenStream) -> TokenStream {
 pub fn data(attribute: TokenStream, item: TokenStream) -> TokenStream {
     if attribute.to_string().trim() == "impl" {
         invocation(lane::Kind::DataImpl, attribute, item)
+    } else if let Some((error, item)) = data_and_export(&item, "export") {
+        let expanded =
+            proc_macro2::TokenStream::from(invocation(lane::Kind::Data, attribute, item));
+        quote! { #error #expanded }.into()
     } else {
         invocation(lane::Kind::Data, attribute, item)
     }
+}
+
+/// Refuses a struct carrying both `#[data]` and `#[export]`, and drops `other`, the marker
+/// that has not expanded yet, so the item still expands once.
+fn data_and_export(
+    item: &TokenStream,
+    other: &str,
+) -> Option<(proc_macro2::TokenStream, TokenStream)> {
+    let mut parsed = syn::parse::<syn::ItemStruct>(item.clone()).ok()?;
+    let position = parsed.attrs.iter().position(|attr| {
+        is_boltffi_helper_path(attr.path())
+            && attr
+                .path()
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == other)
+    })?;
+    let marker = parsed.attrs.remove(position);
+    let error = syn::Error::new_spanned(
+        marker,
+        "a struct is either a `#[data]` record or an `#[export]` class, not both",
+    )
+    .to_compile_error();
+    Some((error, parsed.to_token_stream().into()))
 }
 
 #[proc_macro_attribute]
@@ -78,13 +106,48 @@ pub fn error(attribute: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    if let Some((error, item)) = data_and_export(&item, "data") {
+        let expanded =
+            proc_macro2::TokenStream::from(invocation(lane::Kind::Export, attribute, item));
+        return quote! { #error #expanded }.into();
+    }
     match syn::parse::<syn::Item>(item.clone()) {
-        Ok(syn::Item::Const(_) | syn::Item::Fn(_) | syn::Item::Impl(_) | syn::Item::Trait(_)) => {
+        Ok(syn::Item::Impl(block)) if !attribute.is_empty() => {
+            let attribute = proc_macro2::TokenStream::from(attribute);
+            let name = match &*block.self_ty {
+                syn::Type::Path(path) => path
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident.to_string()),
+                _ => None,
+            }
+            .unwrap_or_else(|| block.self_ty.to_token_stream().to_string());
+            let advice = match syn::parse2::<syn::Ident>(attribute.clone()) {
+                Ok(argument) if argument == "single_threaded" => format!(
+                    "; write `#[export(single_threaded)]` on `struct {name}`, which declares \
+                     the class"
+                ),
+                Ok(argument) if argument == "methods" => format!(
+                    "; every `#[export] impl` adds methods to the class that `#[export]` on \
+                     `struct {name}` declares"
+                ),
+                _ => String::new(),
+            };
+            syn::Error::new_spanned(
+                &attribute,
+                format!("`#[export] impl` takes no arguments{advice}"),
+            )
+            .to_compile_error()
+            .into()
+        }
+        Ok(syn::Item::Impl(_)) => invocation(lane::Kind::ExportMethods, attribute, item),
+        Ok(syn::Item::Const(_) | syn::Item::Fn(_) | syn::Item::Struct(_) | syn::Item::Trait(_)) => {
             invocation(lane::Kind::Export, attribute, item)
         }
         Ok(item) => syn::Error::new_spanned(
             item,
-            "export can only be applied to const, fn, impl, or trait",
+            "export can only be applied to const, fn, impl, struct, or trait",
         )
         .to_compile_error()
         .into(),
@@ -145,20 +208,13 @@ fn records(
     item: TokenStream,
 ) -> proc_macro2::TokenStream {
     match kind {
-        lane::Kind::Data => capture::item_tokens(
-            item,
-            capture::ImplCapture::Class(proc_macro2::TokenStream::new()),
-            false,
-        ),
-        lane::Kind::Error => capture::item_tokens(
-            item,
-            capture::ImplCapture::Class(proc_macro2::TokenStream::new()),
-            true,
-        ),
-        lane::Kind::Export => {
-            capture::item_tokens(item, capture::ImplCapture::Class(attribute.clone()), false)
+        lane::Kind::Data
+        | lane::Kind::Error
+        | lane::Kind::Export
+        | lane::Kind::DataImpl
+        | lane::Kind::ExportMethods => {
+            capture::item_tokens(item, kind.capture(attribute), kind == lane::Kind::Error)
         }
-        lane::Kind::DataImpl => capture::item_tokens(item, capture::ImplCapture::Methods, false),
         lane::Kind::CustomFfi => capture::custom_ffi_tokens(item),
         lane::Kind::CustomType => capture::custom_type_tokens(item),
         lane::Kind::Pool => capture::interned_string_pool_tokens(item),
