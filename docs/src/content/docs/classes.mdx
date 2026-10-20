@@ -120,7 +120,7 @@ demo_counter_free(&counter);`}
 
 ### More than one impl block
 
-A class can have any number of `#[export] impl` blocks. Each adds its methods, constructors, constants and streams to the class its struct declares. A block can sit in any module of the crate, above or below the struct, and name the class by any path or `use` alias.
+A class can have any number of `#[export] impl` blocks. Each adds its methods, constructors, constants and streams to the class its struct or enum declares. A block can sit in any module of the crate, above or below the struct, and name the class by any path or `use` alias.
 
 ```rust
 #[export]
@@ -145,7 +145,7 @@ mod mutation {
 }
 ```
 
-Thread safety belongs to the struct, so `#[export(single_threaded)]` goes there and an `#[export] impl` block takes no arguments. `#[deprecated]` goes on the struct too. The class's doc comment comes from the struct, or, when the struct has none, from the first documented `#[export] impl` block.
+Thread safety belongs to the struct or enum that declares the class, so `#[export(single_threaded)]` goes there and an `#[export] impl` block takes no arguments. `#[deprecated]` goes there too. The class's doc comment comes from that struct or enum, or, when it has none, from the first documented `#[export] impl` block.
 
 A block cannot implement a trait or take generic parameters.
 
