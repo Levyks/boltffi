@@ -154,6 +154,7 @@ fn a_type_that_is_both_data_and_a_class_is_refused_once_either_way() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let struct_refusal = "a struct is either a `#[data]` record or an `#[export]` class, not both";
     let enum_refusal = "an enum is either a `#[data]` enum or an `#[export]` class, not both";
+    let error_refusal = "an enum is either an `#[error]` enum or an `#[export]` class, not both";
 
     assert!(
         !output.status.success(),
@@ -162,9 +163,10 @@ fn a_type_that_is_both_data_and_a_class_is_refused_once_either_way() {
     assert_eq!(
         (
             stderr.matches(struct_refusal).count(),
-            stderr.matches(enum_refusal).count()
+            stderr.matches(enum_refusal).count(),
+            stderr.matches(error_refusal).count()
         ),
-        (2, 2),
+        (2, 2, 2),
         "data and export fixture failed for another reason\nstderr\n{stderr}"
     );
     assert!(

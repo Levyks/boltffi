@@ -27,3 +27,17 @@ pub enum Mode {
 pub enum Pitch {
     Low,
 }
+
+#[boltffi::error]
+#[export]
+#[derive(Debug)]
+pub enum Fault {
+    Jammed,
+}
+
+#[export]
+#[boltffi::error]
+#[derive(Debug)]
+pub enum Stall {
+    Engine,
+}
