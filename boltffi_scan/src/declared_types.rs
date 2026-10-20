@@ -138,9 +138,11 @@ impl DeclaredTypes {
                 })?;
             declared_types.register(DeclaredType::Class(id))
         })?;
-        marked.class_structs().iter().try_for_each(|marked| {
+        marked.class_declarations().iter().try_for_each(|marked| {
             declared_types.register(DeclaredType::Class(ClassId::new(
-                marked.module().qualified(&marked.item().ident.to_string()),
+                marked
+                    .module()
+                    .qualified(&marked.declaration().ident().to_string()),
             )))
         })?;
         marked.customs().iter().try_for_each(|marked| {

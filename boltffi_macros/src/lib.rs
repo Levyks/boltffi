@@ -65,54 +65,104 @@ pub fn interned_string_pool(item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn data(attribute: TokenStream, item: TokenStream) -> TokenStream {
     if attribute.to_string().trim() == "impl" {
-        invocation(lane::Kind::DataImpl, attribute, item)
-    } else if let Some((error, item)) = data_and_export(&item, "export") {
-        let expanded =
-            proc_macro2::TokenStream::from(invocation(lane::Kind::Data, attribute, item));
-        quote! { #error #expanded }.into()
-    } else {
-        invocation(lane::Kind::Data, attribute, item)
+        return invocation(lane::Kind::DataImpl, attribute, item);
     }
+    syn::parse::<syn::Item>(item.clone())
+        .ok()
+        .and_then(|mut parsed| refuse_second_marker(lane::Kind::Data, &attribute, &mut parsed))
+        .unwrap_or_else(|| invocation(lane::Kind::Data, attribute, item))
 }
 
-/// Refuses a struct carrying both `#[data]` and `#[export]`, and drops `other`, the marker
-/// that has not expanded yet, so the item still expands once.
-fn data_and_export(
-    item: &TokenStream,
-    other: &str,
-) -> Option<(proc_macro2::TokenStream, TokenStream)> {
-    let mut parsed = syn::parse::<syn::ItemStruct>(item.clone()).ok()?;
-    let position = parsed.attrs.iter().position(|attr| {
-        is_boltffi_helper_path(attr.path())
-            && attr
-                .path()
-                .segments
-                .last()
-                .is_some_and(|segment| segment.ident == other)
-    })?;
-    let marker = parsed.attrs.remove(position);
+/// The BoltFFI markers that each declare what a struct or enum is.
+const TYPE_MARKERS: [&str; 3] = ["data", "error", "export"];
+
+/// Refuses a struct or enum carrying a second type marker besides the one expanding as
+/// `kind`, and expands it once with that marker dropped, since it has not expanded yet.
+fn refuse_second_marker(
+    kind: lane::Kind,
+    attribute: &TokenStream,
+    item: &mut syn::Item,
+) -> Option<TokenStream> {
+    let own = match kind {
+        lane::Kind::Data => "data",
+        lane::Kind::Error => "error",
+        _ => "export",
+    };
+    let (noun, attrs) = match item {
+        syn::Item::Struct(item) => ("struct", &mut item.attrs),
+        syn::Item::Enum(item) => ("enum", &mut item.attrs),
+        _ => return None,
+    };
+    let position = attrs
+        .iter()
+        .position(|attr| type_marker(attr).is_some_and(|marker| marker != own))?;
+    let other = type_marker(&attrs[position])?;
+    let marker = attrs.remove(position);
+    let role = |marker: &str| match (marker, noun) {
+        ("data", "struct") => "a `#[data]` record".to_owned(),
+        ("data", _) => "a `#[data]` enum".to_owned(),
+        ("error", _) => format!("an `#[error]` {noun}"),
+        _ => "an `#[export]` class".to_owned(),
+    };
+    let rank = |marker: &str| TYPE_MARKERS.iter().position(|name| *name == marker);
+    let (first, second) = match rank(own) < rank(other) {
+        true => (own, other),
+        false => (other, own),
+    };
+    let article = match noun {
+        "enum" => "an",
+        _ => "a",
+    };
     let error = syn::Error::new_spanned(
         marker,
-        "a struct is either a `#[data]` record or an `#[export]` class, not both",
+        format!(
+            "{article} {noun} is either {} or {}, not both",
+            role(first),
+            role(second)
+        ),
     )
     .to_compile_error();
-    Some((error, parsed.to_token_stream().into()))
+    let expanded = proc_macro2::TokenStream::from(invocation(
+        kind,
+        attribute.clone(),
+        item.to_token_stream().into(),
+    ));
+    Some(quote! { #error #expanded }.into())
+}
+
+/// The type marker `attr` spells, bare or under `boltffi::`. A bare `error(..)` is
+/// thiserror's message, not BoltFFI's marker.
+fn type_marker(attr: &syn::Attribute) -> Option<&'static str> {
+    let path = attr.path();
+    if !is_boltffi_helper_path(path) {
+        return None;
+    }
+    let ident = &path.segments.last()?.ident;
+    let message = path.get_ident().is_some() && matches!(attr.meta, syn::Meta::List(_));
+    TYPE_MARKERS
+        .into_iter()
+        .find(|marker| ident == marker && !(message && *marker == "error"))
 }
 
 #[proc_macro_attribute]
 pub fn error(attribute: TokenStream, item: TokenStream) -> TokenStream {
-    invocation(lane::Kind::Error, attribute, item)
+    syn::parse::<syn::Item>(item.clone())
+        .ok()
+        .and_then(|mut parsed| refuse_second_marker(lane::Kind::Error, &attribute, &mut parsed))
+        .unwrap_or_else(|| invocation(lane::Kind::Error, attribute, item))
 }
 
 #[proc_macro_attribute]
 pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
-    if let Some((error, item)) = data_and_export(&item, "data") {
-        let expanded =
-            proc_macro2::TokenStream::from(invocation(lane::Kind::Export, attribute, item));
-        return quote! { #error #expanded }.into();
+    let mut parsed = match syn::parse::<syn::Item>(item.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => return error.to_compile_error().into(),
+    };
+    if let Some(refused) = refuse_second_marker(lane::Kind::Export, &attribute, &mut parsed) {
+        return refused;
     }
-    match syn::parse::<syn::Item>(item.clone()) {
-        Ok(syn::Item::Impl(block)) if !attribute.is_empty() => {
+    match parsed {
+        syn::Item::Impl(block) if !attribute.is_empty() => {
             let attribute = proc_macro2::TokenStream::from(attribute);
             let name = match &*block.self_ty {
                 syn::Type::Path(path) => path
@@ -125,12 +175,11 @@ pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
             .unwrap_or_else(|| block.self_ty.to_token_stream().to_string());
             let advice = match syn::parse2::<syn::Ident>(attribute.clone()) {
                 Ok(argument) if argument == "single_threaded" => format!(
-                    "; write `#[export(single_threaded)]` on `struct {name}`, which declares \
-                     the class"
+                    "; write `#[export(single_threaded)]` on `{name}`, which declares the class"
                 ),
                 Ok(argument) if argument == "methods" => format!(
                     "; every `#[export] impl` adds methods to the class that `#[export]` on \
-                     `struct {name}` declares"
+                     `{name}` declares"
                 ),
                 _ => String::new(),
             };
@@ -141,17 +190,18 @@ pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
             .to_compile_error()
             .into()
         }
-        Ok(syn::Item::Impl(_)) => invocation(lane::Kind::ExportMethods, attribute, item),
-        Ok(syn::Item::Const(_) | syn::Item::Fn(_) | syn::Item::Struct(_) | syn::Item::Trait(_)) => {
-            invocation(lane::Kind::Export, attribute, item)
-        }
-        Ok(item) => syn::Error::new_spanned(
+        syn::Item::Impl(_) => invocation(lane::Kind::ExportMethods, attribute, item),
+        syn::Item::Const(_)
+        | syn::Item::Enum(_)
+        | syn::Item::Fn(_)
+        | syn::Item::Struct(_)
+        | syn::Item::Trait(_) => invocation(lane::Kind::Export, attribute, item),
+        item => syn::Error::new_spanned(
             item,
-            "export can only be applied to const, fn, impl, struct, or trait",
+            "export can only be applied to const, enum, fn, impl, struct, or trait",
         )
         .to_compile_error()
         .into(),
-        Err(error) => error.to_compile_error().into(),
     }
 }
 

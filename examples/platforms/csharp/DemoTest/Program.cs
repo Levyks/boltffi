@@ -1981,6 +1981,14 @@ public static partial class DemoTest
             Require(e.Message.Contains("capacity must be greater than zero"), "Inventory.TryNew(0) error message");
         }
 
+        DemoCase("case:classes.enum_backed.traffic_light.seconds_left.should_match_on_the_variant_behind_the_handle");
+        using (var red = new TrafficLight())
+        using (var green = red.TurnGreen(30))
+        {
+            Require(red.SecondsLeft() == 0, "TrafficLight.SecondsLeft on the red variant");
+            Require(green.SecondsLeft() == 30, "TrafficLight.SecondsLeft on the green variant");
+        }
+
         // Counter exercises every method-return shape that lands in
         // this PR: primitive direct, void mutator, Option<primitive>
         // through FfiBuf, and a blittable record return.

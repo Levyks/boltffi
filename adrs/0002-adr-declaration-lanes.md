@@ -220,7 +220,7 @@ only then.
 | D5 | `custom_type!` types are written by their declared name, which aliases the remote type | A signature naming `DateTime<Utc>` has no lane, and stable Rust cannot test whether a macro exists |
 | D6 | Types named `Duration`, `SystemTime`, `Uuid` or `Url` are rejected at the declaration | Signatures spelling those names cross as the builtin |
 | D7 | Capture is always on; bindgen reads records only | A fallback is a second pipeline to keep equivalent |
-| D8 | `#[export]` on the struct declares a class; every `#[export] impl` block adds methods | Invocations are independent, so no impl block can tell it is the first. The struct is the one site each class has: it owns the lane, handle and thread safety, and a block reaches them as `#[data(impl)]` reaches a record, from any module and through any path or alias |
+| D8 | `#[export]` on the struct or enum declares a class; every `#[export] impl` block adds methods | Invocations are independent, so no impl block can tell it is the first. The type's declaration is the one site each class has: it owns the lane, handle and thread safety, and a block reaches them as `#[data(impl)]` reaches a record, from any module and through any path or alias |
 | D9 | Lanes carry one level: the type's own fragment, with its references unresolved | Lowering never reads past a named type's own shape, so this is exact, lets types refer to each other, and keeps each use linear |
 | D10 | Bindings cover the root crate and its path dependencies in full; registry and git crates only where they are reached | Matches what `main` binds, and extends it to registry types a signature uses. Two crates binding the same name are refused |
 | D11 | `generate` checks every symbol the bindings call against the built library | A dependency's wrappers live in that crate, so a crate the library never uses is not linked. The error lists the symbols and names the fix, `use <crate> as _;` |
@@ -258,7 +258,7 @@ walks one crate through every expansion.
 
 - **Breaking.** Every crate adds `boltffi::scaffolding!()` at its root. Symbols drop module
   segments (D3), `custom_type!` spelling changes (D5), every class adds `#[export]` to its
-  struct (D8), and builtin names are refused (D6). A `macro_rules!` named like a declared
+  struct or enum (D8), and builtin names are refused (D6). A `macro_rules!` named like a declared
   type collides with its lane.
 - **Compile time.** Against `main`, the demo builds 28% slower clean in debug, 9% faster
   in release, and 26% slower after an edit. Synthetic crates of 400 flat records or a

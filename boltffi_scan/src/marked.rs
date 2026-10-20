@@ -1,4 +1,5 @@
 use crate::items;
+use crate::items::class::ClassDeclaration;
 use crate::marker::Marker;
 use crate::source_tree::SourceTree;
 use crate::{ModulePath, ModuleScope, ScanError};
@@ -9,7 +10,7 @@ pub(super) struct MarkedItems<'source> {
     functions: Vec<Marked<'source, syn::ItemFn>>,
     traits: Vec<Marked<'source, syn::ItemTrait>>,
     classes: Vec<Marked<'source, syn::ItemImpl>>,
-    class_structs: Vec<Marked<'source, syn::ItemStruct>>,
+    class_declarations: Vec<MarkedClass<'source>>,
     constants: Vec<Marked<'source, syn::ItemConst>>,
     customs: Vec<MarkedCustom<'source>>,
     interned_string_pools: Vec<MarkedInternedStringPool<'source>>,
@@ -39,7 +40,7 @@ impl<'source> MarkedItems<'source> {
             functions: Vec::new(),
             traits: Vec::new(),
             classes: Vec::new(),
-            class_structs: Vec::new(),
+            class_declarations: Vec::new(),
             constants: Vec::new(),
             customs: Vec::new(),
             interned_string_pools: Vec::new(),
@@ -67,8 +68,8 @@ impl<'source> MarkedItems<'source> {
         &self.classes
     }
 
-    pub(super) fn class_structs(&self) -> &[Marked<'source, syn::ItemStruct>] {
-        &self.class_structs
+    pub(super) fn class_declarations(&self) -> &[MarkedClass<'source>] {
+        &self.class_declarations
     }
 
     pub(super) fn constants(&self) -> &[Marked<'source, syn::ItemConst>] {
@@ -154,7 +155,19 @@ impl<'source> MarkedItems<'source> {
                 Ok(())
             }
             (Marker::Export(_), syn::Item::Struct(item)) => {
-                self.class_structs.push(Marked::new(scope, marker, item));
+                self.class_declarations.push(MarkedClass::new(
+                    scope,
+                    marker,
+                    ClassDeclaration::Struct(item),
+                ));
+                Ok(())
+            }
+            (Marker::Export(_), syn::Item::Enum(item)) => {
+                self.class_declarations.push(MarkedClass::new(
+                    scope,
+                    marker,
+                    ClassDeclaration::Enum(item),
+                ));
                 Ok(())
             }
             (Marker::Export(export), syn::Item::Const(item))
@@ -165,6 +178,42 @@ impl<'source> MarkedItems<'source> {
             }
             _ => Err(marker.invalid_placement(item_kind(item))),
         }
+    }
+}
+
+pub(super) struct MarkedClass<'source> {
+    scope: &'source ModuleScope,
+    marker: Marker,
+    declaration: ClassDeclaration<'source>,
+}
+
+impl<'source> MarkedClass<'source> {
+    fn new(
+        scope: &'source ModuleScope,
+        marker: Marker,
+        declaration: ClassDeclaration<'source>,
+    ) -> Self {
+        Self {
+            scope,
+            marker,
+            declaration,
+        }
+    }
+
+    pub(super) fn module(&self) -> &'source ModulePath {
+        self.scope.path()
+    }
+
+    pub(super) fn scope(&self) -> &'source ModuleScope {
+        self.scope
+    }
+
+    pub(super) fn marker(&self) -> Marker {
+        self.marker
+    }
+
+    pub(super) fn declaration(&self) -> ClassDeclaration<'source> {
+        self.declaration
     }
 }
 
@@ -396,7 +445,7 @@ mod tests {
 
     #[test]
     fn rejects_marker_on_wrong_item_kind() {
-        let tree = tree("#[export] enum Mode { Fast }");
+        let tree = tree("#[export] static MODE: u8 = 0;");
 
         let error = match MarkedItems::collect(&tree) {
             Ok(_) => panic!("wrong marker placement must reject"),
@@ -407,7 +456,7 @@ mod tests {
             error,
             ScanError::InvalidMarkerPlacement {
                 marker: "export".to_owned(),
-                item: "enum".to_owned()
+                item: "static".to_owned()
             }
         );
     }

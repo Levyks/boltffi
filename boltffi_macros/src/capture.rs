@@ -5,8 +5,9 @@
 
 use boltffi_binding::SourceFragment;
 use boltffi_scan::{
-    capture_class, capture_class_methods, capture_constant, capture_enum, capture_error_enum,
-    capture_error_struct, capture_function, capture_methods, capture_struct, capture_trait,
+    ClassDeclaration, capture_class, capture_class_methods, capture_constant, capture_enum,
+    capture_error_enum, capture_error_struct, capture_function, capture_methods, capture_struct,
+    capture_trait,
 };
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
@@ -26,12 +27,12 @@ pub(crate) fn facade() -> TokenStream {
 pub(crate) enum Capture {
     /// The item declares what its syntax says: a record, enum, function, trait or constant.
     Item,
-    /// `#[export]` on a struct declares a class. Carries the export marker's argument
-    /// tokens for the thread-safety choice.
+    /// `#[export]` on a struct or enum declares a class. Carries the export marker's
+    /// argument tokens for the thread-safety choice.
     Class(TokenStream),
     /// `#[data(impl)]` adds methods to a type whose identity the `#[data]` site owns.
     Methods,
-    /// `#[export] impl` adds methods to a class its struct declares.
+    /// `#[export] impl` adds methods to a class its struct or enum declares.
     ClassMethods,
 }
 
@@ -46,10 +47,14 @@ pub(crate) fn item_tokens(
         return TokenStream::new();
     };
     let (name, identity) = match (&item, &capture) {
-        (syn::Item::Struct(item), Capture::Class(_)) => {
-            let identity = local_identity_tokens(&item.ident, &item.ident.to_string());
-            let class = class_identity_tokens(&item.ident);
-            (item.ident.to_string(), Some(quote! { #identity #class }))
+        (
+            syn::Item::Struct(syn::ItemStruct { ident, .. })
+            | syn::Item::Enum(syn::ItemEnum { ident, .. }),
+            Capture::Class(_),
+        ) => {
+            let identity = local_identity_tokens(ident, &ident.to_string());
+            let class = class_identity_tokens(ident);
+            (ident.to_string(), Some(quote! { #identity #class }))
         }
         (syn::Item::Struct(item), _) => (
             item.ident.to_string(),
@@ -93,6 +98,12 @@ pub(crate) fn fragments(
     error: bool,
 ) -> Result<Fragments, String> {
     let failed = |error: boltffi_scan::ScanError| error.to_string();
+    if let (Some(declaration), Capture::Class(marker_args)) = (ClassDeclaration::of(item), capture)
+    {
+        return capture_class(declaration, marker_args.clone())
+            .map(|captured| vec![(SourceFragment::Class(captured.def), captured.slots)])
+            .map_err(failed);
+    }
     match item {
         syn::Item::Struct(item) if error => capture_error_struct(item)
             .map(|captured| vec![(SourceFragment::Record(captured.def), captured.slots)])
@@ -100,14 +111,9 @@ pub(crate) fn fragments(
         syn::Item::Enum(item) if error => capture_error_enum(item)
             .map(|captured| vec![(SourceFragment::Enum(captured.def), captured.slots)])
             .map_err(failed),
-        syn::Item::Struct(item) => match capture {
-            Capture::Class(marker_args) => capture_class(item, marker_args.clone())
-                .map(|captured| vec![(SourceFragment::Class(captured.def), captured.slots)])
-                .map_err(failed),
-            _ => capture_struct(item)
-                .map(|captured| vec![(SourceFragment::Record(captured.def), captured.slots)])
-                .map_err(failed),
-        },
+        syn::Item::Struct(item) => capture_struct(item)
+            .map(|captured| vec![(SourceFragment::Record(captured.def), captured.slots)])
+            .map_err(failed),
         syn::Item::Enum(item) => capture_enum(item)
             .map(|captured| vec![(SourceFragment::Enum(captured.def), captured.slots)])
             .map_err(failed),
@@ -388,7 +394,7 @@ fn local_identity_tokens<T: quote::ToTokens>(self_ty: &T, name: &str) -> TokenSt
     }
 }
 
-/// Marks a type as a class at the struct that declares it, which is what an
+/// Marks a type as a class at the struct or enum that declares it, which is what an
 /// `#[export] impl` block requires of its target.
 fn class_identity_tokens<T: quote::ToTokens>(self_ty: &T) -> TokenStream {
     let facade = facade();
@@ -404,7 +410,7 @@ fn class_identity_tokens<T: quote::ToTokens>(self_ty: &T) -> TokenStream {
 }
 
 /// Requires an `#[export] impl` block's target to be a declared class, in every build, so a
-/// struct without `#[export]` is reported as such next to its missing lane.
+/// type without `#[export]` is reported as such next to its missing lane.
 fn exported_class_tokens(self_ty: &syn::Type) -> TokenStream {
     let facade = facade();
     quote! {

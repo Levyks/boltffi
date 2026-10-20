@@ -1,6 +1,6 @@
 ---
 title: "Classes"
-description: "Expose Rust structs as BoltFFI classes with #[export] on the struct and its impl blocks, including constructors, methods, ownership, thread safety, and lifecycle management."
+description: "Expose Rust structs and enums as BoltFFI classes with #[export] on the type and its impl blocks, including constructors, methods, ownership, thread safety, and lifecycle management."
 ---
 
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
@@ -120,7 +120,7 @@ demo_counter_free(&counter);`}
 
 ### More than one impl block
 
-A class can have any number of `#[export] impl` blocks. Each adds its methods, constructors, constants and streams to the class its struct declares. A block can sit in any module of the crate, above or below the struct, and name the class by any path or `use` alias.
+A class can have any number of `#[export] impl` blocks. Each adds its methods, constructors, constants and streams to the class its struct or enum declares. A block can sit in any module of the crate, above or below the struct, and name the class by any path or `use` alias.
 
 ```rust
 #[export]
@@ -145,11 +145,39 @@ mod mutation {
 }
 ```
 
-Thread safety belongs to the struct, so `#[export(single_threaded)]` goes there and an `#[export] impl` block takes no arguments. `#[deprecated]` goes on the struct too. The class's doc comment comes from the struct, or, when the struct has none, from the first documented `#[export] impl` block.
+Thread safety belongs to the struct or enum that declares the class, so `#[export(single_threaded)]` goes there and an `#[export] impl` block takes no arguments. `#[deprecated]` goes there too. The class's doc comment comes from that struct or enum, or, when it has none, from the first documented `#[export] impl` block.
 
 A block cannot implement a trait or take generic parameters.
 
-An `#[export] impl` for a struct without `#[export]` fails with `` `Counter` is not an exported class ``, next to ``cannot find macro `Counter` ``.
+### Enums as classes
+
+`#[export]` on an enum declares a class the same way. The variants stay in Rust, and the target language sees only the methods.
+
+```rust
+#[export]
+pub enum TrafficLight {
+    Red,
+    Green { seconds: u32 },
+}
+
+#[export]
+impl TrafficLight {
+    pub fn new() -> Self {
+        Self::Red
+    }
+
+    pub fn seconds_left(&self) -> u32 {
+        match self {
+            Self::Red => 0,
+            Self::Green { seconds } => *seconds,
+        }
+    }
+}
+```
+
+To pass the variants themselves across, make it a [`#[data]` enum](/docs/records#enums) instead. An enum is either one or the other.
+
+An `#[export] impl` for a struct or enum without `#[export]` fails with `` `Counter` is not an exported class ``, next to ``cannot find macro `Counter` ``.
 
 ## Constructors
 

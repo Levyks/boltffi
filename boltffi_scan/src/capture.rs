@@ -10,6 +10,7 @@ use boltffi_ast::{
 };
 
 use crate::declared_types::DeclaredTypes;
+use crate::items::class::ClassDeclaration;
 use crate::path::{ModulePath, ModuleScope};
 use crate::{ScanError, items};
 
@@ -68,17 +69,17 @@ pub fn capture_function(item: &syn::ItemFn) -> Result<CapturedItem<FunctionDef>,
     captured(|scope, declared_types| items::function::scan_item(item, scope, declared_types))
 }
 
-/// Captures an `#[export]` struct as the class it declares, without members.
+/// Captures an `#[export]` struct or enum as the class it declares, without members.
 ///
 /// The `marker_args` parameter is the export marker's argument tokens, which carry the
 /// class thread-safety choice.
 pub fn capture_class(
-    item: &syn::ItemStruct,
+    declaration: ClassDeclaration<'_>,
     marker_args: proc_macro2::TokenStream,
 ) -> Result<CapturedItem<ClassDef>, ScanError> {
     let thread_safety = crate::marker::export_marker_from_args(marker_args)?.class_thread_safety();
     captured(|scope, declared_types| {
-        items::class::scan_struct(item, scope, declared_types, thread_safety)
+        items::class::scan_declaration(declaration, scope, declared_types, thread_safety)
     })
 }
 
@@ -423,8 +424,11 @@ mod tests {
             }
         };
 
-        let captured =
-            capture_class(&item, proc_macro2::TokenStream::new()).expect("class struct captures");
+        let captured = capture_class(
+            ClassDeclaration::Struct(&item),
+            proc_macro2::TokenStream::new(),
+        )
+        .expect("class struct captures");
 
         assert_eq!(captured.def.id.as_str(), "$self::Counter");
         assert!(
@@ -446,13 +450,47 @@ mod tests {
     }
 
     #[test]
+    fn captures_a_class_from_its_enum() {
+        let item: syn::ItemEnum = syn::parse_quote! {
+            /// Runs or idles.
+            pub enum Engine {
+                Idle,
+                Running(u32),
+            }
+        };
+
+        let captured = capture_class(
+            ClassDeclaration::Enum(&item),
+            quote::quote!(single_threaded),
+        )
+        .expect("class enum captures");
+
+        assert_eq!(captured.def.id.as_str(), "$self::Engine");
+        assert!(
+            captured.slots.is_empty(),
+            "variants stay in Rust, so they take no slots"
+        );
+        assert_eq!(
+            captured.def.doc.as_ref().map(|doc| doc.as_str()),
+            Some("Runs or idles.")
+        );
+        assert_eq!(
+            captured.def.thread_safety,
+            boltffi_ast::ClassThreadSafety::UnsafeSingleThreaded
+        );
+    }
+
+    #[test]
     fn captures_single_threaded_class_thread_safety() {
         let item: syn::ItemStruct = syn::parse_quote! {
             pub struct Counter;
         };
 
-        let captured =
-            capture_class(&item, quote::quote!(single_threaded)).expect("class struct captures");
+        let captured = capture_class(
+            ClassDeclaration::Struct(&item),
+            quote::quote!(single_threaded),
+        )
+        .expect("class struct captures");
 
         assert_eq!(
             captured.def.thread_safety,
@@ -725,7 +763,11 @@ mod tests {
         };
 
         assert!(
-            capture_class(&item, proc_macro2::TokenStream::new()).is_err(),
+            capture_class(
+                ClassDeclaration::Struct(&item),
+                proc_macro2::TokenStream::new()
+            )
+            .is_err(),
             "generic classes stay unsupported"
         );
     }

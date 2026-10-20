@@ -8,6 +8,7 @@ boltffi::scaffolding!();
 mod custom_methods;
 #[cfg(feature = "data_and_export")]
 mod data_and_export;
+pub mod enums;
 pub mod extras;
 #[cfg(feature = "impl_arguments")]
 mod impl_arguments;

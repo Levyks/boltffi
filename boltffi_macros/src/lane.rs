@@ -482,8 +482,8 @@ fn check_methods_target(
              its methods stay in Rust"
         )),
         (Kind::ExportMethods, false) => Err(format!(
-            "`#[export] impl` adds methods to a class declared by an `#[export]` struct, and \
-             `{spelling}` is not one; use `#[data(impl)]` on a `#[data]` type"
+            "`#[export] impl` adds methods to a class declared by an `#[export]` struct or enum, \
+             and `{spelling}` is not one; use `#[data(impl)]` on a `#[data]` type"
         )),
         (Kind::DataImpl, true) => Err(format!(
             "`#[data(impl)]` adds methods to a `#[data]` type, and `{spelling}` is an exported \
@@ -681,7 +681,11 @@ fn invocation_module(kind: Kind, item: &syn::Item) -> Option<syn::Ident> {
         (Kind::Export, syn::Item::Fn(item)) => ("fn", item.sig.ident.to_string()),
         (Kind::Export, syn::Item::Const(item)) => ("const", item.ident.to_string()),
         (Kind::Export, syn::Item::Trait(item)) => ("trait", item.ident.to_string()),
-        (Kind::Export, syn::Item::Struct(item)) => ("class", item.ident.to_string()),
+        (
+            Kind::Export,
+            syn::Item::Struct(syn::ItemStruct { ident, .. })
+            | syn::Item::Enum(syn::ItemEnum { ident, .. }),
+        ) => ("class", ident.to_string()),
         (Kind::ExportMethods | Kind::DataImpl, syn::Item::Impl(item)) => {
             let syn::Type::Path(path) = &*item.self_ty else {
                 return None;

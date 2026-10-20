@@ -215,7 +215,7 @@ impl<'lowered> Expander<'lowered> {
     }
 
     /// Renders selected classes as an `#[export] impl` block does: members only, since the
-    /// class's `#[export]` struct renders the handle and release.
+    /// class's `#[export]` struct or enum renders the handle and release.
     pub fn extending_classes(mut self) -> Self {
         self.extends_classes = true;
         self
