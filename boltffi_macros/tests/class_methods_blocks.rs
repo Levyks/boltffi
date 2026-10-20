@@ -43,7 +43,7 @@ fn a_methods_block_without_an_exported_struct_names_the_missing_class() {
     );
     assert!(
         stderr.contains("`Orphan` is not an exported class")
-            && stderr.contains("declare the class with `#[export]` on `struct Orphan`"),
+            && stderr.contains("declare the class with `#[export]` on the struct or enum `Orphan`"),
         "undeclared class fixture failed for another reason\nstderr\n{stderr}"
     );
     assert!(
@@ -83,7 +83,7 @@ fn a_data_methods_block_on_a_class_names_the_export_marker() {
 }
 
 #[test]
-fn thread_safety_on_a_methods_block_points_at_the_struct() {
+fn thread_safety_on_a_methods_block_points_at_the_declaring_type() {
     let output = check(
         "misplaced-thread-safety",
         &["--features", "misplaced_thread_safety"],
@@ -97,7 +97,10 @@ fn thread_safety_on_a_methods_block_points_at_the_struct() {
     assert!(
         stderr.contains(
             "`#[export] impl` takes no arguments; write `#[export(single_threaded)]` on \
-             `struct Cursor`"
+             `Cursor`, which declares the class"
+        ) && stderr.contains(
+            "`#[export] impl` takes no arguments; write `#[export(single_threaded)]` on \
+             `Gear`, which declares the class"
         ),
         "misplaced thread safety fixture failed for another reason\nstderr\n{stderr}"
     );
@@ -131,7 +134,7 @@ fn an_argument_on_a_methods_block_is_moved_only_when_the_struct_takes_it() {
     assert!(
         stderr.contains(
             "`#[export] impl` takes no arguments; every `#[export] impl` adds methods to the \
-             class that `#[export]` on `struct Cursor` declares"
+             class that `#[export]` on `Cursor` declares"
         ) && stderr
             .matches("`#[export] impl` takes no arguments")
             .count()
@@ -146,18 +149,22 @@ fn an_argument_on_a_methods_block_is_moved_only_when_the_struct_takes_it() {
 }
 
 #[test]
-fn a_struct_that_is_both_data_and_a_class_is_refused_once_either_way() {
+fn a_type_that_is_both_data_and_a_class_is_refused_once_either_way() {
     let output = check("data-and-export", &["--features", "data_and_export"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let refusal = "a struct is either a `#[data]` record or an `#[export]` class, not both";
+    let struct_refusal = "a struct is either a `#[data]` record or an `#[export]` class, not both";
+    let enum_refusal = "an enum is either a `#[data]` enum or an `#[export]` class, not both";
 
     assert!(
         !output.status.success(),
-        "a struct compiled as both data and a class\nstderr\n{stderr}"
+        "a type compiled as both data and a class\nstderr\n{stderr}"
     );
     assert_eq!(
-        stderr.matches(refusal).count(),
-        2,
+        (
+            stderr.matches(struct_refusal).count(),
+            stderr.matches(enum_refusal).count()
+        ),
+        (2, 2),
         "data and export fixture failed for another reason\nstderr\n{stderr}"
     );
     assert!(
@@ -184,7 +191,7 @@ fn a_methods_block_on_a_custom_type_says_custom_types_take_none() {
 }
 
 #[test]
-fn a_mutable_receiver_on_a_thread_safe_class_points_at_the_struct() {
+fn a_mutable_receiver_on_a_thread_safe_class_points_at_the_declaring_type() {
     let output = check("mutable-receiver", &["--features", "mutable_receiver"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -194,7 +201,7 @@ fn a_mutable_receiver_on_a_thread_safe_class_points_at_the_struct() {
     );
     assert!(
         stderr.contains(
-            "a `&mut self` method needs `#[export(single_threaded)]` on its class's struct"
+            "a `&mut self` method needs `#[export(single_threaded)]` on its class's struct or enum"
         ),
         "mutable receiver fixture failed for another reason\nstderr\n{stderr}"
     );

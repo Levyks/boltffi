@@ -75,14 +75,25 @@ pub fn data(attribute: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-/// Refuses a struct carrying both `#[data]` and `#[export]`, and drops `other`, the marker
-/// that has not expanded yet, so the item still expands once.
+/// Refuses a struct or enum carrying both `#[data]` and `#[export]`, and drops `other`, the
+/// marker that has not expanded yet, so the item still expands once.
 fn data_and_export(
     item: &TokenStream,
     other: &str,
 ) -> Option<(proc_macro2::TokenStream, TokenStream)> {
-    let mut parsed = syn::parse::<syn::ItemStruct>(item.clone()).ok()?;
-    let position = parsed.attrs.iter().position(|attr| {
+    let mut parsed = syn::parse::<syn::Item>(item.clone()).ok()?;
+    let (attrs, refusal) = match &mut parsed {
+        syn::Item::Struct(item) => (
+            &mut item.attrs,
+            "a struct is either a `#[data]` record or an `#[export]` class, not both",
+        ),
+        syn::Item::Enum(item) => (
+            &mut item.attrs,
+            "an enum is either a `#[data]` enum or an `#[export]` class, not both",
+        ),
+        _ => return None,
+    };
+    let position = attrs.iter().position(|attr| {
         is_boltffi_helper_path(attr.path())
             && attr
                 .path()
@@ -90,12 +101,8 @@ fn data_and_export(
                 .last()
                 .is_some_and(|segment| segment.ident == other)
     })?;
-    let marker = parsed.attrs.remove(position);
-    let error = syn::Error::new_spanned(
-        marker,
-        "a struct is either a `#[data]` record or an `#[export]` class, not both",
-    )
-    .to_compile_error();
+    let marker = attrs.remove(position);
+    let error = syn::Error::new_spanned(marker, refusal).to_compile_error();
     Some((error, parsed.to_token_stream().into()))
 }
 
@@ -125,12 +132,11 @@ pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
             .unwrap_or_else(|| block.self_ty.to_token_stream().to_string());
             let advice = match syn::parse2::<syn::Ident>(attribute.clone()) {
                 Ok(argument) if argument == "single_threaded" => format!(
-                    "; write `#[export(single_threaded)]` on `struct {name}`, which declares \
-                     the class"
+                    "; write `#[export(single_threaded)]` on `{name}`, which declares the class"
                 ),
                 Ok(argument) if argument == "methods" => format!(
                     "; every `#[export] impl` adds methods to the class that `#[export]` on \
-                     `struct {name}` declares"
+                     `{name}` declares"
                 ),
                 _ => String::new(),
             };
@@ -142,12 +148,16 @@ pub fn export(attribute: TokenStream, item: TokenStream) -> TokenStream {
             .into()
         }
         Ok(syn::Item::Impl(_)) => invocation(lane::Kind::ExportMethods, attribute, item),
-        Ok(syn::Item::Const(_) | syn::Item::Fn(_) | syn::Item::Struct(_) | syn::Item::Trait(_)) => {
-            invocation(lane::Kind::Export, attribute, item)
-        }
+        Ok(
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::Fn(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_),
+        ) => invocation(lane::Kind::Export, attribute, item),
         Ok(item) => syn::Error::new_spanned(
             item,
-            "export can only be applied to const, fn, impl, struct, or trait",
+            "export can only be applied to const, enum, fn, impl, struct, or trait",
         )
         .to_compile_error()
         .into(),

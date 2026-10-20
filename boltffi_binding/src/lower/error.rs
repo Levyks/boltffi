@@ -112,8 +112,8 @@ impl fmt::Display for LowerError {
             LowerErrorKind::UnsupportedType(
                 UnsupportedType::MutableClassReceiverRequiresUnsafeSingleThreaded,
             ) => formatter.write_str(
-                "a `&mut self` method needs `#[export(single_threaded)]` on its class's struct, \
-                 since a thread-safe class can be borrowed from many threads at once",
+                "a `&mut self` method needs `#[export(single_threaded)]` on its class's struct or \
+                 enum, since a thread-safe class can be borrowed from many threads at once",
             ),
             LowerErrorKind::UnsupportedType(unsupported) => {
                 write!(

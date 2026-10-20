@@ -138,11 +138,19 @@ impl DeclaredTypes {
                 })?;
             declared_types.register(DeclaredType::Class(id))
         })?;
-        marked.class_structs().iter().try_for_each(|marked| {
-            declared_types.register(DeclaredType::Class(ClassId::new(
-                marked.module().qualified(&marked.item().ident.to_string()),
-            )))
-        })?;
+        marked
+            .class_declarations()
+            .iter()
+            .filter_map(|marked| match marked.item() {
+                syn::Item::Struct(item) => Some((marked, &item.ident)),
+                syn::Item::Enum(item) => Some((marked, &item.ident)),
+                _ => None,
+            })
+            .try_for_each(|(marked, ident)| {
+                declared_types.register(DeclaredType::Class(ClassId::new(
+                    marked.module().qualified(&ident.to_string()),
+                )))
+            })?;
         marked.customs().iter().try_for_each(|marked| {
             let spec = items::custom_type::Spec::parse(marked)?;
             let id = CustomTypeId::new(marked.module().qualified(&spec.name().to_string()));

@@ -12,7 +12,7 @@ use super::impl_methods;
 
 pub fn scan(
     marked: &[Marked<'_, syn::ItemImpl>],
-    structs: &[Marked<'_, syn::ItemStruct>],
+    declarations: &[Marked<'_, syn::Item>],
     declared_types: &DeclaredTypes,
 ) -> Result<Vec<ClassDef>, ScanError> {
     let classes = marked
@@ -40,46 +40,58 @@ pub fn scan(
             }
             Ok(classes)
         })?;
-    structs.iter().try_fold(classes, |mut classes, marked| {
-        let declared = scan_struct(
-            marked.item(),
-            marked.scope(),
-            declared_types,
-            marked
-                .marker()
-                .export()
-                .expect("class scanner only receives export markers")
-                .class_thread_safety(),
-        )?;
-        match classes
-            .iter_mut()
-            .find(|candidate| candidate.id == declared.id)
-        {
-            Some(existing) => {
-                existing.thread_safety = declared.thread_safety;
-                existing.doc = declared.doc.or(existing.doc.take());
-                existing.deprecated = declared.deprecated;
+    declarations
+        .iter()
+        .try_fold(classes, |mut classes, marked| {
+            let declared = scan_declaration(
+                marked.item(),
+                marked.scope(),
+                declared_types,
+                marked
+                    .marker()
+                    .export()
+                    .expect("class scanner only receives export markers")
+                    .class_thread_safety(),
+            )?;
+            match classes
+                .iter_mut()
+                .find(|candidate| candidate.id == declared.id)
+            {
+                Some(existing) => {
+                    existing.thread_safety = declared.thread_safety;
+                    existing.doc = declared.doc.or(existing.doc.take());
+                    existing.deprecated = declared.deprecated;
+                }
+                None => classes.push(declared),
             }
-            None => classes.push(declared),
-        }
-        Ok(classes)
-    })
+            Ok(classes)
+        })
 }
 
-/// The class an `#[export]` struct declares, with no members: its `#[export] impl`
+/// The class an `#[export]` struct or enum declares, with no members: its `#[export] impl`
 /// blocks add those.
-pub(crate) fn scan_struct(
-    item: &syn::ItemStruct,
+pub(crate) fn scan_declaration(
+    item: &syn::Item,
     scope: &ModuleScope,
     declared_types: &DeclaredTypes,
     thread_safety: ClassThreadSafety,
 ) -> Result<ClassDef, ScanError> {
-    crate::unsupported::generics(&item.generics, &format!("class {}", item.ident))?;
-    let id = ClassId::new(scope.path().qualified(&item.ident.to_string()));
-    let mut class = ClassDef::new(id, name::source(&item.ident));
+    let (ident, generics, vis, attrs) = match item {
+        syn::Item::Struct(item) => (&item.ident, &item.generics, &item.vis, &item.attrs),
+        syn::Item::Enum(item) => (&item.ident, &item.generics, &item.vis, &item.attrs),
+        _ => {
+            return Err(ScanError::InvalidMarkerPlacement {
+                marker: "export".to_owned(),
+                item: crate::marked::item_kind(item).to_owned(),
+            });
+        }
+    };
+    crate::unsupported::generics(generics, &format!("class {ident}"))?;
+    let id = ClassId::new(scope.path().qualified(&ident.to_string()));
+    let mut class = ClassDef::new(id, name::source(ident));
     let scanner = Scanner::new(declared_types, scope);
-    let attrs = Attributes::new(&item.attrs, &scanner);
-    class.source = attributes::source(&item.vis, scope, item.span());
+    let attrs = Attributes::new(attrs, &scanner);
+    class.source = attributes::source(vis, scope, item.span());
     class.source_span = class.source.span.clone();
     class.doc = attrs.doc();
     class.deprecated = attrs.deprecated()?;
@@ -293,8 +305,12 @@ mod tests {
         let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
         let declared_types =
             DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
-        let classes =
-            super::scan(marked.classes(), marked.class_structs(), &declared_types).expect("scan");
+        let classes = super::scan(
+            marked.classes(),
+            marked.class_declarations(),
+            &declared_types,
+        )
+        .expect("scan");
 
         assert_eq!(classes.len(), 1);
         assert_eq!(classes[0].id, ClassId::new("demo::Engine"));
@@ -324,8 +340,12 @@ mod tests {
         let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
         let declared_types =
             DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
-        let classes =
-            super::scan(marked.classes(), marked.class_structs(), &declared_types).expect("scan");
+        let classes = super::scan(
+            marked.classes(),
+            marked.class_declarations(),
+            &declared_types,
+        )
+        .expect("scan");
 
         assert_eq!(
             classes
@@ -344,6 +364,38 @@ mod tests {
         assert_eq!(
             classes[0].doc.as_ref().map(|doc| doc.as_str()),
             Some("Drives things.")
+        );
+    }
+
+    #[test]
+    fn an_exported_enum_declares_its_class() {
+        let source_tree = crate::source_tree::SourceTree::in_memory(
+            "demo",
+            syn::parse_str::<syn::File>(
+                "#[export(single_threaded)] pub enum Engine { Idle, Running(u32) } \
+                 #[export] impl Engine { pub fn new() -> Self { todo!() } } \
+                 #[export] impl Engine { pub fn rpm(&self) -> u32 { 0 } }",
+            )
+            .expect("valid source")
+            .items,
+        )
+        .expect("source tree");
+        let marked = crate::marked::MarkedItems::collect(&source_tree).expect("marked");
+        let declared_types =
+            DeclaredTypes::index(&source_tree, &marked).expect("declared type index");
+        let classes = super::scan(
+            marked.classes(),
+            marked.class_declarations(),
+            &declared_types,
+        )
+        .expect("scan");
+
+        assert_eq!(classes.len(), 1);
+        assert_eq!(classes[0].id, ClassId::new("demo::Engine"));
+        assert_eq!(classes[0].methods.len(), 2);
+        assert_eq!(
+            classes[0].thread_safety,
+            ClassThreadSafety::UnsafeSingleThreaded
         );
     }
 }

@@ -13,3 +13,17 @@ pub struct Both {
 pub struct Either {
     pub x: u32,
 }
+
+#[data]
+#[export]
+#[derive(Clone, Copy)]
+pub enum Mode {
+    Fast,
+}
+
+#[export]
+#[data]
+#[derive(Clone, Copy)]
+pub enum Pitch {
+    Low,
+}
