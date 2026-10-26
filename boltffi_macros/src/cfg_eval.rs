@@ -123,6 +123,8 @@ pub(crate) fn is_conditional(item: &Item) -> bool {
         fn visit_attribute(&mut self, attribute: &'ast Attribute) {
             self.0 |= is_cfg(attribute) || is_cfg_attr(attribute);
         }
+
+        fn visit_block(&mut self, _: &'ast syn::Block) {}
     }
     let mut conditional = Conditional::default();
     conditional.visit_item(item);
@@ -557,7 +559,7 @@ fn trait_item_attrs_mut(member: &mut syn::TraitItem) -> Option<&mut Vec<Attribut
 mod tests {
     use quote::ToTokens;
 
-    use super::{conditional_parameter, defer, flattened};
+    use super::{conditional_parameter, defer, flattened, is_conditional};
     use crate::lane::Kind;
 
     #[test]
@@ -576,6 +578,45 @@ mod tests {
                 quote::quote!(#[cfg_attr(a, allow(dead_code))]).to_string(),
                 quote::quote!(#[cfg_attr(all(a, b), cfg(c))]).to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn configuration_inside_bodies_does_not_defer_the_item() {
+        let function: syn::Item = syn::parse_quote! {
+            pub fn answer() -> u32 {
+                #[cfg(debug_assertions)]
+                trace();
+                42
+            }
+        };
+        let methods: syn::Item = syn::parse_quote! {
+            impl Point {
+                pub fn norm(&self) -> f64 {
+                    #[cfg(feature = "fast")]
+                    return 0.0;
+                    self.x
+                }
+            }
+        };
+        let gated: syn::Item = syn::parse_quote! {
+            impl Point {
+                #[cfg(feature = "fast")]
+                pub fn fast(&self) {}
+            }
+        };
+
+        assert!(
+            !is_conditional(&function),
+            "a function body's cfg is the compiler's alone"
+        );
+        assert!(
+            !is_conditional(&methods),
+            "a method body's cfg is the compiler's alone"
+        );
+        assert!(
+            is_conditional(&gated),
+            "a gated member still defers the item"
         );
     }
 
