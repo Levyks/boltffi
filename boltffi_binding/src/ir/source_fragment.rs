@@ -482,8 +482,8 @@ fn crate_segment(module: &str) -> &str {
 }
 
 fn crate_scoped(id: &str) -> String {
-    match (id.split("::").next(), id.rsplit("::").next()) {
-        (Some(krate), Some(name)) if krate != name => format!("{krate}::{name}"),
+    match (id.split_once("::"), id.rsplit_once("::")) {
+        (Some((krate, _)), Some((_, name))) => format!("{krate}::{name}"),
         _ => id.to_owned(),
     }
 }
@@ -1435,6 +1435,41 @@ mod tests {
             }
             other => panic!("slot leaf did not resolve to a record: {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolves_a_nested_slot_to_a_record_named_after_its_crate() {
+        let mut named_like_crate =
+            RecordDef::new(RecordId::new(format!("{SELF_ID}::demo")), name("demo"));
+        named_like_crate.fields = vec![FieldDef::new(
+            name("x"),
+            TypeExpr::Primitive(Primitive::F64),
+        )];
+        let named_like_crate = raw(
+            "demo::inner",
+            &[],
+            serde_json::to_vec(&SourceFragment::Record(named_like_crate))
+                .expect("fragment serializes"),
+        );
+        let route = raw(
+            "demo",
+            &[r#"{"id":"demo::inner::demo"}"#],
+            record_fragment(vec![FieldDef::new(name("start"), slot_leaf(0, "demo"))]),
+        );
+
+        let contract =
+            aggregate_records(&[route, named_like_crate], PackageInfo::new("demo", None))
+                .expect("a record sharing its crate's name aggregates from a nested module");
+
+        let route = contract
+            .records
+            .iter()
+            .find(|record| record.id == RecordId::new("demo::Route"))
+            .expect("route aggregates");
+        assert!(matches!(
+            &route.fields[0].type_expr,
+            TypeExpr::Record { id, .. } if id == &RecordId::new("demo::demo")
+        ));
     }
 
     #[test]
