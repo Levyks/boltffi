@@ -760,6 +760,7 @@ fn resolve_expr(
             {
                 return Err(SourceFragmentError::ShadowedBuiltin {
                     name: name.to_owned(),
+                    krate: krate.to_owned(),
                 });
             }
             Ok(())
@@ -1009,6 +1010,8 @@ pub enum SourceFragmentError {
     ShadowedBuiltin {
         /// The contested builtin name.
         name: String,
+        /// The crate whose declaration shadows it and whose signature spells it.
+        krate: String,
     },
     /// A record field names a type that resolves to a primitive, such as an alias.
     PrimitiveFieldSlot {
@@ -1075,10 +1078,10 @@ impl std::fmt::Display for SourceFragmentError {
                 formatter,
                 "two records declare `{id}` with different content"
             ),
-            Self::ShadowedBuiltin { name } => write!(
+            Self::ShadowedBuiltin { name, krate } => write!(
                 formatter,
-                "builtin `{name}` is shadowed by a declaration of the same name; \
-                 name the custom type by its declared name in signatures"
+                "builtin `{name}` is shadowed in crate `{krate}` by a declaration of the same \
+                 name; name the custom type by its declared name in signatures"
             ),
             Self::PrimitiveFieldSlot { field, primitive } => write!(
                 formatter,
@@ -1120,6 +1123,14 @@ mod tests {
         let mut def = RecordDef::new(RecordId::new(format!("{SELF_ID}::Route")), name("Route"));
         def.fields = fields;
         serde_json::to_vec(&SourceFragment::Record(def)).expect("fragment serializes")
+    }
+
+    fn in_crate(record: RawSourceRecord, module: &str) -> RawSourceRecord {
+        RawSourceRecord {
+            package: PackageInfo::new(crate_segment(module), None),
+            module: module.to_owned(),
+            ..record
+        }
     }
 
     fn raw(module: &str, slots: &[&str], json: Vec<u8>) -> RawSourceRecord {
@@ -1290,7 +1301,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            SourceFragmentError::ShadowedBuiltin { name } if name == "Duration"
+            SourceFragmentError::ShadowedBuiltin { name, krate } if name == "Duration" && krate == "demo"
         ));
     }
 
@@ -1328,15 +1339,17 @@ mod tests {
 
             assert!(matches!(
                 error,
-                SourceFragmentError::ShadowedBuiltin { name } if name == "Duration"
+                SourceFragmentError::ShadowedBuiltin { name, krate } if name == "Duration" && krate == "demo"
             ));
         }
     }
 
     #[test]
     fn a_custom_remote_in_another_crate_leaves_the_builtin_alone() {
-        let mut custom = custom_with_remote(&["std", "time", "Duration"]);
-        custom.module = "dependency::customs".to_owned();
+        let custom = in_crate(
+            custom_with_remote(&["std", "time", "Duration"]),
+            "dependency::customs",
+        );
 
         let contract = aggregate_records(
             &[custom, duration_field_record()],
@@ -1347,6 +1360,28 @@ mod tests {
         assert!(matches!(
             contract.records[0].fields[0].type_expr,
             TypeExpr::Builtin(BuiltinType::Duration)
+        ));
+    }
+
+    #[test]
+    fn a_custom_remote_refuses_the_builtin_only_in_its_own_crate() {
+        let custom = || custom_with_remote(&["std", "time", "Duration"]);
+        let dependency_duration = || in_crate(duration_field_record(), "dependency");
+
+        aggregate_records(
+            &[custom(), dependency_duration()],
+            PackageInfo::new("demo", None),
+        )
+        .expect("the dependency's Duration is the builtin");
+        let error = aggregate_records(
+            &[custom(), dependency_duration(), duration_field_record()],
+            PackageInfo::new("demo", None),
+        )
+        .expect_err("the declaring crate's Duration is ambiguous");
+
+        assert!(matches!(
+            error,
+            SourceFragmentError::ShadowedBuiltin { name, krate } if name == "Duration" && krate == "demo"
         ));
     }
 
