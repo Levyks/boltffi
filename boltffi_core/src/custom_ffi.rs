@@ -62,10 +62,49 @@ repr_arg!(
     [K, V, S] std::collections::HashMap<K, V, S> => 1: V;
     [K, V] std::collections::BTreeMap<K, V> => 0: K;
     [K, V] std::collections::BTreeMap<K, V> => 1: V;
-    [A] (A,) => 0: A;
-    [A, B] (A, B) => 0: A;
-    [A, B] (A, B) => 1: B;
-    [A, B, C] (A, B, C) => 0: A;
-    [A, B, C] (A, B, C) => 1: B;
-    [A, B, C] (A, B, C) => 2: C;
 );
+
+macro_rules! tuple_repr_arg {
+    ($($param:ident),+) => {
+        tuple_repr_arg!(@at [$($param),+] (0) $($param)+);
+    };
+    (@at [$($param:ident),+] ($index:expr) $arg:ident $($rest:ident)*) => {
+        impl<$($param),+> ReprArg<{ $index }> for ($($param,)+) {
+            type Arg = $arg;
+        }
+        tuple_repr_arg!(@at [$($param),+] ($index + 1) $($rest)*);
+    };
+    (@at [$($param:ident),+] ($index:expr)) => {};
+}
+
+tuple_repr_arg!(A);
+tuple_repr_arg!(A, B);
+tuple_repr_arg!(A, B, C);
+tuple_repr_arg!(A, B, C, D);
+tuple_repr_arg!(A, B, C, D, E);
+tuple_repr_arg!(A, B, C, D, E, F);
+tuple_repr_arg!(A, B, C, D, E, F, G);
+tuple_repr_arg!(A, B, C, D, E, F, G, H);
+tuple_repr_arg!(A, B, C, D, E, F, G, H, I);
+tuple_repr_arg!(A, B, C, D, E, F, G, H, I, J);
+tuple_repr_arg!(A, B, C, D, E, F, G, H, I, J, K);
+tuple_repr_arg!(A, B, C, D, E, F, G, H, I, J, K, L);
+
+#[cfg(test)]
+mod tests {
+    use super::ReprArg;
+
+    fn arg_of<Repr: ReprArg<N>, const N: usize>() -> &'static str {
+        std::any::type_name::<<Repr as ReprArg<N>>::Arg>()
+    }
+
+    #[test]
+    fn every_tuple_position_names_its_argument() {
+        type Wide = (u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, bool, char);
+
+        assert_eq!(arg_of::<(u8, u16, u32, i64), 3>(), "i64");
+        assert_eq!(arg_of::<Wide, 0>(), "u8");
+        assert_eq!(arg_of::<Wide, 7>(), "i64");
+        assert_eq!(arg_of::<Wide, 11>(), "char");
+    }
+}
