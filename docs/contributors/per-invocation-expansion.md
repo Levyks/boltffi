@@ -205,7 +205,7 @@ against `Line`'s own fields, without reaching `Point`, and renders its wrapper:
 pub mod __boltffi_fn_length {
     use super::*;
     #[no_mangle]
-    pub unsafe extern "C" fn boltffi_function_geo_length(
+    pub unsafe extern "C" fn boltffi_function_3geo6length(
         line_ptr: *const u8,
         line_len: usize,
     ) -> f64 {
@@ -235,7 +235,7 @@ Bindgen, reading the three records, reaches the same lowering over the same frag
 the header it writes matches the wrapper:
 
 ```c
-double boltffi_function_geo_length(const uint8_t *line_ptr, uintptr_t line_len);
+double boltffi_function_3geo6length(const uint8_t *line_ptr, uintptr_t line_len);
 ```
 
 `#[data]`, `#[error]`, `#[export] trait`, `#[export] struct`, `#[custom_ffi]`,
@@ -271,7 +271,8 @@ there, and `use <crate> as _;` in the root fixes it.
 ## Identity
 
 Declarations are identified by crate and name: `demo::Point`, `demo::Engine::start`.
-Symbols follow, as in `boltffi_function_demo_add`. An invocation cannot know its module
+Symbols follow, as in `boltffi_function_4demo3add`: each part keeps its Rust spelling
+behind its length, so `foo_bar::baz` and `foo::bar_baz` stay apart. An invocation cannot know its module
 path, and the foreign namespace is flat by name anyway. So two types or exports with the
 same name in one crate fail to build: every lane also defines a crate-root
 `__boltffi_declared_<Name>` macro, and every export a symbol.

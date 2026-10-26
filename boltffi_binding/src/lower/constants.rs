@@ -616,7 +616,7 @@ mod tests {
 
         match decl.value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_magic");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo5MAGIC");
                 assert!(callable.receiver().is_none());
                 assert!(callable.params().is_empty());
             }
@@ -756,7 +756,7 @@ mod tests {
 
         match only_constant(&bindings).value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_alias");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo5ALIAS");
                 assert!(callable.params().is_empty());
             }
             other => panic!("expected accessor constant value, got {other:?}"),
@@ -911,7 +911,7 @@ mod tests {
 
         match only_constant(&bindings).value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo12DEFAULT_MODE");
                 assert!(callable.params().is_empty());
             }
             other => panic!("expected accessor constant value, got {other:?}"),
@@ -940,7 +940,7 @@ mod tests {
 
         match only_constant(&bindings).value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo12DEFAULT_MODE");
                 assert!(callable.params().is_empty());
             }
             other => panic!("expected accessor constant value, got {other:?}"),
@@ -969,7 +969,7 @@ mod tests {
 
         match only_constant(&bindings).value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo12DEFAULT_MODE");
                 assert!(callable.params().is_empty());
             }
             other => panic!("expected accessor constant value, got {other:?}"),
@@ -1075,7 +1075,7 @@ mod tests {
 
         match only_constant(&bindings).value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_default_mode");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo12DEFAULT_MODE");
                 assert!(callable.params().is_empty());
             }
             other => panic!("expected accessor constant value, got {other:?}"),
@@ -1093,7 +1093,7 @@ mod tests {
 
         match only_constant(&bindings).value() {
             ConstantValueDecl::Accessor { symbol, callable } => {
-                assert_eq!(symbol.name().as_str(), "boltffi_const_demo_computed");
+                assert_eq!(symbol.name().as_str(), "boltffi_const_4demo8COMPUTED");
                 assert!(callable.params().is_empty());
             }
             other => panic!("expected accessor constant value, got {other:?}"),
@@ -1137,7 +1137,7 @@ mod tests {
             .collect();
 
         assert!(
-            names.contains(&"boltffi_const_demo_magic"),
+            names.contains(&"boltffi_const_4demo5MAGIC"),
             "accessor symbol missing from {names:?}"
         );
     }

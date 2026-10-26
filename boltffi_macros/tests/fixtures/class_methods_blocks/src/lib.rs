@@ -111,24 +111,24 @@ impl Cursor {
 
 pub fn every_block_exports_its_members() -> [*const (); 17] {
     [
-        boltffi_init_class_class_methods_blocks_counter_new as *const (),
-        boltffi_init_class_class_methods_blocks_counter_starting_at as *const (),
-        boltffi_method_class_class_methods_blocks_counter_get as *const (),
-        boltffi_method_class_class_methods_blocks_counter_step as *const (),
-        extras::by_path::boltffi_method_class_class_methods_blocks_counter_settled as *const (),
-        extras::by_path::boltffi_method_class_class_methods_blocks_counter_twin as *const (),
-        extras::by_import::boltffi_method_class_class_methods_blocks_counter_reset as *const (),
-        boltffi_stream_class_methods_blocks_counter_changes_subscribe as *const (),
-        extras::by_import::boltffi_stream_class_methods_blocks_counter_resets_subscribe
+        boltffi_init_class_20class_methods_blocks7Counter3new as *const (),
+        boltffi_init_class_20class_methods_blocks7Counter11starting_at as *const (),
+        boltffi_method_class_20class_methods_blocks7Counter3get as *const (),
+        boltffi_method_class_20class_methods_blocks7Counter4step as *const (),
+        extras::by_path::boltffi_method_class_20class_methods_blocks7Counter7settled as *const (),
+        extras::by_path::boltffi_method_class_20class_methods_blocks7Counter4twin as *const (),
+        extras::by_import::boltffi_method_class_20class_methods_blocks7Counter5reset as *const (),
+        boltffi_stream_20class_methods_blocks7Counter7changes_subscribe as *const (),
+        extras::by_import::boltffi_stream_20class_methods_blocks7Counter6resets_subscribe
             as *const (),
-        boltffi_method_class_class_methods_blocks_cursor_advance as *const (),
-        layouts::boltffi_method_class_class_methods_blocks_engine_warm as *const (),
-        layouts::engine::boltffi_init_class_class_methods_blocks_engine_new as *const (),
-        layouts::engine::tuning::boltffi_method_class_class_methods_blocks_engine_boost
+        boltffi_method_class_20class_methods_blocks6Cursor7advance as *const (),
+        layouts::boltffi_method_class_20class_methods_blocks6Engine4warm as *const (),
+        layouts::engine::boltffi_init_class_20class_methods_blocks6Engine3new as *const (),
+        layouts::engine::tuning::boltffi_method_class_20class_methods_blocks6Engine5boost
             as *const (),
-        layouts::ffi::boltffi_method_class_class_methods_blocks_engine_idle as *const (),
-        layouts::ffi::boltffi_method_class_class_methods_blocks_engine_present as *const (),
-        layouts::api::boltffi_function_class_methods_blocks_engine_rpm as *const (),
-        layouts::boltffi_method_class_class_methods_blocks_generated_name as *const (),
+        layouts::ffi::boltffi_method_class_20class_methods_blocks6Engine4idle as *const (),
+        layouts::ffi::boltffi_method_class_20class_methods_blocks6Engine7present as *const (),
+        layouts::api::boltffi_function_20class_methods_blocks10engine_rpm as *const (),
+        layouts::boltffi_method_class_20class_methods_blocks9Generated4name as *const (),
     ]
 }

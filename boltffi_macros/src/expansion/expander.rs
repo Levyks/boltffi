@@ -553,11 +553,11 @@ mod tests {
         assert_in_order(
             &rendered,
             &[
-                "boltffi_register_callback_demo_listener",
-                "fn boltffi_release_class_demo_engine",
-                "fn boltffi_stream_demo_engine_values_subscribe",
-                "fn boltffi_const_demo_magic",
-                "fn boltffi_function_demo_answer",
+                "boltffi_register_callback_4demo8Listener",
+                "fn boltffi_release_class_4demo6Engine",
+                "fn boltffi_stream_4demo6Engine6values_subscribe",
+                "fn boltffi_const_4demo5MAGIC",
+                "fn boltffi_function_4demo6answer",
             ],
         );
         let runtimes = quote! {
@@ -628,14 +628,14 @@ mod tests {
             .expect("contract expands")
             .to_string();
 
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_start"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine5start"));
         assert!(
             rendered.contains(
                 "< Engine as :: boltffi :: __private :: ClassHandle > :: Handle :: shared"
             )
         );
         assert!(!rendered.contains("struct __BoltffiEngineHandle"));
-        assert!(!rendered.contains("boltffi_release_class_demo_engine"));
+        assert!(!rendered.contains("boltffi_release_class_4demo6Engine"));
         assert!(!rendered.contains("BoltFFIThreadSafe"));
     }
 
@@ -650,7 +650,7 @@ mod tests {
             .expect("contract expands");
         let rendered = tokens.to_string();
 
-        assert!(rendered.contains("fn boltffi_stream_demo_events_subscribe () -> u64"));
+        assert!(rendered.contains("fn boltffi_stream_4demo6events_subscribe () -> u64"));
         assert!(rendered.contains("let subscription = events ()"));
         assert_generated_crate_checks("expander_ownerless_stream", ownerless_stream_crate(tokens));
     }

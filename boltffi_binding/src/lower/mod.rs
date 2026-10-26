@@ -260,7 +260,45 @@ mod tests {
         ReturnPlan, TypeRef, ValueRef, WritePlan, native,
     };
 
-    use super::{lower, lower_with_declarations};
+    use super::{lower, lower_invocation, lower_with_declarations};
+
+    fn closure_maker(name: &str) -> SourceFunction {
+        let mut function = SourceFunction::new(
+            SourceFunctionId::new(format!("demo::{name}")),
+            SourceName::single(name),
+        );
+        function.returns = SourceReturn::value(SourceType::boxed(SourceType::dyn_fn(
+            boltffi_ast::FnTrait::new(
+                boltffi_ast::FnTraitKind::Fn,
+                boltffi_ast::FnSig::new(
+                    vec![SourceType::Primitive(SourcePrimitive::I32)],
+                    SourceReturn::value(SourceType::Primitive(SourcePrimitive::I32)),
+                ),
+            ),
+        )));
+        function
+    }
+
+    fn closure_exports(decls: &[Decl<crate::Wasm32>]) -> Vec<String> {
+        decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Decl::Function(function) => match function.callable().returns().plan() {
+                    ReturnPlan::ClosureViaOutPointer(closure) => Some(
+                        closure
+                            .registration()
+                            .shape()
+                            .call()
+                            .name()
+                            .as_str()
+                            .to_owned(),
+                    ),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
 
     fn source_contract() -> SourceContract {
         let mut function = SourceFunction::new(
@@ -272,6 +310,40 @@ mod tests {
         let mut source = SourceContract::new(SourcePackage::new("demo", None));
         source.functions.push(function);
         source
+    }
+
+    #[test]
+    fn wasm_closure_exports_match_between_crate_and_invocation_lowering() {
+        let mut source = SourceContract::new(SourcePackage::new("demo", None));
+        source.functions.push(closure_maker("make_adder"));
+        source.functions.push(closure_maker("make_doubler"));
+        let none = std::collections::HashSet::new();
+
+        let crate_wide = closure_exports(
+            lower::<crate::Wasm32>(&source)
+                .expect("two closure makers lower together")
+                .decls(),
+        );
+        let per_invocation = ["demo::make_adder", "demo::make_doubler"]
+            .into_iter()
+            .flat_map(|id| {
+                let selected = std::collections::HashSet::from([id.to_owned()]);
+                closure_exports(
+                    lower_invocation::<crate::Wasm32>(&source, &selected, &none)
+                        .expect("one closure maker lowers alone")
+                        .decls(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            crate_wide,
+            [
+                "boltffi_closure_function_4demo10make_adder_0_call",
+                "boltffi_closure_function_4demo12make_doubler_0_call",
+            ]
+        );
+        assert_eq!(per_invocation, crate_wide);
     }
 
     #[test]

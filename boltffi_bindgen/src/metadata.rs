@@ -1171,19 +1171,22 @@ include!("included.rs");
             .map(|path| fs::read(path).expect("read built artifact"))
             .collect::<Vec<_>>();
         for (name, symbol) in [
-            ("plainAdd", "boltffi_function_metadata_fixture_plain_add"),
+            ("plainAdd", "boltffi_function_16metadata_fixture9plain_add"),
             (
                 "generatedMul",
-                "boltffi_function_metadata_fixture_generated_mul",
+                "boltffi_function_16metadata_fixture13generated_mul",
             ),
             (
                 "includedMul",
-                "boltffi_function_metadata_fixture_included_mul",
+                "boltffi_function_16metadata_fixture12included_mul",
             ),
-            ("Counter", "boltffi_init_class_metadata_fixture_counter_new"),
+            (
+                "Counter",
+                "boltffi_init_class_16metadata_fixture7Counter3new",
+            ),
             (
                 "doubled",
-                "boltffi_method_record_metadata_fixture_point_doubled",
+                "boltffi_method_record_16metadata_fixture5Point7doubled",
             ),
         ] {
             assert!(swift.contains(name), "`{name}` is declared");
@@ -1372,35 +1375,44 @@ pub fn local_types() -> u32 {
             &fixture,
             &[],
             &[
-                ("earlyX", "boltffi_function_metadata_fixture_early_x"),
+                ("earlyX", "boltffi_function_16metadata_fixture7early_x"),
                 (
                     "journeyName",
-                    "boltffi_function_metadata_fixture_journey_name",
+                    "boltffi_function_16metadata_fixture12journey_name",
                 ),
-                ("stopLabel", "boltffi_function_metadata_fixture_stop_label"),
+                (
+                    "stopLabel",
+                    "boltffi_function_16metadata_fixture10stop_label",
+                ),
                 (
                     "func norm(",
-                    "boltffi_method_record_metadata_fixture_point_norm",
+                    "boltffi_method_record_16metadata_fixture5Point4norm",
                 ),
                 (
                     "func locatedX(",
-                    "boltffi_method_record_metadata_fixture_point_located_x",
+                    "boltffi_method_record_16metadata_fixture5Point9located_x",
                 ),
                 (
                     "offsetX",
-                    "boltffi_method_class_metadata_fixture_counter_offset_x",
+                    "boltffi_method_class_16metadata_fixture7Counter8offset_x",
                 ),
-                ("Counter", "boltffi_init_class_metadata_fixture_counter_new"),
+                (
+                    "Counter",
+                    "boltffi_init_class_16metadata_fixture7Counter3new",
+                ),
                 (
                     "stampValue",
-                    "boltffi_function_metadata_fixture_stamp_value",
+                    "boltffi_function_16metadata_fixture11stamp_value",
                 ),
                 (
                     "positiveValue",
-                    "boltffi_function_metadata_fixture_positive_value",
+                    "boltffi_function_16metadata_fixture14positive_value",
                 ),
-                ("spanValue", "boltffi_function_metadata_fixture_span_value"),
-                ("typeId", "boltffi_function_metadata_fixture_type_id"),
+                (
+                    "spanValue",
+                    "boltffi_function_16metadata_fixture10span_value",
+                ),
+                ("typeId", "boltffi_function_16metadata_fixture7type_id"),
             ],
             &[],
         );
@@ -1484,25 +1496,28 @@ pub fn mode_name(mode: Mode) -> String { String::from(match mode { Mode::Plain =
         let extra = [
             (
                 "boost",
-                "boltffi_method_class_metadata_fixture_engine_boost",
+                "boltffi_method_class_16metadata_fixture6Engine5boost",
             ),
             (
                 "describe",
-                "boltffi_method_class_metadata_fixture_engine_describe",
+                "boltffi_method_class_16metadata_fixture6Engine8describe",
             ),
-            ("makeExtra", "boltffi_function_metadata_fixture_make_extra"),
+            (
+                "makeExtra",
+                "boltffi_function_16metadata_fixture10make_extra",
+            ),
             (
                 "onExtra",
-                "boltffi_register_callback_metadata_fixture_listener",
+                "boltffi_register_callback_16metadata_fixture8Listener",
             ),
             (
                 "extraField",
-                "boltffi_function_metadata_fixture_settings_name",
+                "boltffi_function_16metadata_fixture13settings_name",
             ),
-            ("boosted", "boltffi_function_metadata_fixture_mode_name"),
+            ("boosted", "boltffi_function_16metadata_fixture9mode_name"),
             (
                 "nestedBoost",
-                "boltffi_method_class_metadata_fixture_engine_nested_boost",
+                "boltffi_method_class_16metadata_fixture6Engine12nested_boost",
             ),
         ];
         assert_declared_and_exported(
@@ -1520,33 +1535,36 @@ pub fn mode_name(mode: Mode) -> String { String::from(match mode { Mode::Plain =
             &[
                 (
                     "fallbackField",
-                    "boltffi_function_metadata_fixture_settings_name",
+                    "boltffi_function_16metadata_fixture13settings_name",
                 ),
                 (
                     "onEvent",
-                    "boltffi_register_callback_metadata_fixture_listener",
+                    "boltffi_register_callback_16metadata_fixture8Listener",
                 ),
                 (
                     "nestedField",
-                    "boltffi_function_metadata_fixture_settings_name",
+                    "boltffi_function_16metadata_fixture13settings_name",
                 ),
             ],
             &[
                 (
                     "func boost",
-                    "boltffi_method_class_metadata_fixture_engine_boost",
+                    "boltffi_method_class_16metadata_fixture6Engine5boost",
                 ),
                 (
                     "func describe",
-                    "boltffi_method_class_metadata_fixture_engine_describe",
+                    "boltffi_method_class_16metadata_fixture6Engine8describe",
                 ),
-                ("makeExtra", "boltffi_function_metadata_fixture_make_extra"),
+                (
+                    "makeExtra",
+                    "boltffi_function_16metadata_fixture10make_extra",
+                ),
                 ("onExtra", "boltffi_no_such_symbol"),
                 ("extraField", "boltffi_no_such_symbol"),
                 ("boosted", "boltffi_no_such_symbol"),
                 (
                     "nestedBoost",
-                    "boltffi_method_class_metadata_fixture_engine_nested_boost",
+                    "boltffi_method_class_16metadata_fixture6Engine12nested_boost",
                 ),
             ],
         );

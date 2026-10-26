@@ -1169,7 +1169,7 @@ mod tests {
         assert!(
             output.files()[0]
                 .contents()
-                .contains("boltffi_function_demo_add")
+                .contains("boltffi_function_4demo3add")
         );
     }
 
@@ -1220,7 +1220,7 @@ mod tests {
                 .contains("public static int add(int left, int right)")
         );
         assert!(file(&output, "jni/jni_glue.c").contains(
-            "JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_1demo_1add"
+            "JNIEXPORT jint JNICALL Java_com_boltffi_demo_Native_boltffi_1function_14demo3add"
         ));
     }
 
@@ -1245,7 +1245,7 @@ mod tests {
                 .contains("export function add(left: number, right: number): number")
         );
         assert!(
-            file(&output, "demo.ts").contains("_exports.boltffi_function_demo_add as Function")
+            file(&output, "demo.ts").contains("_exports.boltffi_function_4demo3add as Function")
         );
     }
 
@@ -1266,14 +1266,15 @@ mod tests {
             .contains("return com.boltffi.demo.jvm.add(left, right)")
         );
         assert!(
-            internal.contains("external fun boltffi_function_demo_add(left: Int, right: Int): Int")
+            internal
+                .contains("external fun boltffi_function_4demo3add(left: Int, right: Int): Int")
         );
         assert!(internal.contains("val androidLibrary = \"demo\""));
         assert!(internal.contains("val desktopPreferredLibrary = \"demo_jni\""));
         assert!(internal.contains("val desktopFallbackLibrary = \"demo\""));
         assert!(
             file(&output, "src/jvmMain/c/jni_glue.c")
-                .contains("_result = boltffi_function_demo_add(left, right);")
+                .contains("_result = boltffi_function_4demo3add(left, right);")
         );
     }
 
@@ -1351,19 +1352,19 @@ mod tests {
         assert!(jvm_internal.contains("package com.boltffi.demo.jvm"));
         assert!(jvm_internal.contains("private object Native"));
         assert!(jvm_internal.contains(
-            "@JvmStatic external fun boltffi_function_demo_add(left: Int, right: Int): Int"
+            "@JvmStatic external fun boltffi_function_4demo3add(left: Int, right: Int): Int"
         ));
         assert!(jvm_internal.contains("fun add(left: Int, right: Int): Int"));
-        assert!(jvm_internal.contains("return Native.boltffi_function_demo_add(left, right)"));
+        assert!(jvm_internal.contains("return Native.boltffi_function_4demo3add(left, right)"));
         assert!(!jvm_internal.contains("expect fun"));
         assert!(!jvm_internal.contains("actual fun"));
 
         assert_eq!(jvm_jni, android_jni);
         assert!(jvm_jni.contains("#include <boltffi_generated/demo.h>"));
         assert!(jvm_jni.contains(
-            "JNIEXPORT jint JNICALL Java_com_boltffi_demo_jvm_Native_boltffi_1function_1demo_1add"
+            "JNIEXPORT jint JNICALL Java_com_boltffi_demo_jvm_Native_boltffi_1function_14demo3add"
         ));
-        assert!(jvm_jni.contains("boltffi_function_demo_add(left, right)"));
+        assert!(jvm_jni.contains("boltffi_function_4demo3add(left, right)"));
 
         assert!(build_gradle.contains("kotlin(\"multiplatform\") version \"2.4.20\""));
         assert!(build_gradle.contains("id(\"com.android.library\") version \"8.5.2\""));
@@ -1554,7 +1555,7 @@ mod tests {
         );
         assert!(
             file(&output, "src/jvmMain/c/jni_glue.c")
-                .contains("_result = boltffi_function_demo_do_the_thing(value);")
+                .contains("_result = boltffi_function_4demo10DoTheThing(value);")
         );
     }
 
@@ -1596,7 +1597,7 @@ mod tests {
             common.contains("expect fun read(`value`: Long): Long"),
             "{common}"
         );
-        assert!(jni.contains("_result = boltffi_function_demo_signed_read(value);"));
-        assert!(jni.contains("_result = boltffi_function_demo_wide_read(value);"));
+        assert!(jni.contains("_result = boltffi_function_4demo6signed4read(value);"));
+        assert!(jni.contains("_result = boltffi_function_4demo4wide4read(value);"));
     }
 }

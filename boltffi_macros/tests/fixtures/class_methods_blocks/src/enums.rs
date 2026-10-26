@@ -68,11 +68,11 @@ impl Signal {
 
 pub fn every_enum_block_exports_its_members() -> [*const (); 6] {
     [
-        gearbox::boltffi_init_class_class_methods_blocks_gear_new as *const (),
-        gearbox::boltffi_method_class_class_methods_blocks_gear_shift as *const (),
-        gearbox::readout::boltffi_method_class_class_methods_blocks_gear_speed as *const (),
-        boltffi_method_class_class_methods_blocks_gear_moving as *const (),
-        boltffi_init_class_class_methods_blocks_signal_new as *const (),
-        boltffi_method_class_class_methods_blocks_signal_follows as *const (),
+        gearbox::boltffi_init_class_20class_methods_blocks4Gear3new as *const (),
+        gearbox::boltffi_method_class_20class_methods_blocks4Gear5shift as *const (),
+        gearbox::readout::boltffi_method_class_20class_methods_blocks4Gear5speed as *const (),
+        boltffi_method_class_20class_methods_blocks4Gear6moving as *const (),
+        boltffi_init_class_20class_methods_blocks6Signal3new as *const (),
+        boltffi_method_class_20class_methods_blocks6Signal7follows as *const (),
     ]
 }
