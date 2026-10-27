@@ -267,6 +267,10 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: 3.10.8
+      - if: runner.os != 'Windows'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'

@@ -40,6 +40,7 @@ experimental = ["typescript.async_streams"]
 Experimental targets:
 - `dart`
 - `kotlin_multiplatform`
+- `ruby`
 
 Experimental features:
 - `typescript.async_streams`
@@ -76,6 +77,7 @@ Each `[targets.<name>]` table listed below also accepts `cargo_args` (array of s
 | `[targets.python]` | `generate python`, `pack python` |
 | `[targets.csharp]` | `generate csharp`, `pack csharp` |
 | `[targets.c]` | `generate c`, `pack c` |
+| `[targets.ruby]` | `generate ruby`, `pack ruby` |
 
 `generate all`, `build all`, `pack all`, and `release` apply each target's `cargo_args` to that target only.
 
@@ -600,6 +602,41 @@ previous C package build.
 See [C linking and ownership](https://www.boltffi.dev/docs/c) for consumption and
 [experimental C limits](https://www.boltffi.dev/docs/experimental#c) for the
 remaining API restrictions.
+
+## Ruby
+
+### `[targets.ruby]` (experimental, optional)
+
+Enable Ruby with `--experimental` or `experimental = ["ruby"]` at the top level.
+
+The generated gem requires Ruby 3.3 or later.
+
+- `enabled` (bool): Whether Ruby generation and packaging are active.
+  - Default: `false`
+- `output` (path): Gem source root.
+  - Default: `dist/ruby`
+  - `generate ruby` writes `{output}/<gem>.gemspec`, `{output}/lib/<stem>.rb`, and
+    the extension sources under `{output}/ext/<stem>/`.
+  - `pack ruby` also copies the host static library and its link metadata into
+    `{output}/ext/<stem>/`.
+- `gem_name` (string, optional): Gem name in RubyGems syntax.
+  - Default: `{package.name}`
+  - The extension stem `<stem>` is the gem name in `snake_case`. It names
+    `lib/<stem>.rb`, `ext/<stem>/`, and the `Init_<stem>` entry point.
+- `module_name` (string, optional): Ruby module that the extension defines,
+  such as `MyLib::Native`.
+  - Default: the Cargo package name in `UpperCamelCase`.
+- `version` (string, optional): Gem version in RubyGems syntax.
+  - Default: the Cargo package version without build metadata. For example,
+    `1.2.3-rc.1+ci` becomes `1.2.3-rc.1`.
+
+`pack ruby` requires the `staticlib` crate type and builds for the current
+host, which must be macOS or Linux. The generated `extconf.rb` links the
+library that `pack ruby` copies, so run `pack ruby` before `gem build`.
+
+`pack ruby --no-build` builds nothing. It checks that the recorded digest of
+the extension C source matches the current source. Missing or invalid link
+metadata or a source mismatch causes an error.
 
 ## Dart
 
