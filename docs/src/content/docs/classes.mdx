@@ -684,14 +684,7 @@ impl Counter {
 ```
 
 ```
-error: BoltFFI: `&mut self` methods are not thread-safe in FFI contexts
-
-Two threads calling `&mut self` on the same instance = undefined behavior.
-
-Options:
-1. Use `&self` with interior mutability (Mutex, RefCell, etc.) [recommended]
-2. Add #[export(single_threaded)] ONLY if you enforce thread safety in the target
-   language and want to avoid synchronization overhead you don't need
+error: BoltFFI: a `&mut self` method needs `#[export(single_threaded)]` on its class's struct or enum, since a thread-safe class can be borrowed from many threads at once
 ```
 
 Use `&self` instead, and move the synchronization inside your struct. `Mutex`, `RwLock`, atomics, channels, or any other mechanism that makes concurrent access safe:
@@ -1043,7 +1036,7 @@ If your struct contains types that aren't thread-safe (like `RefCell`, `Rc`, or 
 
 1. Make it thread-safe using synchronization primitives like `Mutex`, `RwLock`, or atomics. For shared ownership across threads, combine with `Arc` (e.g., `Arc<Mutex<T>>`).
 
-2. Add `#[export(single_threaded)]`. This disables the `Send + Sync` check, but you're responsible for ensuring the class is only used from a single thread.
+2. Add `#[export(single_threaded)]` to the struct or enum. This disables the `Send + Sync` check, but you're responsible for ensuring the class is only used from a single thread.
 
 <CodeComparison
   title=""

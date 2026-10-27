@@ -5,7 +5,7 @@ description: "Use custom_type! to map external Rust crate types like uuid or url
 
 # Custom Types
 
-Sometimes you need to expose types from external crates that you don't own. You can't add `#[data]` to a type defined in another crate, but you can teach BoltFFI how to convert it to and from an FFI-compatible representation. This lets you use types from popular crates like `chrono`, `uuid`, or `url` directly in your exported API.
+Sometimes you need to expose types from external crates that you don't own. You can't add `#[data]` to a type defined in another crate, but you can teach BoltFFI how to convert it to and from an FFI-compatible representation. This lets you use types from crates like `chrono` or `rust_decimal` in your exported API, under a name you declare.
 
 The conversion happens automatically at the FFI boundary. Your Rust code uses the original type, consumers see either a primitive or a record, and BoltFFI handles the conversion in both directions.
 
@@ -96,7 +96,7 @@ Note: Due to Rust's orphan rule, you cannot implement `CustomFfiConvertible` for
 ## Choosing an Approach
 
 Use `custom_type!` when:
-- The type is from an external crate (chrono, uuid, url, etc.)
+- The type is from an external crate (chrono, rust_decimal, geo, etc.)
 - The conversion is straightforward (parse/format, extract field)
 
 Use `#[custom_ffi]` when:

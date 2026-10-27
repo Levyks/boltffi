@@ -274,9 +274,9 @@ Make the counter persist to a file asynchronously:
 ```rust
 use boltffi::*;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::path::PathBuf;
 
 boltffi::scaffolding!();
-use std::path::PathBuf;
 
 #[export]
 pub struct PersistentCounter {
