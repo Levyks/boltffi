@@ -946,6 +946,16 @@ impl Config {
         self.targets.ruby.output.clone()
     }
 
+    /// The gem name for generation and packaging: `targets.ruby.gem_name`,
+    /// or `package.name`.
+    pub fn ruby_gem_name(&self) -> &str {
+        self.targets
+            .ruby
+            .gem_name
+            .as_deref()
+            .unwrap_or(&self.package.name)
+    }
+
     pub fn csharp_namespace(&self) -> Option<&str> {
         self.targets.csharp.namespace.as_deref()
     }

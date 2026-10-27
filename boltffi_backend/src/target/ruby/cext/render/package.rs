@@ -3,11 +3,11 @@
 use askama::Template;
 
 use crate::{
-    core::{FilePath, GeneratedFile, Result},
+    core::{GeneratedFile, Result},
     target::ruby::syntax::{ConstantPath, Literal},
 };
 
-use super::extension;
+use super::{extension, file};
 
 #[derive(Template)]
 #[template(path = "target/ruby/lib.rb", escape = "none")]
@@ -18,14 +18,9 @@ struct LibTemplate<'package> {
 
 #[derive(Template)]
 #[template(path = "target/ruby/extconf.rb", escape = "none")]
-struct ExtconfTemplate<'package> {
-    stem: &'package str,
+struct ExtconfTemplate {
     extension: Literal,
     artifact: Literal,
-    manifest: Option<Literal>,
-    toolchain_selector: Option<Literal>,
-    active_features: Literal,
-    feature_args: Vec<Literal>,
 }
 
 #[derive(Template)]
@@ -45,10 +40,6 @@ pub struct Package<'package> {
     pub stem: &'package str,
     pub module: &'package ConstantPath,
     pub artifact: &'package str,
-    pub cargo_manifest: Option<&'package str>,
-    pub toolchain_selector: Option<&'package str>,
-    pub active_features: &'package str,
-    pub feature_args: &'package [String],
     pub crate_name: &'package str,
 }
 
@@ -57,33 +48,24 @@ impl Package<'_> {
     pub fn render(&self) -> Result<Vec<GeneratedFile>> {
         let extension_dir = extension::directory(self.stem);
         Ok(vec![
-            GeneratedFile::new(
-                FilePath::new(format!("lib/{}.rb", self.stem))?,
+            file(
+                format!("lib/{}.rb", self.stem),
                 LibTemplate {
                     module: self.module,
                     extension_path: Literal::string(&format!("{0}/{0}", self.stem)),
                 }
                 .render()?,
-            ),
-            GeneratedFile::new(
-                FilePath::new(format!("{extension_dir}/extconf.rb"))?,
+            )?,
+            file(
+                format!("{extension_dir}/extconf.rb"),
                 ExtconfTemplate {
-                    stem: self.stem,
                     extension: Literal::string(self.stem),
                     artifact: Literal::string(self.artifact),
-                    manifest: self.cargo_manifest.map(Literal::string),
-                    toolchain_selector: self.toolchain_selector.map(Literal::string),
-                    active_features: Literal::string(self.active_features),
-                    feature_args: self
-                        .feature_args
-                        .iter()
-                        .map(|argument| Literal::string(argument))
-                        .collect(),
                 }
                 .render()?,
-            ),
-            GeneratedFile::new(
-                FilePath::new(format!("{}.gemspec", self.gem))?,
+            )?,
+            file(
+                format!("{}.gemspec", self.gem),
                 GemspecTemplate {
                     gem: Literal::string(self.gem),
                     stem: Literal::string(self.stem),
@@ -95,7 +77,7 @@ impl Package<'_> {
                     extconf: Literal::string(&format!("{extension_dir}/extconf.rb")),
                 }
                 .render()?,
-            ),
+            )?,
         ])
     }
 }

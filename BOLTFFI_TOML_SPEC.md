@@ -608,37 +608,24 @@ The generated gem requires Ruby 3.3 or later.
     the extension sources under `{output}/ext/<stem>/`.
   - `pack ruby` also copies the host static library and its link metadata into
     `{output}/ext/<stem>/`.
-- `gem_name` (string, optional): Gem name.
-  - Default: the Cargo package name.
+- `gem_name` (string, optional): Gem name in RubyGems syntax.
+  - Default: `{package.name}`
   - The extension stem `<stem>` is the gem name in `snake_case`. It names
     `lib/<stem>.rb`, `ext/<stem>/`, and the `Init_<stem>` entry point.
-  - Packaging selects only the current stem, even when the output contains an earlier gem.
-- `module_name` (string, optional): Ruby module that holds the functions and
-  records, such as `MyLib::Native`.
+- `module_name` (string, optional): Ruby module that the extension defines,
+  such as `MyLib::Native`.
   - Default: the Cargo package name in `UpperCamelCase`.
-- `version` (string, optional): Gem version.
-  - Default: the selected Cargo package's version without build metadata (`+...`).
-  - Prerelease labels remain. For example, `1.2.3-rc.1+ci` becomes `1.2.3-rc.1`.
-  - Build-metadata variants share a gem version. Set `version` explicitly for a distinct gem release.
-  - Explicit values use RubyGems version syntax and override the Cargo version.
-- `cargo_manifest` (string, optional): Crate manifest path, relative to
-  `{output}/ext/<stem>/`. With the default `output`, a manifest at the project
-  root is `../../../../Cargo.toml`.
-  - The generated `extconf.rb` builds this crate when no prebuilt static
-    library exists. The build replays the cargo feature arguments that
-    `boltffi generate` used, so the library exports every function the
-    extension calls.
-  - The build also uses the explicit Rust toolchain that `boltffi generate` selected.
-  - A `.gem` file holds the generated files but not the crate. So the path
-    works only when `extconf.rb` runs in a checkout that holds the crate,
-    such as a Bundler `git:` gem.
+- `version` (string, optional): Gem version in RubyGems syntax.
+  - Default: the Cargo package version without build metadata. For example,
+    `1.2.3-rc.1+ci` becomes `1.2.3-rc.1`.
 
 `pack ruby` requires the `staticlib` crate type and builds for the current
-host, which must be macOS or Linux.
+host, which must be macOS or Linux. The generated `extconf.rb` links the
+library that `pack ruby` copies, so run `pack ruby` before `gem build`.
 
-Before `pack ruby --no-build` succeeds, the command checks the recorded digest of the extension C source.
-Missing or invalid link metadata or a source mismatch causes an error.
-Run `pack ruby` without `--no-build` to regenerate the sources and rebuild the library.
+`pack ruby --no-build` builds nothing. It checks that the recorded digest of
+the extension C source matches the current source. Missing or invalid link
+metadata or a source mismatch causes an error.
 
 ## Dart
 

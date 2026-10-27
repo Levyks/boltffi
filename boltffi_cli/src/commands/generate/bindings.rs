@@ -548,10 +548,17 @@ pub(crate) fn render_ruby(
     deny_skipped: bool,
 ) -> Result<()> {
     let target = Target::Ruby;
+    let ruby = &config.targets.ruby;
+    let host = RubyCExtHost::new()
+        .native_library(expansion.artifact_name())
+        .version(ruby.version.clone())
+        .gem_name(config.ruby_gem_name())
+        .and_then(|host| host.module_name(ruby.module_name.as_deref()))
+        .map_err(|error| generation_error(target.name(), GenerationError::Render(error)))?;
     expansion
         .generation()
         .coverage_mode(CoverageMode::Partial)
-        .ruby_host(ruby_host(config, expansion)?)
+        .ruby_host(host)
         .render(target)
         .map_err(|error| generation_error(target.name(), error))
         .and_then(|output| {
@@ -560,31 +567,6 @@ pub(crate) fn render_ruby(
                 .map(drop)
                 .map_err(|error| generation_error(target.name(), error))
         })
-}
-
-/// Builds the Ruby host from `[targets.ruby]`, the Rust library artifact, and
-/// the cargo feature selection of the binding expansion.
-pub(crate) fn ruby_host(config: &Config, expansion: &BindingExpansion) -> Result<RubyCExtHost> {
-    let ruby = &config.targets.ruby;
-    let host = RubyCExtHost::new()
-        .native_library(expansion.artifact_name())
-        .cargo_features(expansion.features(), expansion.feature_args())
-        .cargo_toolchain_selector(expansion.toolchain_selector().map(str::to_owned))
-        .version(ruby.version.clone());
-    let host = match &ruby.module_name {
-        Some(module) => host.module_name(module).map_err(|error| {
-            generation_error(Target::Ruby.name(), GenerationError::Render(error))
-        })?,
-        None => host,
-    };
-    let host = match &ruby.gem_name {
-        Some(gem) => host.gem_name(gem.clone()),
-        None => host,
-    };
-    Ok(match &ruby.cargo_manifest {
-        Some(manifest) => host.cargo_manifest(manifest.clone()),
-        None => host,
-    })
 }
 
 fn generate_kotlin(config: &Config, options: &GenerateOptions) -> Result<()> {

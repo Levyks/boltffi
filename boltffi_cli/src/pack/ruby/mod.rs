@@ -2,8 +2,8 @@
 //!
 //! The pack generates the sources and builds the Rust static library from
 //! one binding expansion, copies the library into the generated extension
-//! directory, and writes its link metadata beside it. `gem build` or `ruby extconf.rb && make` in that tree
-//! then needs no cargo.
+//! directory, and writes its link metadata beside it. `gem build` in that
+//! tree then produces an installable gem.
 
 use std::path::{Path, PathBuf};
 
@@ -91,13 +91,7 @@ pub(crate) fn pack_ruby(
     let profile_dir = binding_expansion
         .target_directory()
         .join(build_profile.output_directory_name());
-    let gem = config
-        .targets
-        .ruby
-        .gem_name
-        .as_deref()
-        .unwrap_or_else(|| binding_expansion.selected_library().package_name());
-    let extension_dir = extension_dir(&config.ruby_output(), gem)?;
+    let extension_dir = extension_dir(&config.ruby_output(), config.ruby_gem_name())?;
     let vendored = extension_dir.join(&static_library);
     let link_metadata = extension_dir.join(format!("{static_library}.boltffi-link.json"));
 

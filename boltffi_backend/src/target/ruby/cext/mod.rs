@@ -9,7 +9,6 @@
 //! It renders no declarations yet.
 
 mod render;
-mod runtime;
 mod support;
 
 use boltffi_binding::{
@@ -20,9 +19,9 @@ use boltffi_binding::{
 use crate::{
     bridge::c::{CBridge, CBridgeContract},
     core::{
-        BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, GeneratedOutput,
-        HostCapabilities, RenderContext, RenderedDeclaration, Result, Target, contract::sealed,
-        host,
+        BindingCapability, BridgeCapability, CapabilityRequirements, Emitted, Error,
+        GeneratedOutput, HostCapabilities, RenderContext, RenderedDeclaration, Result, Target,
+        contract::sealed, host,
     },
 };
 
@@ -43,10 +42,6 @@ pub struct RubyCExtHost {
     gem: Option<String>,
     version: Option<String>,
     library: Option<String>,
-    cargo_manifest: Option<String>,
-    toolchain_selector: Option<String>,
-    active_features: String,
-    feature_args: Vec<String>,
 }
 
 impl RubyCExtHost {
@@ -55,18 +50,31 @@ impl RubyCExtHost {
         Self::default()
     }
 
-    /// Selects the Ruby module that holds the functions and records, such as
+    /// Selects the Ruby module that the extension defines, such as
     /// `MyLib::Native`.
-    pub fn module_name(mut self, module: &str) -> Result<Self> {
-        self.module = Some(ConstantPath::parse(module)?);
+    pub fn module_name(mut self, module: Option<&str>) -> Result<Self> {
+        self.module = module.map(ConstantPath::parse).transpose()?;
         Ok(self)
     }
 
     /// Selects the gem name. The extension stem is the gem name in
     /// `snake_case`.
-    pub fn gem_name(mut self, gem: impl Into<String>) -> Self {
-        self.gem = Some(gem.into());
-        self
+    ///
+    /// RubyGems accepts ASCII letters, digits, `.`, `-`, and `_`. A name needs
+    /// a letter and starts with a letter or digit. The check also keeps the
+    /// gemspec path inside the output directory.
+    pub fn gem_name(mut self, gem: impl Into<String>) -> Result<Self> {
+        let gem = gem.into();
+        let valid = gem.starts_with(|character: char| character.is_ascii_alphanumeric())
+            && gem.contains(|character: char| character.is_ascii_alphabetic())
+            && gem.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+            });
+        if !valid {
+            return Err(Error::InvalidRubyGemName { name: gem });
+        }
+        self.gem = Some(gem);
+        Ok(self)
     }
 
     /// Selects the gem version.
@@ -78,29 +86,6 @@ impl RubyCExtHost {
     /// Selects the Rust library artifact name, `demo` for `libdemo.a`.
     pub fn native_library(mut self, library: impl Into<String>) -> Self {
         self.library = Some(library.into());
-        self
-    }
-
-    /// Records the crate manifest path, relative to the extension directory,
-    /// that the generated `extconf.rb` builds when no prebuilt library exists.
-    pub fn cargo_manifest(mut self, manifest: impl Into<String>) -> Self {
-        self.cargo_manifest = Some(manifest.into());
-        self
-    }
-
-    /// Records the cargo feature selection of the binding expansion: the
-    /// active features, comma separated, and the cargo arguments that
-    /// selected them. The generated `extconf.rb` replays the arguments, so
-    /// the library exports every function the extension calls.
-    pub fn cargo_features(mut self, active: impl Into<String>, arguments: Vec<String>) -> Self {
-        self.active_features = active.into();
-        self.feature_args = arguments;
-        self
-    }
-
-    /// Selects the Rust toolchain for the generated Cargo fallback.
-    pub fn cargo_toolchain_selector(mut self, selector: Option<String>) -> Self {
-        self.toolchain_selector = selector;
         self
     }
 
@@ -269,7 +254,7 @@ impl host::HostBackend for RubyCExtHost {
         bindings: &Bindings<Self::Surface>,
         _bridge: &Self::Bridge,
         _context: &RenderContext<Self::Surface>,
-        declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
+        _declarations: Vec<RenderedDeclaration<'decl, Self::Surface>>,
     ) -> Result<GeneratedOutput> {
         let gem = self.gem(bindings);
         let stem = self.stem(bindings);
@@ -286,16 +271,9 @@ impl host::HostBackend for RubyCExtHost {
             stem: &stem,
             module: &module,
             artifact: &artifact,
-            cargo_manifest: self.cargo_manifest.as_deref(),
-            toolchain_selector: self.toolchain_selector.as_deref(),
-            active_features: &self.active_features,
-            feature_args: &self.feature_args,
             crate_name: &crate_name,
         };
-        let mut files = vec![
-            extension::render(&stem, &module, declarations)?,
-            runtime::header(&extension::directory(&stem))?,
-        ];
+        let mut files = vec![extension::render(&stem, &module)?];
         files.extend(package.render()?);
         Ok(GeneratedOutput::new(files, Vec::new()))
     }
@@ -311,7 +289,7 @@ mod tests {
     use boltffi_binding::{CanonicalName, NamePart, lower};
 
     use super::*;
-    use crate::core::{CapabilityStatus, Error};
+    use crate::core::CapabilityStatus;
 
     fn bindings(source: &str) -> Bindings<Native> {
         bindings_with_version(source, Some("1.2.3"))
@@ -389,13 +367,11 @@ mod tests {
             [
                 "ext/my_lib/boltffi.h",
                 "ext/my_lib/my_lib.c",
-                "ext/my_lib/boltffi_ruby.h",
                 "lib/my_lib.rb",
                 "ext/my_lib/extconf.rb",
                 "my_lib.gemspec",
             ]
         );
-        assert!(file(&output, "ext/my_lib/my_lib.c").contains("void Init_my_lib(void)"));
     }
 
     #[test]
@@ -436,21 +412,15 @@ mod tests {
             .collect();
         unsupported.sort_unstable();
         assert_eq!(unsupported, [("function", "echo"), ("record", "point")]);
-        assert!(!file(&output, "ext/demo/demo.c").contains("echo"));
     }
 
     #[test]
-    fn ruby_package_files_use_the_configured_gem_module_and_manifest() {
+    fn ruby_package_files_use_the_configured_gem_and_module() {
         let host = RubyCExtHost::new()
             .gem_name("my-lib")
-            .module_name("MyLib::Native")
-            .expect("valid module")
-            .native_library("my_lib")
-            .cargo_manifest("../../Cargo.toml")
-            .cargo_features(
-                "default,ffi",
-                vec!["--features".to_owned(), "my-lib/ffi".to_owned()],
-            );
+            .and_then(|host| host.module_name(Some("MyLib::Native")))
+            .expect("valid gem and module")
+            .native_library("my_lib");
         let output = render(host, "");
 
         assert_eq!(
@@ -458,7 +428,6 @@ mod tests {
             [
                 "ext/my_lib/boltffi.h",
                 "ext/my_lib/my_lib.c",
-                "ext/my_lib/boltffi_ruby.h",
                 "lib/my_lib.rb",
                 "ext/my_lib/extconf.rb",
                 "my-lib.gemspec",
@@ -466,12 +435,30 @@ mod tests {
         );
         insta::assert_snapshot!(
             "ruby_package_files",
-            ["lib/my_lib.rb", "ext/my_lib/extconf.rb", "my-lib.gemspec",]
-                .map(|path| format!("==> {path}\n{}", file(&output, path)))
-                .join("\n")
+            [
+                "ext/my_lib/my_lib.c",
+                "lib/my_lib.rb",
+                "ext/my_lib/extconf.rb",
+                "my-lib.gemspec",
+            ]
+            .map(|path| format!("==> {path}\n{}", file(&output, path)))
+            .join("\n")
         );
-        assert!(file(&output, "ext/my_lib/my_lib.c").contains(
-            "RUBY_FUNC_EXPORTED void Init_my_lib(void) {\n    VALUE boltffi_module = rb_define_module(\"MyLib\");\n    boltffi_module = rb_define_module_under(boltffi_module, \"Native\");"
-        ));
+    }
+
+    #[test]
+    fn gem_names_follow_rubygems_rules() {
+        for gem in ["demo", "my-lib", "my_lib", "my.lib", "3d-demo"] {
+            assert!(RubyCExtHost::new().gem_name(gem).is_ok(), "{gem}");
+        }
+        for gem in ["", "_demo", "-demo", ".demo", "1234", "my gem", "../evil"] {
+            assert!(
+                matches!(
+                    RubyCExtHost::new().gem_name(gem),
+                    Err(Error::InvalidRubyGemName { name }) if name == gem
+                ),
+                "{gem}"
+            );
+        }
     }
 }

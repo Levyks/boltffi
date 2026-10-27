@@ -94,23 +94,16 @@ impl LanguageSyntax for Syntax {
 
 impl sealed::LanguageSyntax for Syntax {}
 
-/// Returns whether `text` starts with a character `first` accepts and
-/// continues with ASCII letters, digits, or underscores.
-///
-/// The first character decides the Ruby role: a lowercase start is a method
-/// or member name, and an uppercase start is a constant.
-fn ascii_word(text: &str, first: impl Fn(char) -> bool) -> bool {
-    let mut characters = text.chars();
-    characters.next().is_some_and(first)
-        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-}
-
 impl Constant {
     /// Parses a Ruby constant name made of ASCII word characters.
     /// Rejects keywords because the constant can start a Ruby expression.
     pub fn parse(constant: impl Into<String>) -> Result<Self> {
         let constant = constant.into();
-        let valid = ascii_word(&constant, |first| first.is_ascii_uppercase())
+        let mut characters = constant.chars();
+        let valid = characters
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+            && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
             && !Syntax::keyword(&constant);
         if valid {
             Ok(Self(constant))

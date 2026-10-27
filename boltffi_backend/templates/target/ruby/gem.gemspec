@@ -11,13 +11,11 @@ Gem::Specification.new do |spec|
   spec.extensions = [{{ extconf }}]
   stem = {{ stem }}
   spec.files = Dir.chdir(__dir__) do
-    Dir["lib/#{stem}.rb", "lib/#{stem}/**/*.rb", "ext/#{stem}/**/*.{c,h,rb}", "ext/#{stem}/**/*.a", "ext/#{stem}/**/*.boltffi-link.json"]
+    Dir["lib/#{stem}.rb", "ext/#{stem}/*.{c,h,rb,a}", "ext/#{stem}/*.boltffi-link.json"]
   end
-  # A vendored static library runs only on the platform that built it, so the
-  # gem names that platform. The tag leaves out the Darwin version. That
+  # The vendored static library runs only on the platform that built it, so
+  # the gem names that platform. The tag leaves out the Darwin version. That
   # version names the macOS that built Ruby, and the library does not need it.
-  if spec.files.any? { |file| file.end_with?(".a") }
-    host = Gem::Platform.local
-    spec.platform = host.os == "darwin" ? Gem::Platform.new([host.cpu, host.os]) : host
-  end
+  host = Gem::Platform.local
+  spec.platform = host.os == "darwin" ? Gem::Platform.new([host.cpu, host.os]) : host
 end
