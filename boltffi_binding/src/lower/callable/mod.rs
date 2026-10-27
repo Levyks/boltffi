@@ -646,7 +646,9 @@ pub fn lower_constant_accessor<S: SurfaceLower>(
     allocator: &mut SymbolAllocator,
     owner: CallableOwner<'_>,
     type_expr: &boltffi_ast::TypeExpr,
+    accessor_symbol_name: &str,
 ) -> Result<ExportedCallable<S>, LowerError> {
+    allocator.enter_callable(accessor_symbol_name);
     let return_def = boltffi_ast::ReturnDef::value(type_expr.clone());
     let (returns, error) = returns::lower::<S, _>(
         index,

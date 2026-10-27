@@ -113,8 +113,14 @@ fn lower_value_decl<S: SurfaceLower>(
         }
         None => {
             let symbol = allocator.mint_constant_accessor(constant.id.as_str())?;
-            let callable =
-                callable::lower_constant_accessor::<S>(index, ids, allocator, owner, type_expr)?;
+            let callable = callable::lower_constant_accessor::<S>(
+                index,
+                ids,
+                allocator,
+                owner,
+                type_expr,
+                symbol.name().as_str(),
+            )?;
             Ok(ConstantValueDecl::accessor(symbol, Box::new(callable)))
         }
     }
@@ -1119,6 +1125,30 @@ mod tests {
             only_constant(&bindings).value(),
             ConstantValueDecl::Accessor { .. }
         ));
+    }
+
+    #[test]
+    fn function_pointer_constant_names_wasm_closure_after_its_accessor() {
+        let bindings = lower_constants_ok::<Wasm32>(vec![constant(
+            "demo::HANDLER",
+            "HANDLER",
+            TypeExpr::FnPtr(Box::new(boltffi_ast::FnSig::new(
+                vec![TypeExpr::Primitive(Primitive::I32)],
+                boltffi_ast::ReturnDef::value(TypeExpr::Primitive(Primitive::I32)),
+            ))),
+            ConstExpr::Raw("handler".to_owned()),
+        )]);
+
+        match only_constant(&bindings).value() {
+            ConstantValueDecl::Accessor { callable, .. } => match callable.returns().plan() {
+                ReturnPlan::ClosureViaOutPointer(closure) => assert_eq!(
+                    closure.registration().shape().call().name().as_str(),
+                    "boltffi_closure_const_4demo7HANDLER_0_call"
+                ),
+                other => panic!("expected closure return, got {other:?}"),
+            },
+            other => panic!("expected accessor constant value, got {other:?}"),
+        }
     }
 
     #[test]
