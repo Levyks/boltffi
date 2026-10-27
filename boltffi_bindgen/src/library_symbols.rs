@@ -206,13 +206,13 @@ mod tests {
         )
         .expect("archive is written");
 
-        let error = require_exported(&library, ["boltffi_function_demo_answer"])
+        let error = require_exported(&library, ["boltffi_function_4demo6answer"])
             .expect_err("a symbol only a bitcode member could define is not verified");
 
         assert!(matches!(
             &error,
             LibrarySymbolsError::Unreadable { missing, unreadable, .. }
-                if missing == &["boltffi_function_demo_answer"] && unreadable == &["lib.bc"]
+                if missing == &["boltffi_function_4demo6answer"] && unreadable == &["lib.bc"]
         ));
         assert!(
             error.to_string().contains("linker-plugin-lto"),

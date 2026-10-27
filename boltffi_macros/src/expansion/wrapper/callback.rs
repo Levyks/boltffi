@@ -149,6 +149,7 @@ impl<'expansion, 'lowered> Trait<'expansion, 'lowered, Native> {
                     type #local_state_ident = ::std::sync::Arc<dyn #trait_path>;
 
                     #cfg
+                    #[allow(non_snake_case)]
                     extern "C" fn #local_free_ident(handle: u64) {
                         if handle == 0 {
                             return;
@@ -159,6 +160,7 @@ impl<'expansion, 'lowered> Trait<'expansion, 'lowered, Native> {
                     }
 
                     #cfg
+                    #[allow(non_snake_case)]
                     extern "C" fn #local_clone_ident(handle: u64) -> u64 {
                         if handle == 0 {
                             return 0;
@@ -186,6 +188,7 @@ impl<'expansion, 'lowered> Trait<'expansion, 'lowered, Native> {
                     }
 
                     #cfg
+                    #[allow(non_snake_case)]
                     pub fn #local_handle_ident(
                         callback: ::std::sync::Arc<dyn #trait_path>,
                     ) -> ::boltffi::__private::CallbackHandle {
@@ -549,6 +552,7 @@ impl<'expansion, 'lowered> Trait<'expansion, 'lowered, Wasm32> {
                     }
 
                     #cfg
+                    #[allow(non_snake_case)]
                     fn #local_lookup_ident(handle: u32) -> #local_state_ident {
                         #local_registry_ident.with(|registry| {
                             registry
@@ -592,6 +596,7 @@ impl<'expansion, 'lowered> Trait<'expansion, 'lowered, Wasm32> {
                     }
 
                     #cfg
+                    #[allow(non_snake_case)]
                     pub fn #local_handle_ident(
                         callback: ::std::sync::Arc<dyn #trait_path>,
                     ) -> ::boltffi::__private::CallbackHandle {
@@ -1019,6 +1024,7 @@ where
             function: quote! {
                 #(#local_return_items)*
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+                #[allow(non_snake_case)]
                 extern "C" fn #function_ident(
                     #receiver_handle: u64
                     #(, #return_parameters)*

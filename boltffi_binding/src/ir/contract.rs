@@ -702,7 +702,10 @@ mod tests {
                 .iter()
                 .map(|symbol| symbol.name().as_str())
                 .collect::<Vec<_>>(),
-            vec!["boltffi_function_demo_first", "boltffi_function_demo_third"]
+            vec![
+                "boltffi_function_4demo5first",
+                "boltffi_function_4demo5third"
+            ]
         );
     }
 
@@ -779,7 +782,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            &BindingErrorKind::UnreferencedSymbol("boltffi_function_demo_second".to_owned())
+            &BindingErrorKind::UnreferencedSymbol("boltffi_function_4demo6second".to_owned())
         );
     }
 

@@ -190,14 +190,14 @@ fn bindings_carry_the_exports_of_linked_dependencies() {
     let header = header(&workspace).expect("linked dependency workspace generates C bindings");
 
     [
-        "boltffi_function_app_norm",
-        "boltffi_function_app_make_widget",
-        "boltffi_function_app_widget_n",
-        "boltffi_function_app_register",
-        "boltffi_function_shapes_shapes_origin",
-        "boltffi_init_class_shapes_widget_new",
-        "boltffi_method_class_shapes_widget_n",
-        "boltffi_register_callback_shapes_listener",
+        "boltffi_function_3app4norm",
+        "boltffi_function_3app11make_widget",
+        "boltffi_function_3app8widget_n",
+        "boltffi_function_3app8register",
+        "boltffi_function_6shapes13shapes_origin",
+        "boltffi_init_class_6shapes6Widget3new",
+        "boltffi_method_class_6shapes6Widget1n",
+        "boltffi_register_callback_6shapes8Listener",
     ]
     .into_iter()
     .for_each(|symbol| assert!(header.contains(symbol), "{symbol} is linked and exported"));
@@ -214,9 +214,9 @@ fn a_dependency_the_library_never_links_is_refused_by_name() {
             &error,
             GenerationError::LibrarySymbols(LibrarySymbolsError::Missing { missing, .. })
                 if missing == &[
-                    "boltffi_function_other_other_hello".to_owned(),
-                    "boltffi_init_class_other_gadget_new".to_owned(),
-                    "boltffi_release_class_other_gadget".to_owned(),
+                    "boltffi_function_5other11other_hello".to_owned(),
+                    "boltffi_init_class_5other6Gadget3new".to_owned(),
+                    "boltffi_release_class_5other6Gadget".to_owned(),
                 ]
         ) && error.to_string().contains("`use <crate> as _;`"),
         "{error}"
@@ -230,9 +230,9 @@ fn naming_a_dependency_links_it_so_its_exports_bind() {
     let header = header(&workspace).expect("a used dependency is linked and generates");
 
     [
-        "boltffi_function_shapes_shapes_origin",
-        "boltffi_function_other_other_hello",
-        "boltffi_init_class_other_gadget_new",
+        "boltffi_function_6shapes13shapes_origin",
+        "boltffi_function_5other11other_hello",
+        "boltffi_init_class_5other6Gadget3new",
     ]
     .into_iter()
     .for_each(|symbol| assert!(header.contains(symbol), "{symbol} is linked and exported"));
@@ -264,9 +264,9 @@ fn refused_as_unlinked(error: &GenerationError, extension: &str) -> bool {
         GenerationError::LibrarySymbols(LibrarySymbolsError::Missing { path, missing })
             if path.extension().is_some_and(|found| found == extension)
                 && missing == &[
-                    "boltffi_function_other_other_hello".to_owned(),
-                    "boltffi_init_class_other_gadget_new".to_owned(),
-                    "boltffi_release_class_other_gadget".to_owned(),
+                    "boltffi_function_5other11other_hello".to_owned(),
+                    "boltffi_init_class_5other6Gadget3new".to_owned(),
+                    "boltffi_release_class_5other6Gadget".to_owned(),
                 ]
     ) && error.to_string().contains("`use <crate> as _;`")
 }

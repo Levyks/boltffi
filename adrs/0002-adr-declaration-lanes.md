@@ -192,7 +192,7 @@ impl WireEncode for Line { … }
 fields:
 
 ```rust
-pub unsafe extern "C" fn boltffi_function_geo_length(line_ptr: *const u8, line_len: usize) -> f64
+pub unsafe extern "C" fn boltffi_function_3geo6length(line_ptr: *const u8, line_len: usize) -> f64
 ```
 
 After the build, bindgen reads the three records from the artifact and runs the same
@@ -215,7 +215,7 @@ only then.
 |---|---|---|
 | D1 | Lanes carry fragments, not a classification keyword | The invocation runs bindgen's own lowering, so there is exactly one classifier |
 | D2 | Lower per invocation, not pre-lowered summaries | Summaries are a second representation to keep in sync. Revisit if compile time bites a real crate |
-| D3 | Ids are crate and name; symbols drop the module (`boltffi_function_demo_add_i32`) | A proc macro cannot know its module path. The foreign namespace is flat by name, so same-named types or exports in one crate fail to build |
+| D3 | Ids are crate and name; symbols drop the module and length-prefix each part (`boltffi_function_4demo7add_i32`) | A proc macro cannot know its module path. The foreign namespace is flat by name, so same-named types or exports in one crate fail to build. Joining snake-cased parts with `_` let `foo_bar::baz` and `foo::bar_baz` share a symbol |
 | D4 | `cfg` is evaluated through a derive probe | The only exact option, and there is no scan left to fall back to. It covers items and their fields, variants and members; `cfg` on a parameter is refused with a message to gate the function instead, and fails on `main` too |
 | D5 | `custom_type!` types are written by their declared name, which aliases the remote type | A signature naming `DateTime<Utc>` has no lane, and stable Rust cannot test whether a macro exists |
 | D6 | Types named `Duration`, `SystemTime`, `Uuid` or `Url` are rejected at the declaration | Signatures spelling those names cross as the builtin |

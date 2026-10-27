@@ -2503,7 +2503,7 @@ mod tests {
         syn::parse2::<syn::File>(generated.clone()).expect("bytes constant expansion parses");
         assert_generated_crate_checks("native_bytes_constant", generated);
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_const_demo_magic"));
+        assert!(rendered.contains("fn boltffi_const_4demo5MAGIC"));
         assert!(rendered.contains("let __boltffi_result : & [u8] = MAGIC"));
         assert!(rendered.contains("FfiBuf :: wire_encode (& __boltffi_result)"));
     }
@@ -2534,7 +2534,7 @@ mod tests {
         );
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_const_demo_magic"));
+        assert!(rendered.contains("fn boltffi_const_4demo5MAGIC"));
         assert!(rendered.contains(") -> u64"));
         assert!(rendered.contains("let __boltffi_result : & [u8] = MAGIC"));
         assert!(rendered.contains("into_packed"));
@@ -2598,7 +2598,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                pub extern "C" fn boltffi_function_4demo6answer() -> u32 {
                     self::answer()
                 }
             }
@@ -2628,7 +2628,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_http_request() -> u32 {
+                pub extern "C" fn boltffi_function_4demo12http_request() -> u32 {
                     self::HTTPRequest()
                 }
             }
@@ -2658,7 +2658,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_syntax_payload(
+                pub unsafe extern "C" fn boltffi_function_4demo14syntax_payload(
                     HTTPCode: u32
                 ) -> u32 {
                     self::syntax_payload(HTTPCode)
@@ -2690,7 +2690,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                extern "C" fn boltffi_function_demo_answer() -> u32 {
+                extern "C" fn boltffi_function_4demo6answer() -> u32 {
                     self::answer()
                 }
             }
@@ -2720,7 +2720,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_year(
+                pub unsafe extern "C" fn boltffi_function_4demo4year(
                     __boltffi_when_ptr: *const u8,
                     __boltffi_when_len: usize
                 ) -> u32 {
@@ -3096,7 +3096,7 @@ mod tests {
         })
         .expect("direct record initializer expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_record_demo_point_new"));
+        assert!(rendered.contains("fn boltffi_init_record_4demo5Point3new"));
         assert!(rendered.contains("Point :: new (x)"));
     }
 
@@ -3132,8 +3132,8 @@ mod tests {
         })
         .expect("direct record static method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_origin_x"));
-        assert!(!rendered.contains("fn boltffi_init_record_demo_point_origin_x"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point8origin_x"));
+        assert!(!rendered.contains("fn boltffi_init_record_4demo5Point8origin_x"));
         assert!(!rendered.contains("__boltffi_receiver"));
         assert!(rendered.contains("Point :: origin_x ()"));
     }
@@ -3175,12 +3175,12 @@ mod tests {
             .expect("direct record async initializer parses");
         assert_generated_crate_checks("native_direct_record_async_initializer", generated);
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_record_demo_point_load"));
+        assert!(rendered.contains("fn boltffi_init_record_4demo5Point4load"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { Point :: load () . await })"
         ));
-        assert!(rendered.contains("fn boltffi_async_init_record_demo_point_load_poll"));
-        assert!(rendered.contains("fn boltffi_async_init_record_demo_point_load_complete"));
+        assert!(rendered.contains("fn boltffi_async_init_record_4demo5Point4load_poll"));
+        assert!(rendered.contains("fn boltffi_async_init_record_4demo5Point4load_complete"));
     }
 
     #[test]
@@ -3199,7 +3199,7 @@ mod tests {
         let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_norm"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point4norm"));
         assert!(rendered.contains(
             "__boltffi_receiver : < Point as :: boltffi :: __private :: Passable > :: In"
         ));
@@ -3241,7 +3241,7 @@ mod tests {
         })
         .expect("direct record self-returning method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_copy"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point4copy"));
         assert!(rendered.contains("-> < Point as :: boltffi :: __private :: Passable > :: Out"));
         assert!(!rendered.contains("< Self as :: boltffi :: __private :: Passable >"));
         assert!(rendered.contains("__boltffi_receiver . copy ()"));
@@ -3280,11 +3280,11 @@ mod tests {
         })
         .expect("direct record async method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_compute"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point7compute"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { __boltffi_receiver . compute () . await })"
         ));
-        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_compute_poll"));
+        assert!(rendered.contains("fn boltffi_async_method_record_4demo5Point7compute_poll"));
     }
 
     #[test]
@@ -3321,12 +3321,12 @@ mod tests {
         .expect("wasm direct record async method expansion parses");
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_compute"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point7compute"));
         assert!(rendered.contains("__boltffi_receiver : * const u8"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { __boltffi_receiver . compute () . await })"
         ));
-        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_compute_poll_sync"));
+        assert!(rendered.contains("fn boltffi_async_method_record_4demo5Point7compute_poll_sync"));
     }
 
     #[test]
@@ -3362,7 +3362,7 @@ mod tests {
         })
         .expect("wasm direct record async return expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_async_method_record_demo_point_duplicate_complete"));
+        assert!(rendered.contains("fn boltffi_async_method_record_4demo5Point9duplicate_complete"));
         assert!(rendered.contains(
             "__boltffi_return_out : * mut < Point as :: boltffi :: __private :: Passable > :: Out"
         ));
@@ -3387,7 +3387,7 @@ mod tests {
         let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_shift"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point5shift"));
         assert!(rendered.contains(
             "__boltffi_receiver : < Point as :: boltffi :: __private :: Passable > :: In"
         ));
@@ -3417,7 +3417,7 @@ mod tests {
         let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_point_shift"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo5Point5shift"));
         assert!(rendered.contains("__boltffi_receiver : * mut u8"));
         assert!(rendered.contains("let ____boltffi_boltffi_receiver_out = __boltffi_receiver ;"));
         assert!(rendered.contains("__boltffi_receiver . shift ()"));
@@ -3442,7 +3442,7 @@ mod tests {
         let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_record_demo_profile_from_name"));
+        assert!(rendered.contains("fn boltffi_init_record_4demo7Profile9from_name"));
         assert!(rendered.contains("Profile :: from_name (name)"));
         assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: wire_encode"));
     }
@@ -3463,7 +3463,7 @@ mod tests {
         let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_record_demo_profile_try_from_name"));
+        assert!(rendered.contains("fn boltffi_init_record_4demo7Profile13try_from_name"));
         assert!(
             rendered.contains("__boltffi_return_out : * mut :: boltffi :: __private :: FfiBuf")
         );
@@ -3489,7 +3489,7 @@ mod tests {
         let tokens = expand_record(&expansion, &source.records[0]).expect("expanded record");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_profile_display_name"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo7Profile12display_name"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_len : usize"));
         assert!(rendered.contains("let ____boltffi_boltffi_receiver_storage : Profile ="));
@@ -3532,8 +3532,10 @@ mod tests {
             .expect("encoded record async method expansion parses");
         assert_generated_crate_checks("native_encoded_record_async_method", generated);
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_record_demo_profile_display_name"));
-        assert!(rendered.contains("fn boltffi_async_method_record_demo_profile_display_name_poll"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo7Profile12display_name"));
+        assert!(
+            rendered.contains("fn boltffi_async_method_record_4demo7Profile12display_name_poll")
+        );
         assert!(
             rendered
                 .contains(":: boltffi :: __private :: rustfuture :: rust_future_new (async move")
@@ -3557,7 +3559,7 @@ mod tests {
 
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_method_record_demo_profile_display_name"));
+        assert!(rendered.contains("fn boltffi_method_record_4demo7Profile12display_name"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_len : usize"));
         assert!(rendered.contains("__boltffi_receiver . display_name ()"));
@@ -3626,7 +3628,7 @@ mod tests {
         })
         .expect("c-style enum method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_enum_demo_status_is_ready"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo6Status8is_ready"));
         assert!(rendered.contains(
             "__boltffi_receiver : < Status as :: boltffi :: __private :: Passable > :: In"
         ));
@@ -3702,7 +3704,7 @@ mod tests {
         })
         .expect("c-style enum static method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_enum_demo_status_count"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo6Status5count"));
         assert!(!rendered.contains("fn boltffi_init_enum_demo_status_count"));
         assert!(!rendered.contains("__boltffi_receiver"));
         assert!(rendered.contains("Status :: count ()"));
@@ -3739,7 +3741,7 @@ mod tests {
         })
         .expect("c-style enum initializer expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_enum_demo_status_default_status"));
+        assert!(rendered.contains("fn boltffi_init_enum_4demo6Status14default_status"));
         assert!(!rendered.contains("fn boltffi_method_enum_demo_status_default_status"));
         assert!(rendered.contains("Status :: default_status ()"));
         assert!(rendered.contains("-> < Status as :: boltffi :: __private :: Passable > :: Out"));
@@ -3777,12 +3779,12 @@ mod tests {
         })
         .expect("c-style enum async initializer expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_enum_demo_status_load"));
+        assert!(rendered.contains("fn boltffi_init_enum_4demo6Status4load"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { Status :: load () . await })"
         ));
-        assert!(rendered.contains("fn boltffi_async_init_enum_demo_status_load_poll"));
-        assert!(rendered.contains("fn boltffi_async_init_enum_demo_status_load_complete"));
+        assert!(rendered.contains("fn boltffi_async_init_enum_4demo6Status4load_poll"));
+        assert!(rendered.contains("fn boltffi_async_init_enum_4demo6Status4load_complete"));
     }
 
     #[test]
@@ -3803,12 +3805,12 @@ mod tests {
 
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_init_enum_demo_status_load"));
+        assert!(rendered.contains("fn boltffi_init_enum_4demo6Status4load"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { Status :: load () . await })"
         ));
-        assert!(rendered.contains("fn boltffi_async_init_enum_demo_status_load_poll_sync"));
-        assert!(rendered.contains("fn boltffi_async_init_enum_demo_status_load_complete"));
+        assert!(rendered.contains("fn boltffi_async_init_enum_4demo6Status4load_poll_sync"));
+        assert!(rendered.contains("fn boltffi_async_init_enum_4demo6Status4load_complete"));
     }
 
     #[test]
@@ -3827,7 +3829,7 @@ mod tests {
         let tokens = expand_enumeration(&expansion, &source.enums[0]).expect("expanded enum");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_enum_demo_status_clone_status"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo6Status12clone_status"));
         assert!(rendered.contains("-> < Status as :: boltffi :: __private :: Passable > :: Out"));
         assert!(rendered.contains("__boltffi_receiver . clone_status ()"));
     }
@@ -3883,7 +3885,7 @@ mod tests {
         let tokens = expand_enumeration(&expansion, &source.enums[0]).expect("expanded enum");
 
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_enum_demo_event_label"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo5Event5label"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_len : usize"));
         assert!(rendered.contains("let __boltffi_receiver : Event ="));
@@ -3958,8 +3960,8 @@ mod tests {
             .expect("data enum async method expansion parses");
         assert_generated_crate_checks("native_data_enum_async_method", generated);
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_enum_demo_event_label"));
-        assert!(rendered.contains("fn boltffi_async_method_enum_demo_event_label_poll"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo5Event5label"));
+        assert!(rendered.contains("fn boltffi_async_method_enum_4demo5Event5label_poll"));
         assert!(
             rendered
                 .contains(":: boltffi :: __private :: rustfuture :: rust_future_new (async move")
@@ -4000,14 +4002,14 @@ mod tests {
         .expect("wasm data enum async method expansion parses");
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_method_enum_demo_event_label"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo5Event5label"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_ptr : * const u8"));
         assert!(rendered.contains("____boltffi_boltffi_receiver_len : usize"));
         assert!(
             rendered
                 .contains(":: boltffi :: __private :: rustfuture :: rust_future_new (async move")
         );
-        assert!(rendered.contains("fn boltffi_async_method_enum_demo_event_label_poll_sync"));
+        assert!(rendered.contains("fn boltffi_async_method_enum_4demo5Event5label_poll_sync"));
     }
 
     #[test]
@@ -4042,7 +4044,7 @@ mod tests {
         })
         .expect("data enum static method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_enum_demo_event_kind_count"));
+        assert!(rendered.contains("fn boltffi_method_enum_4demo5Event10kind_count"));
         assert!(!rendered.contains("fn boltffi_init_enum_demo_event_kind_count"));
         assert!(!rendered.contains("__boltffi_receiver"));
         assert!(rendered.contains("Event :: kind_count ()"));
@@ -4080,7 +4082,7 @@ mod tests {
         })
         .expect("data enum initializer expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_enum_demo_event_empty_event"));
+        assert!(rendered.contains("fn boltffi_init_enum_4demo5Event11empty_event"));
         assert!(!rendered.contains("fn boltffi_method_enum_demo_event_empty_event"));
         assert!(rendered.contains("Event :: empty_event ()"));
         assert!(rendered.contains(":: boltffi :: __private :: FfiBuf :: wire_encode"));
@@ -4103,7 +4105,7 @@ mod tests {
 
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_init_enum_demo_event_empty_event"));
+        assert!(rendered.contains("fn boltffi_init_enum_4demo5Event11empty_event"));
         assert!(rendered.contains("Event :: empty_event ()"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: FfiBuf :: wire_encode (& __boltffi_result) . into_packed ()"
@@ -4143,12 +4145,12 @@ mod tests {
         })
         .expect("data enum async initializer expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_enum_demo_event_load"));
+        assert!(rendered.contains("fn boltffi_init_enum_4demo5Event4load"));
         assert!(rendered.contains(
             ":: boltffi :: __private :: rustfuture :: rust_future_new (async move { Event :: load () . await })"
         ));
-        assert!(rendered.contains("fn boltffi_async_init_enum_demo_event_load_poll"));
-        assert!(rendered.contains("fn boltffi_async_init_enum_demo_event_load_complete"));
+        assert!(rendered.contains("fn boltffi_async_init_enum_4demo5Event4load_poll"));
+        assert!(rendered.contains("fn boltffi_async_init_enum_4demo5Event4load_complete"));
     }
 
     #[test]
@@ -4173,7 +4175,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_stamp() -> ::boltffi::__private::FfiBuf {
+                pub extern "C" fn boltffi_function_4demo5stamp() -> ::boltffi::__private::FfiBuf {
                     let __boltffi_result = self::stamp();
                     {
                         let __boltffi_wire = (timestamp_into_ffi)(&__boltffi_result);
@@ -4201,7 +4203,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_function_demo_try_stamp (__boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiBuf"
+            "pub unsafe extern \"C\" fn boltffi_function_4demo9try_stamp (__boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiBuf"
         ));
         assert!(rendered.contains("Err (__boltffi_error) =>"));
         assert!(
@@ -4349,7 +4351,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub(in crate) extern "C" fn boltffi_function_demo_answer() -> u32 {
+                pub(in crate) extern "C" fn boltffi_function_4demo6answer() -> u32 {
                     self::answer()
                 }
             }
@@ -4379,7 +4381,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                pub extern "C" fn boltffi_function_4demo6answer() -> u32 {
                     self::answer()
                 }
             }
@@ -4429,12 +4431,12 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                pub extern "C" fn boltffi_function_4demo6answer() -> u32 {
                     self::answer()
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_answer() -> u32 {
+                pub extern "C" fn boltffi_function_4demo6answer() -> u32 {
                     self::answer()
                 }
             }
@@ -4495,14 +4497,14 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_answer() -> ::boltffi::__private::RustFutureHandle {
+                pub extern "C" fn boltffi_function_4demo6answer() -> ::boltffi::__private::RustFutureHandle {
                     ::boltffi::__private::rustfuture::rust_future_new(async move {
                         self::answer().await
                     })
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_answer_poll(
+                pub unsafe extern "C" fn boltffi_async_function_4demo6answer_poll(
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
@@ -4517,7 +4519,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_answer_complete(
+                pub unsafe extern "C" fn boltffi_async_function_4demo6answer_complete(
                     handle: ::boltffi::__private::RustFutureHandle,
                     out_status: *mut ::boltffi::__private::FfiStatus,
                 ) -> u32 {
@@ -4542,7 +4544,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_answer_panic_message(
+                pub unsafe extern "C" fn boltffi_async_function_4demo6answer_panic_message(
                     handle: ::boltffi::__private::RustFutureHandle,
                 ) -> ::boltffi::__private::FfiBuf {
                     match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<u32>(handle) } {
@@ -4552,7 +4554,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_answer_cancel(
+                pub unsafe extern "C" fn boltffi_async_function_4demo6answer_cancel(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4561,7 +4563,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_answer_free(
+                pub unsafe extern "C" fn boltffi_async_function_4demo6answer_free(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4595,14 +4597,14 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_greet() -> ::boltffi::__private::RustFutureHandle {
+                pub extern "C" fn boltffi_function_4demo5greet() -> ::boltffi::__private::RustFutureHandle {
                     ::boltffi::__private::rustfuture::rust_future_new(async move {
                         self::greet().await
                     })
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_greet_poll(
+                pub unsafe extern "C" fn boltffi_async_function_4demo5greet_poll(
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
@@ -4617,7 +4619,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_greet_complete(
+                pub unsafe extern "C" fn boltffi_async_function_4demo5greet_complete(
                     handle: ::boltffi::__private::RustFutureHandle,
                     out_status: *mut ::boltffi::__private::FfiStatus,
                 ) -> ::boltffi::__private::FfiBuf {
@@ -4642,7 +4644,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_greet_panic_message(
+                pub unsafe extern "C" fn boltffi_async_function_4demo5greet_panic_message(
                     handle: ::boltffi::__private::RustFutureHandle,
                 ) -> ::boltffi::__private::FfiBuf {
                     match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<String>(handle) } {
@@ -4652,7 +4654,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_greet_cancel(
+                pub unsafe extern "C" fn boltffi_async_function_4demo5greet_cancel(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4661,7 +4663,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_greet_free(
+                pub unsafe extern "C" fn boltffi_async_function_4demo5greet_free(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4696,14 +4698,14 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_try_count() -> ::boltffi::__private::RustFutureHandle {
+                pub extern "C" fn boltffi_function_4demo9try_count() -> ::boltffi::__private::RustFutureHandle {
                     ::boltffi::__private::rustfuture::rust_future_new(async move {
                         self::try_count().await
                     })
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_try_count_poll(
+                pub unsafe extern "C" fn boltffi_async_function_4demo9try_count_poll(
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
@@ -4718,7 +4720,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_try_count_complete(
+                pub unsafe extern "C" fn boltffi_async_function_4demo9try_count_complete(
                     handle: ::boltffi::__private::RustFutureHandle,
                     out_status: *mut ::boltffi::__private::FfiStatus,
                     __boltffi_return_out: *mut i32
@@ -4760,7 +4762,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_try_count_panic_message(
+                pub unsafe extern "C" fn boltffi_async_function_4demo9try_count_panic_message(
                     handle: ::boltffi::__private::RustFutureHandle,
                 ) -> ::boltffi::__private::FfiBuf {
                     match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<#rust_return_type>(handle) } {
@@ -4770,7 +4772,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_try_count_cancel(
+                pub unsafe extern "C" fn boltffi_async_function_4demo9try_count_cancel(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4779,7 +4781,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_try_count_free(
+                pub unsafe extern "C" fn boltffi_async_function_4demo9try_count_free(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4809,14 +4811,14 @@ mod tests {
                 pub async fn ping() {}
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_ping() -> ::boltffi::__private::RustFutureHandle {
+                pub extern "C" fn boltffi_function_4demo4ping() -> ::boltffi::__private::RustFutureHandle {
                     ::boltffi::__private::rustfuture::rust_future_new(async move {
                         self::ping().await
                     })
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_ping_poll_sync(
+                pub unsafe extern "C" fn boltffi_async_function_4demo4ping_poll_sync(
                     handle: ::boltffi::__private::RustFutureHandle,
                 ) -> i32 {
                     unsafe {
@@ -4825,7 +4827,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_ping_complete(
+                pub unsafe extern "C" fn boltffi_async_function_4demo4ping_complete(
                     handle: ::boltffi::__private::RustFutureHandle,
                     out_status: *mut ::boltffi::__private::FfiStatus,
                 ) {
@@ -4848,7 +4850,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_ping_panic_message(
+                pub unsafe extern "C" fn boltffi_async_function_4demo4ping_panic_message(
                     handle: ::boltffi::__private::RustFutureHandle,
                 ) -> ::boltffi::__private::FfiBuf {
                     match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<()>(handle) } {
@@ -4858,7 +4860,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_ping_cancel(
+                pub unsafe extern "C" fn boltffi_async_function_4demo4ping_cancel(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4867,7 +4869,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_ping_free(
+                pub unsafe extern "C" fn boltffi_async_function_4demo4ping_free(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4901,7 +4903,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_name_len(
+                pub unsafe extern "C" fn boltffi_function_4demo8name_len(
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> ::boltffi::__private::RustFutureHandle {
@@ -4934,7 +4936,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_name_len_poll(
+                pub unsafe extern "C" fn boltffi_async_function_4demo8name_len_poll(
                     handle: ::boltffi::__private::RustFutureHandle,
                     callback_data: u64,
                     callback: ::boltffi::__private::RustFutureContinuationCallback,
@@ -4949,7 +4951,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_name_len_complete(
+                pub unsafe extern "C" fn boltffi_async_function_4demo8name_len_complete(
                     handle: ::boltffi::__private::RustFutureHandle,
                     out_status: *mut ::boltffi::__private::FfiStatus,
                 ) -> u32 {
@@ -4974,7 +4976,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_name_len_panic_message(
+                pub unsafe extern "C" fn boltffi_async_function_4demo8name_len_panic_message(
                     handle: ::boltffi::__private::RustFutureHandle,
                 ) -> ::boltffi::__private::FfiBuf {
                     match unsafe { ::boltffi::__private::rustfuture::rust_future_panic_message::<u32>(handle) } {
@@ -4984,7 +4986,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_name_len_cancel(
+                pub unsafe extern "C" fn boltffi_async_function_4demo8name_len_cancel(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -4993,7 +4995,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_async_function_demo_name_len_free(
+                pub unsafe extern "C" fn boltffi_async_function_4demo8name_len_free(
                     handle: ::boltffi::__private::RustFutureHandle
                 ) {
                     unsafe {
@@ -5041,7 +5043,7 @@ mod tests {
 
         assert!(tokens.to_string().contains(
             &quote! {
-                pub unsafe extern "C" fn boltffi_function_demo_engine_id(
+                pub unsafe extern "C" fn boltffi_function_4demo9engine_id(
                     engine: u64
                 ) -> ::boltffi::__private::RustFutureHandle {
                     if engine == 0 {
@@ -5181,7 +5183,7 @@ mod tests {
                 pub fn ping() {}
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_ping() {
+                pub extern "C" fn boltffi_function_4demo4ping() {
                     self::ping();
                 }
             }
@@ -5211,7 +5213,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_norm(
+                pub unsafe extern "C" fn boltffi_function_4demo4norm(
                     point: <Point as ::boltffi::__private::Passable>::In
                 ) -> f64 {
                     let point: Point = unsafe {
@@ -5246,7 +5248,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_norm(
+                pub unsafe extern "C" fn boltffi_function_4demo4norm(
                     point: *const u8
                 ) -> f64 {
                     if point.is_null() {
@@ -5291,7 +5293,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_shift(
+                pub unsafe extern "C" fn boltffi_function_4demo5shift(
                     point: *mut <Point as ::boltffi::__private::Passable>::In
                 ) -> f64 {
                     if point.is_null() {
@@ -5330,7 +5332,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_shift(
+                pub unsafe extern "C" fn boltffi_function_4demo5shift(
                     point: *mut u8
                 ) -> f64 {
                     let __boltffi_point_out = point;
@@ -5381,7 +5383,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_bump(
+                pub unsafe extern "C" fn boltffi_function_4demo4bump(
                     count: i32
                 ) -> ::boltffi::__private::FfiStatus {
                     let mut count = count;
@@ -5415,7 +5417,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_name_len(
+                pub unsafe extern "C" fn boltffi_function_4demo8name_len(
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> u32 {
@@ -5471,7 +5473,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_name_len(
+                pub unsafe extern "C" fn boltffi_function_4demo8name_len(
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize
                 ) -> u32 {
@@ -5528,7 +5530,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_rewrite(
+                pub unsafe extern "C" fn boltffi_function_4demo7rewrite(
                     __boltffi_name_ptr: *const u8,
                     __boltffi_name_len: usize,
                     __boltffi_name_out: *mut ::boltffi::__private::FfiBuf
@@ -5599,7 +5601,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_bytes_len(
+                pub unsafe extern "C" fn boltffi_function_4demo9bytes_len(
                     __boltffi_bytes_ptr: *const u8,
                     __boltffi_bytes_len: usize
                 ) -> u32 {
@@ -5655,7 +5657,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_bytes_sum(
+                pub unsafe extern "C" fn boltffi_function_4demo9bytes_sum(
                     __boltffi_bytes_ptr: *const u8,
                     __boltffi_bytes_len: usize
                 ) -> u32 {
@@ -5758,7 +5760,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_fill(
+                pub unsafe extern "C" fn boltffi_function_4demo4fill(
                     __boltffi_bytes_ptr: *mut u8,
                     __boltffi_bytes_len: usize
                 ) -> u32 {
@@ -5797,7 +5799,7 @@ mod tests {
                 pub fn set_count(count: Option<i32>) {}
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_set_count(
+                pub unsafe extern "C" fn boltffi_function_4demo9set_count(
                     __boltffi_count_ptr: *const u8,
                     __boltffi_count_len: usize
                 ) -> ::boltffi::__private::FfiStatus {
@@ -5847,7 +5849,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_name_score(
+                pub unsafe extern "C" fn boltffi_function_4demo10name_score(
                     __boltffi_profile_ptr: *const u8,
                     __boltffi_profile_len: usize
                 ) -> u32 {
@@ -5903,7 +5905,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_rename(
+                pub unsafe extern "C" fn boltffi_function_4demo6rename(
                     __boltffi_profile_ptr: *const u8,
                     __boltffi_profile_len: usize,
                     __boltffi_profile_out: *mut ::boltffi::__private::FfiBuf
@@ -5974,7 +5976,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_open(
+                pub unsafe extern "C" fn boltffi_function_4demo4open(
                     engine: u64
                 ) -> u64 {
                     let __boltffi_engine_storage = unsafe {
@@ -6045,7 +6047,7 @@ mod tests {
         })
         .expect("class release expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_release_class_demo_engine"));
+        assert!(rendered.contains("fn boltffi_release_class_4demo6Engine"));
         assert!(rendered.contains("handle : u64"));
         assert!(rendered.contains("if handle != 0"));
         assert!(rendered.contains(
@@ -6083,8 +6085,8 @@ mod tests {
         syn::parse2::<syn::File>(generated.clone()).expect("stream expansion parses");
         assert_generated_crate_checks("native_direct_stream", generated);
         let rendered = stream_tokens.to_string();
-        assert!(rendered.contains("fn boltffi_stream_demo_engine_values_subscribe"));
-        assert!(rendered.contains("fn boltffi_stream_demo_engine_values_pop_batch"));
+        assert!(rendered.contains("fn boltffi_stream_4demo6Engine6values_subscribe"));
+        assert!(rendered.contains("fn boltffi_stream_4demo6Engine6values_pop_batch"));
         assert!(rendered.contains(") -> u64"));
         assert!(rendered.contains("subscription_handle : u64"));
         assert!(
@@ -6569,13 +6571,11 @@ mod tests {
         );
         let rendered = stream_tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_pop_batch"));
-        assert!(rendered.contains("fn boltffi_stream_demo_engine_profiles_subscribe"));
-        assert!(
-            rendered.contains(
-                "fn boltffi_stream_demo_engine_profiles_poll (subscription_handle : u32 ,)"
-            )
-        );
+        assert!(rendered.contains("fn boltffi_stream_4demo6Engine8profiles_pop_batch"));
+        assert!(rendered.contains("fn boltffi_stream_4demo6Engine8profiles_subscribe"));
+        assert!(rendered.contains(
+            "fn boltffi_stream_4demo6Engine8profiles_poll (subscription_handle : u32 ,)"
+        ));
         assert!(rendered.contains("subscription . poll_wasm (subscription_handle)"));
         assert!(!rendered.contains("StreamContinuationCallback"));
         assert!(rendered.contains(") -> u32"));
@@ -6627,9 +6627,9 @@ mod tests {
         })
         .expect("class static exports parse");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_class_demo_engine_new"));
+        assert!(rendered.contains("fn boltffi_init_class_4demo6Engine3new"));
         assert!(rendered.contains("Engine :: new (seed)"));
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_count"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine5count"));
         assert!(rendered.contains("Engine :: count ()"));
         assert!(rendered.contains("trait BoltFFIThreadSafe : Send + Sync"));
         assert!(!rendered.contains("fn boltffi_init_class_demo_engine_count"));
@@ -6656,7 +6656,7 @@ mod tests {
         })
         .expect("class instance method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_start"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine5start"));
         assert!(rendered.contains("__boltffi_receiver : u64"));
         assert!(rendered.contains("if __boltffi_receiver == 0"));
         assert!(rendered.contains("let __boltffi_receiver : & Engine = unsafe"));
@@ -6688,7 +6688,7 @@ mod tests {
         })
         .expect("single-threaded class instance method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_start"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine5start"));
         assert!(!rendered.contains("BoltFFIThreadSafe"));
     }
 
@@ -6720,7 +6720,7 @@ mod tests {
         })
         .expect("class self-returning method expansion parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_clone_engine"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine12clone_engine"));
         assert!(rendered.contains("let __boltffi_result : Engine ="));
         assert!(!rendered.contains("let __boltffi_result : Self"));
         assert!(rendered.contains("< Engine as :: boltffi :: __private :: ClassHandle > :: Handle :: new (__boltffi_result)"));
@@ -6756,8 +6756,8 @@ mod tests {
         syn::parse2::<syn::File>(generated.clone()).expect("class async method expansion parses");
         assert_generated_crate_checks("native_class_async_method", generated);
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_compute"));
-        assert!(rendered.contains("fn boltffi_async_method_class_demo_engine_compute_poll"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine7compute"));
+        assert!(rendered.contains("fn boltffi_async_method_class_4demo6Engine7compute_poll"));
         assert!(rendered.contains("rust_future_new (async move"));
         assert!(rendered.contains(
             "let ____boltffi_boltffi_receiver_handle = match unsafe { __BoltffiEngineHandle :: retain"
@@ -6785,8 +6785,8 @@ mod tests {
 
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_release_class_demo_engine (handle : u32)"));
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_id"));
+        assert!(rendered.contains("fn boltffi_release_class_4demo6Engine (handle : u32)"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine2id"));
         assert!(rendered.contains("__boltffi_receiver : u32"));
         assert!(rendered.contains("__boltffi_receiver . id ()"));
     }
@@ -6826,7 +6826,7 @@ mod tests {
         })
         .expect("class closure-param initializer parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_class_demo_engine_new"));
+        assert!(rendered.contains("fn boltffi_init_class_4demo6Engine3new"));
         assert!(rendered.contains("NativeCallbackOwner :: new"));
         assert!(rendered.contains("Engine :: new (build)"));
         assert_generated_crate_checks(
@@ -6877,7 +6877,7 @@ mod tests {
         })
         .expect("class closure-return method parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_handler"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine7handler"));
         assert!(rendered.contains("__boltffi_return_out : * mut :: core :: ffi :: c_void"));
         assert!(rendered.contains("__boltffi_handler_closure_call"));
         assert!(rendered.contains("__boltffi_receiver . handler ()"));
@@ -6923,13 +6923,14 @@ mod tests {
             #tokens
         }
         .to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_replace"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine7replace"));
         assert!(rendered.contains("BoxFromCallbackHandle"));
         assert!(rendered.contains("pub struct ListenerVTable"));
         assert!(
-            rendered.contains("pub unsafe extern \"C\" fn boltffi_register_callback_demo_listener")
+            rendered
+                .contains("pub unsafe extern \"C\" fn boltffi_register_callback_4demo8Listener")
         );
-        assert!(rendered.contains("__boltffi_local_demo_listener_handle"));
+        assert!(rendered.contains("__boltffi_local_4demo8Listener_handle"));
         assert!(rendered.contains("__boltffi_receiver . replace (listener)"));
         assert_generated_crate_checks(
             "native_class_method_with_callback_param_and_return",
@@ -6991,7 +6992,7 @@ mod tests {
         })
         .expect("class custom method parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_stamp"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine5stamp"));
         assert!(rendered.contains("timestamp_try_from_ffi"));
         assert!(
             rendered.contains("let __boltffi_wire = (timestamp_into_ffi) (& __boltffi_result)")
@@ -7063,7 +7064,7 @@ mod tests {
         .expect("wasm class custom method parses");
         let rendered = tokens.to_string();
         assert!(rendered.contains("# [cfg (target_arch = \"wasm32\")]"));
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_stamp"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine5stamp"));
         assert!(rendered.contains("__boltffi_receiver : u32"));
         assert!(rendered.contains("timestamp_try_from_ffi"));
         assert!(
@@ -7100,7 +7101,7 @@ mod tests {
         })
         .expect("class fallible initializer parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_init_class_demo_engine_try_new"));
+        assert!(rendered.contains("fn boltffi_init_class_4demo6Engine7try_new"));
         assert!(rendered.contains("__boltffi_return_out : * mut u64"));
         assert!(rendered.contains("Engine :: try_new ()"));
         assert!(rendered.contains(
@@ -7136,7 +7137,7 @@ mod tests {
         })
         .expect("class nullable self-return method parses");
         let rendered = tokens.to_string();
-        assert!(rendered.contains("fn boltffi_method_class_demo_engine_maybe_self"));
+        assert!(rendered.contains("fn boltffi_method_class_4demo6Engine10maybe_self"));
         assert!(rendered.contains("let __boltffi_result : Option < Engine >"));
         assert!(rendered.contains("Some (__boltffi_value)"));
         assert!(rendered.contains("None => 0"));
@@ -7160,7 +7161,7 @@ mod tests {
                 pub fn listen(listener: Box<dyn Listener>) {}
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_listen(
+                pub unsafe extern "C" fn boltffi_function_4demo6listen(
                     listener: ::boltffi::__private::CallbackHandle
                 ) -> ::boltffi::__private::FfiStatus {
                     let __boltffi_listener_handle = listener;
@@ -7365,15 +7366,16 @@ mod tests {
         assert!(rendered.contains("pub struct ListenerVTable"));
         assert!(rendered.contains("pub on_value : extern \"C\" fn (handle : u64 , u32) -> u32"));
         assert!(
-            rendered.contains("pub unsafe extern \"C\" fn boltffi_register_callback_demo_listener")
+            rendered
+                .contains("pub unsafe extern \"C\" fn boltffi_register_callback_4demo8Listener")
         );
-        assert!(rendered.contains("pub extern \"C\" fn boltffi_create_callback_demo_listener"));
+        assert!(rendered.contains("pub extern \"C\" fn boltffi_create_callback_4demo8Listener"));
         assert!(rendered.contains("impl Listener for ForeignListener"));
         assert!(
             rendered
                 .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
         );
-        assert!(rendered.contains("pub fn __boltffi_local_demo_listener_handle"));
+        assert!(rendered.contains("pub fn __boltffi_local_4demo8Listener_handle"));
         assert!(rendered.contains("static __BOLTFFI_LOCAL_LISTENER_VTABLE"));
     }
 
@@ -7388,22 +7390,20 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(
-            rendered.contains("fn __boltffi_callback_lifecycle_demo_listener_free (handle : u32)")
-        );
-        assert!(
-            rendered.contains(
-                "fn __boltffi_callback_lifecycle_demo_listener_clone (handle : u32) -> u32"
-            )
+            rendered.contains("fn __boltffi_callback_lifecycle_4demo8Listener_free (handle : u32)")
         );
         assert!(rendered.contains(
-            "fn __boltffi_callback_method_demo_listener_on_value (handle : u32 , __boltffi_arg0 : u32) -> u32"
+            "fn __boltffi_callback_lifecycle_4demo8Listener_clone (handle : u32) -> u32"
         ));
-        assert!(rendered.contains("pub extern \"C\" fn boltffi_create_callback_demo_listener"));
+        assert!(rendered.contains(
+            "fn __boltffi_callback_method_4demo8Listener8on_value (handle : u32 , __boltffi_arg0 : u32) -> u32"
+        ));
+        assert!(rendered.contains("pub extern \"C\" fn boltffi_create_callback_4demo8Listener"));
         assert!(rendered.contains("impl Listener for ForeignListener"));
         assert!(rendered.contains("pub struct LocalListener"));
         assert!(rendered.contains("impl Listener for LocalListener"));
         assert!(rendered.contains("if handle < 2147483648u32"));
-        assert!(rendered.contains("let handle = __boltffi_local_demo_listener_clone (handle)"));
+        assert!(rendered.contains("let handle = __boltffi_local_4demo8Listener_clone (handle)"));
         assert!(rendered.contains(":: std :: sync :: Arc :: new (LocalListener { handle })"));
         assert!(rendered.contains("Box :: new (LocalListener { handle })"));
         let local_drop = rendered
@@ -7411,11 +7411,11 @@ mod tests {
             .nth(1)
             .and_then(|tail| tail.split("impl Listener for LocalListener").next())
             .expect("local listener drop body");
-        assert!(local_drop.contains("__boltffi_local_demo_listener_free (self . handle)"));
-        assert!(!local_drop.contains("__boltffi_callback_lifecycle_demo_listener_free"));
+        assert!(local_drop.contains("__boltffi_local_4demo8Listener_free (self . handle)"));
+        assert!(!local_drop.contains("__boltffi_callback_lifecycle_4demo8Listener_free"));
         assert!(rendered.contains("static __BOLTFFI_LOCAL_LISTENER_REGISTRY"));
-        assert!(rendered.contains("pub extern \"C\" fn __boltffi_local_demo_listener_on_value"));
-        assert!(rendered.contains("pub fn __boltffi_local_demo_listener_handle"));
+        assert!(rendered.contains("pub extern \"C\" fn __boltffi_local_4demo8Listener8on_value"));
+        assert!(rendered.contains("pub fn __boltffi_local_4demo8Listener_handle"));
     }
 
     #[test]
@@ -7430,20 +7430,20 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_method_demo_listener_payload (handle : u32 , __boltffi_callback_out : * mut :: boltffi :: __private :: WasmCallbackOutBuf)"
+            "fn __boltffi_callback_method_4demo8Listener7payload (handle : u32 , __boltffi_callback_out : * mut :: boltffi :: __private :: WasmCallbackOutBuf)"
         ));
         assert!(rendered.contains(
             "let mut __boltffi_callback_out = :: boltffi :: __private :: WasmCallbackOutBuf :: empty ()"
         ));
         assert!(rendered.contains("__boltffi_callback_out . as_slice ()"));
         assert!(rendered.contains(
-            "pub extern \"C\" fn __boltffi_local_demo_listener_payload (handle : u32) -> u64"
+            "pub extern \"C\" fn __boltffi_local_4demo8Listener7payload (handle : u32) -> u64"
         ));
         assert!(rendered.contains(
-            ":: boltffi :: __private :: take_packed_bytes (__boltffi_local_demo_listener_payload (self . handle))"
+            ":: boltffi :: __private :: take_packed_bytes (__boltffi_local_4demo8Listener7payload (self . handle))"
         ));
         assert!(!rendered.contains(
-            "__boltffi_local_demo_listener_payload (self . handle , & mut __boltffi_callback_out)"
+            "__boltffi_local_4demo8Listener7payload (self . handle , & mut __boltffi_callback_out)"
         ));
     }
 
@@ -7486,10 +7486,10 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_method_demo_listener_maybe_count (handle : u32) -> f64"
+            "fn __boltffi_callback_method_4demo8Listener11maybe_count (handle : u32) -> f64"
         ));
         assert!(
-            rendered.contains("fn __boltffi_callback_method_demo_listener_numbers (handle : u32)")
+            rendered.contains("fn __boltffi_callback_method_4demo8Listener7numbers (handle : u32)")
         );
         assert!(rendered.contains("f64 :: NAN"));
         assert!(rendered.contains(":: boltffi :: __private :: write_return_slot"));
@@ -7593,10 +7593,10 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_async_start_demo_listener_on_event (handle : u32 , request_id : u32 , __boltffi_arg0 : i32)"
+            "fn __boltffi_callback_async_start_4demo8Listener8on_event (handle : u32 , request_id : u32 , __boltffi_arg0 : i32)"
         ));
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_callback_demo_listener_on_event_complete"
+            "pub unsafe extern \"C\" fn boltffi_callback_4demo8Listener8on_event_complete"
         ));
         assert!(rendered.contains("AsyncCallbackRegistry :: current"));
         assert!(rendered.contains("async callback return conversion failed"));
@@ -7648,10 +7648,10 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_async_start_demo_listener_maybe_count (handle : u32 , request_id : u32)"
+            "fn __boltffi_callback_async_start_4demo8Listener11maybe_count (handle : u32 , request_id : u32)"
         ));
         assert!(rendered.contains(
-            "fn __boltffi_callback_async_start_demo_listener_count (handle : u32 , request_id : u32)"
+            "fn __boltffi_callback_async_start_4demo8Listener5count (handle : u32 , request_id : u32)"
         ));
         assert!(rendered.contains("wire :: decode :: < u32 >"));
         assert!(rendered.contains("wire :: decode :: < Option < i32 > >"));
@@ -7674,7 +7674,7 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_async_start_demo_listener_listener (handle : u32 , request_id : u32)"
+            "fn __boltffi_callback_async_start_4demo8Listener8listener (handle : u32 , request_id : u32)"
         ));
         assert!(rendered.contains("wire :: decode :: < u32 >"));
         assert!(rendered.contains("CallbackHandle :: from_wasm_handle"));
@@ -7758,10 +7758,10 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_async_start_demo_listener_try_count (handle : u32 , request_id : u32)"
+            "fn __boltffi_callback_async_start_4demo8Listener9try_count (handle : u32 , request_id : u32)"
         ));
         assert!(rendered.contains(
-            "fn __boltffi_callback_async_start_demo_listener_try_numbers (handle : u32 , request_id : u32)"
+            "fn __boltffi_callback_async_start_4demo8Listener11try_numbers (handle : u32 , request_id : u32)"
         ));
         assert!(rendered.contains("async fn try_count (& self) -> Result < u32 , String >"));
         assert!(
@@ -7799,7 +7799,7 @@ mod tests {
             !rendered
                 .contains("impl :: boltffi :: __private :: ArcFromCallbackHandle for dyn Listener")
         );
-        assert!(!rendered.contains("pub (crate) fn __boltffi_local_demo_listener_handle"));
+        assert!(!rendered.contains("pub (crate) fn __boltffi_local_4demo8Listener_handle"));
     }
 
     #[test]
@@ -7884,7 +7884,7 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "fn __boltffi_callback_method_demo_listener_make_handler (handle : u32 , __boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiStatus"
+            "fn __boltffi_callback_method_4demo8Listener12make_handler (handle : u32 , __boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiStatus"
         ));
         assert!(rendered.contains("fn make_handler (& self) -> impl Fn (u32) -> u32"));
         assert!(rendered.contains(
@@ -7905,7 +7905,7 @@ mod tests {
         syn::parse2::<syn::File>(tokens.clone()).expect("expanded callback parses");
 
         assert!(rendered.contains(
-            "extern \"C\" fn __boltffi_local_demo_listener_make_handler (handle : u64 , __boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiStatus"
+            "extern \"C\" fn __boltffi_local_4demo8Listener12make_handler (handle : u64 , __boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiStatus"
         ));
         assert!(rendered.contains(
             "* __boltffi_return_out = __BoltffiClosureReturn__boltffi_closure { invoke : Some"
@@ -7937,7 +7937,7 @@ mod tests {
         assert!(rendered.contains(
             "* __boltffi_success_out = < dyn Listener as :: boltffi :: __private :: CallbackLocalHandle > :: local_callback_handle (:: std :: sync :: Arc :: from (__boltffi_success))"
         ));
-        assert!(!rendered.contains("boltffi_create_callback_demo_listener (__boltffi_success)"));
+        assert!(!rendered.contains("boltffi_create_callback_4demo8Listener (__boltffi_success)"));
     }
 
     #[test]
@@ -7962,7 +7962,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_maybe(
+                pub unsafe extern "C" fn boltffi_function_4demo5maybe(
                     listener: u32
                 ) -> u32 {
                     let __boltffi_listener_handle =
@@ -8004,7 +8004,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_make_listener()
+                pub extern "C" fn boltffi_function_4demo13make_listener()
                     -> ::boltffi::__private::CallbackHandle
                 {
                     let __boltffi_result: Box<dyn Listener> = self::make_listener();
@@ -8037,7 +8037,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_shared_listener()
+                pub extern "C" fn boltffi_function_4demo15shared_listener()
                     -> ::boltffi::__private::CallbackHandle
                 {
                     let __boltffi_result: ::std::sync::Arc<dyn Listener> = self::shared_listener();
@@ -8070,7 +8070,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_maybe_listener() -> u32 {
+                pub extern "C" fn boltffi_function_4demo14maybe_listener() -> u32 {
                     let __boltffi_result: Option<::std::sync::Arc<dyn Listener> > =
                         self::maybe_listener();
                     __boltffi_result
@@ -8106,7 +8106,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_maybe_boxed_listener() -> u32 {
+                pub extern "C" fn boltffi_function_4demo20maybe_boxed_listener() -> u32 {
                     let __boltffi_result: Option<Box<dyn Listener> > = self::maybe_boxed_listener();
                     __boltffi_result
                         .map(|__boltffi_callback| {
@@ -8143,7 +8143,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_try_make_listener(
+                pub unsafe extern "C" fn boltffi_function_4demo17try_make_listener(
                     __boltffi_return_out: *mut ::boltffi::__private::CallbackHandle
                 ) -> ::boltffi::__private::FfiBuf {
                     match self::try_make_listener() {
@@ -8192,7 +8192,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_apply(
+                pub unsafe extern "C" fn boltffi_function_4demo5apply(
                     __boltffi_callback_call: unsafe extern "C" fn(*mut ::core::ffi::c_void, u32) -> u32,
                     __boltffi_callback_context: *mut ::core::ffi::c_void,
                     __boltffi_callback_release: unsafe extern "C" fn(*mut ::core::ffi::c_void)
@@ -8239,7 +8239,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_apply(callback: u32) -> u32 {
+                pub unsafe extern "C" fn boltffi_function_4demo5apply(callback: u32) -> u32 {
                     let __boltffi_callback_owner = (callback != 0).then(|| {
                         ::boltffi::__private::WasmCallbackOwner::new(
                             callback,
@@ -8660,7 +8660,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_function_demo_make_callback (__boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiStatus"
+            "pub unsafe extern \"C\" fn boltffi_function_4demo13make_callback (__boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiStatus"
         ));
         assert!(rendered.contains(
             "struct __BoltffiClosureReturn__boltffi_closure { invoke : Option < unsafe extern \"C\" fn (* mut :: core :: ffi :: c_void , u32) -> u32 > , context : * mut :: core :: ffi :: c_void , release : Option < unsafe extern \"C\" fn (* mut :: core :: ffi :: c_void) > , }"
@@ -8687,13 +8687,13 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_function_demo_make_callback (__boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiStatus"
+            "pub unsafe extern \"C\" fn boltffi_function_4demo13make_callback (__boltffi_return_out : * mut u32) -> :: boltffi :: __private :: FfiStatus"
         ));
         assert!(rendered.contains(
-            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_1____closure__u32_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
+            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_function_4demo13make_callback_0_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
         ));
         assert!(rendered.contains(
-            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_1____closure__u32_to_u32_free (__boltffi_context : u32)"
+            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_function_4demo13make_callback_0_free (__boltffi_context : u32)"
         ));
         assert!(rendered.contains(
             "* __boltffi_return_out = Box :: into_raw (Box :: new (Box :: new (__boltffi_closure) as Box < dyn Fn (u32) -> u32 + 'static >)) as usize as u32"
@@ -8717,7 +8717,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_async_function_demo_make_callback_complete"
+            "pub unsafe extern \"C\" fn boltffi_async_function_4demo13make_callback_complete"
         ));
         assert!(rendered.contains("__boltffi_return_out : * mut :: core :: ffi :: c_void"));
         assert!(rendered.contains("-> :: boltffi :: __private :: FfiStatus"));
@@ -8743,7 +8743,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_async_function_demo_make_callback_complete"
+            "pub unsafe extern \"C\" fn boltffi_async_function_4demo13make_callback_complete"
         ));
         assert!(rendered.contains("__boltffi_return_out : * mut u32"));
         assert!(rendered.contains("-> :: boltffi :: __private :: FfiStatus"));
@@ -8769,7 +8769,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_closure_1____closure__demo_point_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : * const u8) -> u32"
+            "pub unsafe extern \"C\" fn boltffi_closure_function_4demo13make_callback_0_call (__boltffi_context : u32 , __boltffi_arg0 : * const u8) -> u32"
         ));
         assert!(rendered.contains(
             "let __boltffi_arg0 : Point = unsafe { let __boltffi_value = :: core :: ptr :: read_unaligned (__boltffi_arg0 as * const < Point as :: boltffi :: __private :: Passable > :: In) ; < Point as :: boltffi :: __private :: Passable > :: unpack (__boltffi_value) }"
@@ -8833,7 +8833,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_1____closure__u32_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
+            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_function_4demo13make_callback_0_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
         ));
         assert!(rendered.contains(
             "* __boltffi_return_out = Box :: into_raw (Box :: new (Box :: new (__boltffi_closure) as Box < dyn Fn (u32) -> u32 + 'static >)) as usize as u32"
@@ -8886,7 +8886,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_closure_1____closure__box_closure_to_u32_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
+            "pub unsafe extern \"C\" fn boltffi_closure_function_4demo11make_runner_0_call (__boltffi_context : u32 , __boltffi_arg0 : u32) -> u32"
         ));
         assert!(rendered.contains(
             "unsafe extern \"C\" { fn __boltffi_callback_closure____closure__u32_to_u32_call (handle : u32 , __boltffi_ffi_arg0 : u32) -> u32 ; fn __boltffi_callback_closure____closure__u32_to_u32_free (handle : u32) ; }"
@@ -8969,7 +8969,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_1____closure__string_to_string_call (__boltffi_context : u32 , __boltffi_arg0_ptr : * const u8 , __boltffi_arg0_len : usize) -> u64"
+            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_function_4demo11make_mapper_0_call (__boltffi_context : u32 , __boltffi_arg0_ptr : * const u8 , __boltffi_arg0_len : usize) -> u64"
         ));
         assert!(rendered.contains("let __boltffi_arg0 : String = {"));
         assert!(
@@ -8999,7 +8999,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "pub unsafe extern \"C\" fn boltffi_function_demo_try_make_callback (__boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiBuf"
+            "pub unsafe extern \"C\" fn boltffi_function_4demo17try_make_callback (__boltffi_return_out : * mut :: core :: ffi :: c_void) -> :: boltffi :: __private :: FfiBuf"
         ));
         assert!(rendered.contains(
             "Ok (__boltffi_success) => { # [repr (C)] struct __BoltffiClosureReturn__boltffi_success"
@@ -9061,7 +9061,7 @@ mod tests {
         let rendered = tokens.to_string();
 
         assert!(rendered.contains(
-            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_1____closure__to_result_string_err_string_call (__boltffi_context : u32 , __boltffi_success_out : * mut u64) -> u64"
+            "# [cfg (target_arch = \"wasm32\")] # [unsafe (no_mangle)] pub unsafe extern \"C\" fn boltffi_closure_function_4demo11make_mapper_0_call (__boltffi_context : u32 , __boltffi_success_out : * mut u64) -> u64"
         ));
         assert!(rendered.contains("match __boltffi_closure ()"));
         assert!(rendered.contains(
@@ -9094,7 +9094,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_engine_id(
+                pub unsafe extern "C" fn boltffi_function_4demo9engine_id(
                     engine: u32
                 ) -> u32 {
                     if engine == 0 {
@@ -9133,7 +9133,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_try_open(
+                pub unsafe extern "C" fn boltffi_function_4demo8try_open(
                     __boltffi_return_out: *mut u64
                 ) -> ::boltffi::__private::FfiBuf {
                     match self::try_open() {
@@ -9176,7 +9176,7 @@ mod tests {
                 pub fn set_count(count: Option<i32>) {}
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_set_count(
+                pub unsafe extern "C" fn boltffi_function_4demo9set_count(
                     count: f64
                 ) -> ::boltffi::__private::FfiStatus {
                     let count: Option<i32> = if count.is_nan() {
@@ -9214,7 +9214,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_sum(
+                pub unsafe extern "C" fn boltffi_function_4demo3sum(
                     __boltffi_values_ptr: *const u32,
                     __boltffi_values_len: usize
                 ) -> u32 {
@@ -9257,7 +9257,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_count_points(
+                pub unsafe extern "C" fn boltffi_function_4demo12count_points(
                     __boltffi_points_ptr: *const u8,
                     __boltffi_points_len: usize
                 ) -> u32 {
@@ -9313,7 +9313,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_origin() -> <Point as ::boltffi::__private::Passable>::Out {
+                pub extern "C" fn boltffi_function_4demo6origin() -> <Point as ::boltffi::__private::Passable>::Out {
                     <Point as ::boltffi::__private::Passable>::pack(self::origin())
                 }
             }
@@ -9343,7 +9343,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_origin(
+                pub unsafe extern "C" fn boltffi_function_4demo6origin(
                     __boltffi_return_out: *mut <Point as ::boltffi::__private::Passable>::Out
                 ) {
                     let __boltffi_result: Point = self::origin();
@@ -9383,7 +9383,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_try_count(
+                pub unsafe extern "C" fn boltffi_function_4demo9try_count(
                     __boltffi_return_out: *mut i32
                 ) -> ::boltffi::__private::FfiBuf {
                     match self::try_count() {
@@ -9430,7 +9430,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_try_ping() -> u64 {
+                pub extern "C" fn boltffi_function_4demo8try_ping() -> u64 {
                     match self::try_ping() {
                         Ok(()) => {
                             ::boltffi::__private::FfiBuf::EMPTY_PACKED
@@ -9467,7 +9467,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn boltffi_function_demo_try_greet(
+                pub unsafe extern "C" fn boltffi_function_4demo9try_greet(
                     __boltffi_return_out: *mut u64
                 ) -> u64 {
                     match self::try_greet() {
@@ -9516,7 +9516,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_maybe_count() -> ::boltffi::__private::FfiBuf {
+                pub extern "C" fn boltffi_function_4demo11maybe_count() -> ::boltffi::__private::FfiBuf {
                     let __boltffi_result: Option<i32> = self::maybe_count();
                     ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_result)
                 }
@@ -9568,7 +9568,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_maybe_count() -> f64 {
+                pub extern "C" fn boltffi_function_4demo11maybe_count() -> f64 {
                     let __boltffi_result: Option<i32> = self::maybe_count();
                     match __boltffi_result {
                         Some(__boltffi_value) => __boltffi_value as f64,
@@ -9595,7 +9595,7 @@ mod tests {
             expand_function(&expansion, &source.functions[0], syntax).expect("expanded function");
         let rendered = tokens.to_string();
 
-        assert!(rendered.contains("extern \"C\" fn boltffi_function_demo_maybe_ratio () -> f64"));
+        assert!(rendered.contains("extern \"C\" fn boltffi_function_4demo11maybe_ratio () -> f64"));
         assert!(rendered.contains("if __boltffi_value . is_nan ()"));
         assert!(rendered.contains("write_option_f64_presence (true)"));
         assert!(rendered.contains("write_option_f64_presence (false)"));
@@ -9623,7 +9623,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_numbers() -> ::boltffi::__private::FfiBuf {
+                pub extern "C" fn boltffi_function_4demo7numbers() -> ::boltffi::__private::FfiBuf {
                     let __boltffi_result = self::numbers();
                     <i32 as ::boltffi::__private::VecTransport>::pack_vec(__boltffi_result)
                 }
@@ -9654,7 +9654,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_numbers() {
+                pub extern "C" fn boltffi_function_4demo7numbers() {
                     let __boltffi_result = self::numbers();
                     let __boltffi_buf =
                         <i32 as ::boltffi::__private::VecTransport>::pack_vec(__boltffi_result);
@@ -9693,7 +9693,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_greet() -> ::boltffi::__private::FfiBuf {
+                pub extern "C" fn boltffi_function_4demo5greet() -> ::boltffi::__private::FfiBuf {
                     let __boltffi_result: String = self::greet();
                     ::boltffi::__private::FfiBuf::wire_encode_owned_string(__boltffi_result)
                 }
@@ -9724,7 +9724,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_greet() -> u64 {
+                pub extern "C" fn boltffi_function_4demo5greet() -> u64 {
                     let __boltffi_result: String = self::greet();
                     ::boltffi::__private::FfiBuf::from_vec(__boltffi_result.into_bytes()).into_packed()
                 }
@@ -9755,7 +9755,7 @@ mod tests {
                 }
                 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_payload() -> ::boltffi::__private::FfiBuf {
+                pub extern "C" fn boltffi_function_4demo7payload() -> ::boltffi::__private::FfiBuf {
                     let __boltffi_result: Vec<u8> = self::payload();
                     ::boltffi::__private::FfiBuf::wire_encode_owned_bytes(__boltffi_result)
                 }
@@ -9786,7 +9786,7 @@ mod tests {
                 }
                 #[cfg(target_arch = "wasm32")]
                 #[unsafe(no_mangle)]
-                pub extern "C" fn boltffi_function_demo_payload() -> u64 {
+                pub extern "C" fn boltffi_function_4demo7payload() -> u64 {
                     let __boltffi_result: Vec<u8> = self::payload();
                     ::boltffi::__private::FfiBuf::from_vec(__boltffi_result).into_packed()
                 }
