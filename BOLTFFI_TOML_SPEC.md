@@ -47,7 +47,7 @@ Experimental features:
 ### `[package]` (required)
 
 - `name` (string): Logical name used for default module/class naming.
-- `crate` (string, optional): Rust crate name to scan/build if different from `name`.
+- `crate` (string, optional): Rust crate name to build if different from `name`.
 - `version` (string, optional): Package version.
   - Default: read from `Cargo.toml`
 - `description` (string, optional): Package description.
@@ -152,7 +152,7 @@ Each mapping is a table with:
 Example:
 ```toml
 [targets.apple.swift.type_mappings]
-Uuid = { type = "UUID", conversion = "uuid_string" }
+ItemId = { type = "UUID", conversion = "uuid_string" }
 ```
 
 ### `[targets.apple.xcframework]` (optional)
@@ -267,7 +267,7 @@ Maps custom types to native Kotlin/Java types. Same structure as `[targets.apple
 Example:
 ```toml
 [targets.android.kotlin.type_mappings]
-Uuid = { type = "java.util.UUID", conversion = "uuid_string" }
+ItemId = { type = "java.util.UUID", conversion = "uuid_string" }
 ```
 
 ### `[targets.android.header]` (optional)
@@ -435,7 +435,7 @@ Maps custom types to native TypeScript types. Same structure as `[targets.apple.
 Example:
 ```toml
 [targets.wasm.typescript.type_mappings]
-Uuid = { type = "string", conversion = "uuid_string" }
+ItemId = { type = "string", conversion = "uuid_string" }
 ```
 
 ### `[targets.wasm.npm]` (optional)

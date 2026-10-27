@@ -83,6 +83,7 @@ pub fn echo_i32(v: i32) -> i32 { v }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Point { pub x: f64, pub y: f64 }
 
+#[export]
 #[benchmark_candidate(object, uniffi)]                             // stateful object
 pub struct Counter { /* … */ }
 
