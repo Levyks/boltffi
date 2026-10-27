@@ -131,6 +131,16 @@ impl RubyCExtHost {
             .map(Ok)
             .unwrap_or_else(|| default_module(bindings.package().name()))
     }
+
+    fn gem_version<'a>(&'a self, bindings: &'a Bindings<Native>) -> &'a str {
+        if let Some(version) = self.version.as_deref() {
+            return version;
+        }
+        let version = bindings.package().version().unwrap_or("0.1.0");
+        version
+            .split_once('+')
+            .map_or(version, |(release, _)| release)
+    }
 }
 
 impl host::HostBackend for RubyCExtHost {
@@ -268,15 +278,11 @@ impl host::HostBackend for RubyCExtHost {
             .library
             .clone()
             .unwrap_or_else(|| package_snake(bindings.package().name()));
-        let version = self
-            .version
-            .clone()
-            .or_else(|| bindings.package().version().map(str::to_owned))
-            .unwrap_or_else(|| "0.1.0".to_owned());
+        let version = self.gem_version(bindings);
         let crate_name = bindings.package().name().as_path_string();
         let package = Package {
             gem: &gem,
-            version: &version,
+            version,
             stem: &stem,
             module: &module,
             artifact: &artifact,
@@ -308,9 +314,13 @@ mod tests {
     use crate::core::{CapabilityStatus, Error};
 
     fn bindings(source: &str) -> Bindings<Native> {
+        bindings_with_version(source, Some("1.2.3"))
+    }
+
+    fn bindings_with_version(source: &str, version: Option<&str>) -> Bindings<Native> {
         let source = boltffi_scan::scan_file(
             syn::parse_str(source).expect("valid source"),
-            PackageInfo::new("demo", Some("1.2.3".to_owned())),
+            PackageInfo::new("demo", version.map(str::to_owned)),
         )
         .expect("source should scan");
         lower::<Native>(&source).expect("source should lower")
@@ -339,6 +349,25 @@ mod tests {
             .iter()
             .map(|file| file.path().as_path().to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn cargo_build_metadata_does_not_change_the_gem_release() {
+        for (cargo, expected) in [
+            ("1.2.3", "1.2.3"),
+            ("1.2.3+ci.123", "1.2.3"),
+            ("1.2.3-rc.1+ci.123", "1.2.3-rc.1"),
+        ] {
+            let bindings = bindings_with_version("", Some(cargo));
+            assert_eq!(RubyCExtHost::new().gem_version(&bindings), expected);
+        }
+    }
+
+    #[test]
+    fn configured_gem_versions_override_cargo_versions() {
+        let bindings = bindings_with_version("", Some("1.2.3+ci"));
+        let host = RubyCExtHost::new().version(Some("2.0.rc1".to_owned()));
+        assert_eq!(host.gem_version(&bindings), "2.0.rc1");
     }
 
     #[test]

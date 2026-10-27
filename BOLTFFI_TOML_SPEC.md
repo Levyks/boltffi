@@ -617,7 +617,10 @@ The generated gem requires Ruby 3.3 or later.
   records, such as `MyLib::Native`.
   - Default: the Cargo package name in `UpperCamelCase`.
 - `version` (string, optional): Gem version.
-  - Default: the selected Cargo package's version.
+  - Default: the selected Cargo package's version without build metadata (`+...`).
+  - Prerelease labels remain. For example, `1.2.3-rc.1+ci` becomes `1.2.3-rc.1`.
+  - Build-metadata variants share a gem version. Set `version` explicitly for a distinct gem release.
+  - Explicit values use RubyGems version syntax and override the Cargo version.
 - `cargo_manifest` (string, optional): Crate manifest path, relative to
   `{output}/ext/<stem>/`. With the default `output`, a manifest at the project
   root is `../../../../Cargo.toml`.
@@ -632,6 +635,10 @@ The generated gem requires Ruby 3.3 or later.
 
 `pack ruby` requires the `staticlib` crate type and builds for the current
 host, which must be macOS or Linux.
+
+Before `pack ruby --no-build` succeeds, the command checks the recorded digest of the extension C source.
+Missing or invalid link metadata or a source mismatch causes an error.
+Run `pack ruby` without `--no-build` to regenerate the sources and rebuild the library.
 
 ## Dart
 
