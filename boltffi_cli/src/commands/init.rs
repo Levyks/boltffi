@@ -5,8 +5,7 @@ use crate::config::{
     AndroidConfig, AndroidLinkConfig, AndroidPackConfig, AppleConfig, CConfig, CSharpConfig,
     CargoConfig, Config, DartConfig, DartWebConfig, DebugSymbolsConfig, ErrorStyle, HeaderConfig,
     JavaConfig, KotlinConfig, KotlinFactoryStyle, KotlinMultiplatformConfig, PackageConfig,
-    PythonConfig, RubyConfig, SpmConfig, SwiftConfig, TargetsConfig, WasmConfig,
-    XcframeworkConfig,
+    PythonConfig, RubyConfig, SpmConfig, SwiftConfig, TargetsConfig, WasmConfig, XcframeworkConfig,
 };
 
 pub struct InitOptions {
