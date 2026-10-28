@@ -8,48 +8,50 @@ expression: "rendered_fixture_with_host(\"exports/kotlin_class_handles\", host)"
 package com.boltffi.demo
 @Suppress("FunctionName")
 private object Native {
-    @JvmStatic external fun boltffi_release_class_demo_engine(handle: Long): Unit
-    @JvmStatic external fun boltffi_init_class_demo_engine_new(value: Int): Long
-    @JvmStatic external fun boltffi_method_class_demo_engine_version(): Int
-    @JvmStatic external fun boltffi_method_class_demo_engine_value(`receiver`: Long): Int
-    @JvmStatic external fun boltffi_method_class_demo_engine_swap(`receiver`: Long, other: Long): Long
-    @JvmStatic external fun boltffi_method_class_demo_engine_maybe_swap(`receiver`: Long, other: Long): Long
+    @JvmStatic external fun boltffi_release_class_4demo6Engine(handle: Long): Unit
+    @JvmStatic external fun boltffi_init_class_4demo6Engine3new(value: Int): Long
+    @JvmStatic external fun boltffi_method_class_4demo6Engine7version(): Int
+    @JvmStatic external fun boltffi_method_class_4demo6Engine5value(`receiver`: Long): Int
+    @JvmStatic external fun boltffi_method_class_4demo6Engine4swap(`receiver`: Long, other: Long): Long
+    @JvmStatic external fun boltffi_method_class_4demo6Engine10maybe_swap(`receiver`: Long, other: Long): Long
 }
 
-class Engine internal constructor(internal val handle: Long) : AutoCloseable {
-    private val __boltffi_closed = java.util.concurrent.atomic.AtomicBoolean(false)
+class Engine internal constructor(private val __boltffi_handle: java.util.concurrent.atomic.AtomicLong) : AutoCloseable {
 
     override fun close() {
-        if (__boltffi_closed.compareAndSet(false, true)) {
-            Native.boltffi_release_class_demo_engine(handle)
+        val handle = __boltffi_handle.getAndSet(0L)
+        if (handle != 0L) {
+            Native.boltffi_release_class_4demo6Engine(handle)
         }
     }
 
     internal fun __boltffiTakeHandle(): Long {
-        check(__boltffi_closed.compareAndSet(false, true)) { "Engine is closed" }
+        val handle = __boltffi_handle.getAndSet(0L)
+        check(handle != 0L) { "Engine is closed" }
         return handle
     }
 
     internal fun boltffiHandle(): Long {
-        check(!__boltffi_closed.get()) { "Engine is closed" }
+        val handle = __boltffi_handle.get()
+        check(handle != 0L) { "Engine is closed" }
         return handle
     }
 
     companion object {
         fun new(value: Int): Engine {
-            return Engine(Native.boltffi_init_class_demo_engine_new(value))
+            return Engine(java.util.concurrent.atomic.AtomicLong(Native.boltffi_init_class_4demo6Engine3new(value)))
         }
         fun version(): UInt {
-            return Native.boltffi_method_class_demo_engine_version().toUInt()
+            return Native.boltffi_method_class_4demo6Engine7version().toUInt()
         }
     }
 
     fun value(): Int {
-        return Native.boltffi_method_class_demo_engine_value(this.boltffiHandle())
+        return Native.boltffi_method_class_4demo6Engine5value(this.boltffiHandle())
     }
 
     fun swap(other: Engine): Engine {
-        return Engine(({
+        return Engine(java.util.concurrent.atomic.AtomicLong(({
     Native.ensureInitialized()
     var __boltffi_other_owned_handle = 0L
     var __boltffiEntered = false
@@ -58,16 +60,16 @@ class Engine internal constructor(internal val handle: Long) : AutoCloseable {
         val __boltffiArgument0 = this.boltffiHandle()
         val __boltffiArgument1 = __boltffi_other_owned_handle
         __boltffiEntered = true
-        Native.boltffi_method_class_demo_engine_swap(__boltffiArgument0, __boltffiArgument1)
+        Native.boltffi_method_class_4demo6Engine4swap(__boltffiArgument0, __boltffiArgument1)
     } catch (__boltffiFailure: UnsatisfiedLinkError) {
         __boltffiEntered = false
         throw __boltffiFailure
     } finally {
         if (!__boltffiEntered) {
-            if (__boltffi_other_owned_handle != 0L) Native.boltffi_release_class_demo_engine(__boltffi_other_owned_handle)
+            if (__boltffi_other_owned_handle != 0L) Native.boltffi_release_class_4demo6Engine(__boltffi_other_owned_handle)
         }
     }
-})())
+})()))
     }
 
     fun maybeSwap(other: Engine?): Engine? {
@@ -80,16 +82,16 @@ class Engine internal constructor(internal val handle: Long) : AutoCloseable {
         val __boltffiArgument0 = this.boltffiHandle()
         val __boltffiArgument1 = __boltffi_other_owned_handle
         __boltffiEntered = true
-        Native.boltffi_method_class_demo_engine_maybe_swap(__boltffiArgument0, __boltffiArgument1)
+        Native.boltffi_method_class_4demo6Engine10maybe_swap(__boltffiArgument0, __boltffiArgument1)
     } catch (__boltffiFailure: UnsatisfiedLinkError) {
         __boltffiEntered = false
         throw __boltffiFailure
     } finally {
         if (!__boltffiEntered) {
-            if (__boltffi_other_owned_handle != 0L) Native.boltffi_release_class_demo_engine(__boltffi_other_owned_handle)
+            if (__boltffi_other_owned_handle != 0L) Native.boltffi_release_class_4demo6Engine(__boltffi_other_owned_handle)
         }
     }
 })()
-        return if (__boltffi_handle == 0L) null else Engine(__boltffi_handle)
+        return if (__boltffi_handle == 0L) null else Engine(java.util.concurrent.atomic.AtomicLong(__boltffi_handle))
     }
 }

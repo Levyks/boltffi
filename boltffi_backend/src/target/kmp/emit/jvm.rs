@@ -7,17 +7,14 @@ use crate::{
     target::{jvm::NativeLibraries, kotlin::render::native_library_loader::NativeLibraryLoader},
 };
 
-use super::{
-    super::plan::{KmpApiBody, KmpFunctionPlan, KmpModule},
-    common::{RenderedFunction, unsupported_body_emission},
-};
+use super::common::RenderedFunction;
 
 #[derive(AskamaTemplate)]
 #[template(path = "target/kmp/platform_actual.kt", escape = "none")]
 struct PlatformActualTemplate<'module> {
     package_name: &'module str,
     internal_package: &'module str,
-    functions: Vec<RenderedFunction>,
+    functions: &'module [RenderedFunction],
 }
 
 #[derive(AskamaTemplate)]
@@ -25,8 +22,7 @@ struct PlatformActualTemplate<'module> {
 struct InternalKotlinTemplate<'module> {
     internal_package: &'module str,
     native_library_loader: String,
-    native_functions: Vec<RenderedFunction>,
-    functions: Vec<RenderedFunction>,
+    functions: &'module [RenderedFunction],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,56 +47,32 @@ impl KmpJvmAdapter {
     }
 }
 
-pub(crate) fn default_adapters() -> Vec<KmpJvmAdapter> {
-    vec![KmpJvmAdapter::jvm(), KmpJvmAdapter::android()]
+pub fn default_adapters() -> [KmpJvmAdapter; 2] {
+    [KmpJvmAdapter::jvm(), KmpJvmAdapter::android()]
 }
 
-pub(crate) fn render_platform_actual(
-    module: &KmpModule,
+pub fn render_platform_actual(
+    functions: &[RenderedFunction],
     package_name: &str,
     internal_package: &str,
 ) -> Result<String> {
-    let functions = function_plans(module)?;
-
     Ok(PlatformActualTemplate {
         package_name,
         internal_package,
-        functions: rendered_functions(&functions)?,
+        functions,
     }
     .render()?)
 }
 
-pub(crate) fn render_internal_kotlin(
-    module: &KmpModule,
+pub fn render_internal_kotlin(
+    functions: &[RenderedFunction],
     internal_package: &str,
     native_libraries: &NativeLibraries,
 ) -> Result<String> {
-    let functions = function_plans(module)?;
-
     Ok(InternalKotlinTemplate {
         internal_package,
         native_library_loader: NativeLibraryLoader::new(native_libraries).render()?,
-        native_functions: rendered_functions(&functions)?,
-        functions: rendered_functions(&functions)?,
+        functions,
     }
     .render()?)
-}
-
-fn function_plans(module: &KmpModule) -> Result<Vec<&KmpFunctionPlan>> {
-    module
-        .common()
-        .apis()
-        .iter()
-        .map(|api| match api.body() {
-            KmpApiBody::Function(function) => Ok(function),
-            KmpApiBody::Unsupported => Err(unsupported_body_emission()),
-        })
-        .collect()
-}
-
-fn rendered_functions(functions: &[&KmpFunctionPlan]) -> Result<Vec<RenderedFunction>> {
-    functions
-        .iter()
-        .map(|function| RenderedFunction::from_plan(function))
-        .collect()
 }

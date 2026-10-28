@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -30,6 +31,9 @@ struct PythonInterpreter {
     command: String,
     executable: PathBuf,
     identity: PythonInterpreterIdentity,
+    /// `sysconfig`'s `CFLAGS`, which setuptools compiles extensions with; absent
+    /// on Windows.
+    cflags: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -42,6 +46,7 @@ struct PythonInterpreterIdentity {
 struct PythonInterpreterRuntime {
     identity: PythonInterpreterIdentity,
     version: PythonRuntimeVersion,
+    cflags: Option<String>,
 }
 
 impl PythonInterpreter {
@@ -79,6 +84,7 @@ impl PythonInterpreter {
                 command: selection.command().to_string(),
                 executable,
                 identity: runtime.identity,
+                cflags: runtime.cflags,
             })
             .ok_or_else(|| CliError::CommandFailed {
                 command: format!(
@@ -96,12 +102,13 @@ impl PythonInterpreter {
             prefix: PathBuf,
             version_major: u8,
             version_minor: u8,
+            cflags: Option<String>,
         }
 
         let output = Command::new(executable)
             .args([
                 "-c",
-                "import json, pathlib, sys; print(json.dumps({'resolved_executable': str(pathlib.Path(sys.executable).resolve()), 'prefix': sys.prefix, 'version_major': sys.version_info[0], 'version_minor': sys.version_info[1]}))",
+                "import json, pathlib, sys, sysconfig; print(json.dumps({'resolved_executable': str(pathlib.Path(sys.executable).resolve()), 'prefix': sys.prefix, 'version_major': sys.version_info[0], 'version_minor': sys.version_info[1], 'cflags': sysconfig.get_config_var('CFLAGS')}))",
             ])
             .output()
             .map_err(|source| CliError::CommandFailed {
@@ -123,6 +130,7 @@ impl PythonInterpreter {
                     prefix: probe.prefix,
                 },
                 version: PythonRuntimeVersion::new(probe.version_major, probe.version_minor),
+                cflags: probe.cflags,
             })
             .map_err(|source| CliError::CommandFailed {
                 command: format!(
@@ -146,14 +154,49 @@ impl PythonInterpreter {
             })
     }
 
-    fn wheel_command(&self, source_root: &Path, wheel_directory: &Path) -> Command {
+    fn wheel_command(
+        &self,
+        source_root: &Path,
+        wheel_directory: &Path,
+        cflags: Option<String>,
+    ) -> Command {
         let mut command = Command::new(&self.executable);
         command.current_dir(source_root);
         command
             .args(["-m", "pip", "wheel", ".", "--wheel-dir"])
             .arg(wheel_directory)
             .arg("--no-deps");
+        if let Some(cflags) = cflags {
+            command.env("CFLAGS", cflags);
+        }
         command
+    }
+
+    /// `$CFLAGS` for the extension build, or `None` to leave it alone.
+    ///
+    /// A debug pack compiles the extension unoptimized, as the dev-profile cdylib
+    /// it wraps is. Current setuptools takes `$CFLAGS` in place of the
+    /// interpreter's own flags (older releases appended it), so those are passed
+    /// through and only the optimization is overridden after them (`-fno-lto`: an
+    /// LTO-built interpreter would otherwise still emit fat LTO objects). A
+    /// caller's own `$CFLAGS` is left as it is. MSVC reads no `$CFLAGS`, so
+    /// Windows is unchanged.
+    fn extension_cflags(
+        &self,
+        optimize_extension: bool,
+        caller_cflags: Option<OsString>,
+    ) -> Option<String> {
+        if optimize_extension || caller_cflags.is_some() {
+            return None;
+        }
+        Some(
+            self.cflags
+                .iter()
+                .map(String::as_str)
+                .chain(["-O0 -fno-lto"])
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 }
 
@@ -210,6 +253,10 @@ impl<'a> PythonWheelBuilder<'a> {
         let mut command = interpreter.wheel_command(
             &self.plan.layout.root_directory,
             &self.plan.layout.wheel_directory,
+            interpreter.extension_cflags(
+                self.plan.cargo_context.build_profile.is_release_like(),
+                std::env::var_os("CFLAGS"),
+            ),
         );
 
         if verbose {
@@ -363,16 +410,22 @@ fn verify_wheel_contents(
             })
         })?;
 
+    let file_names = archive
+        .file_names()
+        .collect::<zip::result::ZipResult<Vec<_>>>()
+        .map_err(|source| CliError::CommandFailed {
+            command: format!("failed to read wheel '{}': {source}", wheel_path.display()),
+            status: None,
+        })?;
+
     let extension_prefix = format!("{package}/{extension_module}.");
     let debug_extension_prefix = format!("{package}/{extension_module}_d.");
-    let has_extension = archive.file_names().any(|name| {
+    let has_extension = file_names.iter().any(|name| {
         (name.starts_with(&extension_prefix) && (name.ends_with(".so") || name.ends_with(".pyd")))
             || (name.starts_with(&debug_extension_prefix) && name.ends_with(".pyd"))
     });
     let shared_library_entry = format!("{package}/{shared_library}");
-    let has_shared_library = archive
-        .file_names()
-        .any(|name| name == shared_library_entry);
+    let has_shared_library = file_names.iter().any(|name| *name == shared_library_entry);
 
     let missing = [
         (!has_extension).then(|| format!("the compiled {package}.{extension_module} extension")),
@@ -428,7 +481,8 @@ fn absolutize_interpreter_path(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::ffi::{OsStr, OsString};
+    use std::path::{Path, PathBuf};
 
     use super::{
         PythonInterpreter, PythonInterpreterIdentity, PythonWheelBuilder, verify_wheel_contents,
@@ -524,6 +578,7 @@ mod tests {
                     resolved_executable: PathBuf::from("/usr/bin/python3.12"),
                     prefix: PathBuf::from("/usr"),
                 },
+                cflags: None,
             },
             PythonInterpreter {
                 command: "python3".to_string(),
@@ -532,6 +587,7 @@ mod tests {
                     resolved_executable: PathBuf::from("/usr/bin/python3.12"),
                     prefix: PathBuf::from("/usr"),
                 },
+                cflags: None,
             },
             PythonInterpreter {
                 command: "python3.13".to_string(),
@@ -540,6 +596,7 @@ mod tests {
                     resolved_executable: PathBuf::from("/usr/bin/python3.13"),
                     prefix: PathBuf::from("/usr"),
                 },
+                cflags: None,
             },
         ]);
 
@@ -562,6 +619,7 @@ mod tests {
                     resolved_executable: PathBuf::from("/usr/bin/python3.12"),
                     prefix: PathBuf::from("/tmp/.venv"),
                 },
+                cflags: None,
             },
             PythonInterpreter {
                 command: "/usr/bin/python3.12".to_string(),
@@ -570,9 +628,68 @@ mod tests {
                     resolved_executable: PathBuf::from("/usr/bin/python3.12"),
                     prefix: PathBuf::from("/usr"),
                 },
+                cflags: None,
             },
         ]);
 
         assert_eq!(interpreters.len(), 2);
+    }
+
+    fn interpreter(cflags: Option<&str>) -> PythonInterpreter {
+        PythonInterpreter {
+            command: "python3".to_string(),
+            executable: PathBuf::from("/usr/bin/python3"),
+            identity: PythonInterpreterIdentity {
+                resolved_executable: PathBuf::from("/usr/bin/python3"),
+                prefix: PathBuf::from("/usr"),
+            },
+            cflags: cflags.map(str::to_string),
+        }
+    }
+
+    /// The interpreter's flags survive (on a universal2 macOS build they carry
+    /// the `-arch` pair), and only the optimization is overridden after them.
+    #[test]
+    fn debug_extension_build_keeps_the_interpreter_flags_but_not_its_optimization() {
+        let cflags = interpreter(Some("-DNDEBUG -O3 -arch arm64 -arch x86_64 -flto=auto"))
+            .extension_cflags(false, None);
+
+        assert_eq!(
+            cflags.as_deref(),
+            Some("-DNDEBUG -O3 -arch arm64 -arch x86_64 -flto=auto -O0 -fno-lto"),
+        );
+        assert_eq!(
+            interpreter(None).extension_cflags(false, None).as_deref(),
+            Some("-O0 -fno-lto"),
+        );
+    }
+
+    #[test]
+    fn release_and_caller_cflags_leave_the_extension_flags_alone() {
+        let interpreter = interpreter(Some("-O3"));
+
+        assert_eq!(interpreter.extension_cflags(true, None), None);
+        assert_eq!(
+            interpreter.extension_cflags(false, Some(OsString::from("-O2 -g"))),
+            None,
+        );
+    }
+
+    #[test]
+    fn wheel_command_sets_cflags_only_when_given() {
+        let cflags = |cflags: Option<&str>| {
+            interpreter(None)
+                .wheel_command(
+                    Path::new("/tmp/pkg"),
+                    Path::new("/tmp/wheelhouse"),
+                    cflags.map(str::to_string),
+                )
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("CFLAGS"))
+                .and_then(|(_, value)| value.map(OsStr::to_os_string))
+        };
+
+        assert_eq!(cflags(Some("-O0")), Some(OsString::from("-O0")));
+        assert_eq!(cflags(None), None);
     }
 }

@@ -12,6 +12,7 @@ pub enum PackCommand {
     DartWeb(PackDartWebOptions),
     CSharp(PackCSharpOptions),
     C(PackCOptions),
+    Ruby(PackRubyOptions),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +83,11 @@ pub struct PackCSharpOptions {
 }
 
 pub struct PackCOptions {
+    pub execution: PackExecutionOptions,
+    pub experimental: bool,
+}
+
+pub struct PackRubyOptions {
     pub execution: PackExecutionOptions,
     pub experimental: bool,
 }

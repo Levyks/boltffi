@@ -1,6 +1,4 @@
-use boltffi_binding::{
-    CustomTypeId, DefaultValue, EnumDecl, FloatValue, Native, Primitive, TypeRef,
-};
+use boltffi_binding::{CustomTypeId, DefaultValue, EnumDecl, Native, Primitive, TypeRef};
 
 use crate::{
     core::{
@@ -30,16 +28,14 @@ impl DefaultExpression {
         if let (TypeRef::Optional(inner), false) = (ty, matches!(value, DefaultValue::Null)) {
             return Self::render(inner, value, context);
         }
+        if let TypeRef::Primitive(primitive) = ty {
+            return Self::primitive(*primitive, value);
+        }
 
         match value {
-            DefaultValue::Bool(value) => Ok(Expression::bool(*value)),
-            DefaultValue::Integer(value) => match ty {
-                TypeRef::Primitive(primitive) => {
-                    KotlinPrimitive::new(*primitive).integer_literal(*value)
-                }
-                _ => Err(KotlinHost::unsupported("integer default type")),
-            },
-            DefaultValue::Float(value) => Self::float(*value, ty),
+            DefaultValue::Bool(_) | DefaultValue::Integer(_) | DefaultValue::Float(_) => Err(
+                KotlinHost::unsupported("default value requires a primitive type"),
+            ),
             DefaultValue::String(value) => Ok(Expression::literal(Literal::string(value))),
             DefaultValue::EnumVariant {
                 enum_name,
@@ -65,6 +61,24 @@ impl DefaultExpression {
             },
             DefaultValue::Null => Ok(Expression::null()),
             _ => Err(KotlinHost::unsupported("unknown default literal")),
+        }
+    }
+
+    pub fn primitive(primitive: Primitive, value: &DefaultValue) -> Result<Expression> {
+        match (primitive, value) {
+            (Primitive::Bool, DefaultValue::Bool(value)) => Ok(Expression::bool(*value)),
+            (_, DefaultValue::Integer(value)) => {
+                KotlinPrimitive::new(primitive).integer_literal(*value)
+            }
+            (Primitive::F32, DefaultValue::Float(value)) => {
+                Ok(Expression::float(value.to_f64(), true))
+            }
+            (Primitive::F64, DefaultValue::Float(value)) => {
+                Ok(Expression::float(value.to_f64(), false))
+            }
+            _ => Err(KotlinHost::unsupported(
+                "default value does not match its primitive type",
+            )),
         }
     }
 
@@ -95,14 +109,6 @@ impl DefaultExpression {
         match context.custom_type_mapping(custom_type) {
             Some(mapping) => KotlinHost::custom_type_decode(mapping, representation),
             None => Ok(representation),
-        }
-    }
-
-    fn float(value: FloatValue, ty: &TypeRef) -> Result<Expression> {
-        match ty {
-            TypeRef::Primitive(Primitive::F32) => Ok(Expression::float(value.to_f64(), true)),
-            TypeRef::Primitive(Primitive::F64) => Ok(Expression::float(value.to_f64(), false)),
-            _ => Err(KotlinHost::unsupported("float default type")),
         }
     }
 }

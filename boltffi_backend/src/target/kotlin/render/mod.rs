@@ -23,6 +23,7 @@ pub use class::Class;
 use constant::AssociatedConstants;
 pub use constant::Constant;
 pub use custom_type::CustomType;
+pub use default_value::DefaultExpression;
 use documentation::Documentation;
 pub use enumeration::Enumeration;
 pub use function::Function;

@@ -2,6 +2,13 @@ import Demo
 import XCTest
 
 final class DefaultArgumentsTests: DemoTestCase {
+    func testRequiredArgumentsAfterDefaults() {
+        demoCase("case:primitives.default_arguments.should_keep_required_arguments_after_defaults")
+        XCTAssertEqual(addDefault(right: 10), 15)
+        XCTAssertEqual(addDefault(right: 10, negate: true), -15)
+        XCTAssertEqual(addDefault(left: 0, right: 10), 10)
+    }
+
     final class Doubler: ValueCallback {
         func onValue(value: Int32) -> Int32 { value * 2 }
     }

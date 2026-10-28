@@ -334,6 +334,13 @@ If you enable `[targets.android.debug_symbols]`, BoltFFI also writes `{crate_art
 
 For release-style packaging, BoltFFI rejects this option unless the selected Cargo profile has debuginfo enabled.
 
+Each JNI library also exports its `boltffi_*` C symbols, for native code that calls the library directly. When only the Kotlin bindings call it, turn that off and the linker drops the code no JNI entry point reaches:
+
+```toml
+[targets.android.link]
+export_c_symbols = false
+```
+
 ### Output Structure
 
 ```
@@ -794,7 +801,7 @@ This flow does the work a Python package needs.
 1. regenerates the Python source package unless `--regenerate false`
 2. builds or reuses the host `cdylib`
 3. stages the shared library into the generated package
-4. builds a wheel with `python -m pip wheel`
+4. builds a wheel with `python -m pip wheel`; without `--release` the C extension is compiled unoptimized (`-O0`) like the debug `cdylib`, unless `CFLAGS` is set
 
 ### Configuration
 

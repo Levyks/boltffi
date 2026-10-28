@@ -83,6 +83,7 @@ pub fn echo_i32(v: i32) -> i32 { v }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Point { pub x: f64, pub y: f64 }
 
+#[export]
 #[benchmark_candidate(object, uniffi)]                             // stateful object
 pub struct Counter { /* … */ }
 
@@ -121,8 +122,9 @@ just demo-verify
 
 This packs the artifacts, runs each platform's own test entry point, and fails on the first regression. Supported host → platforms:
 
-- **macOS**: apple, kotlin, java, wasm, python, csharp, dart, c
-- **Linux / Windows**: java, wasm, python, csharp, dart, c
+- **macOS**: apple, kotlin, java, wasm, python, csharp, dart, c, ruby
+- **Linux**: java, wasm, python, csharp, dart, c, ruby
+- **Windows**: java, wasm, python, csharp, dart, c
 
 Scope it down when iterating:
 

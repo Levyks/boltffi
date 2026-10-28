@@ -66,6 +66,7 @@ public final class DemoTest {
             testSingleThreadedStateHolder();
             testResultFunctions();
             testBorrowedClassRef();
+            testEnumBackedClass();
             testResultClassMethods();
             testResultEnumErrors();
             testStreams();
@@ -731,6 +732,11 @@ public final class DemoTest {
 
     private static void testParameterDefaults() {
         System.out.println("Testing parameter defaults...");
+        demoCase("case:primitives.default_arguments.should_keep_required_arguments_after_defaults");
+        assert Demo.addDefault(10) == 15;
+        assert Demo.addDefault(5, 10, true) == -15;
+        assert Demo.addDefault(0, 10) == 10;
+
         demoCase("case:primitives.default_arguments.should_apply_omitted_scalar_and_string_defaults");
         assert Demo.repeatGreeting("ada").equals("hello ada, hello ada");
         assert Demo.repeatGreeting("ada", "hi").equals("hi ada, hi ada");
@@ -2885,8 +2891,26 @@ public final class DemoTest {
         System.out.println("  PASS\n");
     }
 
+    private static void testEnumBackedClass() {
+        System.out.println("Testing enum-backed class...");
+
+        demoCase("case:classes.enum_backed.traffic_light.seconds_left.should_match_on_the_variant_behind_the_handle");
+        try (TrafficLight red = new TrafficLight(); TrafficLight green = red.turnGreen(30)) {
+            assert red.secondsLeft() == 0 : "TrafficLight.secondsLeft on the red variant";
+            assert green.secondsLeft() == 30 : "TrafficLight.secondsLeft on the green variant";
+        }
+
+        System.out.println("  PASS\n");
+    }
+
     private static void testResultClassMethods() {
         System.out.println("Testing result class methods...");
+
+        demoCase("case:classes.methods.counter.decrement.should_call_a_method_declared_in_a_methods_block");
+        try (Counter counter = new Counter(5)) {
+            counter.decrement();
+            assert counter.get() == 4 : "Counter.decrement from a methods block";
+        }
 
         try (Counter counter = new Counter(0)) {
             counter.increment();

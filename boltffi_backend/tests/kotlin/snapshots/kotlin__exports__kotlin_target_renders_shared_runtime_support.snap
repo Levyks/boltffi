@@ -314,9 +314,9 @@ internal class WireReader(private val bytes: ByteArray) {
     }
 
     private inline fun <T> readOptional(read: (WireReader) -> T): T? {
-        return when (readU8()) {
-            0.toUByte() -> null
-            1.toUByte() -> read(this)
+        return when (readU8().toInt()) {
+            0 -> null
+            1 -> read(this)
             else -> throw IllegalArgumentException("invalid optional wire tag")
         }
     }
@@ -576,10 +576,10 @@ internal class WireWriter(initialCapacity: Int) {
 
     private inline fun <T> writeOptional(value: T?, write: (WireWriter, T) -> Unit) {
         if (value == null) {
-            writeU8(0.toUByte())
+            writeU8(0u)
             return
         }
-        writeU8(1.toUByte())
+        writeU8(1u)
         write(this, value)
     }
 }
@@ -666,41 +666,38 @@ private object Native {
             return
         }
 
-        if (tryLoadOptionalDesktopLibrary(fallbackLibrary)) {
+        if (tryLoadDesktopLibrary(fallbackLibrary) == null) {
             preferredFailure = tryLoadDesktopLibrary(preferredLibrary)
             if (preferredFailure == null) {
                 return
             }
         }
 
-        throw preferredFailure
+        val resources = bundledLibraryResourceCandidates(System.mapLibraryName(preferredLibrary))
+        throw UnsatisfiedLinkError(
+            "Could not load native library '$preferredLibrary'\n" +
+                "Searched JVM resources ${resources.joinToString()} and java.library.path\n" +
+                "For Kotlin Multiplatform, run boltffi pack kmp --experimental and include src/jvmMain/resources\n" +
+                "For Android Kotlin bindings used on desktop, enable targets.android.kotlin.desktop_pack.enabled, " +
+                "run boltffi pack android and include desktopJniLibs in the JVM resource path " +
+                "or set targets.android.kotlin.desktop_pack.output to a JVM resource directory"
+        ).apply { initCause(preferredFailure) }
     }
 
     private fun tryLoadDesktopLibrary(libraryName: String): UnsatisfiedLinkError? {
-        try {
-            if (loadBundledLibraryIfPresent(libraryName) || loadExternalLibraryIfPresent(libraryName)) {
+        val bundledFailure = try {
+            if (loadBundledLibraryIfPresent(libraryName)) {
                 return null
             }
-            return UnsatisfiedLinkError("Could not load native library '$libraryName'")
+            null
         } catch (error: UnsatisfiedLinkError) {
-            return error
+            error
         }
-    }
-
-    private fun tryLoadOptionalDesktopLibrary(libraryName: String): Boolean {
-        return try {
-            loadBundledLibraryIfPresent(libraryName) || loadExternalLibraryIfPresent(libraryName)
-        } catch (_: UnsatisfiedLinkError) {
-            false
-        }
-    }
-
-    private fun loadExternalLibraryIfPresent(libraryName: String): Boolean {
         return try {
             System.loadLibrary(libraryName)
-            true
-        } catch (_: UnsatisfiedLinkError) {
-            false
+            null
+        } catch (error: UnsatisfiedLinkError) {
+            bundledFailure?.apply { addSuppressed(error) } ?: error
         }
     }
 
@@ -780,22 +777,22 @@ private object Native {
             else -> emptyList()
         }
     }
-    @JvmStatic external fun boltffi_function_demo_add(left: Int, right: Int): Int
-    @JvmStatic external fun boltffi_function_demo_enabled(flag: Boolean): Boolean
-    @JvmStatic external fun boltffi_function_demo_refresh(): Unit
-    @JvmStatic external fun boltffi_function_demo_echo_bytes(bytes: java.nio.ByteBuffer, __boltffi_bytes_len: Int): ByteArray?
+    @JvmStatic external fun boltffi_function_4demo3add(left: Int, right: Int): Int
+    @JvmStatic external fun boltffi_function_4demo7enabled(flag: Boolean): Boolean
+    @JvmStatic external fun boltffi_function_4demo7refresh(): Unit
+    @JvmStatic external fun boltffi_function_4demo10echo_bytes(bytes: java.nio.ByteBuffer, __boltffi_bytes_len: Int): ByteArray?
 }
 
 fun add(left: Int, right: Int): Int {
-    return Native.boltffi_function_demo_add(left, right)
+    return Native.boltffi_function_4demo3add(left, right)
 }
 
 fun enabled(flag: Boolean): Boolean {
-    return Native.boltffi_function_demo_enabled(flag)
+    return Native.boltffi_function_4demo7enabled(flag)
 }
 
 fun refresh() {
-    Native.boltffi_function_demo_refresh()
+    Native.boltffi_function_4demo7refresh()
 }
 
 fun echoBytes(bytes: ByteArray): ByteArray {
@@ -803,7 +800,7 @@ fun echoBytes(bytes: ByteArray): ByteArray {
     val __boltffi_bytes_writer = __boltffi_bytes_wire.writer
     __boltffi_bytes_writer.writeBytes(bytes)
     try {
-        val __boltffi_result = Native.boltffi_function_demo_echo_bytes(__boltffi_bytes_wire.directBuffer(), __boltffi_bytes_wire.size()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_result = Native.boltffi_function_4demo10echo_bytes(__boltffi_bytes_wire.directBuffer(), __boltffi_bytes_wire.size()) ?: throw IllegalStateException("null buffer returned")
         val __boltffi_reader = WireReader(__boltffi_result)
         return __boltffi_reader.readBytes()
     } finally {

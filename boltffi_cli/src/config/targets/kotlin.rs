@@ -31,6 +31,7 @@ pub struct KotlinConfig {
 pub struct KotlinDesktopPackConfig {
     #[serde(default)]
     pub enabled: bool,
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -137,10 +138,23 @@ pub struct AndroidPackConfig {
     pub output: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AndroidLinkConfig {
     #[serde(default)]
     pub extra_args: Vec<String>,
+    /// Whether the library exports its `boltffi_*` C symbols beside the JNI ones. Off, the
+    /// linker drops whatever no JNI export reaches.
+    #[serde(default = "default_true")]
+    pub export_c_symbols: bool,
+}
+
+impl Default for AndroidLinkConfig {
+    fn default() -> Self {
+        Self {
+            extra_args: Vec::new(),
+            export_c_symbols: true,
+        }
+    }
 }
 
 fn default_android_output() -> PathBuf {

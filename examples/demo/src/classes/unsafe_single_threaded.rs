@@ -11,12 +11,13 @@ pub struct MarkerOptions {
     pub title: String,
 }
 
+#[export(single_threaded)]
 pub struct Marker {
     id: u32,
     title: String,
 }
 
-#[export(single_threaded)]
+#[export]
 impl Marker {
     pub fn id(&self) -> u32 {
         self.id
@@ -27,12 +28,13 @@ impl Marker {
     }
 }
 
+#[export(single_threaded)]
 #[derive(Default)]
 pub struct MapView {
     markers_created: Cell<u32>,
 }
 
-#[export(single_threaded)]
+#[export]
 impl MapView {
     pub fn new() -> Self {
         Self {
@@ -43,7 +45,12 @@ impl MapView {
     #[demo_bench_macros::demo_case(
         "classes.unsafe_single_threaded.map_view.add_marker.should_return_single_threaded_marker_handle",
         justification = "Ensure a single-threaded class method returns another single-threaded class as an owned object handle.",
-        directions = "Call `classes::unsafe_single_threaded::MapView::add_marker` through the generated binding and assert the returned Marker handle exposes the MarkerOptions fields."
+        directions = "Call `classes::unsafe_single_threaded::MapView::add_marker` through the generated binding and assert the returned Marker handle exposes the MarkerOptions fields.",
+        exclude(
+            ruby,
+            reason = ExclusionReason::ImplementationGap,
+            details = "the Ruby target does not support classes yet"
+        )
     )]
     pub fn add_marker(&self, options: MarkerOptions) -> Marker {
         self.markers_created.set(self.markers_created.get() + 1);
@@ -58,6 +65,7 @@ impl MapView {
     }
 }
 
+#[export(single_threaded)]
 pub struct StateHolder {
     label: String,
     value: i32,
@@ -69,7 +77,7 @@ pub struct StateHolder {
 // useful when you know only one thread touches this, e.g. main-thread-only
 // UI objects on iOS/Android where you don't want to pay for locks you'll
 // never need. proceed with caution.
-#[export(single_threaded)]
+#[export]
 impl StateHolder {
     pub fn new(label: String) -> Self {
         Self {
@@ -141,12 +149,13 @@ impl StateHolder {
     }
 }
 
+#[export(single_threaded)]
 #[derive(Default)]
 pub struct CounterSingleThreaded {
     value: i32,
 }
 
-#[export(single_threaded)]
+#[export]
 impl CounterSingleThreaded {
     pub fn new() -> Self {
         Self { value: 0 }
@@ -165,12 +174,13 @@ impl CounterSingleThreaded {
     }
 }
 
+#[export(single_threaded)]
 #[derive(Default)]
 pub struct AccumulatorSingleThreaded {
     value: i64,
 }
 
-#[export(single_threaded)]
+#[export]
 impl AccumulatorSingleThreaded {
     pub fn new() -> Self {
         Self { value: 0 }

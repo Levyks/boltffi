@@ -1,7 +1,7 @@
 use boltffi_ast::{AttributeInput, ClassThreadSafety, Path, UserAttr};
 use syn::parse::Parser;
 
-use crate::ScanError;
+use crate::{ScanError, attributes};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Marker {
@@ -80,7 +80,7 @@ impl Marker {
     }
 
     fn from_attribute(attr: &syn::Attribute) -> Result<Option<Self>, ScanError> {
-        match marker_name(attr).as_deref() {
+        match attributes::owned_name(attr) {
             Some("data") => Self::from_data(attr).map(Some),
             Some("custom_ffi") => Self::empty(attr, Self::CustomFfi).map(Some),
             Some("error") => Self::empty(attr, Self::Error).map(Some),
@@ -125,7 +125,7 @@ impl ExportMarker {
         self.class_thread_safety.unwrap_or_default()
     }
 
-    pub fn requires_class_impl(self) -> bool {
+    pub fn declares_class_thread_safety(self) -> bool {
         self.class_thread_safety.is_some()
     }
 
@@ -154,24 +154,17 @@ fn parse_export_args(input: syn::parse::ParseStream<'_>) -> syn::Result<ExportMa
     }
 }
 
-fn marker_name(attr: &syn::Attribute) -> Option<String> {
-    let segments = attr.path().segments.iter().collect::<Vec<_>>();
-    match segments.as_slice() {
-        [segment] => Some(segment.ident.to_string()).filter(|name| {
-            matches!(
-                name.as_str(),
-                "custom_ffi" | "data" | "error" | "export" | "skip"
-            )
-        }),
-        [namespace, marker] if namespace.ident == "boltffi" => Some(marker.ident.to_string())
-            .filter(|name| {
-                matches!(
-                    name.as_str(),
-                    "custom_ffi" | "data" | "error" | "export" | "skip"
-                )
-            }),
-        _ => None,
+pub(crate) fn export_marker_from_args(
+    tokens: proc_macro2::TokenStream,
+) -> Result<ExportMarker, ScanError> {
+    if tokens.is_empty() {
+        return Ok(ExportMarker::default());
     }
+    syn::parse::Parser::parse2(parse_export_args, tokens.clone()).map_err(|_| {
+        ScanError::InvalidMarker {
+            attribute: format!("export({tokens})"),
+        }
+    })
 }
 
 fn invalid(attr: &syn::Attribute) -> ScanError {
@@ -308,6 +301,54 @@ mod tests {
             Marker::detect(&enum_attrs("#[boltffi::error] enum E { Io, Parse }")),
             Ok(Some(Marker::Error))
         );
+    }
+
+    #[test]
+    fn ignores_unqualified_error_helpers() {
+        [
+            "#[error(\"request failed\")]",
+            "#[error(transparent)]",
+            "#[error()]",
+        ]
+        .into_iter()
+        .for_each(|helper| {
+            assert_eq!(
+                Marker::detect(&struct_attrs(&format!(
+                    "{helper} struct ServiceError {{ message: String }}"
+                ))),
+                Ok(None),
+            );
+        });
+    }
+
+    #[test]
+    fn detects_error_markers_alongside_thiserror_helpers() {
+        ["error", "boltffi::error"].into_iter().for_each(|marker| {
+            assert_eq!(
+                Marker::detect(&struct_attrs(&format!(
+                    "#[{marker}] #[derive(Debug, thiserror::Error)] \
+                         #[error(\"request failed: {{message}}\")] \
+                         struct ServiceError {{ message: String }}"
+                ))),
+                Ok(Some(Marker::Error)),
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_argument_bearing_qualified_error_markers() {
+        ["foo", "\"request failed\"", ""]
+            .into_iter()
+            .for_each(|arguments| {
+                assert_eq!(
+                    Marker::detect(&struct_attrs(&format!(
+                        "#[boltffi::error({arguments})] struct ServiceError {{ message: String }}"
+                    ))),
+                    Err(ScanError::InvalidMarker {
+                        attribute: format!("boltffi::error({arguments})"),
+                    }),
+                );
+            });
     }
 
     #[test]

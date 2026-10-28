@@ -20,6 +20,7 @@ pub enum GenerateTarget {
     Python,
     CSharp,
     C,
+    Ruby,
     All,
 }
 
@@ -45,6 +46,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::Python => bindings::run_generation(config, &options),
         GenerateTarget::CSharp => bindings::run_generation(config, &options),
         GenerateTarget::C => bindings::run_generation(config, &options),
+        GenerateTarget::Ruby => bindings::run_generation(config, &options),
         GenerateTarget::All => {
             if config.should_process(Target::Swift, options.experimental) {
                 bindings::run_generation(
@@ -155,6 +157,19 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
                     config,
                     &GenerateOptions {
                         target: GenerateTarget::C,
+                        output: options.output.clone(),
+                        experimental: options.experimental,
+                        cargo_args: options.cargo_args.clone(),
+                        deny_skipped: options.deny_skipped,
+                    },
+                )?;
+            }
+
+            if config.should_process(Target::Ruby, options.experimental) {
+                bindings::run_generation(
+                    config,
+                    &GenerateOptions {
+                        target: GenerateTarget::Ruby,
                         output: options.output.clone(),
                         experimental: options.experimental,
                         cargo_args: options.cargo_args.clone(),
@@ -544,7 +559,7 @@ Email = { type = "java.net.URI", conversion = "url_string" }
         assert!(jvm_internal.contains("private object Native"));
         assert!(jni_glue.contains("#include <boltffi_generated/demo.h>"));
         assert!(build_gradle.contains("kotlin(\"multiplatform\")"));
-        assert!(build_gradle.contains("kotlin(\"multiplatform\") version \"2.4.20\""));
+        assert!(build_gradle.contains("kotlin(\"multiplatform\") version \"2.4.21\""));
         assert!(build_gradle.contains("import org.jetbrains.kotlin.gradle.dsl.JvmTarget"));
         assert!(build_gradle.contains("jvmTarget.set(JvmTarget.JVM_1_8)"));
         assert!(build_gradle.contains("androidTarget {"));

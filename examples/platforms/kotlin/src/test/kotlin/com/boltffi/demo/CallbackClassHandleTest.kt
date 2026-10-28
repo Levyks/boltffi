@@ -115,14 +115,14 @@ class CallbackClassHandleTest {
             receiver.first!!.close()
             val native = Class.forName("com.boltffi.demo.Native")
             val deliver = native.getDeclaredMethod(
-                "boltffi_function_demo_callbacks_class_handles_deliver_message_pair",
+                "boltffi_function_4demo20deliver_message_pair",
                 Long::class.javaPrimitiveType,
                 Long::class.javaPrimitiveType,
                 Boolean::class.javaPrimitiveType,
             )
             deliver.isAccessible = true
             val failure = assertFailsWith<InvocationTargetException> {
-                deliver.invoke(null, Long.MAX_VALUE, drops.handle, true)
+                deliver.invoke(null, Long.MAX_VALUE, drops.boltffiHandle(), true)
             }
             assertIs<BoltFfiErrorBufferException>(failure.cause)
             assertEquals(3u, drops.count())

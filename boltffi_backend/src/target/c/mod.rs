@@ -171,14 +171,13 @@ impl host::HostBackend for CHost {
                 Ok(definition) => {
                     record_definitions.insert(record.id(), definition);
                 }
-                Err(Error::UnsupportedTarget { shape, .. })
-                    if matches!(context.coverage_mode(), CoverageMode::Partial) =>
-                {
+                Err(Error::UnsupportedTarget { shape, .. } | Error::UnsupportedCAbi { shape }) => {
+                    let label = DeclarationLabel::from_ref(declaration.declaration());
+                    if matches!(context.coverage_mode(), CoverageMode::Complete) {
+                        return Err(label.coverage_error("c", shape));
+                    }
                     rendered.remove(&declaration.declaration().id());
-                    coverage.push(UnsupportedDeclaration::new(
-                        DeclarationLabel::from_ref(declaration.declaration()),
-                        shape,
-                    ));
+                    coverage.push(UnsupportedDeclaration::new(label, shape));
                 }
                 Err(error) => return Err(error),
             }
@@ -201,13 +200,11 @@ impl host::HostBackend for CHost {
                         return Some(Ok(declaration));
                     }
                     let shape = "depends on a declaration without a C binding";
+                    let label = DeclarationLabel::from_ref(declaration.declaration());
                     if !matches!(context.coverage_mode(), CoverageMode::Partial) {
-                        return Some(Err(Error::UnsupportedTarget { target: "c", shape }));
+                        return Some(Err(label.coverage_error("c", shape)));
                     }
-                    coverage.push(UnsupportedDeclaration::new(
-                        DeclarationLabel::from_ref(declaration.declaration()),
-                        shape,
-                    ));
+                    coverage.push(UnsupportedDeclaration::new(label, shape));
                     rendered.remove(&declaration.declaration().id());
                     None
                 })
@@ -271,6 +268,83 @@ mod tests {
             .to_owned()
     }
 
+    fn compiler_available(tool: &str) -> bool {
+        if std::process::Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return true;
+        }
+        assert!(
+            std::env::var_os("BOLTFFI_REQUIRE_CC").is_none(),
+            "BOLTFFI_REQUIRE_CC is set but `{tool}` is unavailable"
+        );
+        eprintln!("skipping: `{tool}` is unavailable");
+        false
+    }
+
+    #[test]
+    fn compiler_requirement_controls_missing_toolchain_failure() {
+        const CHILD_ENV: &str = "BOLTFFI_TEST_COMPILER_REQUIREMENT_CHILD";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            assert!(!compiler_available("boltffi-missing-test-compiler"));
+            return;
+        }
+        let executable = std::env::current_exe().expect("test executable");
+        let test_name = concat!(
+            module_path!(),
+            "::compiler_requirement_controls_missing_toolchain_failure"
+        )
+        .split_once("::")
+        .expect("crate-qualified test name")
+        .1;
+        for required in [false, true] {
+            let mut command = std::process::Command::new(&executable);
+            command
+                .args(["--exact", test_name, "--nocapture"])
+                .env(CHILD_ENV, "1")
+                .env("PATH", "")
+                .env_remove("BOLTFFI_REQUIRE_CC");
+            if required {
+                command.env("BOLTFFI_REQUIRE_CC", "1");
+            }
+            let output = command.output().expect("run isolated compiler check");
+            assert_eq!(
+                output.status.success(),
+                !required,
+                "required={required}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn complete_coverage_identifies_unrenderable_record() {
+        let bindings = bindings(
+            r#"
+            #[export]
+            pub trait Listener: Send + Sync {
+                fn on_value(&self, value: i32);
+            }
+            #[data]
+            pub struct CallbackRecord {
+                pub listener: std::sync::Arc<dyn Listener>,
+            }
+            "#,
+        );
+        let target = CHost::new().into_target(&bindings).expect("target");
+        let error = target
+            .render(&bindings)
+            .expect_err("unsupported record codec");
+        let crate::core::Error::IncompleteCoverage { target, reason } = error else {
+            panic!("expected a declaration-specific coverage error, got {error}");
+        };
+        assert_eq!(target, "c");
+        assert!(reason.contains("callback::record"), "{reason}");
+    }
+
     fn empty_bindings() -> Bindings<Native> {
         let source = boltffi_scan::scan_file(
             syn::parse_str("").expect("valid empty source"),
@@ -330,7 +404,7 @@ mod tests {
             .expect("boltffi.h")
             .contents();
         assert!(header.contains("static inline int32_t demo_add(int32_t left, int32_t right) {"));
-        assert!(header.contains("boltffi_function_demo_add(left, right)"));
+        assert!(header.contains("boltffi_function_4demo3add(left, right)"));
     }
 
     #[test]
@@ -584,8 +658,7 @@ mod tests {
     #[test]
     fn emitted_header_compiles_with_cc() {
         use std::process::Command;
-        if Command::new("cc").arg("--version").output().is_err() {
-            eprintln!("skipping: no C toolchain");
+        if !compiler_available("cc") {
             return;
         }
         let bindings = bindings(
@@ -681,7 +754,7 @@ mod tests {
         // half missing fails the compile below. "measure" takes a shared slice
         // of the same record, which packs through an encoded slice instead.
         assert!(header.contains(
-            "boltffi_function_demo_total((const uint8_t *)pairs.ptr, pairs.len * sizeof(DemoPair))"
+            "boltffi_function_4demo5total((const uint8_t *)pairs.ptr, pairs.len * sizeof(DemoPair))"
         ));
 
         let dir = std::env::temp_dir().join(format!("boltffi_c_test_{}", std::process::id()));
@@ -701,8 +774,7 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
 
-        if Command::new("c++").arg("--version").output().is_err() {
-            eprintln!("skipping: no C++ toolchain");
+        if !compiler_available("c++") {
             return;
         }
         std::fs::write(
@@ -759,7 +831,7 @@ mod tests {
         assert!(header.contains("typedef struct { uint64_t _boltffi_handle; } DemoEngine;"));
         assert!(header.contains("static inline DemoEngine demo_engine_new(uint64_t seed)"));
         assert!(header.contains(
-            "boltffi_result._boltffi_handle = boltffi_init_class_demo_engine_new(seed);"
+            "boltffi_result._boltffi_handle = boltffi_init_class_4demo6Engine3new(seed);"
         ));
         assert!(header.contains(
             "static inline uint32_t demo_engine_score(const DemoEngine *receiver, DemoPoint point)"
@@ -770,7 +842,7 @@ mod tests {
         ));
         assert!(
             header.contains(
-                "boltffi_method_class_demo_engine_score(receiver->_boltffi_handle, point)"
+                "boltffi_method_class_4demo6Engine5score(receiver->_boltffi_handle, point)"
             )
         );
         assert!(header.contains("value->_boltffi_handle=0;"));
@@ -807,20 +879,19 @@ mod tests {
                 "typedef struct {\n    BoltFFICallbackHandle raw;\n} DemoListenerHandle;"
             )
         );
-        assert!(header.contains("boltffi_register_callback_demo_listener"));
+        assert!(header.contains("boltffi_register_callback_4demo8Listener"));
         assert!(header.contains(
             "static inline DemoListenerHandle demo_listener_create(const DemoListener *vtable, uint64_t identity)"
         ));
         assert!(header.contains(
-            "int64_t boltffi_function_demo_install(BoltFFICallbackHandle listener, uint32_t code, uint32_t value)"
+            "int64_t boltffi_function_4demo7install(BoltFFICallbackHandle listener, uint32_t code, uint32_t value)"
         ));
         assert!(header.contains(
             "static inline int64_t demo_install(DemoListenerHandle *listener, uint32_t code, uint32_t value)"
         ));
-        assert!(header.contains("boltffi_function_demo_install(listener->raw, code, value)"));
+        assert!(header.contains("boltffi_function_4demo7install(listener->raw, code, value)"));
 
-        if Command::new("cc").arg("--version").output().is_err() {
-            eprintln!("skipping: no C toolchain");
+        if !compiler_available("cc") {
             return;
         }
         let dir =
@@ -834,16 +905,16 @@ mod tests {
 
 static const ___ListenerVTable *registered_listener;
 
-void boltffi_register_callback_demo_listener(const ___ListenerVTable *vtable) {
+void boltffi_register_callback_4demo8Listener(const ___ListenerVTable *vtable) {
     registered_listener = vtable;
 }
 
-BoltFFICallbackHandle boltffi_create_callback_demo_listener(uint64_t handle) {
+BoltFFICallbackHandle boltffi_create_callback_4demo8Listener(uint64_t handle) {
     BoltFFICallbackHandle callback = {handle, registered_listener};
     return callback;
 }
 
-int64_t boltffi_function_demo_install(BoltFFICallbackHandle listener, uint32_t code, uint32_t value) {
+int64_t boltffi_function_4demo7install(BoltFFICallbackHandle listener, uint32_t code, uint32_t value) {
     const ___ListenerVTable *vtable = (const ___ListenerVTable *)listener.vtable;
     vtable->notify(listener.handle, code);
     return vtable->on_value(listener.handle, value);
@@ -945,7 +1016,7 @@ int main(void) {
             header.contains("static inline DemoDivideResult demo_divide(int32_t value, int32_t b)")
         );
         assert!(header.contains(
-            "FfiBuf_u8 boltffi_error = boltffi_function_demo_divide(value, b, &boltffi_success);"
+            "FfiBuf_u8 boltffi_error = boltffi_function_4demo6divide(value, b, &boltffi_success);"
         ));
         assert!(!header.contains("boltffi_status_t"));
     }
@@ -998,7 +1069,7 @@ int main(void) {
     #[test]
     fn encoded_record_facade_compiles_and_round_trips_at_runtime() {
         use std::process::Command;
-        if Command::new("cc").arg("--version").output().is_err() {
+        if !compiler_available("cc") {
             return;
         }
         let bindings = bindings(
@@ -1067,24 +1138,24 @@ FfiBuf_u8 boltffi_buf_with_len(uintptr_t len) {
     FfiBuf_u8 b = {(uint8_t *)malloc(len), len, len, 1}; return b;
 }
 void boltffi_free_buf(FfiBuf_u8 b) { free(b.ptr); }
-FfiBuf_u8 boltffi_function_demo_echo_payload(const uint8_t *ptr, uintptr_t len) {
+FfiBuf_u8 boltffi_function_4demo12echo_payload(const uint8_t *ptr, uintptr_t len) {
     FfiBuf_u8 b=boltffi_buf_with_len(len); if (len) memcpy(b.ptr,ptr,len); return b;
 }
-FfiBuf_u8 boltffi_function_demo_echo_string(const uint8_t *ptr, uintptr_t len) {
+FfiBuf_u8 boltffi_function_4demo11echo_string(const uint8_t *ptr, uintptr_t len) {
     FfiBuf_u8 b=boltffi_buf_with_len(len); if (len) memcpy(b.ptr,ptr,len); return b;
 }
-FfiStatus boltffi_function_demo_replace_text(const uint8_t *ptr, uintptr_t len, FfiBuf_u8 *out) {
+FfiStatus boltffi_function_4demo12replace_text(const uint8_t *ptr, uintptr_t len, FfiBuf_u8 *out) {
     (void)ptr; (void)len;
     *out = boltffi_buf_with_len(11);
     uint8_t encoded[] = {7, 0, 0, 0, 'u', 'p', 'd', 'a', 't', 'e', 'd'};
     memcpy(out->ptr, encoded, sizeof(encoded));
     return FFI_STATUS_OK;
 }
-FfiStatus boltffi_function_demo_fill_bytes(uint8_t *ptr, uintptr_t len) {
+FfiStatus boltffi_function_4demo10fill_bytes(uint8_t *ptr, uintptr_t len) {
     memset(ptr, 7, len);
     return FFI_STATUS_OK;
 }
-FfiStatus boltffi_method_record_demo_payload_rename(const uint8_t *ptr, uintptr_t len, FfiBuf_u8 *out) {
+FfiStatus boltffi_method_record_4demo7Payload6rename(const uint8_t *ptr, uintptr_t len, FfiBuf_u8 *out) {
     (void)ptr; (void)len;
     DemoPayloadView replacement = {0};
     replacement.name = demo_string_view("updated", 7);

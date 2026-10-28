@@ -5,5 +5,5 @@ package {{ package_name }}
 {% include "target/kmp/common_result.kt" %}
 {%- for function in functions %}
 
-expect fun {{ function.name() }}({% for parameter in function.params() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = function.returns() %}: {{ return_type }}{% endif %}
+expect fun {{ function.name() }}({% for parameter in function.params() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if let Some(default) = parameter.default() %} = {{ default }}{% endif %}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = function.returns() %}: {{ return_type }}{% endif %}
 {%- endfor %}

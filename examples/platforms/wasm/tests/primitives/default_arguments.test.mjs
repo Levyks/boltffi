@@ -1,6 +1,11 @@
 import { assert, demo } from "../support/index.mjs";
 
 export async function run() {
+  globalThis.demoCase("case:primitives.default_arguments.should_keep_required_arguments_after_defaults");
+  assert.equal(demo.addDefault(undefined, 10), 15);
+  assert.equal(demo.addDefault(undefined, 10, true), -15);
+  assert.equal(demo.addDefault(0, 10), 10);
+
   globalThis.demoCase("case:primitives.default_arguments.should_apply_omitted_scalar_and_string_defaults");
   assert.equal(demo.repeatGreeting("ada"), "hello ada, hello ada");
   assert.equal(demo.repeatGreeting("ada", undefined, undefined, true), "HELLO ADA, HELLO ADA");

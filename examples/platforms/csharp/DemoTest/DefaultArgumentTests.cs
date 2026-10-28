@@ -9,6 +9,11 @@ public static partial class DemoTest
 {
     private static async System.Threading.Tasks.Task TestDefaultArguments()
     {
+        DemoCase("case:primitives.default_arguments.should_keep_required_arguments_after_defaults");
+        Require(AddDefault(right: 10) == 15, "default before required argument");
+        Require(AddDefault(right: 10, negate: true) == -15, "named override preserves omitted default");
+        Require(AddDefault(left: 0, right: 10) == 10, "explicit zero overrides default");
+
         DemoCase("case:primitives.default_arguments.should_apply_omitted_scalar_and_string_defaults");
         Require(RepeatGreeting("ada") == "hello ada, hello ada", "omitted greeting defaults");
         Require(RepeatGreeting("ada", shout: true) == "HELLO ADA, HELLO ADA", "named argument preserves other defaults");

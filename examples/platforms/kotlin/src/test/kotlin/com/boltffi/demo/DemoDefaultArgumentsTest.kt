@@ -10,6 +10,14 @@ import kotlinx.coroutines.withTimeout
 
 class DemoDefaultArgumentsTest {
     @Test
+    fun requiredArgumentsStayRequiredAfterDefaults() {
+        demoCase("case:primitives.default_arguments.should_keep_required_arguments_after_defaults")
+        assertEquals(15, addDefault(right = 10))
+        assertEquals(-15, addDefault(right = 10, negate = true))
+        assertEquals(10, addDefault(left = 0, right = 10))
+    }
+
+    @Test
     fun omittedScalarAndStringArgumentsTakeTheirDefaults() {
         demoCase("case:primitives.default_arguments.should_apply_omitted_scalar_and_string_defaults")
         assertEquals("hello ada, hello ada", repeatGreeting("ada"))

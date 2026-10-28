@@ -49,7 +49,7 @@ impl<'a, 'types> Attributes<'a, 'types> {
     pub(super) fn default(&self) -> Result<Option<DefaultValue>, ScanError> {
         self.attrs
             .iter()
-            .filter(|attr| is_default_attr(attr))
+            .filter(|attr| owned_name(attr) == Some("default"))
             .try_fold(None, |found, attr| {
                 if found.is_some() {
                     return Err(ScanError::InvalidDefault {
@@ -162,41 +162,11 @@ fn keep_user_attr(attr: &syn::Attribute) -> bool {
     !is_doc_comment_attr(attr)
         && !attr.path().is_ident("deprecated")
         && !attr.path().is_ident("repr")
-        && !is_boltffi_owned_attr(attr)
+        && owned_name(attr).is_none()
 }
 
 fn is_doc_comment_attr(attr: &syn::Attribute) -> bool {
     attr.path().is_ident("doc") && matches!(attr.meta, syn::Meta::NameValue(_))
-}
-
-fn is_boltffi_owned_attr(attr: &syn::Attribute) -> bool {
-    matches!(
-        attr_name(attr).as_deref(),
-        Some(
-            "data"
-                | "error"
-                | "export"
-                | "skip"
-                | "default"
-                | "ffi_stream"
-                | "name"
-                | "custom_ffi"
-                | "custom_type",
-        )
-    )
-}
-
-fn is_default_attr(attr: &syn::Attribute) -> bool {
-    matches!(attr_name(attr).as_deref(), Some("default"))
-}
-
-fn attr_name(attr: &syn::Attribute) -> Option<String> {
-    let segments = attr.path().segments.iter().collect::<Vec<_>>();
-    match segments.as_slice() {
-        [segment] => Some(segment.ident.to_string()),
-        [namespace, marker] if namespace.ident == "boltffi" => Some(marker.ident.to_string()),
-        _ => None,
-    }
 }
 
 fn ast_path(path: &syn::Path) -> Path {
@@ -250,6 +220,35 @@ fn invalid_attribute(attr: &syn::Attribute) -> ScanError {
     ScanError::InvalidAttribute {
         attribute: spelling::attr(attr),
     }
+}
+
+pub fn owned_name(attribute: &syn::Attribute) -> Option<&'static str> {
+    let path = attribute.path();
+    let mut segments = path.segments.iter();
+    let marker = match (segments.next(), segments.next(), segments.next()) {
+        (Some(marker), None, None) => marker,
+        (Some(namespace), Some(marker), None) if namespace.ident == "boltffi" => marker,
+        _ => return None,
+    };
+    let name = marker.ident.to_string();
+    if name == "error" && path.get_ident().is_some() && matches!(attribute.meta, syn::Meta::List(_))
+    {
+        return None;
+    }
+
+    [
+        "data",
+        "error",
+        "export",
+        "skip",
+        "default",
+        "ffi_stream",
+        "name",
+        "custom_ffi",
+        "custom_type",
+    ]
+    .into_iter()
+    .find(|owned_name| name == *owned_name)
 }
 
 #[cfg(test)]
@@ -368,6 +367,22 @@ mod tests {
         assert_eq!(
             scanned[2].input,
             AttributeInput::Tokens("hidden".to_owned())
+        );
+    }
+
+    #[test]
+    fn preserves_thiserror_helpers_separately_from_boltffi_markers() {
+        let attributes = attrs(
+            "#[boltffi::error] #[error(\"request failed: {message}\")] \
+             struct ServiceError { message: String }",
+        );
+
+        assert_eq!(
+            with_attrs(&attributes, |scanned| scanned.user_attrs()),
+            vec![UserAttr::new(
+                Path::single("error"),
+                AttributeInput::Tokens("\"request failed: {message}\"".to_owned()),
+            )],
         );
     }
 

@@ -190,6 +190,11 @@ pub trait StringResultMessageCallback {
         c,
         reason = ExclusionReason::ImplementationGap,
         details = "C target does not yet wrap callback result payloads ergonomically"
+    ),
+    exclude(
+        ruby,
+        reason = ExclusionReason::ImplementationGap,
+        details = "the Ruby target does not support Result values yet"
     )
 )]
 #[demo_bench_macros::demo_case(
@@ -201,6 +206,11 @@ pub trait StringResultMessageCallback {
         c,
         reason = ExclusionReason::ImplementationGap,
         details = "C target does not yet wrap callback result payloads ergonomically"
+    ),
+    exclude(
+        ruby,
+        reason = ExclusionReason::ImplementationGap,
+        details = "the Ruby target does not support Result values yet"
     )
 )]
 #[export]
@@ -297,6 +307,7 @@ pub trait DataProvider: Send + Sync {
     fn get_item(&self, index: u32) -> DataPoint;
 }
 
+#[export]
 #[benchmark_candidate(object, uniffi)]
 pub struct DataConsumer {
     provider: std::sync::Mutex<Option<Box<dyn DataProvider>>>,

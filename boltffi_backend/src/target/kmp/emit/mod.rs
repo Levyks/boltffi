@@ -99,7 +99,15 @@ impl KmpEmitter {
         let internal_package = format!("{}.jvm", self.options.package_name());
         let internal_package_path = package_path(&internal_package);
         let common_dir = PathBuf::from("src/commonMain/kotlin").join(&source_package_path);
-        let common_source = common::render_common_module(module, self.options.package_name())?;
+        let functions = common::render_functions(module)?;
+        let common_source = common::render_common_module(&functions, self.options.package_name())?;
+        let actual_source = jvm::render_platform_actual(
+            &functions,
+            self.options.package_name(),
+            &internal_package,
+        )?;
+        let internal_source =
+            jvm::render_internal_kotlin(&functions, &internal_package, self.options.libraries())?;
         let support_metadata = KmpSupportMetadata::new(
             module.support_report(),
             self.options.package_name(),
@@ -128,29 +136,32 @@ impl KmpEmitter {
             self.file(KMP_SUPPORT_REPORT_FILE, support_report)?,
         ];
 
-        for adapter in jvm::default_adapters() {
-            let actual_dir = source_set_kotlin_dir(adapter.source_set, &source_package_path);
-            files.push(self.file(
-                actual_dir.join(format!(
-                    "{}{}.kt",
-                    self.options.module_name(),
-                    adapter.actual_file_suffix
-                )),
-                jvm::render_platform_actual(
-                    module,
-                    self.options.package_name(),
-                    &internal_package,
-                )?,
-            )?);
-        }
+        jvm::default_adapters()
+            .into_iter()
+            .try_for_each(|adapter| {
+                let actual_dir = source_set_kotlin_dir(adapter.source_set, &source_package_path);
+                files.push(self.file(
+                    actual_dir.join(format!(
+                        "{}{}.kt",
+                        self.options.module_name(),
+                        adapter.actual_file_suffix
+                    )),
+                    actual_source.clone(),
+                )?);
+                Ok::<_, Error>(())
+            })?;
 
-        for adapter in jvm::default_adapters() {
-            let internal_dir = source_set_kotlin_dir(adapter.source_set, &internal_package_path);
-            files.push(self.file(
-                internal_dir.join(format!("{}.kt", self.options.module_name())),
-                jvm::render_internal_kotlin(module, &internal_package, self.options.libraries())?,
-            )?);
-        }
+        jvm::default_adapters()
+            .into_iter()
+            .try_for_each(|adapter| {
+                let internal_dir =
+                    source_set_kotlin_dir(adapter.source_set, &internal_package_path);
+                files.push(self.file(
+                    internal_dir.join(format!("{}.kt", self.options.module_name())),
+                    internal_source.clone(),
+                )?);
+                Ok::<_, Error>(())
+            })?;
 
         Ok(GeneratedOutput::new(files, Vec::new()))
     }
@@ -295,6 +306,8 @@ fn source_set_kotlin_dir(source_set: &str, package_path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use boltffi_binding::{DefaultValue, FloatValue, IntegerValue, Primitive};
+
     use super::super::{
         KmpApiPlan, KmpCapability, KmpCapabilitySet, KmpCommonModule, KmpFunctionPlan, KmpModule,
         KmpParamPlan, KmpPlatform, KmpPlatformModule, KmpSupportApi, KmpSupportMode,
@@ -349,7 +362,7 @@ mod tests {
                 KmpCapabilitySet::from_iter([KmpCapability::SyncCallables]),
                 KmpFunctionPlan::new(
                     "roundTrip",
-                    "boltffi_function_demo_round_trip",
+                    "boltffi_function_4demo10round_trip",
                     vec![KmpParamPlan::new(
                         "`value`",
                         KmpTypePlan::Primitive(boltffi_binding::Primitive::U32),
@@ -377,7 +390,7 @@ mod tests {
                 KmpCapabilitySet::from_iter([KmpCapability::SyncCallables]),
                 KmpFunctionPlan::new(
                     "add",
-                    "boltffi_function_demo_add",
+                    "boltffi_function_4demo3add",
                     vec![
                         KmpParamPlan::new(
                             "left",
@@ -546,7 +559,7 @@ mod tests {
                 KmpCapabilitySet::from_iter([KmpCapability::SyncCallables]),
                 KmpFunctionPlan::new(
                     "2d",
-                    "boltffi_function_demo__2d",
+                    "boltffi_function_4demo3_2d",
                     vec![KmpParamPlan::new(
                         "ok",
                         KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -581,7 +594,7 @@ mod tests {
                 KmpCapabilitySet::from_iter([KmpCapability::SyncCallables]),
                 KmpFunctionPlan::new(
                     "add",
-                    "boltffi_function_demo_add",
+                    "boltffi_function_4demo3add",
                     vec![KmpParamPlan::new(
                         "bad-name",
                         KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -631,7 +644,7 @@ mod tests {
     fn emitter_rejects_duplicate_parameter_names_in_manual_function_plans() {
         let module = function_module(vec![KmpFunctionPlan::new(
             "add",
-            "boltffi_function_demo_add",
+            "boltffi_function_4demo3add",
             vec![
                 KmpParamPlan::new(
                     "left",
@@ -657,7 +670,7 @@ mod tests {
         let module = function_module(vec![
             KmpFunctionPlan::new(
                 "add",
-                "boltffi_function_demo_add",
+                "boltffi_function_4demo3add",
                 vec![KmpParamPlan::new(
                     "left",
                     KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -666,7 +679,7 @@ mod tests {
             ),
             KmpFunctionPlan::new(
                 "add",
-                "boltffi_function_demo_add_again",
+                "boltffi_function_4demo9add_again",
                 vec![KmpParamPlan::new(
                     "right",
                     KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -687,7 +700,7 @@ mod tests {
         let module = function_module(vec![
             KmpFunctionPlan::new(
                 "add",
-                "boltffi_function_demo_add",
+                "boltffi_function_4demo3add",
                 vec![KmpParamPlan::new(
                     "left",
                     KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -696,7 +709,7 @@ mod tests {
             ),
             KmpFunctionPlan::new(
                 "sum",
-                "boltffi_function_demo_add",
+                "boltffi_function_4demo3add",
                 vec![KmpParamPlan::new(
                     "right",
                     KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -717,7 +730,7 @@ mod tests {
         for function in [
             KmpFunctionPlan::new(
                 "_",
-                "boltffi_function_demo_add",
+                "boltffi_function_4demo3add",
                 vec![KmpParamPlan::new(
                     "left",
                     KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -726,7 +739,7 @@ mod tests {
             ),
             KmpFunctionPlan::new(
                 "add",
-                "boltffi_function_demo_add",
+                "boltffi_function_4demo3add",
                 vec![KmpParamPlan::new(
                     "__",
                     KmpTypePlan::Primitive(boltffi_binding::Primitive::I32),
@@ -792,7 +805,7 @@ mod tests {
         let internal = file(&output, "src/jvmMain/kotlin/com/example/demo/jvm/Demo.kt");
         assert!(internal.contains("val androidLibrary = \"boltffi\""));
         assert!(internal.contains("fun add(left: Int, right: Int): Int"));
-        assert!(internal.contains("@JvmStatic external fun boltffi_function_demo_add"));
+        assert!(internal.contains("@JvmStatic external fun boltffi_function_4demo3add"));
         assert!(
             file(
                 &output,
@@ -800,6 +813,127 @@ mod tests {
             )
             .contains("return com.example.demo.jvm.add(left, right)")
         );
+    }
+
+    #[test]
+    fn emitter_keeps_parameter_defaults_in_common_declarations() {
+        let module = function_module(vec![KmpFunctionPlan::new(
+            "add",
+            "boltffi_function_4demo3add",
+            vec![
+                KmpParamPlan::new("left", KmpTypePlan::Primitive(Primitive::I32))
+                    .with_default(DefaultValue::Integer(IntegerValue::new(5))),
+                KmpParamPlan::new("right", KmpTypePlan::Primitive(Primitive::I32)),
+                KmpParamPlan::new("negate", KmpTypePlan::Primitive(Primitive::Bool))
+                    .with_default(DefaultValue::Bool(false)),
+            ],
+            Some(KmpTypePlan::Primitive(Primitive::I32)),
+        )]);
+        let output = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
+            .emit(&module)
+            .expect("defaulted function should emit");
+
+        assert!(
+            file(&output, "src/commonMain/kotlin/com/example/demo/Demo.kt").contains(
+                "expect fun add(left: Int = 5, right: Int, negate: Boolean = false): Int"
+            )
+        );
+        [("jvmMain", "JvmActual"), ("androidMain", "AndroidActual")]
+            .into_iter()
+            .for_each(|(source_set, actual_suffix)| {
+                let actual_path = format!(
+                    "src/{source_set}/kotlin/com/example/demo/Demo{actual_suffix}.kt"
+                );
+                let actual = file(&output, &actual_path);
+                assert!(actual.contains("actual fun add(left: Int, right: Int, negate: Boolean): Int"));
+                assert!(actual.contains("return com.example.demo.jvm.add(left, right, negate)"));
+                let internal_path =
+                    format!("src/{source_set}/kotlin/com/example/demo/jvm/Demo.kt");
+                let internal = file(&output, &internal_path);
+                let native_signature =
+                    "external fun boltffi_function_4demo3add(left: Int, right: Int, negate: Boolean): Int";
+                assert!(internal.contains(native_signature));
+            });
+    }
+
+    #[test]
+    fn emitter_preserves_integer_limits_and_negative_zero_defaults() {
+        let parameters = [
+            (
+                "byte",
+                Primitive::I8,
+                DefaultValue::Integer(IntegerValue::new(i128::from(i8::MIN))),
+            ),
+            (
+                "short",
+                Primitive::I16,
+                DefaultValue::Integer(IntegerValue::new(i128::from(i16::MIN))),
+            ),
+            (
+                "int",
+                Primitive::I32,
+                DefaultValue::Integer(IntegerValue::new(i128::from(i32::MIN))),
+            ),
+            (
+                "long",
+                Primitive::I64,
+                DefaultValue::Integer(IntegerValue::new(i128::from(i64::MIN))),
+            ),
+            (
+                "size",
+                Primitive::ISize,
+                DefaultValue::Integer(IntegerValue::new(i128::from(i64::MIN))),
+            ),
+            (
+                "single",
+                Primitive::F32,
+                DefaultValue::Float(FloatValue::from_f64(-0.0)),
+            ),
+            (
+                "double",
+                Primitive::F64,
+                DefaultValue::Float(FloatValue::from_f64(-0.0)),
+            ),
+        ]
+        .into_iter()
+        .map(|(name, primitive, default)| {
+            KmpParamPlan::new(name, KmpTypePlan::Primitive(primitive)).with_default(default)
+        })
+        .collect();
+        let module = function_module(vec![KmpFunctionPlan::new(
+            "limits",
+            "boltffi_function_demo_limits",
+            parameters,
+            None,
+        )]);
+        let output = KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24))
+            .emit(&module)
+            .expect("primitive defaults should emit");
+
+        assert!(file(&output, "src/commonMain/kotlin/com/example/demo/Demo.kt").contains(
+            "expect fun limits(byte: Byte = (-128).toByte(), short: Short = (-32768).toShort(), int: Int = -2147483648, long: Long = Long.MIN_VALUE, size: Long = Long.MIN_VALUE, single: Float = -0.0f, double: Double = -0.0)"
+        ));
+    }
+
+    #[test]
+    fn emitter_rejects_a_default_that_does_not_match_its_primitive_type() {
+        let module = function_module(vec![KmpFunctionPlan::new(
+            "add",
+            "boltffi_function_4demo3add",
+            vec![
+                KmpParamPlan::new("count", KmpTypePlan::Primitive(Primitive::I32))
+                    .with_default(DefaultValue::Bool(false)),
+            ],
+            Some(KmpTypePlan::Primitive(Primitive::I32)),
+        )]);
+
+        assert!(matches!(
+            KmpEmitter::new(KmpEmissionOptions::new("com.example.demo", "Demo", 24)).emit(&module),
+            Err(crate::Error::UnsupportedTarget {
+                shape: "default value does not match its primitive type",
+                ..
+            })
+        ));
     }
 
     #[test]

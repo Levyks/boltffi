@@ -14,6 +14,14 @@ class DoublingCallback:
 
 
 class DefaultArgumentsTests(DemoTestCase):
+    def test_required_arguments_after_defaults(self) -> None:
+        self.demo_case("case:primitives.default_arguments.should_keep_required_arguments_after_defaults")
+        self.assertEqual(demo.add_default(right=10), 15)
+        self.assertEqual(demo.add_default(right=10, negate=True), -15)
+        self.assertEqual(demo.add_default(left=0, right=10), 10)
+        with self.assertRaisesRegex(TypeError, "missing required argument 'right'"):
+            demo.add_default()
+
     def test_scalar_and_string_defaults(self) -> None:
         self.demo_case("case:primitives.default_arguments.should_apply_omitted_scalar_and_string_defaults")
         self.assertEqual(demo.repeat_greeting("ada"), "hello ada, hello ada")

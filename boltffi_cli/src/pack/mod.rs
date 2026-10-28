@@ -7,6 +7,7 @@ pub mod dart_web;
 pub mod java;
 pub mod kmp;
 pub mod python;
+pub mod ruby;
 pub(crate) mod scratch;
 pub mod symbols;
 pub mod wasm;

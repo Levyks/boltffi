@@ -3,7 +3,10 @@
 use askama::Template as AskamaTemplate;
 use boltffi_binding::Primitive;
 
-use crate::core::{Error, Result};
+use crate::{
+    core::{Error, Result},
+    target::kotlin::render::DefaultExpression,
+};
 
 use super::super::plan::{KmpApiBody, KmpFunctionPlan, KmpModule, KmpParamPlan, KmpTypePlan};
 
@@ -11,7 +14,7 @@ use super::super::plan::{KmpApiBody, KmpFunctionPlan, KmpModule, KmpParamPlan, K
 #[template(path = "target/kmp/common_module.kt", escape = "none")]
 struct CommonModuleTemplate<'module> {
     package_name: &'module str,
-    functions: Vec<RenderedFunction>,
+    functions: &'module [RenderedFunction],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,12 +29,13 @@ pub(crate) struct RenderedFunction {
 pub(crate) struct RenderedParam {
     name: String,
     ty: String,
+    default: Option<String>,
 }
 
-pub(crate) fn render_common_module(module: &KmpModule, package_name: &str) -> Result<String> {
+pub fn render_common_module(functions: &[RenderedFunction], package_name: &str) -> Result<String> {
     Ok(CommonModuleTemplate {
         package_name,
-        functions: render_functions(module)?,
+        functions,
     }
     .render()?)
 }
@@ -111,18 +115,30 @@ impl RenderedFunction {
 }
 
 impl RenderedParam {
-    fn from_plan(param: &KmpParamPlan) -> Result<Self> {
-        Ok(Self {
-            name: param.name().to_string(),
-            ty: render_type(param.ty())?,
-        })
-    }
-
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
     pub(crate) fn ty(&self) -> &str {
         &self.ty
+    }
+
+    pub fn default(&self) -> Option<&str> {
+        self.default.as_deref()
+    }
+
+    fn from_plan(param: &KmpParamPlan) -> Result<Self> {
+        let KmpTypePlan::Primitive(primitive) = param.ty();
+        Ok(Self {
+            name: param.name().to_string(),
+            ty: render_type(param.ty())?,
+            default: param
+                .default()
+                .map(|value| {
+                    DefaultExpression::primitive(*primitive, value)
+                        .map(|expression| expression.to_string())
+                })
+                .transpose()?,
+        })
     }
 }

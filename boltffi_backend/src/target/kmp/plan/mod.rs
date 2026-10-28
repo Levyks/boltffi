@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use boltffi_binding::Primitive;
+use boltffi_binding::{DefaultValue, Primitive};
 use serde::{Deserialize, Serialize};
 
 /// Feature required by one generated KMP API.
@@ -373,6 +373,7 @@ impl KmpFunctionPlan {
 pub struct KmpParamPlan {
     name: String,
     ty: KmpTypePlan,
+    default: Option<DefaultValue>,
 }
 
 impl KmpParamPlan {
@@ -381,7 +382,19 @@ impl KmpParamPlan {
         Self {
             name: name.into(),
             ty,
+            default: None,
         }
+    }
+
+    #[doc = "Sets the default value used when the argument is omitted."]
+    pub fn with_default(mut self, default: DefaultValue) -> Self {
+        self.default = Some(default);
+        self
+    }
+
+    #[doc = "Returns the parameter default."]
+    pub fn default(&self) -> Option<&DefaultValue> {
+        self.default.as_ref()
     }
 
     /// Returns the generated Kotlin parameter name.

@@ -80,7 +80,7 @@ impl<'expansion, 'lowered, S: boltffi_binding::SurfaceLower> Stream<'expansion, 
 impl<'expansion, 'lowered> Stream<'expansion, 'lowered, Native> {
     pub fn render(self) -> Result<TokenStream, Error> {
         self.validate_subscription()?;
-        let cfg = quote! { #[cfg(not(target_arch = "wasm32"))] };
+        let cfg = quote! { #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))] };
         let method = names::SourceSpelling::new(&self.stream.source().name)
             .ident("source stream name is not a Rust identifier")?;
         let locals = names::Locals::new(method.span());
@@ -225,9 +225,7 @@ impl<'expansion, 'lowered> Stream<'expansion, 'lowered, Native> {
                 }
             }),
             Subscription::Method { owner, rust_type } => {
-                let class = names::SourceSpelling::new(&owner.source().name)
-                    .ident("source class name is not a Rust identifier")?;
-                let handle_type = names::Class::new(&class).handle();
+                let handle_type = names::Class::handle_of(rust_type);
                 let receiver_handle = names::Parameter::new(&receiver).handle();
                 let carrier = wrapper::handle::CarrierTokens::native(owner.binding().handle())?;
                 let ffi_type = carrier.ty();
@@ -513,9 +511,7 @@ impl<'expansion, 'lowered> Stream<'expansion, 'lowered, Wasm32> {
                 }
             }),
             Subscription::Method { owner, rust_type } => {
-                let class = names::SourceSpelling::new(&owner.source().name)
-                    .ident("source class name is not a Rust identifier")?;
-                let handle_type = names::Class::new(&class).handle();
+                let handle_type = names::Class::handle_of(rust_type);
                 let receiver_handle = names::Parameter::new(&receiver).handle();
                 let carrier = wrapper::handle::CarrierTokens::wasm32(owner.binding().handle())?;
                 let ffi_type = carrier.ty();

@@ -8,12 +8,12 @@ expression: "rendered_fixture(\"exports/documented_class_and_data_enum\")"
 package com.boltffi.demo
 @Suppress("FunctionName")
 private object Native {
-    @JvmStatic external fun boltffi_release_class_demo_counter(handle: Long): Unit
-    @JvmStatic external fun boltffi_init_class_demo_counter_new(start: Long): Long
-    @JvmStatic external fun boltffi_init_class_demo_counter_zeroed(): Long
-    @JvmStatic external fun boltffi_method_class_demo_counter_value(`receiver`: Long): Long
-    @JvmStatic external fun boltffi_function_demo_echo_profile(profile: java.nio.ByteBuffer, __boltffi_profile_len: Int): ByteArray?
-    @JvmStatic external fun boltffi_function_demo_echo_outline(outline: java.nio.ByteBuffer, __boltffi_outline_len: Int): ByteArray?
+    @JvmStatic external fun boltffi_release_class_4demo7Counter(handle: Long): Unit
+    @JvmStatic external fun boltffi_init_class_4demo7Counter3new(start: Long): Long
+    @JvmStatic external fun boltffi_init_class_4demo7Counter6zeroed(): Long
+    @JvmStatic external fun boltffi_method_class_4demo7Counter5value(`receiver`: Long): Long
+    @JvmStatic external fun boltffi_function_4demo12echo_profile(profile: java.nio.ByteBuffer, __boltffi_profile_len: Int): ByteArray?
+    @JvmStatic external fun boltffi_function_4demo12echo_outline(outline: java.nio.ByteBuffer, __boltffi_outline_len: Int): ByteArray?
 }
 
 
@@ -100,7 +100,7 @@ sealed class Outline {
         }
 
         internal override fun writeTo(writer: WireWriter) {
-            writer.writeU32(0.toUInt())
+            writer.writeU32(0u)
             writer.writeString(this.label)
         }
     }
@@ -113,7 +113,7 @@ sealed class Outline {
         }
 
         internal override fun writeTo(writer: WireWriter) {
-            writer.writeU32(1.toUInt())
+            writer.writeU32(1u)
         }
     }
 
@@ -121,8 +121,8 @@ sealed class Outline {
         internal fun fromReader(reader: WireReader): Outline {
             val tag = reader.readU32()
             return when (tag) {
-                0.toUInt() -> Named(reader.readString())
-                1.toUInt() -> Anonymous
+                0u -> Named(reader.readString())
+                1u -> Anonymous
                 else -> throw IllegalArgumentException("unknown Outline tag: $tag")
             }
         }
@@ -137,42 +137,49 @@ sealed class Outline {
 /**
  * A counter owned by Rust.
  */
-class Counter internal constructor(internal val handle: Long) : AutoCloseable {
-    private val __boltffi_closed = java.util.concurrent.atomic.AtomicBoolean(false)
+class Counter internal constructor(private val __boltffi_handle: java.util.concurrent.atomic.AtomicLong) : AutoCloseable {
 
     override fun close() {
-        if (__boltffi_closed.compareAndSet(false, true)) {
-            Native.boltffi_release_class_demo_counter(handle)
+        val handle = __boltffi_handle.getAndSet(0L)
+        if (handle != 0L) {
+            Native.boltffi_release_class_4demo7Counter(handle)
         }
     }
 
     internal fun __boltffiTakeHandle(): Long {
-        check(__boltffi_closed.compareAndSet(false, true)) { "Counter is closed" }
+        val handle = __boltffi_handle.getAndSet(0L)
+        check(handle != 0L) { "Counter is closed" }
         return handle
     }
 
     internal fun boltffiHandle(): Long {
-        check(!__boltffi_closed.get()) { "Counter is closed" }
+        val handle = __boltffi_handle.get()
+        check(handle != 0L) { "Counter is closed" }
         return handle
     }
 
     /**
+     * Creates a counter starting at `start`.
+     */
+    constructor(start: Long) : this(new(start).__boltffi_handle)
+
+    /**
      * Returns a counter starting at zero.
      */
-    constructor() : this(zeroed().handle)
+    constructor() : this(zeroed().__boltffi_handle)
 
     companion object {
         /**
          * Creates a counter starting at `start`.
          */
-        fun new(start: Long): Counter {
-            return Counter(Native.boltffi_init_class_demo_counter_new(start))
+        private fun new(start: Long): Counter {
+            return Counter(java.util.concurrent.atomic.AtomicLong(Native.boltffi_init_class_4demo7Counter3new(start)))
         }
         /**
          * Returns a counter starting at zero.
          */
         private fun zeroed(): Counter {
-            return Counter(Native.boltffi_init_class_demo_counter_zeroed())
+            return Counter(java.util.concurrent.atomic.AtomicLong(Native.boltffi_init_class_4demo7Counter6zeroed()))
         }
     }
 
@@ -180,14 +187,14 @@ class Counter internal constructor(internal val handle: Long) : AutoCloseable {
      * Returns the current value.
      */
     fun value(): Long {
-        return Native.boltffi_method_class_demo_counter_value(this.boltffiHandle())
+        return Native.boltffi_method_class_4demo7Counter5value(this.boltffiHandle())
     }
 }
 
 /**
  * The wire protocol revision.
  */
-val protocolRevision: UInt = 3.toUInt()
+val protocolRevision: UInt = 3u
 
 /**
  * Returns the profile unchanged.
@@ -197,7 +204,7 @@ fun echoProfile(profile: Profile): Profile {
     val __boltffi_profile_writer = __boltffi_profile_wire.writer
     profile.writeTo(__boltffi_profile_writer)
     try {
-        val __boltffi_result = Native.boltffi_function_demo_echo_profile(__boltffi_profile_wire.directBuffer(), __boltffi_profile_wire.size()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_result = Native.boltffi_function_4demo12echo_profile(__boltffi_profile_wire.directBuffer(), __boltffi_profile_wire.size()) ?: throw IllegalStateException("null buffer returned")
         val __boltffi_reader = WireReader(__boltffi_result)
         return Profile.fromReader(__boltffi_reader)
     } finally {
@@ -213,7 +220,7 @@ fun echoOutline(outline: Outline): Outline {
     val __boltffi_outline_writer = __boltffi_outline_wire.writer
     outline.writeTo(__boltffi_outline_writer)
     try {
-        val __boltffi_result = Native.boltffi_function_demo_echo_outline(__boltffi_outline_wire.directBuffer(), __boltffi_outline_wire.size()) ?: throw IllegalStateException("null buffer returned")
+        val __boltffi_result = Native.boltffi_function_4demo12echo_outline(__boltffi_outline_wire.directBuffer(), __boltffi_outline_wire.size()) ?: throw IllegalStateException("null buffer returned")
         val __boltffi_reader = WireReader(__boltffi_result)
         return Outline.fromReader(__boltffi_reader)
     } finally {

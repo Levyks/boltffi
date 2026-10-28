@@ -53,6 +53,24 @@ impl std::fmt::Display for FixtureError {
 
 impl std::error::Error for FixtureError {}
 
+#[boltffi::error]
+#[derive(Debug, thiserror::Error)]
+#[error("request failed: {message}")]
+pub struct FixtureServiceError {
+    pub message: String,
+}
+
+#[export]
+pub fn try_service(fail: bool) -> Result<i32, FixtureServiceError> {
+    if fail {
+        Err(FixtureServiceError {
+            message: "unavailable".to_owned(),
+        })
+    } else {
+        Ok(42)
+    }
+}
+
 #[export]
 pub fn fallible_divide(a: i32, b: i32) -> Result<i32, FixtureError> {
     if b == 0 {
@@ -83,6 +101,7 @@ pub async fn async_fallible_fetch(key: i32) -> Result<String, FixtureError> {
     }
 }
 
+#[export]
 pub struct CancellableTask {
     started: Arc<AtomicBool>,
     completed: Arc<AtomicBool>,
@@ -139,6 +158,7 @@ impl CancellableTask {
     }
 }
 
+#[export]
 pub struct FallibleService {
     failure_mode: Arc<AtomicU32>,
 }

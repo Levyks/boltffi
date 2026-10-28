@@ -237,7 +237,11 @@ fn scan_marked_with_declarations(
     declared_types: &DeclaredTypes,
     package: PackageInfo,
 ) -> Result<SourceContract, ScanError> {
-    let classes = items::class::scan(marked.classes(), declared_types)?;
+    let classes = items::class::scan(
+        marked.classes(),
+        marked.class_declarations(),
+        declared_types,
+    )?;
     let mut records = scan_each(marked.records(), declared_types, items::record::scan)?;
     let mut enums = scan_each(marked.enums(), declared_types, items::enumeration::scan)?;
     let traits = scan_each(marked.traits(), declared_types, items::callback::scan)?;
@@ -2226,6 +2230,17 @@ mod tests {
     }
 
     #[test]
+    fn thiserror_helpers_do_not_export_unmarked_types() {
+        let contract = scan(
+            "#[derive(Debug, thiserror::Error)] \
+             #[error(\"request failed: {message}\")] \
+             pub struct ServiceError { pub message: String }",
+        );
+
+        assert!(contract.records.is_empty());
+    }
+
+    #[test]
     fn references_to_error_types_resolve_like_any_value_type() {
         let contract = scan(
             "#[error] pub enum ParseError { Eof } \
@@ -2290,14 +2305,14 @@ mod tests {
 
     #[test]
     fn marker_on_wrong_item_kind_is_rejected() {
-        let error = try_scan("#[export] pub struct Point { pub x: f64 }")
+        let error = try_scan("#[export] pub static MODE: u8 = 0;")
             .expect_err("wrong marker placement must reject");
 
         assert_eq!(
             error,
             ScanError::InvalidMarkerPlacement {
                 marker: "export".to_owned(),
-                item: "struct".to_owned()
+                item: "static".to_owned()
             }
         );
     }

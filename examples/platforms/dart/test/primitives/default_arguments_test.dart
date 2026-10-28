@@ -7,6 +7,17 @@ import 'package:test/test.dart';
 void main() {
   boltffiTestHooks();
 
+  test('required arguments stay required after defaults', () {
+    expect(
+      addDefault(right: 10),
+      15,
+      reason:
+          'case:primitives.default_arguments.should_keep_required_arguments_after_defaults',
+    );
+    expect(addDefault(right: 10, negate: true), -15);
+    expect(addDefault(left: 0, right: 10), 10);
+  });
+
   test('scalar and string defaults allow named overrides', () {
     expect(
       repeatGreeting('ada'),

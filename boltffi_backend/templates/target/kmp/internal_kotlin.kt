@@ -4,7 +4,7 @@ package {{ internal_package }}
 {% if !functions.is_empty() %}
 private object Native {
 {{ native_library_loader }}
-{%- for function in native_functions %}
+{%- for function in functions %}
     @JvmStatic external fun {{ function.native_symbol() }}({% for parameter in function.params() %}{{ parameter.name() }}: {{ parameter.ty() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if let Some(return_type) = function.returns() %}: {{ return_type }}{% endif %}
 {%- endfor %}
 }

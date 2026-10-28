@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 boltffi.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros"] }
 
 [build-dependencies]

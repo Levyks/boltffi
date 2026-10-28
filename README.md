@@ -52,6 +52,8 @@ Mark your Rust types with `#[data]` and functions with `#[export]`:
 ```rust
 use boltffi::*;
 
+boltffi::scaffolding!();
+
 #[data]
 #[derive(Clone, Copy)]
 pub struct Point {
@@ -123,12 +125,13 @@ The C package includes CMake targets and pkg-config files for shared and static 
 
 The generated bindings use each language's idioms. Swift gets async/await. Kotlin gets coroutines. Java gets CompletableFuture and functional interfaces. C# gets Tasks and async enumerables. TypeScript gets Promises. Errors become native exceptions in the managed targets. C uses typed results and explicit cleanup functions.
 
-## Supported languages
+## Supported languages and targets
 
-| Language | Status       |
+| Language or target | Status       |
 |----------|--------------|
 | Swift    | Full support |
 | Kotlin   | Full support |
+| Kotlin Multiplatform | Experimental, JVM and Android |
 | Java     | Full support |
 | C#       | Full support |
 | WASM/TypeScript | Full support |
@@ -143,6 +146,24 @@ The generated bindings use each language's idioms. Swift gets async/await. Kotli
 | R        | Potential    |
 
 Want another language? [Open an issue](https://github.com/boltffi/boltffi/issues).
+
+Kotlin Multiplatform generates a shared `commonMain` API with `jvmMain` and `androidMain` implementations, it currently supports synchronous infallible free functions using booleans, signed integers and floating point values, including Rust parameter defaults
+
+Enable it in `boltffi.toml`
+
+```toml
+[targets.kotlin_multiplatform]
+enabled = true
+```
+
+Generate the bindings or package them with the native libraries
+
+```bash
+boltffi generate kmp --experimental
+boltffi pack kmp --experimental
+```
+
+Unsupported APIs fail generation, Kotlin/Native targets such as iOS and macOS are not supported yet
 
 ## Installation
 
@@ -163,6 +184,12 @@ Configure the crate type in `Cargo.toml`:
 ```toml
 [lib]
 crate-type = ["cdylib", "staticlib"]
+```
+
+Call `boltffi::scaffolding!()` once at the root of `src/lib.rs`:
+
+```rust
+boltffi::scaffolding!();
 ```
 
 ## Documentation

@@ -5,7 +5,8 @@ use crate::config::{
     AndroidConfig, AndroidLinkConfig, AndroidPackConfig, AppleConfig, CConfig, CSharpConfig,
     CargoConfig, Config, DartConfig, DartWebConfig, DebugSymbolsConfig, ErrorStyle, HeaderConfig,
     JavaConfig, KotlinConfig, KotlinFactoryStyle, KotlinMultiplatformConfig, PackageConfig,
-    PythonConfig, SpmConfig, SwiftConfig, TargetsConfig, WasmConfig, XcframeworkConfig,
+    PythonConfig, RubyConfig, SpmConfig, SwiftConfig, TargetsConfig, WasmConfig,
+    XcframeworkConfig,
 };
 
 pub struct InitOptions {
@@ -139,6 +140,7 @@ fn create_default_config(package_name: &str) -> Config {
             python: PythonConfig::default(),
             csharp: CSharpConfig::default(),
             c: CConfig::default(),
+            ruby: RubyConfig::default(),
         },
     }
 }
