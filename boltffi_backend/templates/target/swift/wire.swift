@@ -12,6 +12,11 @@
         self.position = 0
     }
 
+    /// Steps over padding in a direct record's C image.
+    @inlinable mutating func skip(_ count: Int) {
+        position += count
+    }
+
     @inlinable mutating func readU8() -> UInt8 {
         let value = data[position]
         position += 1
@@ -184,6 +189,11 @@
 
     @inlinable init(capacity: Int = 64) {
         self.data = Data(capacity: capacity)
+    }
+
+    /// Writes zeroed padding of a direct record's C image.
+    @inlinable mutating func pad(_ count: Int) {
+        data.append(contentsOf: repeatElement(0, count: count))
     }
 
     @inlinable mutating func writeU8(_ value: UInt8) {

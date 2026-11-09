@@ -682,3 +682,30 @@ fn swift_target_renders_custom_type_mappings() {
         host
     ));
 }
+
+#[test]
+fn swift_wire_codecs_step_over_direct_record_padding() {
+    // Padded { tag: u16, value: i32, flag: u8 }: offsets 0, 4, 8, size 12.
+    // The Rust runtime puts the C image on the wire, so the gaps after `tag`
+    // and after `flag` must be skipped when reading and zero-filled when writing.
+    let rendered = rendered_fixture("records/padded_direct_record").replace("\r\n", "\n");
+    for expected in [
+        "let tag = reader.readU16()
+        reader.skip(2)
+        let value = reader.readI32()",
+        "let flag = reader.readU8()
+        reader.skip(3)
+        return Padded(tag: tag, value: value, flag: flag)",
+        "writer.writeU16(self.tag)
+        writer.pad(2)
+        writer.writeI32(self.value)",
+        "writer.writeU8(self.flag)
+        writer.pad(3)",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing `{expected}` in:
+{rendered}"
+        );
+    }
+}

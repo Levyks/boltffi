@@ -35,6 +35,8 @@ pub struct Record {
     fields: Vec<Field>,
     members: Vec<String>,
     native: Option<NativeRecord>,
+    /// Bytes after the last field of a direct record's wire image.
+    trailing_padding: u64,
 }
 
 struct Field {
@@ -95,14 +97,19 @@ impl Record {
             });
         }
 
-        Self::new(
+        // The Rust runtime encodes a direct record as its C image, padding
+        // included, so the wire codecs step over each gap.
+        let padding = crate::core::direct_padding::DirectPadding::of(declaration)?;
+        let mut record = Self::new(
             declaration.meta().doc(),
             declaration_name(declaration.name())?,
             declaration.is_error_payload(),
             declaration
                 .fields()
                 .iter()
-                .map(|field| {
+                .enumerate()
+                .map(|(index, field)| {
+                    let pad = padding.before(index);
                     let name = field_name(field.key())?;
                     let primitive = field.ty().primitive();
                     let semantics = ValueSemantics::direct();
@@ -123,13 +130,29 @@ impl Record {
                             })
                             .transpose()?,
                         documentation: Documentation::new(field.meta().doc(), 2),
-                        read: format!("_p$reader.{}()", primitive_read_method(primitive)),
-                        writes: vec![format!(
-                            "_p$writer.{}({});",
-                            primitive_write_method(primitive),
-                            field_name(field.key())?,
-                        )],
-                        size: super::super::codec::primitive_size(primitive).to_string(),
+                        read: match pad {
+                            0 => format!("_p$reader.{}()", primitive_read_method(primitive)),
+                            _ => format!(
+                                "_p$reader.skip({pad}).{}()",
+                                primitive_read_method(primitive)
+                            ),
+                        },
+                        writes: (pad > 0)
+                            .then(|| format!("_p$writer.pad({pad});"))
+                            .into_iter()
+                            .chain([format!(
+                                "_p$writer.{}({});",
+                                primitive_write_method(primitive),
+                                field_name(field.key())?,
+                            )])
+                            .collect(),
+                        size: match pad {
+                            0 => super::super::codec::primitive_size(primitive).to_string(),
+                            _ => format!(
+                                "{pad} + {}",
+                                super::super::codec::primitive_size(primitive)
+                            ),
+                        },
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -161,7 +184,9 @@ impl Record {
                     })
                     .collect::<Result<Vec<_>>>()?,
             }),
-        )
+        )?;
+        record.trailing_padding = padding.trailing();
+        Ok(record)
     }
 
     fn from_encoded(
@@ -255,7 +280,12 @@ impl Record {
             fields,
             members,
             native,
+            trailing_padding: 0,
         })
+    }
+
+    fn trailing_padding(&self) -> u64 {
+        self.trailing_padding
     }
 
     pub fn render(self) -> Emitted {
@@ -295,14 +325,16 @@ impl Record {
     }
 
     fn encoded_size(&self) -> String {
-        if self.fields.is_empty() {
+        let sizes = self
+            .fields
+            .iter()
+            .map(|field| field.size().to_owned())
+            .chain((self.trailing_padding > 0).then(|| self.trailing_padding.to_string()))
+            .collect::<Vec<_>>();
+        if sizes.is_empty() {
             "0".to_owned()
         } else {
-            self.fields
-                .iter()
-                .map(Field::size)
-                .collect::<Vec<_>>()
-                .join(" + ")
+            sizes.join(" + ")
         }
     }
 
