@@ -152,6 +152,24 @@ impl<'expansion, 'lowered, S: boltffi_binding::SurfaceLower> Direct<'expansion, 
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
+        // A single record value on the wire is packed field by field, which is
+        // what every foreign generator reads and writes. Only vectors keep the
+        // raw `#[repr(C)]` image (padding included), because both sides copy
+        // whole struct arrays there. Copying a single value's C image would
+        // shift every field after a padding byte.
+        let packed = self
+            .source
+            .fields
+            .iter()
+            .map(|source| {
+                let ident = names::SourceSpelling::new(&source.name)
+                    .ident("source record field name is not a Rust identifier")?;
+                let rust_type = rust_api::TypeTokens::new(&source.type_expr)?.into_type();
+                Ok((ident, rust_type))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let packed_types = packed.iter().map(|(_, rust_type)| rust_type).collect::<Vec<_>>();
+        let packed_idents = packed.iter().map(|(ident, _)| ident).collect::<Vec<_>>();
         Ok(quote! {
             const _: [(); #size] = [(); ::core::mem::size_of::<#record>()];
             const _: [(); 0] = [(); #alignment % ::core::mem::align_of::<#record>()];
@@ -181,24 +199,38 @@ impl<'expansion, 'lowered, S: boltffi_binding::SurfaceLower> Direct<'expansion, 
                 }
 
                 fn fixed_size() -> Option<usize> {
-                    Some(::core::mem::size_of::<Self>())
+                    Some(0 #(+ <#packed_types as ::boltffi::__private::wire::WireEncode>::fixed_size().unwrap_or(0))*)
                 }
 
                 fn wire_size(&self) -> usize {
-                    ::core::mem::size_of::<Self>()
+                    0 #(+ ::boltffi::__private::wire::WireEncode::wire_size(&self.#packed_idents))*
                 }
 
                 fn encode_to(&self, buffer: &mut [u8]) -> usize {
-                    <Self as ::boltffi::__private::wire::Blittable>::encode_value(self, buffer)
+                    let mut __boltffi_offset = 0usize;
+                    #(
+                        __boltffi_offset += ::boltffi::__private::wire::WireEncode::encode_to(
+                            &self.#packed_idents,
+                            &mut buffer[__boltffi_offset..],
+                        );
+                    )*
+                    __boltffi_offset
                 }
             }
 
             impl ::boltffi::__private::wire::WireDecode for #record {
                 fn decode_from(buffer: &[u8]) -> ::boltffi::__private::wire::DecodeResult<Self> {
-                    match <Self as ::boltffi::__private::wire::Blittable>::decode_value(buffer) {
-                        Some(value) => Ok((value, ::core::mem::size_of::<Self>())),
-                        None => Err(::boltffi::__private::wire::DecodeError::BufferTooSmall),
-                    }
+                    let mut __boltffi_offset = 0usize;
+                    #(
+                        let #packed_idents = {
+                            let (value, used) = <#packed_types as ::boltffi::__private::wire::WireDecode>::decode_from(
+                                buffer.get(__boltffi_offset..).ok_or(::boltffi::__private::wire::DecodeError::BufferTooSmall)?,
+                            )?;
+                            __boltffi_offset += used;
+                            value
+                        };
+                    )*
+                    Ok((Self { #(#packed_idents),* }, __boltffi_offset))
                 }
             }
 
